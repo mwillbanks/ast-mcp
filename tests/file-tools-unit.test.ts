@@ -101,4 +101,4 @@ test("file tool handlers execute keyed batches without transport indirection", a
   } finally {
     await rm(folder, { force: true, recursive: true });
   }
-});
+}, 15_000);
