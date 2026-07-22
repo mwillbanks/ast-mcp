@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Install package dependencies
+        run: bun ci
+      - name: Install documentation dependencies
+        run: bun ci --cwd website
+      - name: Verify toolchain
+        run: bun run tools:check
+      - name: Check formatting and lint
+        run: bun run format:check
+      - name: Typecheck package
+        run: bun run typecheck
+      - name: Test package
+        run: bun run test
+      - name: Validate skill
+        run: bun run skill:check
+      - name: Validate evaluation fixtures
+        run: bun run evals:check
+      - name: Check dead code
+        run: bun run fallow
+      - name: Build distribution binaries
+        run: bun run build
+      - name: Typecheck documentation
+        run: bun run --cwd website typecheck
+      - name: Test documentation
+        run: bun run --cwd website test
+      - name: Build documentation
+        env:
+          VITE_BASE_PATH: /ast-mcp/
+        run: bun run --cwd website build
+      - name: Verify package contents
+        run: bun pm pack --dry-run

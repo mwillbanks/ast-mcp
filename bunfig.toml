@@ -1,0 +1,7 @@
+[test]
+onlyFailures = true
+coverage = true
+coverageThreshold = 0.95
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["website/**"]
+pathIgnorePatterns = ["website/**"]

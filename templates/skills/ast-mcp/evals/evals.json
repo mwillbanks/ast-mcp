@@ -1,0 +1,1209 @@
+{
+  "evals": [
+    {
+      "assertions": [
+        "Uses files with a bounded lines tuple and never requests full-file content.",
+        "Treats returned SHA-256 as the hash of the whole file.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the non-AST request to file_read with one bounded, end-exclusive line slice.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 1,
+      "prompt": "Read lines 200 through 260 from a large XML fixture without loading the whole file.",
+      "required_tools": ["file_read"],
+      "surface": "file_read",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Batches multiple files instead of making repeated file_read calls.",
+        "Uses schema-valid zero-based end-exclusive ranges and maxBytes values.",
+        "Reports truncation and hasMore metadata when present."
+      ],
+      "category": "variant",
+      "expected_output": "Uses one batched file_read call with three bounded requests and per-file byte caps.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 2,
+      "prompt": "Inspect small slices from three non-AST logs in one request and cap every returned slice at 64 KiB.",
+      "required_tools": ["file_read"],
+      "surface": "file_read",
+      "variant": "batch-and-byte-cap"
+    },
+    {
+      "assertions": [
+        "Does not call file_read for AST-capable source.",
+        "Uses map for shape and show for the named implementation.",
+        "Avoids whole-file content reads."
+      ],
+      "category": "negative",
+      "expected_output": "Uses AST intelligence for the TypeScript file and never calls file_read.",
+      "files": [],
+      "forbidden_tools": ["file_read"],
+      "id": 3,
+      "prompt": "Inspect the declarations and implementation of createServer in src/server.ts.",
+      "required_tools": ["map", "show"],
+      "surface": "file_read",
+      "variant": "ast-capable-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses file_write only for new files.",
+        "Uses direct MCP tool file_write; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to file_write with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 4,
+      "prompt": "Create a new src/config.ts file with a typed config object.",
+      "required_tools": ["file_write"],
+      "surface": "file_write",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct file_write argument or recovery variant.",
+        "Uses schema-valid arguments for file_write.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses file_write with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 5,
+      "prompt": "Create a new JSON settings file and verify the newly created output.",
+      "required_tools": ["file_write"],
+      "surface": "file_write",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call file_write for the near-miss.",
+        "Selects the semantically correct alternative file_patch.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to file_write; selects file_patch.",
+      "files": [],
+      "forbidden_tools": ["file_write"],
+      "id": 6,
+      "prompt": "Change an existing TypeScript file under the AST write contract.",
+      "required_tools": ["file_patch"],
+      "surface": "file_write",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses file_patch with the correct strategy for the target.",
+        "Uses direct MCP tool file_patch; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to file_patch with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 7,
+      "prompt": "Rename one uniquely matched TypeScript call with a reviewed AST rule.",
+      "required_tools": ["file_patch"],
+      "surface": "file_patch",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct file_patch argument or recovery variant.",
+        "Uses schema-valid arguments for file_patch.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses file_patch with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 8,
+      "prompt": "Patch duplicated unsupported prose with a unique Aider block and fresh hash.",
+      "required_tools": ["file_patch"],
+      "surface": "file_patch",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Re-inspects through AST and refreshes file_hash after the stale or ambiguous rejection.",
+        "Uses run to narrow the structural rule before retrying.",
+        "Keeps the final file_patch on the AST strategy with exactly one match."
+      ],
+      "category": "negative",
+      "expected_output": "Treats the rejection as recoverable, uses AST inspection and run to narrow the rule, refreshes file_hash, then uses file_patch with one reviewed match.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 9,
+      "prompt": "The existing TypeScript patch reports more matches than expected; re-inspect through AST, refresh file_hash, narrow the AST preview, then continue safely.",
+      "required_tools": ["run", "file_hash", "file_patch"],
+      "surface": "file_patch",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses map for one-file shape and parse health.",
+        "Uses direct MCP tool map; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to map with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 10,
+      "prompt": "Map one source file for declarations, line ranges, and parse errors.",
+      "required_tools": ["map"],
+      "surface": "map",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct map argument or recovery variant.",
+        "Uses schema-valid arguments for map.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses map with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 11,
+      "prompt": "Check parse health for a bounded TypeScript file instead of inferring it from an empty search.",
+      "required_tools": ["map"],
+      "surface": "map",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call map for the near-miss.",
+        "Selects the semantically correct alternative digest.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to map; selects digest.",
+      "files": [],
+      "forbidden_tools": ["map"],
+      "id": 12,
+      "prompt": "Give a compact inventory of every file in an unfamiliar directory.",
+      "required_tools": ["digest"],
+      "surface": "map",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses digest for directory orientation.",
+        "Uses direct MCP tool digest; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to digest with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 13,
+      "prompt": "Digest an unfamiliar src directory with public methods.",
+      "required_tools": ["digest"],
+      "surface": "digest",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct digest argument or recovery variant.",
+        "Uses schema-valid arguments for digest.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses digest with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 14,
+      "prompt": "Digest bounded directories with private members, fields, and a max member limit.",
+      "required_tools": ["digest"],
+      "surface": "digest",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call digest for the near-miss.",
+        "Selects the semantically correct alternative show.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to digest; selects show.",
+      "files": [],
+      "forbidden_tools": ["digest"],
+      "id": 15,
+      "prompt": "Show the exact source body of a known symbol in one file.",
+      "required_tools": ["show"],
+      "surface": "digest",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses show for exact source extraction.",
+        "Uses direct MCP tool show; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to show with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 16,
+      "prompt": "Show the implementation of handleRequest in src/server.ts.",
+      "required_tools": ["show"],
+      "surface": "show",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct show argument or recovery variant.",
+        "Uses schema-valid arguments for show.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses show with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 17,
+      "prompt": "Show a Markdown heading from the skill file as a known symbol.",
+      "required_tools": ["show"],
+      "surface": "show",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call show for the near-miss.",
+        "Selects the semantically correct alternative search.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to show; selects search.",
+      "files": [],
+      "forbidden_tools": ["show"],
+      "id": 18,
+      "prompt": "Find related code when the symbol name is unknown.",
+      "required_tools": ["search"],
+      "surface": "show",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses implements for type hierarchy questions.",
+        "Uses direct MCP tool implements; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to implements with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 19,
+      "prompt": "Find classes implementing PaymentRepository.",
+      "required_tools": ["implements"],
+      "surface": "implements",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct implements argument or recovery variant.",
+        "Uses schema-valid arguments for implements.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses implements with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 20,
+      "prompt": "Find indirect subtypes of an interface using hierarchy options.",
+      "required_tools": ["implements"],
+      "surface": "implements",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call implements for the near-miss.",
+        "Selects the semantically correct alternative callers.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to implements; selects callers.",
+      "files": [],
+      "forbidden_tools": ["implements"],
+      "id": 21,
+      "prompt": "Find functions that call PaymentRepository.save.",
+      "required_tools": ["callers"],
+      "surface": "implements",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses surface for downstream-visible exports.",
+        "Uses direct MCP tool surface; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to surface with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 22,
+      "prompt": "Report the true public API including re-export chains.",
+      "required_tools": ["surface"],
+      "surface": "surface",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct surface argument or recovery variant.",
+        "Uses schema-valid arguments for surface.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses surface with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 23,
+      "prompt": "Render the public API as a tree with a bounded recursion depth.",
+      "required_tools": ["surface"],
+      "surface": "surface",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call surface for the near-miss.",
+        "Selects the semantically correct alternative map.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to surface; selects map.",
+      "files": [],
+      "forbidden_tools": ["surface"],
+      "id": 24,
+      "prompt": "Map declarations and parse errors in one source file.",
+      "required_tools": ["map"],
+      "surface": "surface",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses deps for forward import traversal.",
+        "Uses direct MCP tool deps; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to deps with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 25,
+      "prompt": "List the transitive imports of src/server.ts.",
+      "required_tools": ["deps"],
+      "surface": "deps",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct deps argument or recovery variant.",
+        "Uses schema-valid arguments for deps.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses deps with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 26,
+      "prompt": "Rebuild the dependency graph and traverse imports to depth two.",
+      "required_tools": ["deps"],
+      "surface": "deps",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call deps for the near-miss.",
+        "Selects the semantically correct alternative reverse_deps.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to deps; selects reverse_deps.",
+      "files": [],
+      "forbidden_tools": ["deps"],
+      "id": 27,
+      "prompt": "List the files that import src/server.ts.",
+      "required_tools": ["reverse_deps"],
+      "surface": "deps",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses reverse_deps for importer traversal.",
+        "Uses direct MCP tool reverse_deps; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to reverse_deps with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 28,
+      "prompt": "List files importing src/runtime/hash.ts.",
+      "required_tools": ["reverse_deps"],
+      "surface": "reverse_deps",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct reverse_deps argument or recovery variant.",
+        "Uses schema-valid arguments for reverse_deps.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses reverse_deps with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 29,
+      "prompt": "Find up to five importers with dependency options.",
+      "required_tools": ["reverse_deps"],
+      "surface": "reverse_deps",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call reverse_deps for the near-miss.",
+        "Selects the semantically correct alternative callers.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to reverse_deps; selects callers.",
+      "files": [],
+      "forbidden_tools": ["reverse_deps"],
+      "id": 30,
+      "prompt": "Find functions that call sha256.",
+      "required_tools": ["callers"],
+      "surface": "reverse_deps",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses cycles for circular-import detection.",
+        "Uses direct MCP tool cycles; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to cycles with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 31,
+      "prompt": "Find import cycles and return JSON for a CI gate.",
+      "required_tools": ["cycles"],
+      "surface": "cycles",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct cycles argument or recovery variant.",
+        "Uses schema-valid arguments for cycles.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses cycles with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 32,
+      "prompt": "Find SCCs of size at least three after rebuilding.",
+      "required_tools": ["cycles"],
+      "surface": "cycles",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call cycles for the near-miss.",
+        "Selects the semantically correct alternative graph.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to cycles; selects graph.",
+      "files": [],
+      "forbidden_tools": ["cycles"],
+      "id": 33,
+      "prompt": "Render the complete file-level dependency graph.",
+      "required_tools": ["graph"],
+      "surface": "cycles",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses graph for dependency graph emission.",
+        "Uses direct MCP tool graph; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to graph with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 34,
+      "prompt": "Render the repository file-level dependency graph.",
+      "required_tools": ["graph"],
+      "surface": "graph",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct graph argument or recovery variant.",
+        "Uses schema-valid arguments for graph.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses graph with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 35,
+      "prompt": "Render JSON, hide external imports, and rebuild the graph cache.",
+      "required_tools": ["graph"],
+      "surface": "graph",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call graph for the near-miss.",
+        "Selects the semantically correct alternative cycles.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to graph; selects cycles.",
+      "files": [],
+      "forbidden_tools": ["graph"],
+      "id": 36,
+      "prompt": "Find whether the repository contains a circular import.",
+      "required_tools": ["cycles"],
+      "surface": "graph",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses search for unknown-name discovery.",
+        "Uses direct MCP tool search; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to search with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 37,
+      "prompt": "Find code related to payment retries when no symbol is known.",
+      "required_tools": ["search"],
+      "surface": "search",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct search argument or recovery variant.",
+        "Uses schema-valid arguments for search.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses search with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 38,
+      "prompt": "Search only TypeScript/TSX for an exact symbol and return JSON.",
+      "required_tools": ["search"],
+      "surface": "search",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call search for the near-miss.",
+        "Selects the semantically correct alternative show.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to search; selects show.",
+      "files": [],
+      "forbidden_tools": ["search"],
+      "id": 39,
+      "prompt": "Show the exact body of a known symbol in a known file.",
+      "required_tools": ["show"],
+      "surface": "search",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses find_related for file-line similarity.",
+        "Uses direct MCP tool find_related; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to find_related with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 40,
+      "prompt": "Find chunks related to src/server.ts line 42.",
+      "required_tools": ["find_related"],
+      "surface": "find_related",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct find_related argument or recovery variant.",
+        "Uses schema-valid arguments for find_related.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses find_related with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 41,
+      "prompt": "Find the top three related chunks with an explicit root and result limit.",
+      "required_tools": ["find_related"],
+      "surface": "find_related",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call find_related for the near-miss.",
+        "Selects the semantically correct alternative search.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to find_related; selects search.",
+      "files": [],
+      "forbidden_tools": ["find_related"],
+      "id": 42,
+      "prompt": "Search the repository for the phrase database timeout.",
+      "required_tools": ["search"],
+      "surface": "find_related",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses index for index lifecycle work.",
+        "Uses direct MCP tool index; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to index with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 43,
+      "prompt": "Build the repository search index before discovery.",
+      "required_tools": ["index"],
+      "surface": "index",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct index argument or recovery variant.",
+        "Uses schema-valid arguments for index.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses index with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 44,
+      "prompt": "Report index statistics without changing source files.",
+      "required_tools": ["index"],
+      "surface": "index",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call index for the near-miss.",
+        "Selects the semantically correct alternative search.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to index; selects search.",
+      "files": [],
+      "forbidden_tools": ["index"],
+      "id": 45,
+      "prompt": "Search the indexed repository for PaymentService.",
+      "required_tools": ["search"],
+      "surface": "index",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses callers for reverse call traversal.",
+        "Uses direct MCP tool callers; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to callers with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 46,
+      "prompt": "Find every caller of PaymentService.save.",
+      "required_tools": ["callers"],
+      "surface": "callers",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct callers argument or recovery variant.",
+        "Uses schema-valid arguments for callers.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses callers with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 47,
+      "prompt": "Find callers to depth three with a result limit and ambiguity filtering.",
+      "required_tools": ["callers"],
+      "surface": "callers",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call callers for the near-miss.",
+        "Selects the semantically correct alternative callees.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to callers; selects callees.",
+      "files": [],
+      "forbidden_tools": ["callers"],
+      "id": 48,
+      "prompt": "List the symbols called by PaymentService.save.",
+      "required_tools": ["callees"],
+      "surface": "callers",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses callees for forward call traversal.",
+        "Uses direct MCP tool callees; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to callees with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 49,
+      "prompt": "List what handleRequest calls directly and transitively.",
+      "required_tools": ["callees"],
+      "surface": "callees",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct callees argument or recovery variant.",
+        "Uses schema-valid arguments for callees.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses callees with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 50,
+      "prompt": "List only internal callees to depth two in JSON.",
+      "required_tools": ["callees"],
+      "surface": "callees",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call callees for the near-miss.",
+        "Selects the semantically correct alternative trace.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to callees; selects trace.",
+      "files": [],
+      "forbidden_tools": ["callees"],
+      "id": 51,
+      "prompt": "Trace the path from handleRequest to writeResponse.",
+      "required_tools": ["trace"],
+      "surface": "callees",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses trace for endpoint-to-endpoint flow.",
+        "Uses direct MCP tool trace; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to trace with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 52,
+      "prompt": "Trace how requestHandler reaches writeToDatabase.",
+      "required_tools": ["trace"],
+      "surface": "trace",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct trace argument or recovery variant.",
+        "Uses schema-valid arguments for trace.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses trace with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 53,
+      "prompt": "Trace between two symbols with a hop limit and rebuilt graph.",
+      "required_tools": ["trace"],
+      "surface": "trace",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call trace for the near-miss.",
+        "Selects the semantically correct alternative callers.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to trace; selects callers.",
+      "files": [],
+      "forbidden_tools": ["trace"],
+      "id": 54,
+      "prompt": "Find all callers of writeToDatabase without specifying a source.",
+      "required_tools": ["callers"],
+      "surface": "trace",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses impact for aggregate blast-radius analysis.",
+        "Uses direct MCP tool impact; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to impact with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 55,
+      "prompt": "Show the full blast radius of changing PaymentService.save.",
+      "required_tools": ["impact"],
+      "surface": "impact",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct impact argument or recovery variant.",
+        "Uses schema-valid arguments for impact.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses impact with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 56,
+      "prompt": "Show only affected tests using a schema-valid impact mode.",
+      "required_tools": ["impact"],
+      "surface": "impact",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call impact for the near-miss.",
+        "Selects the semantically correct alternative context.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to impact; selects context.",
+      "files": [],
+      "forbidden_tools": ["impact"],
+      "id": 57,
+      "prompt": "Build symbol context and direct callees for PaymentService.save.",
+      "required_tools": ["context"],
+      "surface": "impact",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses context for a connected symbol packet.",
+        "Uses direct MCP tool context; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to context with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 58,
+      "prompt": "Build a bounded context packet for handleRequest with callers and direct callees.",
+      "required_tools": ["context"],
+      "surface": "context",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct context argument or recovery variant.",
+        "Uses schema-valid arguments for context.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses context with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 59,
+      "prompt": "Build compact JSON context with a 500-token budget.",
+      "required_tools": ["context"],
+      "surface": "context",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call context for the near-miss.",
+        "Selects the semantically correct alternative show.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to context; selects show.",
+      "files": [],
+      "forbidden_tools": ["context"],
+      "id": 60,
+      "prompt": "Show only the complete source body of handleRequest.",
+      "required_tools": ["show"],
+      "surface": "context",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses run for AST search and preview/write sequencing.",
+        "Uses direct MCP tool run; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to run with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 61,
+      "prompt": "Find TypeScript calls matching client.request($$ARGS) without changing files.",
+      "required_tools": ["run"],
+      "surface": "run",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct run argument or recovery variant.",
+        "Uses schema-valid arguments for run.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses run with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 62,
+      "prompt": "Preview a bounded structural rewrite, inspect the diff, then run write=true.",
+      "required_tools": ["run"],
+      "surface": "run",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call run for the near-miss.",
+        "Selects the semantically correct alternative file_patch.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to run; selects file_patch.",
+      "files": [],
+      "forbidden_tools": ["run"],
+      "id": 63,
+      "prompt": "Change one uniquely matched TypeScript call through the SHA-guarded single-file contract.",
+      "required_tools": ["file_patch"],
+      "surface": "run",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses squeeze only for repetitive logs/text.",
+        "Uses direct MCP tool squeeze; never invents a proxy.",
+        "Preserves no-direct-editor and no-shell-mutation rules."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request to squeeze with the arguments and safety checks described by the skill.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 64,
+      "prompt": "Compress repetitive application logs from lines 10 through 80.",
+      "required_tools": ["squeeze"],
+      "surface": "squeeze",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Exercises a distinct squeeze argument or recovery variant.",
+        "Uses schema-valid arguments for squeeze.",
+        "Reports relevant verification."
+      ],
+      "category": "variant",
+      "expected_output": "Uses squeeze with the relevant option or recovery variant, then verifies the result.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 65,
+      "prompt": "Read a selected log slice without compression using raw output.",
+      "required_tools": ["squeeze"],
+      "surface": "squeeze",
+      "variant": "option-variant"
+    },
+    {
+      "assertions": [
+        "Does not call squeeze for the near-miss.",
+        "Selects the semantically correct alternative map.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to squeeze; selects map.",
+      "files": [],
+      "forbidden_tools": ["squeeze"],
+      "id": 66,
+      "prompt": "Analyze repeated function declarations in source code.",
+      "required_tools": ["map"],
+      "surface": "squeeze",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Confirms all file-boundary tools are callable.",
+        "Names direct intelligence tools rather than a proxy.",
+        "Starts exploration with the matching tool."
+      ],
+      "category": "positive",
+      "expected_output": "Names file_hash, bounded file_read, file_write, file_patch, and direct ast-bro tools, then starts with the matching route.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 67,
+      "prompt": "The ast-mcp skill is loaded for an unfamiliar repository. Identify the callable file-boundary and direct intelligence tools, then choose the first safe routing step.",
+      "required_tools": [
+        "file_hash",
+        "file_read",
+        "file_write",
+        "file_patch",
+        "digest",
+        "map",
+        "show"
+      ],
+      "surface": "skill",
+      "variant": "availability-routing"
+    },
+    {
+      "assertions": [
+        "Does not use another editor while MCP is unavailable.",
+        "Uses checker, scoped installer, and reconnect steps.",
+        "Requires authorization before downloading unavailable packages."
+      ],
+      "category": "variant",
+      "expected_output": "Runs the read-only checker, uses the scoped installer, requests authorization before unavailable downloads, reconnects, and verifies direct tools.",
+      "files": [],
+      "forbidden_tools": [
+        "file_hash",
+        "file_read",
+        "file_write",
+        "file_patch",
+        "map",
+        "digest",
+        "show",
+        "implements",
+        "surface",
+        "deps",
+        "reverse_deps",
+        "cycles",
+        "graph",
+        "search",
+        "find_related",
+        "index",
+        "callers",
+        "callees",
+        "trace",
+        "impact",
+        "context",
+        "run",
+        "squeeze"
+      ],
+      "id": 68,
+      "prompt": "The skill is loaded but file_hash, file_read, and direct intelligence tools are missing for local Claude Code and Copilot. Recover safely and explain verification.",
+      "required_tools": [],
+      "surface": "skill",
+      "variant": "installation-recovery"
+    },
+    {
+      "assertions": [
+        "Recognizes unfamiliar exploration as an ast-mcp trigger.",
+        "Uses digest or map first.",
+        "Uses impact before changing a shared symbol."
+      ],
+      "category": "variant",
+      "expected_output": "Triggers ast-mcp, routes orientation to digest/map, and uses impact before the shared change.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 69,
+      "prompt": "Map an unfamiliar repository before changing a public API and show the blast radius of the planned change.",
+      "required_tools": ["digest", "map", "impact"],
+      "surface": "skill",
+      "variant": "trigger-positive"
+    },
+    {
+      "assertions": [
+        "Does not trigger repository tooling.",
+        "Does not call file or intelligence tools.",
+        "Answers from supplied text only."
+      ],
+      "category": "negative",
+      "expected_output": "Does not trigger ast-mcp or call any MCP surface.",
+      "files": [],
+      "forbidden_tools": [
+        "file_hash",
+        "file_read",
+        "file_write",
+        "file_patch",
+        "map",
+        "digest",
+        "show",
+        "implements",
+        "surface",
+        "deps",
+        "reverse_deps",
+        "cycles",
+        "graph",
+        "search",
+        "find_related",
+        "index",
+        "callers",
+        "callees",
+        "trace",
+        "impact",
+        "context",
+        "run",
+        "squeeze"
+      ],
+      "id": 70,
+      "prompt": "Summarize this pasted paragraph in Spanish; do not open a repository, edit files, or use code intelligence.",
+      "required_tools": [],
+      "surface": "skill",
+      "variant": "trigger-negative"
+    }
+  ],
+  "mcp_tools": [
+    "file_chattr",
+    "file_delete",
+    "file_hash",
+    "file_patch",
+    "file_read",
+    "file_write",
+    "map",
+    "digest",
+    "show",
+    "implements",
+    "surface",
+    "deps",
+    "reverse_deps",
+    "cycles",
+    "graph",
+    "search",
+    "find_related",
+    "index",
+    "callers",
+    "callees",
+    "trace",
+    "impact",
+    "context",
+    "run",
+    "squeeze"
+  ],
+  "skill_name": "ast-mcp",
+  "special_surfaces": ["skill", "transport"]
+}

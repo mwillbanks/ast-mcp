@@ -1,0 +1,32 @@
+---
+title: Configuration
+description: Environment variables and minimal server definitions.
+icon: Settings2
+---
+
+## Environment variables
+
+| Variable                        | Default                   | Purpose                                                                   |
+| ------------------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| `AST_MCP_ROOTS`                 | process working directory | Platform-delimited allowed repository roots                               |
+| `AST_MCP_ALLOW_EXTERNAL_ROOTS`  | unset                     | Set to `1` to allow configured roots outside the server working directory |
+| `AST_MCP_HTTP_HOST`             | `127.0.0.1`               | Bind address for Streamable HTTP                                          |
+| HTTP port and timeout variables | runtime defaults          | Configure listener and idle-session timing                                |
+
+## Minimal stdio configuration
+
+```json
+{
+  "mcpServers": {
+    "ast-mcp": {
+      "command": "bun",
+      "args": ["--hot", "/absolute/path/to/ast-mcp/src/index.ts"],
+      "env": {
+        "AST_MCP_ROOTS": "/absolute/project/root"
+      }
+    }
+  }
+}
+```
+
+When the package checkout and repository root differ, also set `AST_MCP_ALLOW_EXTERNAL_ROOTS` to `1`. The installer generates the correct host-specific shape automatically.

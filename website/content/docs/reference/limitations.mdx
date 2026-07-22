@@ -1,0 +1,16 @@
+---
+title: Limitations
+description: Deliberate boundaries and upstream behavior to account for.
+icon: TriangleAlert
+---
+
+- Structural patterns are syntactic. They do not provide semantic type identity.
+- The pinned ast-bro write operation changes the first match per file, not every match in one file.
+- `run` does not create files, perform semantic renames, or guarantee formatted output by itself.
+- Parse health comes from `map.error_count`, not from an empty structural search.
+- Markdown is structurally inspectable through `map` and `show`, but edits use the guarded Aider route.
+- `file_read` is intentionally unavailable for AST-capable files.
+- Blocking hooks prevent known manual escape hatches; arbitrary repository scripts remain a best-effort monitored surface.
+- HTTP session IDs are correlation identifiers, not authentication.
+- Multiple configured roots deliberately enlarge the connected agent's filesystem boundary.
+- A formatter rejection, capped preview, stale hash, ambiguous match, or lost MCP connection stops the write rather than choosing a weaker mutation path.

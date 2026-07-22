@@ -1,0 +1,274 @@
+[
+  {
+    "assertions": [
+      "Uses one keyed batch instead of one call per file.",
+      "Uses schema-valid content values keyed by file path.",
+      "Reports each created file for verification."
+    ],
+    "category": "positive",
+    "expected_output": "Uses one path-keyed file_write object whose values contain content and reports every created file.",
+    "files": ["notes/one.txt", "notes/two.txt", "notes/three.txt"],
+    "forbidden_tools": ["file_patch"],
+    "id": 74,
+    "prompt": "Create notes/one.txt, notes/two.txt, and notes/three.txt in one file_write operation.",
+    "required_tools": ["file_write"],
+    "surface": "file_write",
+    "variant": "keyed-batch"
+  },
+  {
+    "assertions": [
+      "Batches create and guarded non-AST replacement operations together.",
+      "Obtains a fresh file_hash before replacing existing content.",
+      "Does not route either operation through file_patch."
+    ],
+    "category": "variant",
+    "expected_output": "Uses one keyed file_write batch and includes expectedSha256 only for the existing file.",
+    "files": [],
+    "forbidden_tools": ["file_patch"],
+    "id": 75,
+    "prompt": "Create one new text file and replace one existing non-AST file in a single file_write batch using a fresh hash for the existing file.",
+    "required_tools": ["file_hash", "file_write"],
+    "surface": "file_write",
+    "variant": "mixed-create-and-replace"
+  },
+  {
+    "assertions": [
+      "Does not use file_write for an existing structurally rewritable file.",
+      "Selects file_patch with patchStrategy ast.",
+      "Preserves the fresh-hash and preview requirements."
+    ],
+    "category": "negative",
+    "expected_output": "Selects file_patch with an AST rule and does not call file_write.",
+    "files": [],
+    "forbidden_tools": ["file_write"],
+    "id": 76,
+    "prompt": "Replace an existing TypeScript implementation.",
+    "required_tools": ["file_patch"],
+    "surface": "file_write",
+    "variant": "ast-existing-near-miss"
+  },
+  {
+    "assertions": [
+      "Batches multiple files in one file_patch call.",
+      "Keeps multiple AST rules for one file in their declared order under one hash guard.",
+      "Uses run only to preview or verify and sends the mutation through file_patch."
+    ],
+    "category": "positive",
+    "expected_output": "Uses one path-keyed file_patch object with ordered astRules arrays and one expectedSha256 per file; run is used only for preview and verification.",
+    "files": [],
+    "forbidden_tools": ["file_write"],
+    "id": 77,
+    "prompt": "Apply two reviewed AST rules to one TypeScript file and patch two other files in the same operation.",
+    "required_tools": ["file_hash", "run", "file_patch"],
+    "surface": "file_patch",
+    "variant": "ordered-ast-rules"
+  },
+  {
+    "assertions": [
+      "Batches repeated edits to the same file instead of making repeated patch calls.",
+      "Uses one fresh expectedSha256 for the complete operation.",
+      "Preserves Aider ambiguity and atomic-commit safeguards."
+    ],
+    "category": "variant",
+    "expected_output": "Uses one path-keyed file_patch entry with patchStrategy aider_block and an ordered aiderBlocks array.",
+    "files": [],
+    "forbidden_tools": ["file_write"],
+    "id": 78,
+    "prompt": "Apply three unique Aider blocks to one unsupported document in one guarded patch.",
+    "required_tools": ["file_hash", "file_patch"],
+    "surface": "file_patch",
+    "variant": "ordered-aider-blocks"
+  },
+  {
+    "assertions": [
+      "Refuses to treat a batch shape as permission to skip inspection.",
+      "Obtains a separate fresh hash for every keyed file.",
+      "Previews every ordered rule before the single batch mutation."
+    ],
+    "category": "negative",
+    "expected_output": "Does not call file_patch until AST or bounded non-AST inspection, file_hash, and previews are complete.",
+    "files": [],
+    "forbidden_tools": ["file_patch"],
+    "id": 79,
+    "prompt": "Patch four files immediately without inspecting them, hashing them, or previewing the rules.",
+    "required_tools": ["digest", "map", "show", "run", "file_hash"],
+    "surface": "file_patch",
+    "variant": "unreviewed-batch"
+  },
+  {
+    "assertions": [
+      "Does not use run with write:true for a normal agent mutation.",
+      "Uses file_patch with patchStrategy ast for the reviewed edit.",
+      "Previews exact AST matches before the keyed file_patch mutation."
+    ],
+    "category": "negative",
+    "expected_output": "Uses run only for preview or verification and routes the mutation through keyed file_patch with astRules.",
+    "files": [],
+    "forbidden_tools": ["file_write"],
+    "id": 81,
+    "prompt": "A normal reviewed TypeScript edit could be sent directly through run with write:true; choose the correct mutation route.",
+    "required_tools": ["map", "run", "file_hash", "file_patch"],
+    "surface": "run",
+    "variant": "mutation-route-boundary"
+  },
+  {
+    "assertions": [
+      "Preserves JSON-RPC array framing at the transport layer.",
+      "Returns one response per request while omitting notification responses.",
+      "Keeps request IDs correlated after batching."
+    ],
+    "category": "positive",
+    "expected_output": "Uses the native transport batch array and correlates one response to each request ID.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 80,
+    "prompt": "Send two JSON-RPC requests and a notification in one MCP transport payload.",
+    "required_tools": [],
+    "surface": "transport",
+    "variant": "json-rpc-batch"
+  },
+  {
+    "assertions": [
+      "Rejects the empty batch instead of silently dropping it.",
+      "Returns JSON-RPC error code -32600 with a null ID.",
+      "Does not dispatch a request or notification for the invalid batch."
+    ],
+    "category": "negative",
+    "expected_output": "Returns one JSON-RPC Invalid Request error with a null ID and processes no request messages.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 84,
+    "prompt": "Send an empty JSON-RPC batch through the stdio MCP transport.",
+    "required_tools": [],
+    "surface": "transport",
+    "variant": "invalid-empty-batch"
+  },
+  {
+    "assertions": [
+      "Accepts a JSON-RPC array on the stdio transport.",
+      "Returns both request responses without emitting notification responses.",
+      "Preserves request IDs and existing stdio framing."
+    ],
+    "category": "variant",
+    "expected_output": "Expands the stdio batch into individual validated messages and returns one correlated response per request.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 82,
+    "prompt": "Send two initialized ping requests as one JSON-RPC array through the stdio MCP transport.",
+    "required_tools": [],
+    "surface": "transport",
+    "variant": "stdio-json-rpc-batch"
+  },
+  {
+    "assertions": [
+      "Uses file_patch preview true for the end-to-end dry run.",
+      "Keeps the same patchStrategy, ordered operations, and expectedSha256 between preview and mutation.",
+      "Does not treat a preview result as a committed change."
+    ],
+    "category": "variant",
+    "expected_output": "Uses the same keyed file_patch entry with preview true, a fresh hash, and the appropriate ordered astRules or aiderBlocks; it verifies the bounded diff and then sends the guarded mutation.",
+    "files": [],
+    "forbidden_tools": ["run"],
+    "id": 83,
+    "prompt": "Preview an ordered AST or Aider batch through file_patch before committing it.",
+    "required_tools": ["file_hash", "file_patch"],
+    "surface": "file_patch",
+    "variant": "contract-preview"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "positive",
+    "expected_output": "Uses the guarded file_chattr contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 85,
+    "prompt": "Apply chmod attributes to two files.",
+    "required_tools": ["file_chattr"],
+    "surface": "file_chattr",
+    "variant": "chmod"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "variant",
+    "expected_output": "Uses the guarded file_chattr contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 86,
+    "prompt": "Apply chown attributes with hash guards.",
+    "required_tools": ["file_chattr"],
+    "surface": "file_chattr",
+    "variant": "chown"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "negative",
+    "expected_output": "Uses the guarded file_chattr contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 87,
+    "prompt": "Reject invalid file attributes.",
+    "required_tools": ["file_chattr"],
+    "surface": "file_chattr",
+    "variant": "invalid"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "positive",
+    "expected_output": "Uses the guarded file_delete contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 88,
+    "prompt": "Delete two hash-guarded files and report empty directories.",
+    "required_tools": ["file_delete"],
+    "surface": "file_delete",
+    "variant": "batch"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "variant",
+    "expected_output": "Uses the guarded file_delete contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 89,
+    "prompt": "Reject stale deletion context before mutating.",
+    "required_tools": ["file_delete"],
+    "surface": "file_delete",
+    "variant": "stale"
+  },
+  {
+    "assertions": [
+      "Uses the registered lifecycle surface.",
+      "Preserves root and stale-context safeguards.",
+      "Reports the per-file operation result."
+    ],
+    "category": "negative",
+    "expected_output": "Uses the guarded file_delete contract.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 90,
+    "prompt": "Reject non-file deletion targets.",
+    "required_tools": ["file_delete"],
+    "surface": "file_delete",
+    "variant": "directory"
+  }
+]

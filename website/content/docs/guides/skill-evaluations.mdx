@@ -1,0 +1,33 @@
+---
+title: Skill evaluations
+description: Validate fixtures and measure direct MCP transcript evidence.
+icon: ClipboardCheck
+---
+
+The bundled skill includes semantic fixtures and transcript measurement utilities.
+
+## Validate the fixture matrix
+
+```bash
+bun run evals:check
+```
+
+This checks identifiers, expected tools, input shapes, and assertions across the maintained evaluation suite.
+
+## Measure a transcript
+
+```bash
+bun run evals:measure <session.jsonl>
+```
+
+Measurement inventories direct MCP records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex exec source.
+
+Put exactly one `ast-mcp-eval:<id>` marker in the evaluation prompt or direct record input. Marked nested exec evidence and multiple markers fail closed because an outer result cannot prove each nested call.
+
+## Strict scoring
+
+```bash
+bun run evals:score <session.jsonl>
+```
+
+Use strict scoring only for a complete marked matrix. It verifies schema-relevant inputs, workspace-root compliance, required sequencing, expected output evidence, fixture assertions, and a successful output bound to every direct call.

@@ -1,0 +1,50 @@
+[
+  {
+    "assertions": [
+      "Uses file_hash for an AST-capable file when only SHA-256 is required.",
+      "Does not retrieve file content.",
+      "Preserves the returned canonical path, size, and hash."
+    ],
+    "category": "positive",
+    "expected_output": "Routes the hash-only request to file_hash even though the target is AST-capable.",
+    "files": [],
+    "forbidden_tools": ["file_read"],
+    "id": 71,
+    "prompt": "Get a fresh whole-file SHA-256 for src/server.ts immediately before a guarded patch without reading its source content.",
+    "required_tools": ["file_hash"],
+    "surface": "file_hash",
+    "variant": "fresh-patch-hash"
+  },
+  {
+    "assertions": [
+      "Batches all paths in one schema-valid file_hash call.",
+      "Accepts AST-capable and non-AST files.",
+      "Does not request any file content."
+    ],
+    "category": "variant",
+    "expected_output": "Uses one batched file_hash request for all five paths.",
+    "files": [],
+    "forbidden_tools": ["file_read"],
+    "id": 72,
+    "prompt": "Refresh guarded-edit hashes for five mixed AST and non-AST files in one operation.",
+    "required_tools": ["file_hash"],
+    "surface": "file_hash",
+    "variant": "batched-hashes"
+  },
+  {
+    "assertions": [
+      "Does not call file_hash when source content is required.",
+      "Uses show for the named AST symbol.",
+      "Does not fall back to file_read."
+    ],
+    "category": "negative",
+    "expected_output": "Uses show for source content and does not call file_hash.",
+    "files": [],
+    "forbidden_tools": ["file_hash", "file_read"],
+    "id": 73,
+    "prompt": "Show the implementation body of createServer in src/server.ts.",
+    "required_tools": ["show"],
+    "surface": "file_hash",
+    "variant": "content-near-miss"
+  }
+]

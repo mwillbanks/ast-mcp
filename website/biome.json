@@ -1,0 +1,23 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+  "assist": {
+    "enabled": false
+  },
+  "extends": ["../biome.jsonc"],
+  "root": false,
+  "files": {
+    "includes": [
+      "!src/routeTree.gen.ts",
+      "!.output",
+      "!.source",
+      "!node_modules"
+    ]
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all"
+    }
+  }
+}

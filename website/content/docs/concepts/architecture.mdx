@@ -1,0 +1,52 @@
+---
+title: Architecture
+description: How transports, tools, policy, formatting, locks, and atomic filesystem work fit together.
+icon: Network
+---
+
+ast-mcp separates protocol handling from repository policy and mutation mechanics.
+
+```text
+MCP host
+  │
+  ├─ stdio transport ───────┐
+  └─ Streamable HTTP ───────┤
+                             ▼
+                       MCP server
+                             │
+           ┌─────────────────┴─────────────────┐
+           ▼                                   ▼
+  direct ast-bro tools                 file lifecycle tools
+           │                                   │
+           └──────────── root policy ──────────┘
+                                               │
+                                  patch state machine
+                                               │
+                                dprint candidate formatting
+                                               │
+                                  deterministic file locks
+                                               │
+                                    atomic replacement
+```
+
+## Protocol layer
+
+The stdio transport supports JSON-RPC batches while preserving one framed response per request and no response for notifications. Streamable HTTP uses SSE by default and maintains MCP sessions with bounded idle cleanup.
+
+## Policy layer
+
+Every path-bearing intelligence and file operation passes through the same configured-root policy. This keeps discovery and mutation inside one trust boundary.
+
+## Mutation layer
+
+Structural patches and Aider blocks converge on the same candidate pipeline: validate current state, transform, format, lock, recheck, and atomically replace. The operation never treats successful text generation as permission to overwrite stale state.
+
+## Distribution
+
+The package publishes three Bun-bundled executables:
+
+- `ast-mcp` for stdio server startup
+- `ast-mcp-hook` for blocking host hooks
+- `ast-mcp-install` for installation reconciliation
+
+The source and templates remain in the package because the runtime, installer, and generated host surfaces reference them.

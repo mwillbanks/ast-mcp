@@ -1,0 +1,30 @@
+---
+title: Host installation
+description: What ast-mcp configures for Codex, Claude Code, Copilot, and VS Code.
+icon: Plug
+---
+
+The installer reconciles four managed surfaces: MCP configuration, hook payloads and registration, the `ast-mcp` skill, and a marked instruction block.
+
+| Host              | Local MCP configuration | Local hook surface                                          |
+| ----------------- | ----------------------- | ----------------------------------------------------------- |
+| Codex             | `.codex/config.toml`    | `.codex/hooks.json` and `.codex/hooks/ast-mcp.ts`           |
+| Claude Code       | `.mcp.json`             | `.claude/settings.json` and `.claude/hooks/ast-mcp.ts`      |
+| Copilot CLI/cloud | `.github/mcp.json`      | `.github/hooks/ast-mcp.json` and `.github/hooks/ast-mcp.ts` |
+| VS Code Copilot   | `.vscode/mcp.json`      | Shares the Copilot hook and instruction surface             |
+
+Global installation uses each host's home configuration. Managed blocks and entries have exact identities so unrelated MCP servers, hooks, skills, and instructions remain untouched.
+
+## Scope and targets
+
+```bash
+ast-mcp-install install --scope local --target codex --root "$PWD"
+ast-mcp-install install --scope global --target claude
+ast-mcp-install update --scope local --target all --root "$PWD"
+```
+
+Local scope requires a root. Global scope uses the connected repository working directory at runtime unless host configuration supplies an explicit root.
+
+## Blocking hooks
+
+The installed pre-tool hook rejects direct editors, patch utilities, shell and interpreter write escape hatches, mutating formatter bypasses, and destructive Git worktree commands. A denial points the agent back to the relevant AST intelligence or guarded file tool.

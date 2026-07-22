@@ -1,0 +1,68 @@
+---
+title: First guarded workflow
+description: Inspect a module, preview one structural change, and commit it against fresh state.
+icon: Workflow
+---
+
+The normal workflow keeps discovery, intent, current state, and mutation separate.
+
+## 1. Map the target
+
+Use `digest` for an unfamiliar directory, then `show` or `context` for the exact symbol you need.
+
+```json
+{
+  "paths": ["/workspace/src/service.ts"]
+}
+```
+
+For shared or public behavior, call `impact` before editing to identify callers, imports, and affected tests.
+
+## 2. Preview the syntax match
+
+A bounded `run` call proves that the structural pattern matches only the intended node.
+
+```json
+{
+  "lang": "typescript",
+  "paths": ["/workspace/src/service.ts"],
+  "pattern": "legacyCall($$$ARGS)",
+  "json": true
+}
+```
+
+No matches, unexpected matches, or capped output means the rule is not ready.
+
+## 3. Hash immediately before the patch
+
+```json
+{
+  "filePaths": ["/workspace/src/service.ts"]
+}
+```
+
+The returned SHA-256 binds the operation to the file state you inspected. If another writer wins the race, the patch fails closed.
+
+## 4. Patch through the state machine
+
+```json
+{
+  "/workspace/src/service.ts": {
+    "expectedSha256": "<fresh hash>",
+    "patchStrategy": "ast",
+    "astRules": [
+      {
+        "pattern": "legacyCall($$$ARGS)",
+        "fix": "guardedCall($$$ARGS)",
+        "expectedMatches": 1
+      }
+    ]
+  }
+}
+```
+
+Unsupported or non-code files use `patchStrategy: "aider_block"` with unique search and replacement blocks.
+
+## 5. Verify behavior
+
+Re-run the structural search to prove the old form is absent, inspect the changed symbol, then run the repository's own formatter, typecheck, tests, and task-specific gates.

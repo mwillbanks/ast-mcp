@@ -1,0 +1,22 @@
+{
+  "should_not_trigger": [
+    "Explain what an abstract syntax tree is.",
+    "Draft a project status email.",
+    "Summarize this pasted paragraph without opening a repository.",
+    "Generate a standalone image of a dependency graph.",
+    "What is the latest stable Bun release?",
+    "Review this already supplied diff without changing files or exploring the checkout.",
+    "Translate this error message into Spanish.",
+    "Create a calendar reminder for tomorrow."
+  ],
+  "should_trigger": [
+    "Map this unfamiliar repository before I change its public API.",
+    "Find every caller of this method and rename it safely.",
+    "Create a new source file without using shell writes.",
+    "Patch this README paragraph through the AST-isolated environment.",
+    "Show the blast radius of changing PaymentService.",
+    "The ast-mcp tools disappeared; help me restore the local MCP.",
+    "Install the code-intelligence and blocking hooks globally for Codex.",
+    "Trace how the request handler reaches the database call."
+  ]
+}

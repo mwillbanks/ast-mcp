@@ -1,0 +1,49 @@
+---
+title: Commands
+description: Package, development, quality, evaluation, and distribution commands.
+icon: SquareTerminal
+---
+
+## Runtime
+
+```bash
+bun run start
+bun run start:http
+bun run dev
+bun run dev:http
+```
+
+## Quality gates
+
+```bash
+bun run tools:check
+bun run format
+bun run format:check
+bun run typecheck
+bun run test
+bun run skill:check
+bun run evals:check
+bun run fallow
+```
+
+`bun run format` executes `biome check . --write --unsafe --reporter concise --error-on-warnings`. The check-only command uses the same warning policy without writing.
+
+## Distribution
+
+```bash
+bun run build
+bun pm pack --dry-run
+```
+
+The Bun build bundles `bin/ast-mcp.ts`, `bin/ast-mcp-hook.ts`, and `bin/ast-mcp-install.ts` into `dist/` as Bun-targeted ESM executables with external source maps.
+
+## Documentation
+
+```bash
+bun install --cwd website
+bun run --cwd website dev
+bun run --cwd website lint
+bun run --cwd website typecheck
+bun run --cwd website test
+VITE_BASE_PATH=/ast-mcp/ bun run --cwd website build
+```

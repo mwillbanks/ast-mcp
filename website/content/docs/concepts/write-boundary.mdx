@@ -1,0 +1,35 @@
+---
+title: Write boundary
+description: The guarded state machine behind structural and text-file changes.
+icon: LockKeyhole
+---
+
+A requested edit is not enough to authorize a write. ast-mcp requires a route that matches the target's capabilities and proves the caller is operating on current state.
+
+## Route selection
+
+| Target                                            | Required route                                   |
+| ------------------------------------------------- | ------------------------------------------------ |
+| New file                                          | `file_write`                                     |
+| Parseable rewrite-supported source                | `file_patch` with `patchStrategy: "ast"`         |
+| Unsupported, unparseable, or inspection-only file | `file_patch` with `patchStrategy: "aider_block"` |
+| Metadata-only change                              | `file_chattr`                                    |
+| Deletion                                          | `file_delete`                                    |
+
+## Commit sequence
+
+1. Resolve the path under an allowed root.
+2. Confirm the requested route matches the file's capabilities.
+3. Compare the supplied SHA-256 with current state.
+4. Build candidate content from reviewed operations.
+5. Assert that dprint can format the candidate.
+6. Acquire cooperating locks in deterministic path order.
+7. Recheck the hash inside the lock.
+8. Format and atomically replace the file.
+9. Release locks on success or failure.
+
+A stale hash, ambiguous Aider block, unexpected AST match count, capped preview, formatter rejection, or lost MCP connection is a safe stop.
+
+## Concurrency
+
+In-process queues coordinate calls inside one server. Filesystem lock files coordinate cooperating processes. Sorting multi-file lock acquisition prevents lock-order inversions, and the hash recheck inside the lock closes the race between preview and commit.

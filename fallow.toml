@@ -1,0 +1,11 @@
+# Fumadocs generates the collections alias during documentation builds.
+ignoreDependencies = ["collections"]
+
+[duplicates]
+# Focus the gate on broadly repeated copy-paste rather than contextual pairs and triples.
+minOccurrences = 4
+
+[rules]
+# Legacy external-interface suppressions are retained for compatibility with Fallow's
+# inability to model MCP Transport dispatch.
+stale-suppressions = "off"

@@ -1,0 +1,66 @@
+---
+title: Installation
+description: Install the MCP server, blocking hooks, skill, and host configuration.
+icon: Download
+---
+
+Bun is required. The package pins ast-bro and dprint where binary compatibility matters and trusts only the ast-bro install script.
+
+## From an npm package
+
+Install ast-mcp into a repository and connect every supported host:
+
+```bash
+bunx --package @mwillbanks/ast-mcp ast-mcp-install install \
+  --scope local \
+  --target all \
+  --root "$PWD"
+```
+
+Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
+
+## From a source checkout
+
+```bash
+bun install
+bun run bin/ast-mcp-install.ts install \
+  --scope local \
+  --target all \
+  --root "$PWD"
+```
+
+Restart or reconnect the host's MCP servers after installation. A configuration file cannot activate a server in an already-running host process.
+
+## Verify the installation
+
+Confirm that these file-boundary tools are callable:
+
+- `file_hash`
+- `file_read`
+- `file_write`
+- `file_patch`
+- `file_chattr`
+- `file_delete`
+
+Then confirm direct intelligence tools such as `digest`, `show`, `context`, `impact`, and `run`.
+
+The installed skill includes a checker:
+
+```bash
+bun run scripts/check-install.ts \
+  --scope local \
+  --target codex \
+  --root "$PWD"
+```
+
+## Update or remove
+
+Use `update` to reconcile every managed MCP entry, hook payload, registration, skill, and marked instruction block. Use `uninstall` to remove only ast-mcp-managed surfaces.
+
+```bash
+bunx --package @mwillbanks/ast-mcp ast-mcp-install update \
+  --scope local --target all --root "$PWD"
+
+bunx --package @mwillbanks/ast-mcp ast-mcp-install uninstall \
+  --scope local --target all --root "$PWD"
+```

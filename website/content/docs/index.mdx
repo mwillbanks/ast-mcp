@@ -1,0 +1,45 @@
+---
+title: Overview
+description: A zero-trust MCP boundary for structural code intelligence and deterministic repository writes.
+icon: Network
+---
+
+`@mwillbanks/ast-mcp` gives coding agents one deliberate way to inspect and change a repository. It combines native ast-bro intelligence with bounded file operations, fresh-state checks, structural rewrites, deterministic locks, formatting, and atomic replacement.
+
+The boundary is designed to make the safe path the capable path: agents can map a codebase, trace behavior, inspect impact, and make precise edits without falling back to whole-file source dumps or unguarded editor operations.
+
+## What ships
+
+| Surface           | Purpose                                                                                      |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| Code intelligence | Maps, symbols, search, context, calls, imports, cycles, impact, and public API inspection    |
+| File boundary     | Batched hashing, bounded non-AST reads, guarded creation, patching, attributes, and deletion |
+| Blocking hooks    | Reject direct editor, shell-write, patch, and destructive Git escape hatches                 |
+| Agent skill       | Teaches the inspection, preview, hash, patch, verify, and recovery workflow                  |
+| Installer         | Reconciles MCP configuration, hooks, skills, and managed instruction blocks                  |
+| Transports        | Protocol-safe stdio and loopback-first Streamable HTTP                                       |
+
+## The operating model
+
+```text
+request
+  ├─ inspect source ─► AST intelligence
+  ├─ inspect text   ─► bounded file_read
+  └─ change files
+       ├─ preview intent
+       ├─ hash current state
+       ├─ acquire deterministic locks
+       ├─ apply exact structural or Aider operations
+       ├─ format candidate content
+       └─ atomically replace ─► verify
+```
+
+Paths are accepted only beneath `AST_MCP_ROOTS`. Relative paths resolve from the first configured root, external configured roots require an explicit opt-in, and symbolic-link targets are rejected.
+
+## Start here
+
+- [Install ast-mcp](/docs/getting-started/installation)
+- [Run your first guarded workflow](/docs/getting-started/first-workflow)
+- [Choose a code-intelligence tool](/docs/tools/code-intelligence)
+- [Understand the write boundary](/docs/concepts/write-boundary)
+- [Configure a host](/docs/guides/host-installation)

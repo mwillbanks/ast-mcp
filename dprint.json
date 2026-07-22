@@ -1,0 +1,37 @@
+{
+  "$schema": "https://dprint.dev/schemas/v0.json",
+  "biome": {
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "javascript.quoteStyle": "double",
+    "jsxQuoteStyle": "double",
+    "lineEnding": "lf",
+    "lineWidth": 80,
+    "semicolons": "always",
+    "trailingCommas": "all"
+  },
+  "excludes": ["**/node_modules/**", "**/dist/**", "**/build/**", "**/.git/**"],
+  "includes": [
+    "**/*.{c,cc,cpp,cs,css,go,graphql,html,java,js,json,jsonc,jsx,kt,md,php,py,rb,rs,scala,sql,swift,toml,ts,tsx,yaml,yml}"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/biome-0.13.2.wasm",
+    "https://plugins.dprint.dev/typescript-0.96.1.wasm",
+    "https://plugins.dprint.dev/json-0.23.0.wasm",
+    "https://plugins.dprint.dev/markdown-0.22.1.wasm",
+    "https://plugins.dprint.dev/toml-0.7.0.wasm",
+    "https://plugins.dprint.dev/dockerfile-0.4.1.wasm",
+    "https://plugins.dprint.dev/mago-0.21.1.wasm",
+    "https://plugins.dprint.dev/ruff-0.7.22.wasm",
+    "https://plugins.dprint.dev/jupyter-0.3.1.wasm",
+    "https://plugins.dprint.dev/jakebailey/gofumpt-v0.0.13.wasm",
+    "https://plugins.dprint.dev/g-plane/malva-v0.16.0.wasm",
+    "https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.3.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_graphql-v0.2.3.wasm",
+    "https://plugins.dprint.dev/bartlomieju/lax-sql-0.3.0.wasm",
+    "https://plugins.dprint.dev/prettier-0.72.0.json@6e7af2cb2182a5a11358d3adde9ae0ef3b94b7d2e5dcfdd252e3f7c3916541fe",
+    "https://plugins.dprint.dev/roslyn-0.21.0.json@c1429e04de13cff489025e8739f76a476fce6513128366f30feecef2bec0848d",
+    "https://plugins.dprint.dev/exec-0.7.3.json@a7898d5f1897e77bff474cec3d948c3ec3a7f455e32de2cc60c8adb9a5dd24aa"
+  ]
+}

@@ -1,0 +1,34 @@
+---
+title: File-system boundary
+description: Hash, read, write, patch, change attributes, and delete without losing current-state guarantees.
+icon: Files
+---
+
+File operations are root-bounded, batch-oriented, and explicit about state.
+
+## file_hash
+
+Streams up to 50 complete files into SHA-256 without returning their contents. Use it immediately before guarded changes, including AST-capable files.
+
+## file_read
+
+Returns bounded slices from non-AST files only. Requests use zero-based, end-exclusive line ranges and are capped at 1,000 lines and 1 MiB. Responses include content, whole-file hash, size, truncation, and continuation metadata.
+
+AST-capable files are rejected so callers use structural intelligence instead.
+
+## file_write
+
+Creates new files atomically. Replacing an existing non-structurally-rewritable file requires a fresh `expectedSha256`. Parent directories are created only after a guarded missing-parent result and a second root validation.
+
+## file_patch
+
+The normal mutation API accepts a path-keyed batch. Each file receives one fresh hash and ordered operations under one deterministic lock:
+
+- `astRules` for parseable, rewrite-supported source
+- `aiderBlocks` for unsupported, unparseable, or inspection-only formats
+
+Set `preview: true` to execute the guarded and formatted dry-run contract without committing.
+
+## file_chattr and file_delete
+
+`file_chattr` applies bounded chmod and same-owner chown changes. `file_delete` requires a fresh hash, checks AST import references before deletion, and removes only newly empty ancestors inside the configured root.

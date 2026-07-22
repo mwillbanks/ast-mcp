@@ -1,0 +1,44 @@
+---
+title: Code intelligence
+description: Choose the smallest AST-aware tool that answers the question.
+icon: ScanSearch
+---
+
+ast-mcp exposes ast-bro tools directly. There is no generic proxy and no need to retrieve entire source files just to understand structure.
+
+## Learn the shape
+
+| Tool      | Use it for                                                       |
+| --------- | ---------------------------------------------------------------- |
+| `digest`  | A compact map of an unfamiliar directory                         |
+| `map`     | Signatures, fields, headings, and parse health for exact files   |
+| `show`    | The body of one or more known symbols                            |
+| `surface` | The public API after re-export resolution                        |
+| `context` | One symbol plus nearby callers and callees within a token budget |
+
+## Find behavior
+
+| Tool           | Question                                                            |
+| -------------- | ------------------------------------------------------------------- |
+| `search`       | Where is this concept or symbol implemented?                        |
+| `find_related` | What code is structurally or semantically similar to this location? |
+| `callers`      | Who calls this symbol?                                              |
+| `callees`      | What does this symbol call?                                         |
+| `trace`        | How does one symbol reach another?                                  |
+| `implements`   | Which types implement or extend this type?                          |
+
+## Understand dependencies
+
+- `deps` follows imports forward.
+- `reverse_deps` finds importers.
+- `graph` returns the file dependency graph.
+- `cycles` identifies strongly connected components.
+- `impact` combines call edges, imports, and affected tests for a proposed change.
+
+## Search and rewrite syntax
+
+`run` uses structural syntax patterns. `$NODE` matches one node and a metavariable beginning with three dollar signs matches zero or more nodes.
+
+Search omits `rewrite`. A dry-run includes `rewrite` and leaves `write` false. Direct `write: true` is an exceptional lower-level escape hatch; normal edits belong in guarded `file_patch` batches.
+
+The pinned ast-bro version rewrites the first match per file, so every rule must be narrowed to one reviewed match.

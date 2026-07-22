@@ -1,0 +1,23 @@
+---
+title: Root isolation
+description: Keep every intelligence and filesystem path inside the repository boundary.
+icon: ShieldCheck
+---
+
+`AST_MCP_ROOTS` is a platform-delimited list of allowed roots. When it is unset, the server process working directory is the only root.
+
+## Resolution rules
+
+- Relative paths resolve from the first configured root.
+- Every explicit path-bearing argument is validated.
+- Symbolic-link targets are rejected.
+- A configured root outside the server working directory requires `AST_MCP_ALLOW_EXTERNAL_ROOTS=1`.
+- Error messages display the active root boundary without exposing unrelated file contents.
+
+The same policy applies to file operations and direct ast-bro tools, including path, root, paths, and file arguments.
+
+## Why external roots require an opt-in
+
+A host may run ast-mcp from an installed package directory while editing a separate repository. That is a valid deployment, but it expands the default process boundary. The installer makes the expansion explicit in generated local host configuration.
+
+Prefer one repository root per server. Multiple roots are useful for deliberate multi-repository work, but they increase the amount of filesystem state available to the connected agent.

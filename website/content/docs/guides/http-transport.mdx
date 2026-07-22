@@ -1,0 +1,28 @@
+---
+title: Streamable HTTP
+description: Run the MCP server over a loopback-first HTTP transport.
+icon: RadioTower
+---
+
+Stdio is the trusted default. Streamable HTTP is available when a host needs an HTTP connection.
+
+```bash
+bun run start:http
+```
+
+The server listens on `127.0.0.1` by default. Set `AST_MCP_HTTP_HOST=0.0.0.0` only when deliberate network exposure is required.
+
+## Sessions and responses
+
+The endpoint is `/mcp`. MCP session IDs correlate requests; they are not authentication. Sessions have bounded idle cleanup and are closed during graceful shutdown.
+
+JSON-RPC batches may mix requests and notifications:
+
+- stdio emits one framed response per request
+- HTTP emits one SSE event per request by default
+- notifications never receive responses
+- JSON-array HTTP responses require `enableJsonResponse`
+
+## Shutdown
+
+`SIGTERM`, `SIGINT`, and `SIGHUP` initiate graceful cleanup. The HTTP process stops accepting requests, closes active sessions, and then closes remaining connections. A second signal forces termination while cleanup is pending.

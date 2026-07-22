@@ -1,0 +1,86 @@
+{
+  "author": "Mike Willbanks",
+  "bin": {
+    "ast-mcp": "dist/ast-mcp.js",
+    "ast-mcp-hook": "dist/ast-mcp-hook.js",
+    "ast-mcp-install": "dist/ast-mcp-install.js"
+  },
+  "bugs": {
+    "url": "https://github.com/mwillbanks/ast-mcp/issues"
+  },
+  "dependencies": {
+    "@ast-bro/cli": "3.0.0",
+    "@modelcontextprotocol/client": "2.0.0-beta.5",
+    "@modelcontextprotocol/server": "^2.0.0-beta.5",
+    "diff-match-patch-ts": "^2.0.0",
+    "dprint": "0.55.2",
+    "zod": "^4.4.3"
+  },
+  "description": "Zero-trust MCP file writes, AST edits, ast-bro intelligence, hooks, and agent skills",
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
+    "@modelcontextprotocol/inspector": "^1.0.0",
+    "@types/bun": "^1.3.14",
+    "@types/node": "^26.1.1",
+    "fallow": "^3.7.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "files": [
+    "dist",
+    "src",
+    "templates",
+    "dprint.json",
+    "README.md",
+    "CONTRIBUTING.md",
+    "logo.svg",
+    "LICENSE"
+  ],
+  "homepage": "https://mwillbanks.github.io/ast-mcp/",
+  "keywords": [
+    "ast",
+    "ast-grep",
+    "coding-agents",
+    "mcp",
+    "model-context-protocol",
+    "secure-code-editing"
+  ],
+  "license": "MIT",
+  "name": "@mwillbanks/ast-mcp",
+  "packageManager": "bun@1.3.14",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mwillbanks/ast-mcp.git"
+  },
+  "scripts": {
+    "build": "bun build ./bin/ast-mcp.ts ./bin/ast-mcp-hook.ts ./bin/ast-mcp-install.ts --outdir ./dist --target bun --format esm --sourcemap=external --minify",
+    "check": "bun run format:check && bun run typecheck && bun test --bail",
+    "dev": "bun run --watch src/index.ts",
+    "dev:http": "bun run --watch src/http-entry.ts",
+    "evals:check": "bun run templates/skills/ast-mcp/evals/validate.ts",
+    "evals:measure": "bun run templates/skills/ast-mcp/evals/measure.ts",
+    "evals:score": "bun run templates/skills/ast-mcp/evals/measure.ts --strict",
+    "fallow": "fallow --skip health",
+    "fallow:health": "fallow health",
+    "format": "biome check . --write --unsafe --reporter concise --error-on-warnings",
+    "format:check": "biome check . --reporter concise --error-on-warnings",
+    "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
+    "inspect:http": "bunx @modelcontextprotocol/inspector",
+    "lint": "biome check . --reporter concise --error-on-warnings",
+    "prepack": "bun run build",
+    "skill:check": "bunx skills-ref validate templates/skills/ast-mcp",
+    "start": "bun run src/index.ts",
+    "start:http": "bun run src/http-entry.ts",
+    "test": "bun test --bail",
+    "tools:check": "ast-bro --version && dprint --version",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "sideEffects": false,
+  "trustedDependencies": [
+    "@ast-bro/cli"
+  ],
+  "type": "module",
+  "version": "1.0.0"
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AST MCP"
+  short_description: "Explore and edit code through the AST MCP"
+  default_prompt: "Use $ast-mcp to explore this codebase and make the requested change through its enforced write boundary."

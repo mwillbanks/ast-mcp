@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root {
+  --fd-layout-width: 94rem;
+  --color-fd-primary: oklch(0.48 0.2 264);
+  --color-fd-primary-foreground: oklch(0.99 0.01 250);
+}
+
+.dark {
+  --color-fd-primary: oklch(0.75 0.15 240);
+  --color-fd-primary-foreground: oklch(0.15 0.035 260);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+  background-image:
+    radial-gradient(circle at 8% -10%, rgb(39 194 243 / 0.1), transparent 32rem),
+    radial-gradient(circle at 88% 2%, rgb(138 63 252 / 0.1), transparent 30rem),
+    radial-gradient(
+      circle at 50% 16%,
+      rgb(40 120 232 / 0.045),
+      transparent 25rem
+    );
+}
+
+.home-shell {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--color-fd-border) 32%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--color-fd-border) 22%, transparent) 1px,
+      transparent 1px
+    );
+  background-position: center top;
+  background-size: 4rem 4rem;
+}
+
+.hero-glow {
+  position: absolute;
+  top: 1rem;
+  left: 12%;
+  width: min(72vw, 64rem);
+  height: 30rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    100deg,
+    rgb(39 194 243 / 0.12),
+    rgb(40 120 232 / 0.14),
+    rgb(138 63 252 / 0.13)
+  );
+  filter: blur(100px);
+  pointer-events: none;
+}
+
+.hero-gradient {
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    #06b6d4 2%,
+    #2878e8 48%,
+    #8a3ffc 96%
+  );
+  background-clip: text;
+}
+
+.logo-orbit {
+  position: relative;
+  display: grid;
+  width: min(82vw, 34rem);
+  aspect-ratio: 1;
+  place-items: center;
+}
+
+.hero-logo {
+  position: relative;
+  z-index: 2;
+  width: 54%;
+  filter: drop-shadow(0 28px 45px rgb(40 120 232 / 0.22));
+}
+
+.orbit-ring {
+  position: absolute;
+  border: 1px solid color-mix(in oklab, var(--color-fd-border) 80%, transparent);
+  border-radius: 999px;
+}
+
+.orbit-ring-one {
+  inset: 13%;
+}
+
+.orbit-ring-two {
+  inset: 2%;
+  border-style: dashed;
+  opacity: 0.62;
+}
+
+.orbit-node {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  color: rgb(96 165 250);
+  background: color-mix(in oklab, var(--color-fd-card) 86%, transparent);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 1rem;
+  box-shadow: 0 16px 35px rgb(15 23 42 / 0.13);
+  backdrop-filter: blur(14px);
+  place-items: center;
+}
+
+.orbit-node svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.node-search {
+  top: 4%;
+  left: 45%;
+}
+
+.node-branch {
+  top: 43%;
+  right: 0;
+}
+
+.node-lock {
+  right: 18%;
+  bottom: 6%;
+}
+
+.node-binary {
+  bottom: 16%;
+  left: 5%;
+}
+
+.feature-card + .feature-card {
+  border-top: 1px solid var(--color-fd-border);
+}
+
+@media (min-width: 48rem) {
+  .feature-card + .feature-card {
+    border-top: 0;
+    border-left: 1px solid var(--color-fd-border);
+  }
+}
+
+.journey-card {
+  min-height: 18rem;
+}
+
+:where(#nd-page) {
+  --fd-page-width: 56rem;
+}
+
+:where(#nd-page) article {
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+:where(#nd-page) h2 {
+  letter-spacing: -0.025em;
+}

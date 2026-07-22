@@ -1,0 +1,603 @@
+{
+  "callees": {
+    "description": "What does this symbol call? — AST-accurate forward call traversal. Suffix-matches the target like `callers`. Unresolved/external callees shown by default (tagged cyan/red). Returns text by default; set `json: true` for `ast-bro.callees.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Max BFS depth (default 1).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hide_external": {
+          "description": "Drop unresolved/external callees. Default: false (shown with [unresolved]/[external] tags).",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "type": "boolean"
+        },
+        "target": {
+          "description": "Symbol name to look up.",
+          "type": "string"
+        }
+      },
+      "required": ["target"],
+      "type": "object"
+    }
+  },
+  "callers": {
+    "description": "Find callers of a symbol — AST-accurate, no grep noise. Suffix-matches the target like `show`/`implements`: `TakeDamage`, or `Type.method` when ambiguous. Ambiguous matches shown by default (tagged red). Returns text by default; set `json: true` for `ast-bro.callers.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Max BFS depth (default 1).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hide_ambiguous": {
+          "description": "Drop callers with multiple candidates. Default: false (shown with Ambiguous tag).",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Cap result count (default 200).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "type": "boolean"
+        },
+        "target": {
+          "description": "Symbol name to look up.",
+          "type": "string"
+        }
+      },
+      "required": ["target"],
+      "type": "object"
+    }
+  },
+  "context": {
+    "description": "Token-budgeted context for a symbol — target body + direct callees (bodies) + callers/transitive (signatures), greedily packed into a caller-supplied token budget. Replaces chains of 4–5 `show`/`callers`/`callees` calls with ONE context-aware payload. Budget degrades gracefully from full bodies to signatures only. Returns text by default; set `json: true` for `ast-bro.context.v1`.",
+    "inputSchema": {
+      "properties": {
+        "budget": {
+          "description": "Token budget (default 8000). ~4 bytes per token rough.",
+          "minimum": 100,
+          "type": "integer"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "target": {
+          "description": "Symbol to build context for (same form as callers).",
+          "type": "string"
+        }
+      },
+      "required": ["target"],
+      "type": "object"
+    }
+  },
+  "cycles": {
+    "description": "Find import cycles via Tarjan SCC. Returns the list of strongly-connected components with `len > 1` (or singletons with self-edges). Returns text by default; set `json: true` for `ast-bro.cycles.v1`. Exits non-zero when cycles exist (useful for CI gates).",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "type": "boolean"
+        },
+        "min_size": {
+          "description": "Drop SCCs smaller than this (default 2).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "deps": {
+    "description": "Forward import-graph traversal: what does this file import (transitively)? Builds a per-repo dep graph at `.ast-bro/deps/graph.bin` on first call, then reuses it. Returns text by default; set `json: true` for `ast-bro.deps.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Max BFS depth (default 3).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "file": {
+          "description": "Path to the file whose imports to follow.",
+          "type": "string"
+        },
+        "hide_external": {
+          "description": "Drop unresolved imports. Default: false (shown with [external] tag).",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "rebuild": {
+          "description": "Drop the cached graph and rebuild.",
+          "type": "boolean"
+        }
+      },
+      "required": ["file"],
+      "type": "object"
+    }
+  },
+  "digest": {
+    "description": "One-page module map for an unfamiliar directory: every file's types and public methods. Returns text by default; set `json: true` for `ast-bro.map.v1`.",
+    "inputSchema": {
+      "properties": {
+        "include_fields": {
+          "type": "boolean"
+        },
+        "include_private": {
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "max_members": {
+          "description": "Cap members per type (default 50).",
+          "type": "integer"
+        },
+        "paths": {
+          "description": "Files or directories to digest.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": ["paths"],
+      "type": "object"
+    }
+  },
+  "find_related": {
+    "description": "Find chunks semantically similar to a given file:line. Useful for navigating to related code. Returns text by default; set `json: true` for `ast-bro.related.v1`.",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "type": "boolean"
+        },
+        "line": {
+          "description": "1-indexed line within `path`.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "path": {
+          "description": "Repo-relative path of the source chunk.",
+          "type": "string"
+        },
+        "root": {
+          "description": "Repo root containing the index (default \".\").",
+          "type": "string"
+        },
+        "top_k": {
+          "description": "Max results (default 10).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": ["path", "line"],
+      "type": "object"
+    }
+  },
+  "graph": {
+    "description": "Emit the file-level dependency graph. Unresolved external imports shown by default (tagged `[external]`). Returns text by default; set `json: true` for `ast-bro.graph.v1`.",
+    "inputSchema": {
+      "properties": {
+        "hide_external": {
+          "description": "Drop unresolved imports. Default: false (shown with [external] tag).",
+          "type": "boolean"
+        },
+        "json": {
+          "description": "Return JSON (schema `ast-bro.graph.v1`) instead of text.",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "impact": {
+    "description": "Cross-file impact analysis: callers + callees + file reverse-deps + test detection in one call. Answers 'what would break if I change X?' and 'how wide is the blast radius?' in one shot. Four modes: `deps` (what it calls/imports), `dependents` (who calls/imports it), `tests` (affected tests only), `all` (default). Returns text by default; set `json: true` for `ast-bro.impact.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Transitive depth (default 2).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "exclude_tests": {
+          "description": "Exclude test files from output.",
+          "type": "boolean"
+        },
+        "hide_ambiguous": {
+          "description": "Drop ambiguous call-edge matches. Default: false (shown with Ambiguous tag).",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Result cap per section (default 200).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "description": "Section: 'deps', 'dependents', 'tests', or 'all' (default).",
+          "enum": ["deps", "dependents", "tests", "all"],
+          "type": "string"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "target": {
+          "description": "Symbol to analyse (e.g. 'handleRequest', 'Player.TakeDamage', 'src/Player.cs:TakeDamage').",
+          "type": "string"
+        },
+        "tests": {
+          "description": "Show only test files.",
+          "type": "boolean"
+        }
+      },
+      "required": ["target"],
+      "type": "object"
+    }
+  },
+  "implements": {
+    "description": "Find subclasses / implementations of a type using AST matching. Transitive by default — set `direct: true` for level-1 only. Returns text by default; set `json: true` for `ast-bro.implements.v1`.",
+    "inputSchema": {
+      "properties": {
+        "direct": {
+          "description": "Direct subtypes only (skip transitive).",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "paths": {
+          "description": "Files or directories to search.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "target": {
+          "description": "Type name to look up.",
+          "type": "string"
+        }
+      },
+      "required": ["target", "paths"],
+      "type": "object"
+    }
+  },
+  "index": {
+    "description": "Build, refresh, or inspect the per-repo search index. With `stats: true` returns index stats. With `rebuild: true` drops the cache and rebuilds. Otherwise just opens (and incrementally refreshes if files changed). Returns text by default; set `json: true` for `ast-bro.index-stats.v1`.",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "description": "Drop existing cache and rebuild.",
+          "type": "boolean"
+        },
+        "stats": {
+          "description": "Print index stats and return.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "map": {
+    "description": "AST-based structural map of source files — signatures with line ranges, no method bodies. Returns text by default (5–10× smaller than reading the file). Set `json: true` for the machine-readable schema `ast-bro.map.v1`.",
+    "inputSchema": {
+      "properties": {
+        "glob": {
+          "description": "Glob filter applied during directory walk.",
+          "type": "string"
+        },
+        "json": {
+          "description": "Return JSON (schema `ast-bro.map.v1`) instead of text.",
+          "type": "boolean"
+        },
+        "no_attrs": {
+          "description": "Hide attributes / decorators.",
+          "type": "boolean"
+        },
+        "no_docs": {
+          "description": "Hide doc comments.",
+          "type": "boolean"
+        },
+        "no_fields": {
+          "description": "Hide field declarations.",
+          "type": "boolean"
+        },
+        "no_lines": {
+          "description": "Hide line-range suffixes.",
+          "type": "boolean"
+        },
+        "no_private": {
+          "description": "Hide private declarations.",
+          "type": "boolean"
+        },
+        "paths": {
+          "description": "Files or directories to map.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": ["paths"],
+      "type": "object"
+    }
+  },
+  "reverse_deps": {
+    "description": "Reverse import-graph: who imports this file (transitively)? Useful for refactor blast-radius assessment. Returns text by default; set `json: true` for `ast-bro.reverse-deps.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Max BFS depth (default 3).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "file": {
+          "description": "Path to the file whose importers to find.",
+          "type": "string"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "limit": {
+          "description": "Cap result count (default 200).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "rebuild": {
+          "type": "boolean"
+        }
+      },
+      "required": ["file"],
+      "type": "object"
+    }
+  },
+  "run": {
+    "description": "AST-aware pattern search and rewrite. Use metavariables like $FUNC, $ARG, $$$BODY for structural matching. Search-only without rewrite; transform code with rewrite and write. WARNING: `write: true` mutates files on disk — a broad pattern can touch many files at once (capped at 50 per call). Always preview with the default dry-run first and confirm the diff before re-running with `write: true`. Returns text by default; set `json: true` for `ast-bro.run.v1`.",
+    "inputSchema": {
+      "properties": {
+        "glob": {
+          "description": "Glob pattern to filter files, e.g. '**/*.rs'.",
+          "type": "string"
+        },
+        "json": {
+          "description": "Return results as JSON instead of text.",
+          "type": "boolean"
+        },
+        "lang": {
+          "description": "Language (auto-detected from file paths if omitted).",
+          "type": "string"
+        },
+        "paths": {
+          "description": "Files or directories to search.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "pattern": {
+          "description": "AST pattern with metavariables (e.g. '$FUNC($$$)').",
+          "type": "string"
+        },
+        "rewrite": {
+          "description": "Replacement template (e.g. 'bar($A)'). Omit for search-only.",
+          "type": "string"
+        },
+        "write": {
+          "description": "Write changes to disk. Default: false (dry-run). DANGEROUS: mutates files; preview the dry-run diff first and confirm before flipping to true.",
+          "type": "boolean"
+        }
+      },
+      "required": ["pattern"],
+      "type": "object"
+    }
+  },
+  "search": {
+    "description": "Hybrid BM25 + dense semantic search over the repo. First call builds a per-repo index at `.ast-bro/index/` (one-time, ~seconds for typical repos). Returns text by default; set `json: true` for `ast-bro.search.v1`.",
+    "inputSchema": {
+      "properties": {
+        "alpha": {
+          "description": "Override semantic-vs-BM25 weight (0.0=pure BM25, 1.0=pure semantic). Default auto-detects from query type.",
+          "type": "number"
+        },
+        "json": {
+          "description": "Return JSON (schema `ast-bro.search.v1`) instead of text.",
+          "type": "boolean"
+        },
+        "languages": {
+          "description": "Restrict to chunks of these languages (e.g. [\"rust\", \"python\"]).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "description": "Repo root to search in (default \".\").",
+          "type": "string"
+        },
+        "query": {
+          "description": "Search query (free-form text or symbol name).",
+          "type": "string"
+        },
+        "top_k": {
+          "description": "Max results to return (default 10).",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": ["query"],
+      "type": "object"
+    }
+  },
+  "show": {
+    "description": "Extract source of one or more symbols from a single file. Suffix matching: `TakeDamage`, or `Player.TakeDamage` when ambiguous. For markdown the symbol is a heading. Returns text by default; set `json: true` for `ast-bro.show.v1`.",
+    "inputSchema": {
+      "properties": {
+        "json": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "File to search.",
+          "type": "string"
+        },
+        "symbols": {
+          "description": "One or more symbol names to extract.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": ["path", "symbols"],
+      "type": "object"
+    }
+  },
+  "squeeze": {
+    "description": "Compress repetitive log/text with a reversible legend (logs, not code).",
+    "inputSchema": {
+      "properties": {
+        "end": {
+          "description": "1-indexed inclusive end line of the slice.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "json": {
+          "description": "Return JSON (schema `ast-bro.squeeze.v1`) instead of text.",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Path to the log/text file to read.",
+          "type": "string"
+        },
+        "raw": {
+          "description": "Skip compression and emit the raw text.",
+          "type": "boolean"
+        },
+        "start": {
+          "description": "1-indexed inclusive start line of the slice.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": ["path"],
+      "type": "object"
+    }
+  },
+  "surface": {
+    "description": "True public API surface — resolves `pub use` re-exports (Rust) and `__all__` (Python) to compute exactly what a downstream user sees, not just every `pub`/non-underscore item per file. Falls back to visibility-filtered output for Java/C#/Go/Kotlin (no real re-export concept). Returns text by default; set `json: true` for `ast-bro.surface.v1`.",
+    "inputSchema": {
+      "properties": {
+        "include_chain": {
+          "description": "Append the via-chain on each entry (text mode only).",
+          "type": "boolean"
+        },
+        "include_private": {
+          "description": "Include private items — only meaningful for the fallback resolver.",
+          "type": "boolean"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "lang": {
+          "description": "Force a resolver: `rust`, `python`, or `fallback`.",
+          "type": "string"
+        },
+        "max_depth": {
+          "description": "Recursion guard for re-export chains (default 16).",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Crate root file, package init, or directory to auto-detect (default \".\").",
+          "type": "string"
+        },
+        "tree": {
+          "description": "Render as a hierarchical tree grouped by module.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "trace": {
+    "description": "Trace the static call path between two symbols — \"how does <from> reach <to>?\". Shortest-path BFS over the call graph with each hop's source body inlined, so a flow question (e.g. request→handler, update→render) is answered in ONE call instead of chaining `callers`/`callees`. If no static path exists the chain broke at dynamic dispatch — the response inlines both endpoints plus the target file's sibling callables. Targets are suffix-matched like `callers`. Returns text by default; set `json: true` for `ast-bro.trace.v1`.",
+    "inputSchema": {
+      "properties": {
+        "depth": {
+          "description": "Max path length in hops (default 12).",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "from": {
+          "description": "Source symbol — where the path starts.",
+          "type": "string"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Repo root (default \".\").",
+          "type": "string"
+        },
+        "rebuild": {
+          "type": "boolean"
+        },
+        "to": {
+          "description": "Destination symbol — where the path should reach.",
+          "type": "string"
+        }
+      },
+      "required": ["from", "to"],
+      "type": "object"
+    }
+  }
+}
