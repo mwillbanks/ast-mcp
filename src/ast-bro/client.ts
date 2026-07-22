@@ -1,8 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { AST_BRO_BINARY } from "../runtime/native-binaries";
+import { AST_BRO_BINARY } from "../runtime/dependencies";
 
-export { AST_BRO_BINARY } from "../runtime/native-binaries";
+export { AST_BRO_BINARY } from "../runtime/dependencies";
 export const AST_BRO_TOOLS = [
   "map",
   "digest",

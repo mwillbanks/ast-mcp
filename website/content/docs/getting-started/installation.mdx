@@ -4,26 +4,29 @@ description: Install the MCP server, blocking hooks, skill, and host configurati
 icon: Download
 ---
 
-Bun is required. The package pins ast-bro and dprint where binary compatibility matters and trusts only the ast-bro install script.
+Bun is required. The package pins ast-bro and dprint where binary compatibility matters and trusts their pinned install scripts.
 
 ## From an npm package
 
-Install ast-mcp into a repository and connect every supported host:
+Install ast-mcp into a repository so its ast-bro and dprint dependencies remain available, then connect every supported host:
 
 ```bash
-bunx --package @mwillbanks/ast-mcp ast-mcp-install install \
+bun add --dev @mwillbanks/ast-mcp
+bun pm trust @ast-bro/cli dprint
+bunx ast-mcp install \
   --scope local \
   --target all \
   --root "$PWD"
 ```
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
 
 ## From a source checkout
 
 ```bash
 bun install
-bun run bin/ast-mcp-install.ts install \
+bun run build
+bun run bin/ast-mcp.ts install \
   --scope local \
   --target all \
   --root "$PWD"
@@ -58,9 +61,9 @@ bun run scripts/check-install.ts \
 Use `update` to reconcile every managed MCP entry, hook payload, registration, skill, and marked instruction block. Use `uninstall` to remove only ast-mcp-managed surfaces.
 
 ```bash
-bunx --package @mwillbanks/ast-mcp ast-mcp-install update \
+bunx ast-mcp update \
   --scope local --target all --root "$PWD"
 
-bunx --package @mwillbanks/ast-mcp ast-mcp-install uninstall \
+bunx ast-mcp uninstall \
   --scope local --target all --root "$PWD"
 ```

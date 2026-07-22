@@ -70,6 +70,7 @@ test("checker covers every global host surface", async () => {
 
     expect(result.installed).toBeTrue();
     expect(result.installCommand).not.toContain("--root");
+    expect(result.installCommand).toContain("--trust @ast-bro/cli dprint");
   }
 });
 
@@ -86,6 +87,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
+  expect(missing.installCommand).toContain("bun pm trust @ast-bro/cli dprint");
   const write = spyOn(process.stdout, "write").mockImplementation(() => true);
   try {
     await runCheckInstallCli([
@@ -111,7 +113,12 @@ test("checker detects stale managed guidance and hook payloads", async () => {
     agentsFile,
     agents.replace("CRITICAL INSTRUCTION", "STALE INSTRUCTION"),
   );
-  await writeFile(path.join(root, ".codex/hooks/ast-mcp.ts"), "stale");
+  await (async () => {
+    const hookFile = path.join(root, ".codex/hooks.json");
+    const hooks = JSON.parse(await readFile(hookFile, "utf8"));
+    hooks.hooks.PreToolUse[0].hooks[0].command = 'bun "/stale/ast-mcp.js" hook';
+    await writeFile(hookFile, JSON.stringify(hooks));
+  })();
   await writeFile(path.join(root, ".codex/skills/ast-mcp/SKILL.md"), "stale");
 
   const stale = await checkInstall(

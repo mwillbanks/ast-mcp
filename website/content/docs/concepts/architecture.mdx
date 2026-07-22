@@ -43,10 +43,10 @@ Structural patches and Aider blocks converge on the same candidate pipeline: val
 
 ## Distribution
 
-The package publishes three Bun-bundled executables:
+The package publishes one Bun-bundled `ast-mcp` executable with three operational subcommands:
 
-- `ast-mcp` for stdio server startup
-- `ast-mcp-hook` for blocking host hooks
-- `ast-mcp-install` for installation reconciliation
+- `ast-mcp mcp` starts the stdio server
+- `ast-mcp hook` runs blocking host hooks
+- `ast-mcp install` reconciles installation surfaces; `update` and `uninstall` manage them afterward
 
-The source and templates remain in the package because the runtime, installer, and generated host surfaces reference them.
+The installed CLI resolves ast-bro and dprint from the package's stable dependency tree. The source and templates remain in the package because the runtime, installer, and generated host surfaces reference them.

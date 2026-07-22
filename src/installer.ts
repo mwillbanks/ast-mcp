@@ -12,7 +12,7 @@ import path from "node:path";
 import { isManagedHook } from "./managed-hook";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
-const serverEntry = path.join(packageRoot, "src/index.ts");
+const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
 const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
 type Target = (typeof targets)[number];
@@ -32,14 +32,9 @@ async function save(file: string, value: unknown) {
 }
 function definition(root?: string) {
   return {
-    args: ["--hot", serverEntry],
+    args: [cliEntry, "mcp"],
     command: "bun",
-    env: root
-      ? {
-          AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
-          AST_MCP_ROOTS: root,
-        }
-      : {},
+    env: root ? { AST_MCP_ALLOW_EXTERNAL_ROOTS: "1", AST_MCP_ROOTS: root } : {},
   };
 }
 async function codexMcp(file: string, root?: string) {
@@ -50,7 +45,7 @@ async function codexMcp(file: string, root?: string) {
   const environment = root
     ? `env = { AST_MCP_ALLOW_EXTERNAL_ROOTS = "1", AST_MCP_ROOTS = ${JSON.stringify(root)} }\n`
     : "";
-  const block = `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = ["--hot", ${JSON.stringify(serverEntry)}]\n${environment}# ast-mcp:end`;
+  const block = `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = [${JSON.stringify(cliEntry)}, "mcp"]\n${environment}# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
@@ -77,15 +72,14 @@ async function hook(
   file: string,
   event: "PreToolUse" | "preToolUse",
   scriptFile: string,
-  commandPath = scriptFile,
+  _commandPath?: string,
 ) {
-  await mkdir(path.dirname(scriptFile), { recursive: true });
-  await cp(hookEntry, scriptFile, { force: true });
+  await rm(scriptFile, { force: true });
   const value = await json(file);
   if (event === "preToolUse") value.version ??= 1;
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
-  const command = `bun ${JSON.stringify(commandPath)}`;
+  const command = `bun ${JSON.stringify(cliEntry)} hook`;
   const kept = prior.filter(
     (item: unknown) => !isManagedHook(item, event, command),
   );
@@ -201,9 +195,13 @@ async function removeHook(
   const value = await json(file);
   const hooks = value.hooks;
   if (!hooks || !Array.isArray(hooks[event])) return;
-  const command = `bun ${JSON.stringify(commandPath)}`;
+  const commands = [
+    `bun ${JSON.stringify(commandPath)}`,
+    `bun ${JSON.stringify(cliEntry)} hook`,
+  ];
   hooks[event] = hooks[event].filter(
-    (item: unknown) => !isManagedHook(item, event, command),
+    (item: unknown) =>
+      !commands.some((command) => isManagedHook(item, event, command)),
   );
   if (hooks[event].length === 0) delete hooks[event];
   if (Object.keys(hooks).length === 0) delete value.hooks;

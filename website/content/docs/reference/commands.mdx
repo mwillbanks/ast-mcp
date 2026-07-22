@@ -35,7 +35,7 @@ bun run build
 bun pm pack --dry-run
 ```
 
-The Bun build bundles `bin/ast-mcp.ts`, `bin/ast-mcp-hook.ts`, and `bin/ast-mcp-install.ts` into `dist/` as Bun-targeted ESM executables with external source maps.
+The Bun build bundles `bin/ast-mcp.ts` into `dist/ast-mcp.js` as a Bun-targeted ESM executable with an external source map. Its `install`, `hook`, and `mcp` subcommands share the same stable package dependency tree.
 
 ## Documentation
 

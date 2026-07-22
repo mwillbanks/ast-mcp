@@ -2,7 +2,6 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isManagedHook } from "./managed-hook";
 
 type Scope = "local" | "global";
 type Target = "codex" | "claude" | "copilot";
@@ -29,7 +28,7 @@ const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
 
 async function astMcpEntry(entry: unknown): Promise<boolean> {
-  if (typeof entry !== "string" || path.basename(entry) !== "index.ts")
+  if (typeof entry !== "string" || path.basename(entry) !== "ast-mcp.js")
     return false;
   let folder = path.dirname(path.resolve(entry));
   while (true) {
@@ -39,7 +38,7 @@ async function astMcpEntry(entry: unknown): Promise<boolean> {
       );
       return (
         manifest.name === "@mwillbanks/ast-mcp" &&
-        path.resolve(entry) === path.join(folder, "src/index.ts")
+        path.resolve(entry) === path.join(folder, "dist/ast-mcp.js")
       );
     } catch {}
     const parent = path.dirname(folder);
@@ -89,21 +88,30 @@ async function skillCurrent(file: string) {
 async function hookCurrent(
   configFile: string,
   event: "PreToolUse" | "preToolUse",
-  scriptFile: string,
-  commandPath = scriptFile,
+  _scriptFile: string,
+  _commandPath?: string,
 ) {
   const config = JSON.parse(
     await readFile(configFile, "utf8").catch(() => "{}"),
   );
-  const script = await readFile(scriptFile, "utf8").catch(() => "");
-  const command = `bun ${JSON.stringify(commandPath)}`;
   const entries = Array.isArray(config.hooks?.[event])
     ? config.hooks[event]
     : [];
-  return (
-    entries.some((item: unknown) => isManagedHook(item, event, command)) &&
-    script.trim() === (await expectedReference("hook.ts"))
-  );
+  const commands =
+    event === "preToolUse"
+      ? entries.map((item: { command?: unknown }) => item.command)
+      : entries.flatMap((item: { hooks?: Array<{ command?: unknown }> }) =>
+          (item.hooks ?? []).map((child) => child.command),
+        );
+  for (const command of commands) {
+    if (typeof command !== "string") continue;
+    const match = command.match(/^bun (.+) hook$/);
+    if (!match) continue;
+    try {
+      if (await astMcpEntry(JSON.parse(match[1]))) return true;
+    } catch {}
+  }
+  return false;
 }
 
 async function jsonMcpCurrent(
@@ -117,8 +125,8 @@ async function jsonMcpCurrent(
   if (
     entry?.command !== "bun" ||
     !Array.isArray(entry.args) ||
-    entry.args[0] !== "--hot" ||
-    !(await astMcpEntry(entry.args[1]))
+    !(await astMcpEntry(entry.args[0])) ||
+    entry.args[1] !== "mcp"
   )
     return false;
   if (type && entry.type !== type) return false;
@@ -137,16 +145,18 @@ async function codexMcpCurrent(file: string, root?: string) {
   const content = await readFile(file, "utf8").catch(() => "");
   const block =
     content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
-  return (
-    block.includes("[mcp_servers.ast-mcp]") &&
-    block.includes('command = "bun"') &&
-    block.includes('args = ["--hot",') &&
-    block.includes("/src/index.ts") &&
-    (root
-      ? block.includes(`AST_MCP_ROOTS = ${JSON.stringify(root)}`) &&
+  const args = block.match(/args = \[(".*"), "mcp"\]/);
+  if (
+    !block.includes("[mcp_servers.ast-mcp]") ||
+    !block.includes('command = "bun"') ||
+    !args ||
+    !(await astMcpEntry(JSON.parse(args[1])))
+  )
+    return false;
+  return root
+    ? block.includes(`AST_MCP_ROOTS = ${JSON.stringify(root)}`) &&
         block.includes('AST_MCP_ALLOW_EXTERNAL_ROOTS = "1"')
-      : !block.includes("AST_MCP_ROOTS"))
-  );
+    : !block.includes("AST_MCP_ROOTS");
 }
 export async function checkInstall(
   args = process.argv.slice(2),
@@ -245,8 +255,12 @@ export async function checkInstall(
       ? "update"
       : "install";
   const suffix = `--scope ${options.scope} --target ${options.target}${global ? "" : ` --root ${JSON.stringify(options.root)}`}`;
-  const installCommand = `bunx --package @mwillbanks/ast-mcp ast-mcp-install install ${suffix}`;
-  const updateCommand = `bunx --package @mwillbanks/ast-mcp ast-mcp-install update ${suffix}`;
+  const installCommand = global
+    ? `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
+    : `bun add --dev @mwillbanks/ast-mcp && bun pm trust @ast-bro/cli dprint && bunx ast-mcp install ${suffix}`;
+  const updateCommand = global
+    ? `ast-mcp update ${suffix}`
+    : `bunx ast-mcp update ${suffix}`;
   return {
     checks,
     installCommand,

@@ -58,11 +58,9 @@ describe("installer", () => {
       path.join(root, ".github/hooks/ast-mcp.json"),
       "utf8",
     );
-    expect(codexHook).toContain(".codex/hooks/ast-mcp.ts");
-    expect(claudeHook).toContain(
-      `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
-    );
-    expect(copilotHook).toContain(".github/hooks/ast-mcp.ts");
+    expect(codexHook).toContain("dist/ast-mcp.js");
+    expect(claudeHook).toContain("dist/ast-mcp.js");
+    expect(copilotHook).toContain("dist/ast-mcp.js");
     expect(codexHook).not.toContain(root);
     expect(claudeHook).not.toContain(root);
     expect(copilotHook).not.toContain(root);
@@ -161,21 +159,27 @@ describe("installer", () => {
       ".github/hooks/ast-mcp.ts",
     ])
       expect(
-        await access(path.join(root, hookFile)).then(() => true),
+        await access(path.join(root, hookFile))
+          .then(() => false)
+          .catch(() => true),
       ).toBeTrue();
 
     await writeFile(
       path.join(root, ".codex/skills/ast-mcp/obsolete.txt"),
       "obsolete",
     );
-    await writeFile(path.join(root, ".codex/hooks/ast-mcp.ts"), "stale");
+    await (async () => {
+      const legacyHook = path.join(root, ".codex/hooks/ast-mcp.ts");
+      await mkdir(path.dirname(legacyHook), { recursive: true });
+      await writeFile(legacyHook, "stale");
+    })();
     await update({ root, scope: "local", targets: ["codex"] });
     await expect(
       access(path.join(root, ".codex/skills/ast-mcp/obsolete.txt")),
     ).rejects.toThrow();
-    expect(
-      await readFile(path.join(root, ".codex/hooks/ast-mcp.ts"), "utf8"),
-    ).toBe(await readFile(path.resolve("src/hook.ts"), "utf8"));
+    await expect(
+      access(path.join(root, ".codex/hooks/ast-mcp.ts")),
+    ).rejects.toThrow();
   });
 
   test("uninstall removes only ast-mcp managed surfaces", async () => {

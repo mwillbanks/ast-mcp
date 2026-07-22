@@ -9,7 +9,7 @@ function run(command: string[]): string {
 }
 
 const { AST_BRO_BINARY: astBroBinary, DPRINT_BINARY: dprintBinary } =
-  await import("../src/runtime/native-binaries");
+  await import("../src/runtime/dependencies");
 const astBroVersion = run([astBroBinary, "--version"]);
 if (astBroVersion !== "ast-bro 3.0.0")
   throw new Error(

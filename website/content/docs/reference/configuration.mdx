@@ -20,7 +20,10 @@ icon: Settings2
   "mcpServers": {
     "ast-mcp": {
       "command": "bun",
-      "args": ["--hot", "/absolute/path/to/ast-mcp/src/index.ts"],
+      "args": [
+        "/absolute/project/root/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
+        "mcp"
+      ],
       "env": {
         "AST_MCP_ROOTS": "/absolute/project/root"
       }

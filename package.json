@@ -1,9 +1,7 @@
 {
   "author": "Mike Willbanks",
   "bin": {
-    "ast-mcp": "dist/ast-mcp.js",
-    "ast-mcp-hook": "dist/ast-mcp-hook.js",
-    "ast-mcp-install": "dist/ast-mcp-install.js"
+    "ast-mcp": "dist/ast-mcp.js"
   },
   "bugs": {
     "url": "https://github.com/mwillbanks/ast-mcp/issues"
@@ -58,7 +56,7 @@
     "url": "git+https://github.com/mwillbanks/ast-mcp.git"
   },
   "scripts": {
-    "build": "bun run scripts/build.ts ./bin/ast-mcp.ts ./bin/ast-mcp-hook.ts ./bin/ast-mcp-install.ts",
+    "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run format:check && bun run typecheck && bun run test",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",
@@ -82,7 +80,8 @@
   },
   "sideEffects": false,
   "trustedDependencies": [
-    "@ast-bro/cli"
+    "@ast-bro/cli",
+    "dprint"
   ],
   "type": "module",
   "version": "0.1.0"

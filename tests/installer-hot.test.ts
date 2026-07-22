@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { install } from "../src/installer";
 
-test("development installer configures bun hot reload for every local host", async () => {
+test("installer configures stable CLI subcommands for every local host", async () => {
   const root = await os.tmpdir();
   const folder = path.join(
     root,
@@ -23,15 +23,21 @@ test("development installer configures bun hot reload for every local host", asy
   try {
     expect(
       await readFile(path.join(folder, ".codex/config.toml"), "utf8"),
-    ).toContain('args = ["--hot",');
+    ).toContain('/dist/ast-mcp.js", "mcp"]');
     const claude = JSON.parse(
       await readFile(path.join(folder, ".mcp.json"), "utf8"),
     );
-    expect(claude.mcpServers["ast-mcp"].args[0]).toBe("--hot");
+    expect(claude.mcpServers["ast-mcp"].args).toEqual([
+      path.resolve(import.meta.dir, "../dist/ast-mcp.js"),
+      "mcp",
+    ]);
     const copilot = JSON.parse(
       await readFile(path.join(folder, ".github/mcp.json"), "utf8"),
     );
-    expect(copilot.mcpServers["ast-mcp"].args[0]).toBe("--hot");
+    expect(copilot.mcpServers["ast-mcp"].args).toEqual([
+      path.resolve(import.meta.dir, "../dist/ast-mcp.js"),
+      "mcp",
+    ]);
   } finally {
     await rm(folder, { force: true, recursive: true });
     await rm(home, { force: true, recursive: true });

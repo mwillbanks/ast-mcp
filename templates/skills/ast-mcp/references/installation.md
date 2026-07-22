@@ -12,23 +12,29 @@ Replace `codex` with `claude` or `copilot`. For a global installation, pass `--s
 
 ## Install from this package checkout
 
-When the `@mwillbanks/ast-mcp` source checkout is already available:
+When the `@mwillbanks/ast-mcp` source checkout is already available, install its dependencies and build the stable CLI before configuring a host:
 
-`bun run bin/ast-mcp-install.ts install --scope local --target all --root "$PWD"`
+`bun install && bun run build`
+
+`bun run bin/ast-mcp.ts install --scope local --target all --root "$PWD"`
 
 For one host globally:
 
-`bun run bin/ast-mcp-install.ts install --scope global --target codex`
+`bun run bin/ast-mcp.ts install --scope global --target codex`
 
 Targets are `codex`, `claude`, `copilot`, or `all`.
 
 ## Install from the published package
 
-If the package is not already installed, obtain user authorization before allowing Bun to download or install it. Then run:
+If the package is not already installed, obtain user authorization before allowing Bun to download or install it. Install it into the repository so `@ast-bro/cli` and `dprint` remain available, then run the installed CLI:
 
-`bunx --package @mwillbanks/ast-mcp ast-mcp-install install --scope local --target all --root "$PWD"`
+`bun add --dev @mwillbanks/ast-mcp`
 
-For a global host surface, change the scope and select one target. The installer preserves unrelated configuration and updates the managed ast-mcp blocks idempotently. Run the same command with `update` to refresh MCP definitions, hook payloads and registrations, the skill, and the marked instruction block. Run it with `uninstall` to remove only ast-mcp-managed content.
+`bun pm trust @ast-bro/cli dprint`
+
+`bunx ast-mcp install --scope local --target all --root "$PWD"`
+
+For a global host surface, use `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp` followed by `ast-mcp install --scope global --target codex`. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. Do not use `bunx --package` for host installation because its temporary package path can disappear after configuration is written. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. Run `ast-mcp update` to refresh managed surfaces and `ast-mcp uninstall` to remove them.
 
 ## Activate and verify
 

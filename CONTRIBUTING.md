@@ -57,4 +57,4 @@ The formatter command intentionally applies Biome's safe and unsafe fixes and tr
 
 ## Releases
 
-Releases are automated from `main`. Release Please opens and maintains the release pull request; merging it creates the GitHub release, builds all three Bun executables, and publishes the package to npm with provenance.
+Releases are automated from `main`. Release Please opens and maintains the release pull request; merging it creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.

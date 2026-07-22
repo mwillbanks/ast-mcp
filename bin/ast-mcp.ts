@@ -1,2 +1,2 @@
 #!/usr/bin/env bun
-await import("../src/index");
+process.exit((await (await import("../src/cli")).runCli()) ?? 0);

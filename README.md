@@ -46,11 +46,7 @@ A stale hash, ambiguous match, capped preview, unsupported route, formatter reje
 
 ## Distribution
 
-Bun is required. The package publishes three Bun-bundled ESM executables:
-
-- `ast-mcp` — protocol-safe stdio server
-- `ast-mcp-hook` — blocking host hook
-- `ast-mcp-install` — host configuration and skill reconciler
+Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. Host configurations reference the stable installed CLI, so its pinned `@ast-bro/cli` and `dprint` dependencies remain available for the lifetime of the installation.
 
 Runtime dependencies are pinned where binary compatibility matters. `@ast-bro/cli` powers code intelligence and structural rewrites; dprint and its configured plugins format candidate writes across supported languages.
 
@@ -59,19 +55,22 @@ Runtime dependencies are pinned where binary compatibility matters. `@ast-bro/cl
 Install the MCP server, blocking hooks, unified skill, and managed instructions into the current repository:
 
 ```bash
-bunx --package @mwillbanks/ast-mcp ast-mcp-install install \
+bun add --dev @mwillbanks/ast-mcp
+bun pm trust @ast-bro/cli dprint
+bunx ast-mcp install \
   --scope local \
   --target all \
   --root "$PWD"
 ```
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Use `update` to reconcile every managed surface and `uninstall` to remove only ast-mcp-managed configuration.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Use `update` to reconcile every managed surface and `uninstall` to remove only ast-mcp-managed configuration.
 
 From a source checkout:
 
 ```bash
 bun install
-bun run bin/ast-mcp-install.ts install --scope local --target all --root "$PWD"
+bun run build
+bun run bin/ast-mcp.ts install --scope local --target all --root "$PWD"
 ```
 
 ## MCP configuration
@@ -83,7 +82,10 @@ A minimal stdio configuration is:
   "mcpServers": {
     "ast-mcp": {
       "command": "bun",
-      "args": ["--hot", "/absolute/path/to/ast-mcp/src/index.ts"],
+      "args": [
+        "/absolute/path/to/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
+        "mcp"
+      ],
       "env": { "AST_MCP_ROOTS": "/absolute/project/root" }
     }
   }
