@@ -26,7 +26,11 @@ const astBroInstaller = require(path.join(astBroPackage, "bin/install.js")) as {
   getBinaryPath: () => string;
 };
 
-const dprintPackage = path.dirname(require.resolve("dprint/package.json"));
+const dprintPackage = path.dirname(
+  require.resolve(
+    `@dprint/${process.platform === "linux" ? `linux-${process.arch}-glibc` : `${process.platform}-${process.arch}`}/package.json`,
+  ),
+);
 
 export const AST_BRO_BINARY =
   process.env.AST_BRO_BINARY ??

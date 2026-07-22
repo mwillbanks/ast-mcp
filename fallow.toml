@@ -1,5 +1,6 @@
 # Fumadocs generates the collections alias during documentation builds.
-ignoreDependencies = ["collections"]
+# dprint supplies the platform-specific native package copied into distributions.
+ignoreDependencies = ["collections", "dprint"]
 
 [duplicates]
 # Focus the gate on broadly repeated copy-paste rather than contextual pairs and triples.

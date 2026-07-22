@@ -18,7 +18,11 @@ const astBroInstaller = require(path.join(astBroPackage, "bin/install.js")) as {
 const astBroSource =
   process.env.AST_BRO_BINARY ?? astBroInstaller.downloadBinary();
 
-const dprintPackage = path.dirname(require.resolve("dprint/package.json"));
+const dprintPackage = path.dirname(
+  require.resolve(
+    `@dprint/${process.platform === "linux" ? `linux-${process.arch}-glibc` : `${process.platform}-${process.arch}`}/package.json`,
+  ),
+);
 const dprintSource = path.join(dprintPackage, executable("dprint"));
 
 await mkdir(nativeDirectory, { recursive: true });
