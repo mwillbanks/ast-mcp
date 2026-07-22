@@ -41,8 +41,11 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: bun ci
+      - name: Install ast-bro for Linux
+        run: cargo install ast-bro --version 3.0.0 --locked
+      - name: Build distribution with native dependencies
+        run: AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro" bun run build
       - run: bun run check
       - run: bun run skill:check
       - run: bun run evals:check
-      - run: bun run build
       - run: npm publish --access public --provenance --ignore-scripts

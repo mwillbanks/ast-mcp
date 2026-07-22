@@ -10,8 +10,11 @@ import {
 import path from "node:path";
 import { runCommandInput } from "./process-input";
 
-const packageRoot = path.resolve(import.meta.dir, "../..");
-const dprint = path.join(packageRoot, "node_modules/.bin/dprint");
+const packageRoot = path.resolve(
+  import.meta.dir,
+  path.basename(import.meta.dir) === "dist" ? ".." : "../..",
+);
+const dprint = (await import("./native-binaries")).DPRINT_BINARY;
 const dprintConfig =
   process.env.AST_MCP_DPRINT_CONFIG ?? path.join(packageRoot, "dprint.json");
 

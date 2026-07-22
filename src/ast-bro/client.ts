@@ -1,22 +1,8 @@
-import { realpathSync } from "node:fs";
-import { createRequire } from "node:module";
-import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { AST_BRO_BINARY } from "../runtime/native-binaries";
 
-const wrapper = path.resolve(
-  import.meta.dir,
-  "../../node_modules/.bin/ast-bro",
-);
-const installerPath = path.join(
-  path.dirname(realpathSync(wrapper)),
-  "install.js",
-);
-const installer = createRequire(import.meta.url)(installerPath) as {
-  getBinaryPath: () => string;
-};
-export const AST_BRO_BINARY =
-  process.env.AST_BRO_BINARY ?? installer.getBinaryPath();
+export { AST_BRO_BINARY } from "../runtime/native-binaries";
 export const AST_BRO_TOOLS = [
   "map",
   "digest",

@@ -58,7 +58,7 @@
     "url": "git+https://github.com/mwillbanks/ast-mcp.git"
   },
   "scripts": {
-    "build": "bun build ./bin/ast-mcp.ts ./bin/ast-mcp-hook.ts ./bin/ast-mcp-install.ts --outdir ./dist --target bun --format esm --sourcemap=external --minify",
+    "build": "bun run scripts/build.ts ./bin/ast-mcp.ts ./bin/ast-mcp-hook.ts ./bin/ast-mcp-install.ts",
     "check": "bun run tools:check && bun run format:check && bun run typecheck && bun run test",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",

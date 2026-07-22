@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { AST_BRO_TOOLS, callAstBro } from "../src/ast-bro/client";
+import {
+  AST_BRO_BINARY,
+  AST_BRO_TOOLS,
+  callAstBro,
+} from "../src/ast-bro/client";
 import metadata from "../src/ast-bro/tools.json";
 
 test("stdio server exposes only ast-mcp tools", async () => {
@@ -55,7 +59,7 @@ test("upstream ast-bro MCP run exposes write mode", async () => {
   const client = new Client({ name: "upstream-schema-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: ["mcp"],
-    command: path.resolve(import.meta.dir, "../node_modules/.bin/ast-bro"),
+    command: AST_BRO_BINARY,
     cwd: path.resolve(import.meta.dir, ".."),
     stderr: "pipe",
   });
