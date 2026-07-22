@@ -31,6 +31,28 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
 
+## ast-bro platform support
+
+`@ast-bro/cli@3.0.0` currently publishes a precompiled binary only for macOS Apple Silicon. Before changing host configuration, the ast-mcp installer verifies that the pinned ast-bro binary exists and reports the expected version.
+
+On Linux or macOS Intel, install ast-bro through Cargo and expose its absolute location to the host process:
+
+```bash
+cargo install ast-bro --version 3.0.0 --locked
+export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
+printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
+```
+
+For Windows PowerShell:
+
+```powershell
+cargo install ast-bro --version 3.0.0 --locked
+$env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
+[Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
+```
+
+Install Rust and Cargo from [rustup](https://rustup.rs/) first when needed. The example persists the variable for POSIX login shells; zsh users can write the same line to `~/.zprofile` instead. GUI-launched hosts must be started from that configured environment or receive `AST_BRO_BINARY` through their launcher. Rerun `ast-mcp install`, then restart the host. If the binary is unavailable or the version is wrong, installation stops before any host file is changed and prints the applicable commands.
+
 ## From a source checkout
 
 ```bash

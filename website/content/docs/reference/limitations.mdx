@@ -6,6 +6,7 @@ icon: TriangleAlert
 
 - Structural patterns are syntactic. They do not provide semantic type identity.
 - The pinned ast-bro write operation changes the first match per file, not every match in one file.
+- The pinned ast-bro npm package currently provides a precompiled binary only for macOS Apple Silicon; other platforms require a Cargo installation and `AST_BRO_BINARY`.
 - `run` does not create files, perform semantic renames, or guarantee formatted output by itself.
 - Parse health comes from `map.error_count`, not from an empty structural search.
 - Markdown is structurally inspectable through `map` and `show`, but edits use the guarded Aider route.

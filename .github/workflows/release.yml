@@ -24,6 +24,20 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  docs:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Deploy documentation for the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ needs.release.outputs.tag_name }}
+        run: gh workflow run docs.yml --ref main --field release_ref="$RELEASE_REF"
+
   publish:
     needs: release
     if: ${{ needs.release.outputs.release_created == 'true' }}

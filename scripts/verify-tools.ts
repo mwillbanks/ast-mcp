@@ -8,10 +8,13 @@ function run(command: string[]): string {
   return result.stdout.toString().trim();
 }
 
-const { AST_BRO_BINARY: astBroBinary, DPRINT_BINARY: dprintBinary } =
-  await import("../src/runtime/dependencies");
+const {
+  AST_BRO_BINARY: astBroBinary,
+  AST_BRO_VERSION,
+  DPRINT_BINARY: dprintBinary,
+} = await import("../src/runtime/dependencies");
 const astBroVersion = run([astBroBinary, "--version"]);
-if (astBroVersion !== "ast-bro 3.0.0")
+if (astBroVersion !== `ast-bro ${AST_BRO_VERSION}`)
   throw new Error(
     `Unexpected ast-bro version: ${astBroVersion || "no output"}`,
   );

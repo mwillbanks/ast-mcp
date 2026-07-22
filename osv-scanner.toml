@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-frvp-7c67-39w9"
+ignoreUntil = 2027-01-22
+reason = "@hono/node-server is present only through the development-only MCP Inspector dependency; ast-mcp neither imports it nor exposes the affected Hono server request path."

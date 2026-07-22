@@ -10,6 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { isManagedHook } from "./managed-hook";
+import { assertAstBroAvailable } from "./runtime/dependencies";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
@@ -223,6 +224,7 @@ async function hasLocalInstallation(root: string) {
 }
 
 export interface InstallOptions {
+  astBroBinary?: string;
   home?: string;
   root: string;
   scope: "local" | "global";
@@ -299,6 +301,7 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>) {
 }
 
 async function reconcile(options: InstallOptions) {
+  assertAstBroAvailable(options.astBroBinary);
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";
@@ -462,9 +465,10 @@ export async function runInstallerCli(
   args = process.argv.slice(2),
 ): Promise<void> {
   const tokens = [...args];
-  let operation: "install" | "update" | "uninstall" = "install";
+  type Operation = "install" | "update" | "uninstall";
+  let operation: Operation = "install";
   if (["install", "update", "uninstall"].includes(tokens[0] ?? ""))
-    operation = tokens.shift() as typeof operation;
+    operation = tokens.shift() as Operation;
   let scope: "local" | "global" = "local";
   let root = process.cwd();
   let selected: Target[] = [...targets];
