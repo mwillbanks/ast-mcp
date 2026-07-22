@@ -1,18 +1,23 @@
+export interface CliHandlers {
+  hook(): Promise<number>;
+  installer(args: string[]): Promise<void>;
+  mcp(): Promise<void>;
+}
+
 export async function runCli(
-  args = process.argv.slice(2),
+  args: string[],
+  handlers: CliHandlers,
 ): Promise<number | undefined> {
   const [command, ...rest] = args;
   if (command === "mcp") {
-    await import("./index");
+    await handlers.mcp();
     return;
   }
   if (command === "hook") {
-    const { runHook } = await import("./hook");
-    return runHook();
+    return handlers.hook();
   }
   if (["install", "update", "uninstall"].includes(command ?? "")) {
-    const { runInstallerCli } = await import("./installer");
-    await runInstallerCli([command as string, ...rest]);
+    await handlers.installer([command as string, ...rest]);
     return;
   }
   throw new Error(

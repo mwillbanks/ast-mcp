@@ -1,34 +1,36 @@
-import { afterAll, expect, mock, test } from "bun:test";
+import { expect, test } from "bun:test";
 
-const installerCalls: string[][] = [];
+const calls: string[][] = [];
+const handlers = {} as CliHandlers;
 
-mock.module("../src/index", () => ({}));
-mock.module("../src/hook", () => ({ runHook: () => 17 }));
-mock.module("../src/installer", () => ({
-  runInstallerCli: async (args: string[]) => {
-    installerCalls.push(args);
-  },
-}));
+handlers.mcp = async () => {
+  calls.push(["mcp"]);
+};
+handlers.hook = async () => {
+  calls.push(["hook"]);
+  return 17;
+};
+handlers.installer = async (args: string[]) => {
+  calls.push(args);
+};
 
-afterAll(() => {
-  mock.restore();
-});
+Object.freeze(handlers);
 
-import { runCli } from "../src/cli";
+import { type CliHandlers, runCli } from "../src/cli";
 
 test("single CLI dispatches every subcommand", async () => {
-  expect(await runCli(["mcp"])).toBeUndefined();
-  expect(await runCli(["hook"])).toBe(17);
+  expect(await runCli(["mcp"], handlers)).toBeUndefined();
+  expect(await runCli(["hook"], handlers)).toBe(17);
 
-  await runCli(["install", "--scope", "local"]);
-  expect(installerCalls).toEqual([["install", "--scope", "local"]]);
+  await runCli(["install", "--scope", "local"], handlers);
+  expect(calls).toEqual([["mcp"], ["hook"], ["install", "--scope", "local"]]);
 });
 
 test("single CLI rejects missing and unknown subcommands", async () => {
-  await expect(runCli([])).rejects.toThrow(
+  await expect(runCli([], handlers)).rejects.toThrow(
     "Usage: ast-mcp <install|update|uninstall|hook|mcp>",
   );
-  await expect(runCli(["unknown"])).rejects.toThrow(
+  await expect(runCli(["unknown"], handlers)).rejects.toThrow(
     "Usage: ast-mcp <install|update|uninstall|hook|mcp>",
   );
 });
