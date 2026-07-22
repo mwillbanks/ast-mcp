@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 test("guidance routes normal AST and Aider mutations through file_patch", async () => {
   const [agents, skill, evals] = await Promise.all([
     readFile("AGENTS.md", "utf8"),
-    readFile(".codex/skills/ast-mcp/SKILL.md", "utf8"),
+    readFile("templates/skills/ast-mcp/SKILL.md", "utf8"),
     readFile("templates/skills/ast-mcp/evals/batch.evals.json", "utf8"),
   ]);
 
