@@ -4,7 +4,9 @@ entry = ["bin/ast-mcp.ts"]
 # Generated host-install surfaces are runtime copies, not source entry points.
 ignorePatterns = [".github/hooks/**", ".github/skills/**"]
 
-# Fumadocs generates the collections alias during documentation builds.
+# Fumadocs generates the collections aliases during documentation builds.
+ignoreUnresolvedImports = ["collections/browser", "collections/server"]
+
 # ast-bro and dprint are runtime CLI dependencies resolved from the stable package installation.
 ignoreDependencies = ["@ast-bro/cli", "collections", "dprint"]
 
