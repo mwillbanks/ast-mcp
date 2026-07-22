@@ -19,7 +19,8 @@ function run(command: string[]): string {
   return result.stdout.toString().trim();
 }
 
-const astBroVersion = run([installer.downloadBinary(), "--version"]);
+const astBroBinary = process.env.AST_BRO_BINARY ?? installer.downloadBinary();
+const astBroVersion = run([astBroBinary, "--version"]);
 if (astBroVersion !== "ast-bro 3.0.0")
   throw new Error(
     `Unexpected ast-bro version: ${astBroVersion || "no output"}`,

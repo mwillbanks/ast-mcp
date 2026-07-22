@@ -20,6 +20,10 @@ jobs:
         run: bun ci
       - name: Install documentation dependencies
         run: bun ci --cwd website
+      - name: Install ast-bro for Linux
+        run: |
+          cargo install ast-bro --version 3.0.0 --locked
+          echo "AST_BRO_BINARY=$HOME/.cargo/bin/ast-bro" >> "$GITHUB_ENV"
       - name: Verify toolchain
         run: bun run tools:check
       - name: Check formatting and lint

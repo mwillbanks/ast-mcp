@@ -15,7 +15,8 @@ const installerPath = path.join(
 const installer = createRequire(import.meta.url)(installerPath) as {
   getBinaryPath: () => string;
 };
-export const AST_BRO_BINARY = installer.getBinaryPath();
+export const AST_BRO_BINARY =
+  process.env.AST_BRO_BINARY ?? installer.getBinaryPath();
 export const AST_BRO_TOOLS = [
   "map",
   "digest",
