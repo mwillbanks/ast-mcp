@@ -34,7 +34,6 @@ export async function callAstBro(
     args: ["mcp"],
     command: binary,
     cwd: root,
-    stderr: "pipe",
   });
   try {
     await client.connect(transport);

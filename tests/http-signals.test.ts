@@ -27,7 +27,7 @@ test("HTTP entrypoint closes cleanly on SIGHUP", async () => {
 
   try {
     let response: Response | undefined;
-    for (let attempt = 0; attempt < 400; attempt += 1) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
       response = await fetch(`http://127.0.0.1:${port}/health`).catch(
         () => undefined,
       );
