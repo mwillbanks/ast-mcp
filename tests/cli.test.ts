@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { afterAll, expect, mock, test } from "bun:test";
 
 const installerCalls: string[][] = [];
 
@@ -9,6 +9,10 @@ mock.module("../src/installer", () => ({
     installerCalls.push(args);
   },
 }));
+
+afterAll(() => {
+  mock.restore();
+});
 
 import { runCli } from "../src/cli";
 
