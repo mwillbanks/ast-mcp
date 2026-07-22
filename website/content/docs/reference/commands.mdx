@@ -4,6 +4,22 @@ description: Package, development, quality, evaluation, and distribution command
 icon: SquareTerminal
 ---
 
+## Install
+
+```npm
+npm install --save-dev @mwillbanks/ast-mcp
+```
+
+When using Bun, run `bun pm trust @ast-bro/cli dprint` once after installation.
+
+## Manage host surfaces
+
+```bash
+./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"
+./node_modules/.bin/ast-mcp update --scope local --target all --root "$PWD"
+./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
+```
+
 ## Runtime
 
 ```bash
@@ -35,7 +51,7 @@ bun run build
 bun pm pack --dry-run
 ```
 
-The Bun build bundles `bin/ast-mcp.ts` into `dist/ast-mcp.js` as a Bun-targeted ESM executable with an external source map. Its `install`, `hook`, and `mcp` subcommands share the same stable package dependency tree.
+The Bun build bundles `bin/ast-mcp.ts` into `dist/ast-mcp.js` as a Bun-targeted ESM executable with an external source map. Its `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands share the same stable package dependency tree.
 
 ## Documentation
 

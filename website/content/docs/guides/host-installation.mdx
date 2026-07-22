@@ -17,15 +17,33 @@ Global installation uses each host's home configuration. Managed blocks and entr
 
 ## Scope and targets
 
-```bash
-bun add --dev @mwillbanks/ast-mcp
-bun pm trust @ast-bro/cli dprint
-bunx ast-mcp install --scope local --target codex --root "$PWD"
+Install the package locally with the package manager used by the repository:
 
+```npm
+npm install --save-dev @mwillbanks/ast-mcp
+```
+
+Bun users must allow the pinned native installers before configuring a host:
+
+```bash
+bun pm trust @ast-bro/cli dprint
+```
+
+Then manage local host surfaces through the stable repository-local executable:
+
+```bash
+./node_modules/.bin/ast-mcp install --scope local --target codex --root "$PWD"
+./node_modules/.bin/ast-mcp update --scope local --target all --root "$PWD"
+./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
+```
+
+For a Bun-managed global installation:
+
+```bash
 bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp
 ast-mcp install --scope global --target claude
-
-bunx ast-mcp update --scope local --target all --root "$PWD"
+ast-mcp update --scope global --target all
+ast-mcp uninstall --scope global --target all
 ```
 
 The package must remain installed so the configured `mcp` and `hook` subcommands can resolve ast-bro and dprint from its stable dependency tree. Bun's explicit trust step runs the pinned ast-bro and dprint installers instead of leaving their lifecycle scripts blocked. Local scope requires a root. Global scope uses the connected repository working directory at runtime unless host configuration supplies an explicit root.

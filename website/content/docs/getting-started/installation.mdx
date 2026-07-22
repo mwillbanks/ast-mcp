@@ -10,10 +10,20 @@ Bun is required. The package pins ast-bro and dprint where binary compatibility 
 
 Install ast-mcp into a repository so its ast-bro and dprint dependencies remain available, then connect every supported host:
 
+```npm
+npm install --save-dev @mwillbanks/ast-mcp
+```
+
+When installing with Bun, allow the package's pinned native installers:
+
 ```bash
-bun add --dev @mwillbanks/ast-mcp
 bun pm trust @ast-bro/cli dprint
-bunx ast-mcp install \
+```
+
+Run the repository-local executable so the configured MCP and hooks retain a stable package path:
+
+```bash
+./node_modules/.bin/ast-mcp install \
   --scope local \
   --target all \
   --root "$PWD"
@@ -61,9 +71,9 @@ bun run scripts/check-install.ts \
 Use `update` to reconcile every managed MCP entry, hook payload, registration, skill, and marked instruction block. Use `uninstall` to remove only ast-mcp-managed surfaces.
 
 ```bash
-bunx ast-mcp update \
+./node_modules/.bin/ast-mcp update \
   --scope local --target all --root "$PWD"
 
-bunx ast-mcp uninstall \
+./node_modules/.bin/ast-mcp uninstall \
   --scope local --target all --root "$PWD"
 ```

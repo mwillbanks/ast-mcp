@@ -57,13 +57,13 @@ Install the MCP server, blocking hooks, unified skill, and managed instructions 
 ```bash
 bun add --dev @mwillbanks/ast-mcp
 bun pm trust @ast-bro/cli dprint
-bunx ast-mcp install \
+./node_modules/.bin/ast-mcp install \
   --scope local \
   --target all \
   --root "$PWD"
 ```
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Use `update` to reconcile every managed surface and `uninstall` to remove only ast-mcp-managed configuration.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast-mcp update` to reconcile every managed surface and `./node_modules/.bin/ast-mcp uninstall` to remove only ast-mcp-managed configuration.
 
 From a source checkout:
 

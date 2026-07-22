@@ -32,9 +32,9 @@ If the package is not already installed, obtain user authorization before allowi
 
 `bun pm trust @ast-bro/cli dprint`
 
-`bunx ast-mcp install --scope local --target all --root "$PWD"`
+`./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"`
 
-For a global host surface, use `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp` followed by `ast-mcp install --scope global --target codex`. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. Do not use `bunx --package` for host installation because its temporary package path can disappear after configuration is written. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. Run `ast-mcp update` to refresh managed surfaces and `ast-mcp uninstall` to remove them.
+For a global host surface, use `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp` followed by `ast-mcp install --scope global --target codex`. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. Do not use an ephemeral package executor for host installation because its temporary package path can disappear after configuration is written. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. For a local installation, run `./node_modules/.bin/ast-mcp update` to refresh managed surfaces and `./node_modules/.bin/ast-mcp uninstall` to remove them; global installations use `ast-mcp update` and `ast-mcp uninstall`.
 
 ## Activate and verify
 

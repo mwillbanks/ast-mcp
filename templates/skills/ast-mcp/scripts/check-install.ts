@@ -257,10 +257,13 @@ export async function checkInstall(
   const suffix = `--scope ${options.scope} --target ${options.target}${global ? "" : ` --root ${JSON.stringify(options.root)}`}`;
   const installCommand = global
     ? `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
-    : `bun add --dev @mwillbanks/ast-mcp && bun pm trust @ast-bro/cli dprint && bunx ast-mcp install ${suffix}`;
+    : `bun add --dev @mwillbanks/ast-mcp && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`;
   const updateCommand = global
     ? `ast-mcp update ${suffix}`
-    : `bunx ast-mcp update ${suffix}`;
+    : `./node_modules/.bin/ast-mcp update ${suffix}`;
+  const uninstallCommand = global
+    ? `ast-mcp uninstall ${suffix}`
+    : `./node_modules/.bin/ast-mcp uninstall ${suffix}`;
   return {
     checks,
     installCommand,
@@ -273,6 +276,7 @@ export async function checkInstall(
         : operation === "install"
           ? installCommand
           : undefined,
+    uninstallCommand,
     updateCommand,
     ...options,
   };

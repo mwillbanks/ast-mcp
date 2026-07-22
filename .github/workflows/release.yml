@@ -17,6 +17,7 @@ jobs:
       pull-requests: write
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v5.0.0
         id: release
@@ -32,6 +33,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7.0.0
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: 1.3.14
@@ -40,6 +43,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Use npm with trusted publishing support
+        run: npm install --global npm@11.17.0
       - run: bun ci
       - name: Install ast-bro for Linux
         run: |

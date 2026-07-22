@@ -10,3 +10,7 @@ tsconfig.tsbuildinfo
 .codex/
 .claude/
 .vscode/
+.github/hooks/
+.github/mcp.json
+.github/skills/
+.mcp.json

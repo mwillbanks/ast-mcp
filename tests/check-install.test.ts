@@ -71,6 +71,8 @@ test("checker covers every global host surface", async () => {
     expect(result.installed).toBeTrue();
     expect(result.installCommand).not.toContain("--root");
     expect(result.installCommand).toContain("--trust @ast-bro/cli dprint");
+    expect(result.updateCommand).toStartWith("ast-mcp update");
+    expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
 });
 
@@ -88,6 +90,14 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
   expect(missing.installCommand).toContain("bun pm trust @ast-bro/cli dprint");
+  expect(missing.installCommand).toContain(
+    "./node_modules/.bin/ast-mcp install",
+  );
+  expect(missing.updateCommand).toContain("./node_modules/.bin/ast-mcp update");
+  expect(missing.uninstallCommand).toContain(
+    "./node_modules/.bin/ast-mcp uninstall",
+  );
+  expect(JSON.stringify(missing)).not.toContain("bunx");
   const write = spyOn(process.stdout, "write").mockImplementation(() => true);
   try {
     await runCheckInstallCli([

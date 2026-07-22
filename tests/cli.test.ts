@@ -23,7 +23,15 @@ test("single CLI dispatches every subcommand", async () => {
   expect(await runCli(["hook"], handlers)).toBe(17);
 
   await runCli(["install", "--scope", "local"], handlers);
-  expect(calls).toEqual([["mcp"], ["hook"], ["install", "--scope", "local"]]);
+  await runCli(["update", "--scope", "local"], handlers);
+  await runCli(["uninstall", "--scope", "local"], handlers);
+  expect(calls).toEqual([
+    ["mcp"],
+    ["hook"],
+    ["install", "--scope", "local"],
+    ["update", "--scope", "local"],
+    ["uninstall", "--scope", "local"],
+  ]);
 });
 
 test("single CLI rejects missing and unknown subcommands", async () => {
