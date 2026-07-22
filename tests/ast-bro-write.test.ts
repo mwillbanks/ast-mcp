@@ -24,6 +24,9 @@ async function astMcpClient(root: string) {
     command: "bun",
     cwd: path.resolve(import.meta.dir, ".."),
     env: {
+      ...(process.env.AST_BRO_BINARY
+        ? { AST_BRO_BINARY: process.env.AST_BRO_BINARY }
+        : {}),
       AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
       AST_MCP_ROOTS: root,
       HOME: process.env.HOME ?? "",
