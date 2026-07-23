@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.2...ast-mcp-v0.1.3) (2026-07-23)
+
+
+### Bug Fixes
+
+* cli surface and package issues ([5dc8504](https://github.com/mwillbanks/ast-mcp/commit/5dc8504a57aa8a7a619eeb611f651405858fac08))
+* remove dead-code ([beee009](https://github.com/mwillbanks/ast-mcp/commit/beee009d1b4cc3859e3fde7b43ddb6b01c04d756))
+
 ## [0.1.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.1...ast-mcp-v0.1.2) (2026-07-23)
 
 
