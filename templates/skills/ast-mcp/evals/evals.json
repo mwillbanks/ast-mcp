@@ -1180,6 +1180,7 @@
   "mcp_tools": [
     "file_chattr",
     "file_delete",
+    "file_rename",
     "file_hash",
     "file_patch",
     "file_read",

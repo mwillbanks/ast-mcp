@@ -270,5 +270,53 @@
     "required_tools": ["file_delete"],
     "surface": "file_delete",
     "variant": "directory"
+  },
+  {
+    "assertions": [
+      "Uses one path-keyed file_rename batch.",
+      "Obtains a fresh source hash before renaming.",
+      "Reports each source and destination result."
+    ],
+    "category": "positive",
+    "expected_output": "Uses the guarded file_rename contract for multiple files.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 91,
+    "prompt": "Rename two hash-guarded files in one file_rename operation.",
+    "required_tools": ["file_rename"],
+    "surface": "file_rename",
+    "variant": "batch"
+  },
+  {
+    "assertions": [
+      "Preserves source hash and root-boundary safeguards.",
+      "Does not overwrite an existing destination.",
+      "Reports the per-file operation result."
+    ],
+    "category": "variant",
+    "expected_output": "Uses the guarded file_rename contract and rejects an existing destination.",
+    "files": [],
+    "forbidden_tools": [],
+    "id": 92,
+    "prompt": "Reject a file_rename request whose destination already exists.",
+    "required_tools": ["file_rename"],
+    "surface": "file_rename",
+    "variant": "existing-destination"
+  },
+  {
+    "assertions": [
+      "Does not use shell mv or a direct editor for renaming.",
+      "Uses the registered file_rename MCP surface.",
+      "Preserves the root and hash safeguards."
+    ],
+    "category": "negative",
+    "expected_output": "Uses file_rename and does not call shell mutation or direct editor tools.",
+    "files": [],
+    "forbidden_tools": ["file_write", "file_delete"],
+    "id": 93,
+    "prompt": "Move a source file to a new name using the filesystem shell.",
+    "required_tools": ["file_rename"],
+    "surface": "file_rename",
+    "variant": "shell-near-miss"
   }
 ]

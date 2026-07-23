@@ -28,6 +28,7 @@ test("stdio server exposes only ast-mcp tools", async () => {
         "file_hash",
         "file_patch",
         "file_read",
+        "file_rename",
         "file_write",
       ].sort(),
     );

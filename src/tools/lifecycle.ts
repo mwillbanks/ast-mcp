@@ -3,6 +3,7 @@ import * as z from "zod/v4";
 import { applyFileChattr, type FileChattr } from "../runtime/attributes";
 import { deleteFilesSafely } from "../runtime/file-delete";
 import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
+import { renameFilesSafely } from "../runtime/file-rename";
 import { sha256 } from "../runtime/hash";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
@@ -112,6 +113,42 @@ export default function registerLifecycleTools(server: McpServer) {
           content: [
             {
               text: JSON.stringify(await deleteFilesSafely(requests)),
+              type: "text",
+            },
+          ],
+        };
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+  server.registerTool(
+    "file_rename",
+    {
+      description:
+        "Renames hash-guarded files in one root-bounded batch without overwriting existing destinations.",
+      inputSchema: z
+        .record(
+          z.string().min(1),
+          z.object({
+            destination: z.string().min(1),
+            expectedSha256: z.string().length(64),
+          }),
+        )
+        .refine(
+          (value) =>
+            Object.keys(value).length > 0 &&
+            Object.keys(value).length <= FILE_READ_MAX_BATCH,
+          "file_rename requires between 1 and 50 files",
+        ),
+      title: "Rename Files Safely",
+    },
+    async (requests) => {
+      try {
+        return {
+          content: [
+            {
+              text: JSON.stringify(await renameFilesSafely(requests)),
               type: "text",
             },
           ],

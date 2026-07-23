@@ -55,7 +55,7 @@ test("eval matrix covers every registered MCP surface", async () => {
 
     expect([...suite.mcp_tools].sort()).toEqual([...registered].sort());
     const batchCases = suite.evals.filter((evaluation) => evaluation.id >= 74);
-    expect(batchCases).toHaveLength(17);
+    expect(batchCases).toHaveLength(20);
     expect(
       batchCases.some(
         (evaluation) => evaluation.variant === "ordered-ast-rules",

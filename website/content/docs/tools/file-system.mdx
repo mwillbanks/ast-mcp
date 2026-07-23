@@ -1,6 +1,6 @@
 ---
 title: File-system boundary
-description: Hash, read, write, patch, change attributes, and delete without losing current-state guarantees.
+description: Hash, read, write, patch, rename, change attributes, and delete without losing current-state guarantees.
 icon: Files
 ---
 
@@ -28,6 +28,10 @@ The normal mutation API accepts a path-keyed batch. Each file receives one fresh
 - `aiderBlocks` for unsupported, unparseable, or inspection-only formats
 
 Set `preview: true` to execute the guarded and formatted dry-run contract without committing.
+
+## file_rename
+
+Renames multiple regular files in one root-bounded operation using byte-accurate source hashes. Sources and destinations must share a configured root, destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
 
 ## file_chattr and file_delete
 

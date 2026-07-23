@@ -13,6 +13,7 @@ A requested edit is not enough to authorize a write. ast-mcp requires a route th
 | New file                                          | `file_write`                                     |
 | Parseable rewrite-supported source                | `file_patch` with `patchStrategy: "ast"`         |
 | Unsupported, unparseable, or inspection-only file | `file_patch` with `patchStrategy: "aider_block"` |
+| Rename                                            | `file_rename`                                    |
 | Metadata-only change                              | `file_chattr`                                    |
 | Deletion                                          | `file_delete`                                    |
 

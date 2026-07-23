@@ -36,9 +36,10 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
    - Unsupported targets: `{ expectedSha256, patchStrategy: "aider_block", aiderBlocks: [{ search, replace }], preview?: boolean }`
      Operations in each array run in order under one file lock; preview returns without committing and normal mode commits atomically.
 5. Use one path-keyed `file_write` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files. Supply the shared `chattr` object when chmod/chown metadata is required; missing parents are created only after a guarded `ENOENT` write and path revalidation.
-6. Use `file_chattr` for metadata-only changes. Use hash-guarded `file_delete` for deletion; it preflights all targets and AST import references before any deletion, requires an explicit `forceReferences` override for referenced source, and removes empty ancestor directories after lock release.
-7. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; it is not the normal agent patch route and still rewrites only the first match per file.
-8. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation.
+6. Use one path-keyed `file_rename` batch for hash-guarded, root-bounded file moves; validate every source and destination, reject existing destinations, and use no-replace moves. Ordinary failures roll back completed entries when possible; the operation is not crash-atomic.
+7. Use `file_chattr` for metadata-only changes. Use hash-guarded `file_delete` for deletion; it preflights all targets and AST import references before any deletion, requires an explicit `forceReferences` override for referenced source, and removes empty ancestor directories after lock release.
+8. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; it is not the normal agent patch route and still rewrites only the first match per file.
+9. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation.
 
 Example batched AST patch:
 

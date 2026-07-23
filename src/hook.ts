@@ -1,7 +1,7 @@
 const direct =
-  /^(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|str_replace|MultiEdit|Edit|Write|NotebookEdit)$/;
+  /^(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)$/;
 const nestedDirect =
-  /tools(?:\.(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|str_replace|MultiEdit|Edit|Write|NotebookEdit)|\s*\[\s*["'](?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|str_replace|MultiEdit|Edit|Write|NotebookEdit)["']\s*\])\s*\(/;
+  /tools(?:\.(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)|\s*\[\s*["'](?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)["']\s*\])\s*\(/;
 const shell =
   /^(?:bash|shell|terminal|exec|functions\.exec|mcp__functions__exec|codex\.exec|exec_command|functions\.exec_command|Bash|powershell|PowerShell)$/;
 const mutation =
@@ -9,6 +9,8 @@ const mutation =
 
 const nestedInterpreter =
   /(?:bash|sh|zsh|dash|ksh|fish|pwsh|powershell|node|python\d*|ruby|perl|php)(?:["']|\s)+(?:--?[A-Za-z][A-Za-z0-9-]*(?:=[^\s"']+)?(?:["']|\s)+)*(?:-c|--command|-Command|-e|--eval)(?=\s|["']|$)/i;
+const shellRename =
+  /(?:^|[;&|]\s*)(?:(?:env(?:\s+(?:\S+=\S+|--?\S+))*|sudo(?:\s+\S+)*|command|nice|nohup|busybox)\s+)*(?:(?:xargs(?:\s+\S+)*\s+(?:mv|rename))|(?:(?:(?:\/\S+\/)?git(?:\s+(?:(?:-C|-c)\s+\S+|--[A-Za-z-]+(?:=\S+|\s+\S+)?))*\s+mv)|(?:(?:\/\S+)*\/)?(?:mv|rename)))(?=\s|$)/i;
 export interface HookDecision {
   denied: boolean;
   reason?: string;
@@ -43,6 +45,7 @@ export function evaluateHook(event: Record<string, unknown>): HookDecision {
   return command &&
     (nestedDirect.test(command) ||
       mutation.test(command) ||
+      shellRename.test(command) ||
       nestedInterpreter.test(command))
     ? { denied: true, reason: "Direct file mutation is blocked. Use ast-mcp." }
     : { denied: false };

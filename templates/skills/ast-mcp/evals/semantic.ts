@@ -102,6 +102,12 @@ function meaningfulInput(invocation: Invocation) {
     return hasKey(input, "chattr") && /["'][^"']+["']\s*:/.test(input);
   if (invocation.tool === "file_delete")
     return hasKey(input, "expectedSha256") && /["'][^"']+["']\s*:/.test(input);
+  if (invocation.tool === "file_rename")
+    return (
+      hasKey(input, "expectedSha256") &&
+      hasKey(input, "destination") &&
+      /["'][^"']+["']\s*:/.test(input)
+    );
   return (toolKeys[invocation.tool] ?? []).every((key) => hasKey(input, key));
 }
 
@@ -120,10 +126,10 @@ function pathIsWithinRoot(candidate: string, roots: string[]) {
 function pathErrors(invocations: Invocation[], roots: string[]) {
   const errors: string[] = [];
   const singlePath =
-    /["']?(?:filePath|file|path|root)["']?\s*:\s*["']([^"']+)["']/g;
+    /["']?(?:filePath|file|path|root|destination)["']?\s*:\s*["']([^"']+)["']/g;
   const pathArray = /["']?(?:filePaths|paths)["']?\s*:\s*\[([^\]]*)\]/gs;
   const keyedPath =
-    /["']([^"']+)["']\s*:\s*\{\s*(?:content|expectedSha256|chattr|astRules|aiderBlocks|patchStrategy)\s*:/g;
+    /["']([^"']+)["']\s*:\s*\{\s*(?:content|expectedSha256|destination|chattr|astRules|aiderBlocks|patchStrategy)\s*:/g;
   for (const invocation of invocations) {
     const input = withoutComments(invocation.input);
     const candidates: string[] = [];
@@ -151,9 +157,13 @@ function pathErrors(invocations: Invocation[], roots: string[]) {
 function isBatch(invocation: Invocation) {
   const input = withoutComments(invocation.input);
   if (
-    ["file_patch", "file_write", "file_chattr", "file_delete"].includes(
-      invocation.tool,
-    )
+    [
+      "file_patch",
+      "file_write",
+      "file_chattr",
+      "file_delete",
+      "file_rename",
+    ].includes(invocation.tool)
   )
     return (input.match(/["'][^"']+["']\s*:\s*\{/g) ?? []).length > 1;
   if (invocation.tool === "file_hash")
@@ -163,11 +173,45 @@ function isBatch(invocation: Invocation) {
   return false;
 }
 
+function renameResultsCoverInputs(
+  call: Invocation,
+  output: string,
+  roots: string[] = [],
+) {
+  try {
+    const request = JSON.parse(call.input) as Record<string, unknown>;
+    const result = JSON.parse(output) as {
+      files?: Record<string, { destinationPath?: string; renamed?: boolean }>;
+    };
+    if (!result.files) return false;
+    const workspaceRoot = roots[0] ?? process.cwd();
+    return Object.entries(request).every(([source, value]) => {
+      if (!value || typeof value !== "object") return false;
+      const destination = (value as { destination?: unknown }).destination;
+      const sourcePath = path.resolve(workspaceRoot, source);
+      const destinationPath =
+        typeof destination === "string"
+          ? path.resolve(workspaceRoot, destination)
+          : undefined;
+      const file = result.files?.[source] ?? result.files?.[sourcePath];
+      return (
+        destinationPath !== undefined &&
+        file?.destinationPath !== undefined &&
+        path.resolve(file.destinationPath) === destinationPath &&
+        file.renamed === true
+      );
+    });
+  } catch {
+    return false;
+  }
+}
+
 function assertionSatisfied(
   assertion: string,
   evaluation: EvalCase,
   invocations: Invocation[],
   output: string,
+  roots: string[] = [],
 ) {
   const normalized = assertion.toLowerCase();
   const sanitizedInvocations = invocations.map((invocation) => ({
@@ -183,11 +227,42 @@ function assertionSatisfied(
   const calls = (tool: string) =>
     sanitizedInvocations.filter((invocation) => invocation.tool === tool);
   if (
+    normalized.includes("does not overwrite") ||
+    normalized.includes("existing destination")
+  ) {
+    const renameCall = calls("file_rename");
+    return (
+      renameCall.length > 0 &&
+      /(?:already exists|destination.*exist|exist.*destination|rejected|error|failed)/i.test(
+        output,
+      ) &&
+      /destination/i.test(output)
+    );
+  }
+  if (
+    normalized.includes("reports each source") &&
+    normalized.includes("destination")
+  )
+    return (
+      calls("file_rename").length > 0 &&
+      renameResultsCoverInputs(calls("file_rename")[0], output, roots) &&
+      /["']?files["']?\s*:/i.test(output) &&
+      /destinationPath|renamed/i.test(output)
+    );
+  if (
     normalized.includes("does not call") ||
     normalized.includes("does not use") ||
     normalized.includes("never calls")
   )
-    return evaluation.forbidden_tools.every((tool) => !tools.has(tool));
+    return (
+      evaluation.forbidden_tools.every((tool) => !tools.has(tool)) &&
+      !(
+        normalized.includes("shell") &&
+        /(?:^|[;&|]\s*)(?:(?:env(?:\s+(?:\S+=\S+|--?\S+))*|sudo(?:\s+\S+)*|command|nice|nohup|busybox)\s+)*(?:(?:xargs(?:\s+\S+)*\s+(?:mv|rename))|(?:(?:(?:\/\S+\/)?git(?:\s+(?:(?:-C|-c)\s+\S+|--[A-Za-z-]+(?:=\S+|\s+\S+)?))*\s+mv)|(?:(?:\/\S+)*\/)?(?:mv|rename)\b))/i.test(
+          source,
+        )
+      )
+    );
   if (
     normalized.includes("direct filesystem") ||
     normalized.includes("direct editor") ||
@@ -207,7 +282,9 @@ function assertionSatisfied(
   if (normalized.includes("fresh") && normalized.includes("hash")) {
     const hashIndex = calls("file_hash")[0]?.index;
     const mutationIndex = invocations.find((call) =>
-      ["file_patch", "file_write", "file_delete"].includes(call.tool),
+      ["file_patch", "file_write", "file_delete", "file_rename"].includes(
+        call.tool,
+      ),
     )?.index;
     return (
       hashIndex !== undefined &&
@@ -313,6 +390,7 @@ export function verifyEvaluation(
       evaluation,
       invocations,
       output,
+      roots,
     )
   )
     errors.push(`expected output not proven: ${evaluation.expected_output}`);
@@ -326,7 +404,7 @@ export function verifyEvaluation(
   )
     errors.push("output does not prove expected transport behavior");
   for (const assertion of evaluation.assertions)
-    if (!assertionSatisfied(assertion, evaluation, invocations, output))
+    if (!assertionSatisfied(assertion, evaluation, invocations, output, roots))
       errors.push(`assertion not proven: ${assertion}`);
   return errors;
 }

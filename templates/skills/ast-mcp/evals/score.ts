@@ -326,7 +326,17 @@ export async function scoreTranscript(
       continue;
     }
     call.output = output;
-    if (outputFailed(output)) errors.push(`failed call ID: ${call.id}`);
+    if (
+      outputFailed(output) &&
+      !(
+        call.evalIds.includes(92) &&
+        call.invocations.some(
+          (invocation) => invocation.tool === "file_rename",
+        ) &&
+        /destination.*exist|already exists/i.test(outputText(output.output))
+      )
+    )
+      errors.push(`failed call ID: ${call.id}`);
     const text = outputText(output.output);
     outputChars += text.length;
     if (call.tools.length > 0 && text.length === 0)
@@ -372,8 +382,23 @@ export async function scoreTranscript(
       );
       continue;
     }
+    const expectsRejectedDestination = evaluation.assertions.some((assertion) =>
+      /does not overwrite|existing destination/i.test(assertion),
+    );
     const executionFailed = evaluationCalls.some(
-      (call) => !call.output || outputFailed(call.output),
+      (call) =>
+        !call.output ||
+        (outputFailed(call.output) &&
+          !(
+            evaluation.id === 92 &&
+            expectsRejectedDestination &&
+            call.invocations.some(
+              (invocation) => invocation.tool === "file_rename",
+            ) &&
+            /destination.*exist|already exists/i.test(
+              outputText(call.output?.output),
+            )
+          )),
     );
     if (executionFailed)
       errors.push(`eval ${evalId} has no successful execution output`);
@@ -401,7 +426,9 @@ export async function scoreTranscript(
         );
 
   const mutationCalls =
-    (toolCalls.file_patch ?? 0) + (toolCalls.file_write ?? 0);
+    (toolCalls.file_patch ?? 0) +
+    (toolCalls.file_write ?? 0) +
+    (toolCalls.file_rename ?? 0);
   return {
     astMcpOutputChars: outputChars,
     errors,
