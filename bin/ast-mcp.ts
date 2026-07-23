@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 const { runCli } = await import("../src/cli");
 
-process.exit(
-  (await runCli(process.argv.slice(2), {
+try {
+  const exitCode = await runCli(process.argv.slice(2), {
     hook: async () => {
       const { runHook } = await import("../src/hook");
       return runHook();
@@ -14,5 +14,11 @@ process.exit(
     mcp: async () => {
       await import("../src/index");
     },
-  })) ?? 0,
-);
+  });
+
+  if (exitCode !== undefined) process.exitCode = exitCode;
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`ast-mcp: ${message}\n`);
+  process.exitCode = 1;
+}

@@ -23,6 +23,7 @@
     },
   },
   "trustedDependencies": [
+    "dprint",
     "@ast-bro/cli",
   ],
   "packages": {

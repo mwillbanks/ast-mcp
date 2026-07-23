@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   access,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -122,12 +123,21 @@ describe("installer", () => {
       "--root",
       root,
     ]);
-    await expect(
-      readFile(path.join(root, ".codex/config.toml"), "utf8"),
-    ).rejects.toThrow();
-    await expect(runInstallerCli(["--unknown"])).rejects.toThrow(
-      "Unknown argument",
+    expect(await readFile(path.join(root, ".codex/config.toml"), "utf8")).toBe(
+      "",
     );
+    await expect(runInstallerCli(["--unknown"])).rejects.toThrow(
+      "Unknown option",
+    );
+    await expect(runInstallerCli(["install", "--scope"])).rejects.toThrow(
+      "Missing value for --scope",
+    );
+    await expect(
+      runInstallerCli(["install", "--scope=invalid"]),
+    ).rejects.toThrow('Invalid scope "invalid"');
+    await expect(
+      runInstallerCli(["install", "--target=invalid"]),
+    ).rejects.toThrow('Invalid target "invalid"');
   });
 
   test("fails before configuring a host when ast-bro is unavailable", async () => {
@@ -274,5 +284,72 @@ describe("installer", () => {
       ".github/skills/ast-mcp/SKILL.md",
     ])
       await expect(access(path.join(root, managedPath))).rejects.toThrow();
+  });
+
+  test("uninstall preserves additive host files when managed content was all they contained", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-owned-files-"));
+    created.push(root);
+    await install({
+      root,
+      scope: "local",
+      targets: ["codex", "claude"],
+    });
+
+    await uninstall({
+      root,
+      scope: "local",
+      targets: ["codex", "claude"],
+    });
+
+    expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe("");
+    expect(await readFile(path.join(root, ".codex/config.toml"), "utf8")).toBe(
+      "",
+    );
+    expect(
+      JSON.parse(await readFile(path.join(root, ".codex/hooks.json"), "utf8")),
+    ).toEqual({});
+    expect(
+      JSON.parse(await readFile(path.join(root, ".mcp.json"), "utf8")),
+    ).toEqual({});
+    expect(
+      JSON.parse(
+        await readFile(path.join(root, ".claude/settings.json"), "utf8"),
+      ),
+    ).toEqual({});
+  });
+
+  test("uninstall surfaces shared-file read errors without deleting those paths", async () => {
+    const configRoot = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-config-read-error-"),
+    );
+    const instructionsRoot = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-instructions-read-error-"),
+    );
+    created.push(configRoot, instructionsRoot);
+    await mkdir(path.join(configRoot, ".codex/config.toml"), {
+      recursive: true,
+    });
+    await mkdir(path.join(instructionsRoot, "AGENTS.md"), { recursive: true });
+
+    await expect(
+      uninstall({
+        root: configRoot,
+        scope: "local",
+        targets: ["codex"],
+      }),
+    ).rejects.toThrow();
+    await expect(
+      uninstall({
+        root: instructionsRoot,
+        scope: "local",
+        targets: ["codex"],
+      }),
+    ).rejects.toThrow();
+    expect(
+      (await lstat(path.join(configRoot, ".codex/config.toml"))).isDirectory(),
+    ).toBeTrue();
+    expect(
+      (await lstat(path.join(instructionsRoot, "AGENTS.md"))).isDirectory(),
+    ).toBeTrue();
   });
 });

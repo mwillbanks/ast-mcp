@@ -134,14 +134,10 @@ const instructionsEnd = "<!-- ast-mcp:end -->";
 const instructionsPattern =
   /<!-- ast-mcp:begin -->[\s\S]*?<!-- ast-mcp:end -->\n?/g;
 
-async function writeTextOrRemove(file: string, content: string) {
+async function writeText(file: string, content: string) {
   const normalized = content.trimEnd();
-  if (!normalized) {
-    await rm(file, { force: true });
-    return;
-  }
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${normalized}\n`);
+  await writeFile(file, normalized ? `${normalized}\n` : "");
 }
 
 async function instructions(file: string) {
@@ -150,23 +146,23 @@ async function instructions(file: string) {
   ).trim();
   const old = await readFile(file, "utf8").catch(() => "");
   const clean = old.replace(instructionsPattern, "").trimEnd();
-  await writeTextOrRemove(
+  await writeText(
     file,
     `${clean ? `${clean}\n\n` : ""}${instructionsBegin}\n\n${block}\n\n${instructionsEnd}`,
   );
 }
 
 async function removeInstructions(file: string) {
-  const old = await readFile(file, "utf8").catch(() => "");
-  await writeTextOrRemove(file, old.replace(instructionsPattern, ""));
+  const old = await readFile(file, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (old === undefined) return;
+  await writeText(file, old.replace(instructionsPattern, ""));
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
-async function saveJsonOrRemove(file: string, value: Record<string, any>) {
-  if (Object.keys(value).length === 0) {
-    await rm(file, { force: true });
-    return;
-  }
+async function saveRemainingJson(file: string, value: Record<string, any>) {
   await save(file, value);
 }
 
@@ -177,12 +173,16 @@ async function removeJsonMcp(file: string, section = "mcpServers") {
     return;
   delete entries["ast-mcp"];
   if (Object.keys(entries).length === 0) delete value[section];
-  await saveJsonOrRemove(file, value);
+  await saveRemainingJson(file, value);
 }
 
 async function removeCodexMcp(file: string) {
-  const old = await readFile(file, "utf8").catch(() => "");
-  await writeTextOrRemove(
+  const old = await readFile(file, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (old === undefined) return;
+  await writeText(
     file,
     old.replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, ""),
   );
@@ -206,7 +206,7 @@ async function removeHook(
   );
   if (hooks[event].length === 0) delete hooks[event];
   if (Object.keys(hooks).length === 0) delete value.hooks;
-  await saveJsonOrRemove(file, value);
+  await saveRemainingJson(file, value);
 }
 
 async function hasLocalInstallation(root: string) {
@@ -229,6 +229,10 @@ export interface InstallOptions {
   root: string;
   scope: "local" | "global";
   targets: Target[];
+}
+
+export class InstallerUsageError extends Error {
+  override name = "InstallerUsageError";
 }
 
 function targetPaths(
@@ -464,7 +468,10 @@ export async function uninstall(options: InstallOptions) {
 export async function runInstallerCli(
   args = process.argv.slice(2),
 ): Promise<void> {
-  const tokens = [...args];
+  const tokens = args.flatMap((token) => {
+    const match = /^(--(?:scope|root|target))=(.*)$/.exec(token);
+    return match ? [match[1], match[2]] : [token];
+  });
   type Operation = "install" | "update" | "uninstall";
   let operation: Operation = "install";
   if (["install", "update", "uninstall"].includes(tokens[0] ?? ""))
@@ -472,19 +479,36 @@ export async function runInstallerCli(
   let scope: "local" | "global" = "local";
   let root = process.cwd();
   let selected: Target[] = [...targets];
+  const valueAfter = (index: number) => {
+    const value = tokens[index + 1];
+    if (!value || value.startsWith("-"))
+      throw new InstallerUsageError(
+        `Missing value for ${tokens[index] ?? "option"}`,
+      );
+    return value;
+  };
   for (let index = 0; index < tokens.length; index += 1) {
-    if (tokens[index] === "--scope") scope = tokens[++index] as typeof scope;
-    else if (tokens[index] === "--root") root = tokens[++index];
-    else if (tokens[index] === "--target") {
-      const value = tokens[++index];
+    if (["--scope", "-s"].includes(tokens[index] ?? "")) {
+      scope = valueAfter(index) as typeof scope;
+      index += 1;
+    } else if (["--root", "-r"].includes(tokens[index] ?? "")) {
+      root = valueAfter(index);
+      index += 1;
+    } else if (["--target", "-t"].includes(tokens[index] ?? "")) {
+      const value = valueAfter(index);
       selected = value === "all" ? [...targets] : [value as Target];
-    } else throw new Error(`Unknown argument: ${tokens[index]}`);
+      index += 1;
+    } else throw new InstallerUsageError(`Unknown option: ${tokens[index]}`);
   }
-  if (
-    !["local", "global"].includes(scope) ||
-    selected.some((item) => !targets.includes(item))
-  )
-    throw new Error("Invalid install scope or target");
+  if (!["local", "global"].includes(scope))
+    throw new InstallerUsageError(
+      `Invalid scope "${scope}"; expected local or global`,
+    );
+  const invalidTarget = selected.find((item) => !targets.includes(item));
+  if (invalidTarget)
+    throw new InstallerUsageError(
+      `Invalid target "${invalidTarget}"; expected codex, claude, copilot, or all`,
+    );
   const options = { root, scope, targets: selected };
   const changed =
     operation === "install"

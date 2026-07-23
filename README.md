@@ -54,16 +54,26 @@ Runtime dependencies are pinned where binary compatibility matters. `@ast-bro/cl
 
 Install the MCP server, blocking hooks, unified skill, and managed instructions into the current repository:
 
+```npm
+npm install --save-dev @mwillbanks/ast-mcp
+```
+
+When installing with Bun, allow the pinned native installers:
+
 ```bash
-bun add --dev @mwillbanks/ast-mcp
 bun pm trust @ast-bro/cli dprint
+```
+
+```bash
 ./node_modules/.bin/ast-mcp install \
   --scope local \
   --target all \
   --root "$PWD"
 ```
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast-mcp update` to reconcile every managed surface and `./node_modules/.bin/ast-mcp uninstall` to remove only ast-mcp-managed configuration.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
+
+Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast-mcp update` to reconcile every managed surface and `./node_modules/.bin/ast-mcp uninstall` to remove only marked blocks, managed entries, and the owned `ast-mcp` skill directory.
 
 ### ast-bro platform support
 

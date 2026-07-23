@@ -23,7 +23,7 @@ Install the package locally with the package manager used by the repository:
 npm install --save-dev @mwillbanks/ast-mcp
 ```
 
-Bun users must allow the pinned native installers before configuring a host:
+When installing with Bun, allow the pinned native installers:
 
 ```bash
 bun pm trust @ast-bro/cli dprint
@@ -37,16 +37,21 @@ Then manage local host surfaces through the stable repository-local executable:
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
 ```
 
-For a Bun-managed global installation:
+For a persistent global installation:
+
+```npm
+npm install --global @mwillbanks/ast-mcp
+```
+
+Then manage the global host surfaces:
 
 ```bash
-bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp
 ast-mcp install --scope global --target claude
 ast-mcp update --scope global --target all
 ast-mcp uninstall --scope global --target all
 ```
 
-The package must remain installed so the configured `mcp` and `hook` subcommands can resolve ast-bro and dprint from its stable dependency tree. Bun's explicit trust step runs the pinned ast-bro and dprint installers instead of leaving their lifecycle scripts blocked. Local scope requires a root. Global scope uses the connected repository working directory at runtime unless host configuration supplies an explicit root.
+Yarn 2+ should use a project-local installation because it does not provide Yarn Classic's global workflow. The package must remain installed so the configured `mcp` and `hook` subcommands can resolve ast-bro and dprint from its stable dependency tree. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. Bun's explicit trust step runs the pinned ast-bro and dprint installers instead of leaving their lifecycle scripts blocked. If another manager blocks dependency build scripts, approve those packages through that manager. Local scope requires a root. Global scope uses the connected repository working directory at runtime unless host configuration supplies an explicit root.
 
 The pinned npm package currently provides a precompiled ast-bro binary only for macOS Apple Silicon. The installer checks the binary before changing host files and prints platform-specific Cargo and `AST_BRO_BINARY` commands when manual setup is required. See the [installation guide](/docs/getting-started/installation) for Linux, Windows, and macOS Intel instructions.
 

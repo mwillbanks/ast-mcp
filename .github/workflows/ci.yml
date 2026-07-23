@@ -7,13 +7,65 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.filter.outputs.package }}
+      release: ${{ steps.filter.outputs.release }}
+      templates: ${{ steps.filter.outputs.templates }}
+      website: ${{ steps.filter.outputs.website }}
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v4.0.2
+        id: filter
+        with:
+          filters: |
+            package:
+              - 'LICENSE'
+              - 'README.md'
+              - 'bin/**'
+              - 'biome.jsonc'
+              - 'bun.lock'
+              - 'bunfig.toml'
+              - 'dprint.json'
+              - 'fallow.toml'
+              - 'logo.svg'
+              - 'osv-scanner.toml'
+              - 'package.json'
+              - 'scripts/**'
+              - 'src/**'
+              - 'templates/**'
+              - 'tests/**'
+              - 'tsconfig.json'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
+            release:
+              - 'bin/**'
+              - 'dprint.json'
+              - 'package.json'
+              - 'scripts/**'
+              - 'src/**'
+              - 'templates/**'
+            templates:
+              - 'templates/**'
+            website:
+              - 'website/**'
+              - '.github/workflows/docs.yml'
+
+  package:
+    name: Package validation
+    needs: changes
+    if: ${{ needs.changes.outputs.package == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
@@ -22,35 +74,63 @@ jobs:
           bun-version: 1.3.14
       - name: Install package dependencies
         run: bun ci
-      - name: Install documentation dependencies
-        run: bun ci --cwd website
+      - name: Restore ast-bro binary
+        id: ast-bro-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ast-bro/3.0.0
+          key: ast-bro-v1-3.0.0-${{ runner.os }}-${{ runner.arch }}
       - name: Install ast-bro for Linux
-        run: |
-          cargo install ast-bro --version 3.0.0 --locked
-          echo "AST_BRO_BINARY=$HOME/.cargo/bin/ast-bro" >> "$GITHUB_ENV"
-      - name: Verify toolchain
-        run: bun run tools:check
-      - name: Check formatting and lint
-        run: bun run format:check
-      - name: Typecheck package
-        run: bun run typecheck
-      - name: Test package
-        run: bun run test
+        if: steps.ast-bro-cache.outputs.cache-hit != 'true'
+        run: cargo install ast-bro --version 3.0.0 --locked --root "$HOME/.cache/ast-bro/3.0.0"
+      - name: Configure ast-bro
+        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/3.0.0/bin/ast-bro" >> "$GITHUB_ENV"
+      - name: Verify package
+        run: bun run check
       - name: Validate skill
+        if: ${{ needs.changes.outputs.templates == 'true' }}
         run: bun run skill:check
       - name: Validate evaluation fixtures
+        if: ${{ needs.changes.outputs.templates == 'true' }}
         run: bun run evals:check
+      - name: Install website dependencies for Fallow
+        run: bun ci --cwd website
       - name: Check dead code
         run: bun run fallow
       - name: Build distribution CLI
         run: bun run build
-      - name: Typecheck documentation
+      - name: Verify package contents
+        run: bun pm pack --dry-run
+
+  website:
+    name: Website validation
+    needs: changes
+    if: ${{ needs.changes.outputs.website == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.3.14
+      - name: Install website dependencies
+        run: bun ci --cwd website
+      - name: Lint website
+        run: bun run --cwd website lint
+      - name: Typecheck website
         run: bun run --cwd website typecheck
-      - name: Test documentation
+      - name: Test website
         run: bun run --cwd website test
-      - name: Build documentation
+      - name: Build website
         env:
           VITE_BASE_PATH: /ast-mcp/
         run: bun run --cwd website build
-      - name: Verify package contents
-        run: bun pm pack --dry-run
+
+  release:
+    name: Release
+    needs: [changes, package, website]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true' && needs.package.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+      id-token: write
+      pull-requests: write

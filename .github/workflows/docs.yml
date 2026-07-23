@@ -1,14 +1,9 @@
 name: Deploy documentation
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
-    inputs:
-      release_ref:
-        description: "Release tag to document; leave empty for a manual main deployment"
-        required: false
-        type: string
 
 permissions:
   contents: read
@@ -19,13 +14,10 @@ concurrency:
 
 jobs:
   build:
-    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_ref || github.ref }}
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2.2.0
         with:

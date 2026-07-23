@@ -26,15 +26,27 @@ Targets are `codex`, `claude`, `copilot`, or `all`.
 
 ## Install from the published package
 
-If the package is not already installed, obtain user authorization before allowing Bun to download or install it. Install it into the repository so `@ast-bro/cli` and `dprint` remain available, then run the installed CLI:
+If the package is not already installed, obtain user authorization before allowing a package manager to download or install it. Install it into the repository so `@ast-bro/cli` and `dprint` remain available, then run the installed CLI:
 
-`bun add --dev @mwillbanks/ast-mcp`
+```npm
+npm install --save-dev @mwillbanks/ast-mcp
+```
+
+When installing with Bun, allow the pinned native installers:
 
 `bun pm trust @ast-bro/cli dprint`
 
 `./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"`
 
-For a global host surface, use `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp` followed by `ast-mcp install --scope global --target codex`. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. Do not use an ephemeral package executor for host installation because its temporary package path can disappear after configuration is written. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. For a local installation, run `./node_modules/.bin/ast-mcp update` to refresh managed surfaces and `./node_modules/.bin/ast-mcp uninstall` to remove them; global installations use `ast-mcp update` and `ast-mcp uninstall`.
+For a global host surface, use the package manager's persistent global install:
+
+```npm
+npm install --global @mwillbanks/ast-mcp
+```
+
+Then run `ast-mcp install --scope global --target codex`. Yarn 2+ should use a project-local installation because it does not provide the Yarn Classic global workflow. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. If another manager blocks dependency build scripts, approve those two packages through that manager.
+
+Do not use an ephemeral package executor for host installation because its temporary package path can disappear after configuration is written. The runtime checks ancestor `node_modules/.bin` directories, package metadata, Bun/pnpm/npm/Yarn global bins, and finally `PATH`. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. For a local installation, run `./node_modules/.bin/ast-mcp update` to refresh managed surfaces and `./node_modules/.bin/ast-mcp uninstall` to remove them; global installations use `ast-mcp update` and `ast-mcp uninstall`.
 
 The pinned `@ast-bro/cli@3.0.0` package has a precompiled binary only for macOS Apple Silicon. On Linux or macOS Intel, install it with `cargo install ast-bro --version 3.0.0 --locked`, set `AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"`, and persist that export in `~/.profile` or `~/.zprofile`. On Windows, use the same Cargo command and persist `AST_BRO_BINARY` as `$HOME\.cargo\bin\ast-bro.exe` in the user environment. GUI-launched hosts must inherit that variable from their launcher. The ast-mcp installer verifies the binary before modifying host configuration and returns these commands when manual setup is required.
 

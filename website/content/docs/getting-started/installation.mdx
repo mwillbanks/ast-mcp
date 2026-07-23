@@ -6,7 +6,7 @@ icon: Download
 
 Bun is required. The package pins ast-bro and dprint where binary compatibility matters and trusts their pinned install scripts.
 
-## From an npm package
+## From a package registry
 
 Install ast-mcp into a repository so its ast-bro and dprint dependencies remain available, then connect every supported host:
 
@@ -29,7 +29,9 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
   --root "$PWD"
 ```
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
+
+Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
 
 ## ast-bro platform support
 

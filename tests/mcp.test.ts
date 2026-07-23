@@ -55,6 +55,23 @@ test("stdio server exposes only ast-mcp tools", async () => {
     await client.close();
   }
 });
+
+test("CLI mcp subcommand remains alive for a stdio handshake", async () => {
+  const client = new Client({ name: "cli-test-client", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    args: [path.resolve(import.meta.dir, "../bin/ast-mcp.ts"), "mcp"],
+    command: "bun",
+    cwd: path.resolve(import.meta.dir, ".."),
+    stderr: "pipe",
+  });
+  try {
+    await client.connect(transport);
+    expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+  } finally {
+    await client.close();
+  }
+});
+
 test("upstream ast-bro MCP run exposes write mode", async () => {
   const client = new Client({ name: "upstream-schema-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
