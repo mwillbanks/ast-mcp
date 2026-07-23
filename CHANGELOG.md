@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.1...ast-mcp-v0.1.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* harden installer and release docs ([79842ed](https://github.com/mwillbanks/ast-mcp/commit/79842ede374247ec12afb741189be97880445518))
+
 ## [0.1.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.0...ast-mcp-v0.1.1) (2026-07-22)
 
 
