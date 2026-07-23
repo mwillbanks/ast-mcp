@@ -19,7 +19,7 @@ describe("agent hook", () => {
     ).toBeTrue();
     expect(
       evaluateHook({
-        tool_input: { command: 'node -e "write()"' },
+        tool_input: { command: "node -e \"writeFileSync('blocked', 'x')\"" },
         tool_name: "bash",
       }).denied,
     ).toBeTrue();
@@ -37,14 +37,33 @@ describe("agent hook", () => {
     ).toBeFalse();
   });
 
-  test("blocks Codex exec wrappers and command-prefix siblings", () => {
-    const sources = [
+  test("does not treat oversized input as a security boundary", () => {
+    expect(
+      evaluateHook({
+        tool_input: {
+          command: ["env ".repeat(100_000), "touch allowed-by-host"].join(""),
+        },
+        tool_name: "bash",
+      }).denied,
+    ).toBeFalse();
+  });
+
+  test("routes known bypasses without policing host-governed commands", () => {
+    const blockedSources = [
       'const result = await tools.exec_command({ cmd: "touch /tmp/blocked" }); text(result);',
+      'const result = await tools.exec_command ({ cmd: "touch /tmp/blocked" }); text(result);',
+      'const result = await tools.exec_command?.({ cmd: "touch /tmp/blocked" }); text(result);',
+      'const result = await tools?.exec_command({ cmd: "touch /tmp/blocked" }); text(result);',
+      'const result = await tools.exec_command /* route */ ({ cmd: "touch /tmp/blocked" }); text(result);',
+      'const result = await tools.bash({ command: "touch /tmp/blocked" }); text(result);',
       'const result = await tools.apply_patch("*** Begin Patch"); text(result);',
+      'const result = await tools.apply_patch ({ patch: "*** Begin Patch" }); text(result);',
+      'const result = await tools.apply_patch?.({ patch: "*** Begin Patch" }); text(result);',
+      'const result = await tools?.apply_patch({ patch: "*** Begin Patch" }); text(result);',
       'const result = await tools.writeFile({ path: "/tmp/blocked" }); text(result);',
       'const result = await tools["apply_patch"]("*** Begin Patch"); text(result);',
     ];
-    for (const source of sources)
+    for (const source of blockedSources)
       for (const tool_name of [
         "exec",
         "functions.exec",
@@ -63,7 +82,7 @@ describe("agent hook", () => {
       "nice touch /tmp/blocked",
       "nohup touch /tmp/blocked",
       "busybox touch /tmp/blocked",
-      "git -C . clean -fd",
+      "timeout 5 touch /tmp/blocked",
     ])
       expect(
         evaluateHook({ tool_input: { command }, tool_name: "exec_command" })
@@ -72,24 +91,49 @@ describe("agent hook", () => {
 
     expect(
       evaluateHook({
-        tool_input: { source: sources[0] },
-        tool_name: "exec",
-      }).denied,
-    ).toBeTrue();
-    expect(
-      evaluateHook({
         tool_input:
           'const result = await tools.mcp__ast_mcp__file_hash({ filePaths: ["src/hook.ts"] }); text(result);',
         tool_name: "exec",
       }).denied,
     ).toBeFalse();
+    for (const command of [
+      "git clone ./src ./dst",
+      "git checkout -- file",
+      "git clean -fd",
+      "printf text > generated.log",
+      "bun run generate | tee generated.log",
+      "cp source target",
+      "mkdir generated",
+    ])
+      expect(
+        evaluateHook({ tool_input: { command }, tool_name: "exec_command" })
+          .denied,
+      ).toBeFalse();
     expect(
       evaluateHook({
-        tool_input: { command: "git status --short" },
-        tool_name: "exec_command",
+        tool_input:
+          'const result = await tools.exec_command({ cmd: "git checkout -- file > report.log" }); text(result);',
+        tool_name: "exec",
       }).denied,
     ).toBeFalse();
   });
+  test("recognizes shell aliases and object-wrapped executor source", () => {
+    expect(
+      evaluateHook({
+        tool_input: { command: "touch blocked" },
+        tool_name: "pwsh",
+      }).denied,
+    ).toBeTrue();
+    expect(
+      evaluateHook({
+        tool_input: {
+          code: 'const r = await tools.exec_command({ cmd: "touch blocked" })',
+        },
+        tool_name: "exec",
+      }).denied,
+    ).toBeTrue();
+  });
+
   test("emits compatible denial payloads", () => {
     const payload = decisionPayload({ denied: true, reason: "no" }) as {
       hookSpecificOutput: { permissionDecision: string };

@@ -16,7 +16,7 @@
     "Patch this README paragraph through the AST-isolated environment.",
     "Show the blast radius of changing PaymentService.",
     "The ast-mcp tools disappeared; help me restore the local MCP.",
-    "Install the code-intelligence and blocking hooks globally for Codex.",
+    "Install the code-intelligence and best-effort routing hooks globally for Codex.",
     "Trace how the request handler reaches the database call."
   ]
 }

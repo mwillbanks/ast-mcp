@@ -15,7 +15,7 @@
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
 </p>
 
-`@mwillbanks/ast-mcp` combines native AST intelligence, deterministic file operations, state-machine-enforced edits, blocking hooks, and agent guidance. It gives Codex, Claude Code, GitHub Copilot, and VS Code Copilot a capable repository workflow without granting them an unbounded editor.
+`@mwillbanks/ast-mcp` combines native AST intelligence, deterministic file operations, state-machine-enforced edits, best-effort routing hooks, and agent guidance. It gives Codex, Claude Code, GitHub Copilot, and VS Code Copilot a capable repository workflow without granting them an unbounded editor.
 
 **[Read the documentation](https://mwillbanks.github.io/ast-mcp/)**
 
@@ -29,7 +29,7 @@ Coding agents need more than a text editor. They need a way to understand code r
 | Guarded file operations | Batched hashing, bounded text reads, deterministic creation, exact patches, attributes, and reference-aware deletion  |
 | Root isolation          | One shared path policy for every file and ast-bro operation, with symlink rejection and explicit external-root opt-in |
 | Safe commits            | Fresh SHA-256 checks, deterministic cross-process locks, candidate formatting, hash rechecks, and atomic replacement  |
-| Host enforcement        | Blocking hooks, a unified skill, and idempotent installers for Codex, Claude, Copilot, and VS Code                    |
+| Agent routing           | Best-effort hooks, a unified skill, and idempotent installers for Codex, Claude, Copilot, and VS Code                 |
 
 AST-capable files stay on the intelligence path instead of being retrieved as whole-file text. Unsupported formats use bounded reads and exact Aider search/replace blocks.
 
@@ -52,7 +52,9 @@ Runtime dependencies are pinned where binary compatibility matters. `@ast-bro/cl
 
 ## Install
 
-Install the MCP server, blocking hooks, unified skill, and managed instructions into the current repository:
+Install the MCP server, best-effort routing hooks, unified skill, and managed instructions into the current repository:
+
+The hooks nudge common direct editor and manual mutation attempts toward ast-mcp. They are not a security boundary and deliberately leave Git operations, output redirection, repository scripts, and arbitrary execution to the host framework and sandbox.
 
 ```npm
 npm install --save-dev @mwillbanks/ast-mcp

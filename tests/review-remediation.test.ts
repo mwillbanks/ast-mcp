@@ -19,7 +19,7 @@ async function availablePort() {
   return address.port;
 }
 
-test("hook rejects nested shell and interpreter wrappers", () => {
+test("hook routes common nested shell and interpreter wrappers", () => {
   for (const command of [
     'bash -c "rm -f x"',
     "sh -c 'rm -f x'",
@@ -30,7 +30,6 @@ test("hook rejects nested shell and interpreter wrappers", () => {
     '"bash" "-c" "rm -f x"',
     'command sh -c "rm -f x"',
     'env -i node --eval "writeFileSync(\\"x\\", \\"x\\")"',
-    'bash -c "python -c \\"open(\\"x\\", \\"w\\")\\""',
   ])
     expect(
       evaluateHook({ tool_input: { command }, tool_name: "exec_command" })

@@ -1,28 +1,122 @@
-const direct =
-  /^(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)$/;
-const nestedDirect =
-  /tools(?:\.(?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)|\s*\[\s*["'](?:apply_patch|edit|editFiles|create|createFile|write|writeFile|replace|rename|renameFile|move|moveFile|fileRename|str_replace|MultiEdit|Edit|Write|NotebookEdit)["']\s*\])\s*\(/;
-const shell =
-  /^(?:bash|shell|terminal|exec|functions\.exec|mcp__functions__exec|codex\.exec|exec_command|functions\.exec_command|Bash|powershell|PowerShell)$/;
-const mutation =
-  /(?:^|[;&|]\s*|["'`]\s*|:\s*["'`]\s*)(?:(?:env(?:\s+(?:--?[^\s"'`]+|[A-Za-z_][A-Za-z0-9_]*=[^\s"'`]+))*|command|sudo(?:\s+--?[^\s"'`]+)*|nice(?:\s+--?[^\s"'`]+)*|nohup|busybox)\s+)*(?:(?:\/[^\s/"'`]+)*\/)?(?:apply_patch|patch|tee|truncate|touch|rm|mv|cp|install|dd|ed|awk|mkdir|rmdir|chmod|chown|python\d*|node|ruby|perl|php|sed|ast-grep)(?=\s|["'`]|$)|(?:^|[;&|]\s*|["'`]\s*|:\s*["'`]\s*)(?:find\b[^\n]*\s-delete\b|xargs\s+(?:[^\n]*\s)?rm\b|git(?:\s+(?:-[A-Za-z]\s+[^\s"'`]+|--?[^\s"'`]+))*\s+(?:apply|checkout|restore|reset|clean)|dprint\s+fmt|bun\s+(?:-e|--eval)|(?:Set|Add)-Content|Out-File|Remove-Item|Move-Item|Copy-Item|New-Item)(?=\s|["'`]|$)|(?:^|[^<\d>])>{1,2}(?!=)|<<[-~]?\s*\w/i;
+import { embeddedShellMutates, shellMutates } from "./shell-policy";
 
-const nestedInterpreter =
-  /(?:bash|sh|zsh|dash|ksh|fish|pwsh|powershell|node|python\d*|ruby|perl|php)(?:["']|\s)+(?:--?[A-Za-z][A-Za-z0-9-]*(?:=[^\s"']+)?(?:["']|\s)+)*(?:-c|--command|-Command|-e|--eval)(?=\s|["']|$)/i;
-const shellRename =
-  /(?:^|[;&|]\s*)(?:(?:env(?:\s+(?:\S+=\S+|--?\S+))*|sudo(?:\s+\S+)*|command|nice|nohup|busybox)\s+)*(?:(?:xargs(?:\s+\S+)*\s+(?:mv|rename))|(?:(?:(?:\/\S+\/)?git(?:\s+(?:(?:-C|-c)\s+\S+|--[A-Za-z-]+(?:=\S+|\s+\S+)?))*\s+mv)|(?:(?:\/\S+)*\/)?(?:mv|rename)))(?=\s|$)/i;
+const directTools = new Set([
+  "apply_patch",
+  "edit",
+  "editfiles",
+  "create",
+  "createfile",
+  "write",
+  "writefile",
+  "replace",
+  "rename",
+  "renamefile",
+  "move",
+  "movefile",
+  "filerename",
+  "str_replace",
+  "multiedit",
+  "notebookedit",
+]);
+function compactCallSyntax(source: string) {
+  let value = "";
+  let quote = "";
+  let escaped = false;
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index];
+    if (quote) {
+      value += character.toLowerCase();
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      value += character;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "/") {
+      while (index < source.length && source[index] !== "\n") index++;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (
+        index < source.length &&
+        !(source[index] === "*" && source[index + 1] === "/")
+      )
+        index++;
+      index++;
+      continue;
+    }
+    if (!/\s/.test(character)) value += character.toLowerCase();
+  }
+  return value.replaceAll("tools?.", "tools.");
+}
+
+function nestedDirect(source: string) {
+  const value = compactCallSyntax(source);
+  return [...directTools].some(
+    (tool) =>
+      value.includes(`tools.${tool}(`) ||
+      value.includes(`tools.${tool}?.(`) ||
+      value.includes(`tools["${tool}"](`) ||
+      value.includes(`tools["${tool}"]?.(`) ||
+      value.includes(`tools['${tool}'](`) ||
+      value.includes(`tools['${tool}']?.(`),
+  );
+}
+const shellTools = new Set([
+  "bash",
+  "shell",
+  "terminal",
+  "exec_command",
+  "functions.exec_command",
+  "powershell",
+  "pwsh",
+]);
+
+const executorTools = new Set([
+  "exec",
+  "functions.exec",
+  "mcp__functions__exec",
+  "codex.exec",
+]);
+
+function nestedShellCall(source: string) {
+  const value = compactCallSyntax(source);
+  return [
+    "exec_command",
+    "bash",
+    "shell",
+    "terminal",
+    "powershell",
+    "pwsh",
+  ].some(
+    (tool) =>
+      value.includes(`tools.${tool}(`) ||
+      value.includes(`tools.${tool}?.(`) ||
+      value.includes(`tools["${tool}"](`) ||
+      value.includes(`tools["${tool}"]?.(`) ||
+      value.includes(`tools['${tool}'](`) ||
+      value.includes(`tools['${tool}']?.(`),
+  );
+}
+
 export interface HookDecision {
   denied: boolean;
   reason?: string;
 }
 export function evaluateHook(event: Record<string, unknown>): HookDecision {
   const name = String(event.tool_name ?? event.toolName ?? event.name ?? "");
-  if (direct.test(name))
+  const normalizedName = name.toLowerCase();
+  const shortName = normalizedName.split(".").at(-1) ?? normalizedName;
+  if (directTools.has(normalizedName) || directTools.has(shortName))
     return {
       denied: true,
-      reason: "Direct file editing is blocked. Use ast-mcp.",
+      reason: "Route direct file editing through ast-mcp.",
     };
-  if (!shell.test(name)) return { denied: false };
   const raw =
     event.tool_input ??
     event.toolInput ??
@@ -42,12 +136,26 @@ export function evaluateHook(event: Record<string, unknown>): HookDecision {
             input.code ??
             "",
         );
-  return command &&
-    (nestedDirect.test(command) ||
-      mutation.test(command) ||
-      shellRename.test(command) ||
-      nestedInterpreter.test(command))
-    ? { denied: true, reason: "Direct file mutation is blocked. Use ast-mcp." }
+  if (executorTools.has(normalizedName)) {
+    if (
+      command &&
+      (nestedDirect(command) ||
+        (nestedShellCall(command) && embeddedShellMutates(command)))
+    )
+      return {
+        denied: true,
+        reason: "Route manual file mutation through ast-mcp.",
+      };
+    if (typeof raw === "string") return { denied: false };
+  }
+  if (
+    !executorTools.has(normalizedName) &&
+    !shellTools.has(normalizedName) &&
+    !shellTools.has(shortName)
+  )
+    return { denied: false };
+  return command && shellMutates(command)
+    ? { denied: true, reason: "Route manual file mutation through ast-mcp." }
     : { denied: false };
 }
 export function decisionPayload(

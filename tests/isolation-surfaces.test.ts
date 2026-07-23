@@ -9,26 +9,31 @@ import { install, update } from "../src/installer";
 const shell = (command: string) =>
   evaluateHook({ tool_input: { command }, tool_name: "bash" }).denied;
 
-test("hook blocks isolated-environment mutation paths without blocking validation", () => {
+test("hook routes manual mutation without policing host-governed execution", () => {
   for (const command of [
     "apply_patch < change.patch",
-    "cat source > target",
-    "echo text >> file",
-    "awk '{ print }' file",
     'python -c \'open("x", "w")\'',
-    "git restore file",
-    "dprint fmt src",
+    "mv source destination",
     "Set-Content -Path file -Value value",
   ])
     expect(shell(command)).toBeTrue();
-  expect(shell("bun test --bail")).toBeFalse();
-  expect(shell("rg symbol src")).toBeFalse();
+
+  for (const command of [
+    "cat source > target",
+    "echo text >> file",
+    "awk '{ print }' file",
+    "git restore file",
+    "dprint fmt src",
+    "bun test --bail",
+    "rg symbol src",
+  ])
+    expect(shell(command)).toBeFalse();
   expect(
     evaluateHook({
       toolArgs: { command: "cat source > target" },
       toolName: "bash",
     }).denied,
-  ).toBeTrue();
+  ).toBeFalse();
 });
 
 test("installer copies only the unified skill and its checker diagnoses the result", async () => {

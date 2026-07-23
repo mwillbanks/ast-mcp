@@ -1,4 +1,5 @@
 import path from "node:path";
+import { embeddedShellMutates, shellMutates } from "./shell-policy";
 
 export type EvalCase = {
   id: number;
@@ -206,6 +207,10 @@ function renameResultsCoverInputs(
   }
 }
 
+function shellMutationSource(source: string) {
+  return embeddedShellMutates(source) || shellMutates(source);
+}
+
 function assertionSatisfied(
   assertion: string,
   evaluation: EvalCase,
@@ -256,21 +261,14 @@ function assertionSatisfied(
   )
     return (
       evaluation.forbidden_tools.every((tool) => !tools.has(tool)) &&
-      !(
-        normalized.includes("shell") &&
-        /(?:^|[;&|]\s*)(?:(?:env(?:\s+(?:\S+=\S+|--?\S+))*|sudo(?:\s+\S+)*|command|nice|nohup|busybox)\s+)*(?:(?:xargs(?:\s+\S+)*\s+(?:mv|rename))|(?:(?:(?:\/\S+\/)?git(?:\s+(?:(?:-C|-c)\s+\S+|--[A-Za-z-]+(?:=\S+|\s+\S+)?))*\s+mv)|(?:(?:\/\S+)*\/)?(?:mv|rename)\b))/i.test(
-          source,
-        )
-      )
+      !(normalized.includes("shell") && shellMutationSource(source))
     );
   if (
     normalized.includes("direct filesystem") ||
     normalized.includes("direct editor") ||
     normalized.includes("shell mutation")
   )
-    return !/(?:writeFile|apply_patch|sed\s+-i|tee\s|>\s*["']?[^=])/i.test(
-      source,
-    );
+    return !shellMutationSource(source);
   if (normalized.includes("bounded") && normalized.includes("lines"))
     return calls("file_read").some((call) =>
       /lines\s*:\s*\[\s*\d+\s*,\s*\d+\s*\]/.test(call.input),

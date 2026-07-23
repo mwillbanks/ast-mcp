@@ -12,6 +12,7 @@
     "@modelcontextprotocol/server": "^2.0.0-beta.5",
     "diff-match-patch-ts": "^2.0.0",
     "dprint": "0.55.2",
+    "unbash": "^4.0.3",
     "zod": "^4.4.3"
   },
   "description": "Zero-trust MCP file writes, AST edits, ast-bro intelligence, hooks, and agent skills",

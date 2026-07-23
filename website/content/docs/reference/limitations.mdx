@@ -11,7 +11,7 @@ icon: TriangleAlert
 - Parse health comes from `map.error_count`, not from an empty structural search.
 - Markdown is structurally inspectable through `map` and `show`, but edits use the guarded Aider route.
 - `file_read` is intentionally unavailable for AST-capable files.
-- Blocking hooks prevent known manual escape hatches; arbitrary repository scripts remain a best-effort monitored surface.
+- Routing hooks are a best-effort agent nudge, not a security boundary. They reject known manual edit paths but leave Git operations, output redirection, repository scripts, and arbitrary execution to the host sandbox.
 - HTTP session IDs are correlation identifiers, not authentication.
 - Multiple configured roots deliberately enlarge the connected agent's filesystem boundary.
 - A formatter rejection, capped preview, stale hash, ambiguous match, or lost MCP connection stops the write rather than choosing a weaker mutation path.

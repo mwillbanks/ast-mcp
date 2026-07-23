@@ -55,6 +55,6 @@ Yarn 2+ should use a project-local installation because it does not provide Yarn
 
 The pinned npm package currently provides a precompiled ast-bro binary only for macOS Apple Silicon. The installer checks the binary before changing host files and prints platform-specific Cargo and `AST_BRO_BINARY` commands when manual setup is required. See the [installation guide](/docs/getting-started/installation) for Linux, Windows, and macOS Intel instructions.
 
-## Blocking hooks
+## Routing hooks
 
-The installed pre-tool hook rejects direct editors, patch utilities, shell and interpreter write escape hatches, mutating formatter bypasses, and destructive Git worktree commands. A denial points the agent back to the relevant AST intelligence or guarded file tool.
+The installed pre-tool hook is a best-effort routing aid. It rejects direct editor tool calls and known manual write, patch, delete, and rename escape hatches so the agent is nudged toward AST intelligence and guarded file tools. It deliberately does not police Git operations, output redirection, repository scripts, or arbitrary process execution; the host agent framework and its sandbox remain responsible for execution security.
