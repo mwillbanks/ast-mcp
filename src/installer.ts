@@ -231,7 +231,7 @@ export interface InstallOptions {
   targets: Target[];
 }
 
-export class InstallerUsageError extends Error {
+class InstallerUsageError extends Error {
   override name = "InstallerUsageError";
 }
 
