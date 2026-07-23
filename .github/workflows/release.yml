@@ -44,7 +44,7 @@ jobs:
       - run: bun ci
       - name: Restore ast-bro binary
         id: ast-bro-cache
-        uses: actions/cache@v6.1.0
+        uses: actions/cache/restore@v6.1.0
         with:
           path: ~/.cache/ast-bro/3.0.0
           key: ast-bro-v1-3.0.0-${{ runner.os }}-${{ runner.arch }}
@@ -52,6 +52,12 @@ jobs:
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
         run: |
           cargo install ast-bro --version 3.0.0 --locked --root "$HOME/.cache/ast-bro/3.0.0"
+      - name: Save ast-bro binary
+        if: steps.ast-bro-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ~/.cache/ast-bro/3.0.0
+          key: ast-bro-v1-3.0.0-${{ runner.os }}-${{ runner.arch }}
       - name: Configure ast-bro
         run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/3.0.0/bin/ast-bro" >> "$GITHUB_ENV"
       - run: bun run check
