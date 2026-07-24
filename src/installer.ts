@@ -9,8 +9,9 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { resolveConfig } from "./config";
 import { isManagedHook } from "./managed-hook";
-import { assertAstBroAvailable } from "./runtime/dependencies";
+import { AST_BRO_BINARY, assertAstBroAvailable } from "./runtime/dependencies";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
@@ -31,11 +32,27 @@ async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+async function installerAstBroBinary(options: InstallOptions) {
+  const root = path.resolve(options.root);
+  const env =
+    options.scope === "local"
+      ? { ...process.env, AST_MCP_PROJECT_ROOT: root }
+      : process.env;
+  const config = await resolveConfig({
+    cwd: root,
+    env,
+    home: options.home,
+  });
+  return (
+    options.astBroBinary ?? config.dependencies.astBroBinary ?? AST_BRO_BINARY
+  );
+}
+
 function definition(root?: string) {
   return {
     args: [cliEntry, "mcp"],
     command: "bun",
-    env: root ? { AST_MCP_ALLOW_EXTERNAL_ROOTS: "1", AST_MCP_ROOTS: root } : {},
+    env: root ? { AST_MCP_PROJECT_ROOT: root } : {},
   };
 }
 async function codexMcp(file: string, root?: string) {
@@ -44,7 +61,7 @@ async function codexMcp(file: string, root?: string) {
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
   const environment = root
-    ? `env = { AST_MCP_ALLOW_EXTERNAL_ROOTS = "1", AST_MCP_ROOTS = ${JSON.stringify(root)} }\n`
+    ? `env = { AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)} }\n`
     : "";
   const block = `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = [${JSON.stringify(cliEntry)}, "mcp"]\n${environment}# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
@@ -305,7 +322,7 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>) {
 }
 
 async function reconcile(options: InstallOptions) {
-  assertAstBroAvailable(options.astBroBinary);
+  assertAstBroAvailable(await installerAstBroBinary(options));
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";

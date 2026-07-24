@@ -22,6 +22,7 @@ import { formatContent } from "../runtime/format";
 import { sha256 } from "../runtime/hash";
 import { withFileLock } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
+import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
 
 import { applyAiderBlock } from "./aider";
 import { detectAstLanguage } from "./languages";
@@ -38,7 +39,7 @@ export interface AiderBlock {
 export interface PatchRequest {
   aiderBlock?: AiderBlock;
   astRule?: AstRule;
-  expectedSha256: string;
+  expectedSha256?: string;
   filePath: string;
   patchStrategy: "ast" | "aider_block";
   preview?: boolean;
@@ -48,7 +49,7 @@ export interface PatchBatchRequest {
   aiderBlocks?: AiderBlock[];
   astRules?: AstRule[];
   chattr?: FileChattr;
-  expectedSha256: string;
+  expectedSha256?: string;
   patchStrategy: "ast" | "aider_block";
   preview?: boolean;
 }
@@ -169,13 +170,8 @@ async function applyPatchBatch(
   return withFileLock(filePath, async () => {
     const original = await readFile(filePath, "utf8");
     const actual = sha256(original);
-    if (actual !== request.expectedSha256)
-      throw new Error(
-        "Stale file context: expected " +
-          request.expectedSha256 +
-          ", found " +
-          actual,
-      );
+    await requireExpectedHash(request.expectedSha256, "file_patch");
+    verifyExpectedHash(request.expectedSha256, actual);
 
     const astRules = request.astRules ?? [];
     const aiderBlocks = request.aiderBlocks ?? [];
@@ -385,16 +381,9 @@ export async function writeFileSafely(args: {
     const existing = await readFile(filePath, "utf8").catch(() => undefined);
     let createdDirectories: string[];
     if (existing !== undefined) {
-      if (!args.expectedSha256)
-        throw new Error("Overwriting an existing file requires expectedSha256");
+      await requireExpectedHash(args.expectedSha256, "file_write overwrite");
       const actual = sha256(existing);
-      if (actual !== args.expectedSha256)
-        throw new Error(
-          "Stale file context: expected " +
-            args.expectedSha256 +
-            ", found " +
-            actual,
-        );
+      verifyExpectedHash(args.expectedSha256, actual);
       const language = detectAstLanguage(filePath);
       if (await astRewritable(filePath, language))
         throw new Error(

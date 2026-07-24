@@ -1,12 +1,9 @@
 import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
+import { currentConfig } from "../config";
 
-function configuredRoots(): string[] {
-  return (
-    process.env.AST_MCP_ROOTS?.split(path.delimiter).filter(Boolean) ?? [
-      process.cwd(),
-    ]
-  ).map((item) => path.resolve(item));
+async function configuredRoots(): Promise<string[]> {
+  return (await currentConfig()).workspace.roots;
 }
 function within(root: string, target: string): boolean {
   const relative = path.relative(root, target);
@@ -17,16 +14,23 @@ function within(root: string, target: string): boolean {
 }
 
 async function allowedRoots(): Promise<string[]> {
-  const cwd = await realpath(process.cwd()).catch(() => process.cwd());
+  const config = await currentConfig();
   const roots = await Promise.all(
-    configuredRoots().map(async (root) => realpath(root).catch(() => root)),
+    (await configuredRoots()).map(async (root) =>
+      realpath(root).catch(() => root),
+    ),
+  );
+  const trustedRoots = await Promise.all(
+    config.trustedRoots.map(async (root) => realpath(root).catch(() => root)),
   );
   if (
-    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS !== "1" &&
-    roots.some((root) => !within(cwd, root))
+    !config.safety.allowExternalRoots &&
+    roots.some(
+      (root) => !trustedRoots.some((trustedRoot) => within(trustedRoot, root)),
+    )
   )
     throw new Error(
-      "AST_MCP_ROOTS contains a root outside the server working directory; set AST_MCP_ALLOW_EXTERNAL_ROOTS=1 to opt in",
+      "Configured workspace roots contain a root outside the trusted project boundary; set safety.allow_external_roots=true or AST_MCP_ALLOW_EXTERNAL_ROOTS=1 to opt in",
     );
   return roots;
 }
@@ -43,6 +47,7 @@ export async function rootForPath(filePath: string): Promise<string> {
   return root;
 }
 export async function resolveWritablePath(filePath: string): Promise<string> {
+  const config = await currentConfig();
   const roots = await allowedRoots();
   const absolute = path.isAbsolute(filePath)
     ? filePath
@@ -63,11 +68,20 @@ export async function resolveWritablePath(filePath: string): Promise<string> {
   }
   const resolved = path.join(existing, ...missing, path.basename(absolute));
   if (!roots.some((root) => within(root, resolved)))
-    throw new Error(`Path is outside AST_MCP_ROOTS: ${filePath}`);
-  if ((await lstat(resolved).catch(() => undefined))?.isSymbolicLink())
-    throw new Error(`Symbolic-link targets are not writable: ${filePath}`);
-  return resolved;
+    throw new Error(
+      `Path is outside AST_MCP_ROOTS/configured workspace roots: ${filePath}`,
+    );
+  const metadata = await lstat(resolved).catch(() => undefined);
+  if (!metadata?.isSymbolicLink()) return resolved;
+  if (!config.safety.followSymlinks)
+    throw new Error(`Symbolic-link targets are not permitted: ${filePath}`);
+  const target = await realpath(resolved);
+  if (!roots.some((root) => within(root, target)))
+    throw new Error(
+      `Symbolic-link target is outside configured workspace roots: ${filePath}`,
+    );
+  return target;
 }
-export function rootsForDisplay(): string[] {
+export async function rootsForDisplay(): Promise<string[]> {
   return configuredRoots();
 }

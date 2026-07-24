@@ -10,7 +10,7 @@ Stdio is the trusted default. Streamable HTTP is available when a host needs an 
 bun run start:http
 ```
 
-The server listens on `127.0.0.1` by default. Set `AST_MCP_HTTP_HOST=0.0.0.0` only when deliberate network exposure is required.
+The server reads `http.host`, `http.port`, `http.session_timeout_ms`, and `http.session_sweep_interval_ms` from layered configuration before it starts listening. The defaults remain `127.0.0.1:3000`, a 30-minute idle timeout, and a one-minute sweep. Existing HTTP environment variables and `PORT` override TOML for compatibility. Bind to `0.0.0.0` only when deliberate network exposure is required.
 
 ## Sessions and responses
 

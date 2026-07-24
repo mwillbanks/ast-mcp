@@ -6,9 +6,9 @@ The server distinguishes AST inspection from structural rewrite support. AST-cap
 
 1. Inspect AST-capable content with intelligence tools. Inspect unsupported content with batched, bounded `file_read` slices.
 2. Preview every ordered structural rule with ast-bro `run`; for the full guarded and formatted dry run, use the same keyed `file_patch` entry with `preview: true`, then obtain one fresh `file_hash` per keyed path immediately before mutation.
-3. Use one path-keyed `file_patch` object for one or more files. Each value has one `expectedSha256`, one `patchStrategy`, ordered `astRules` or `aiderBlocks` arrays, and optional `preview`.
-4. Use one path-keyed `file_write` object for new files or existing non-structurally-rewritable files; existing replacements still require their own fresh `expectedSha256`. Use the shared `chattr` object for chmod/chown metadata. Missing parents are created only after a guarded write returns `ENOENT`, followed by path revalidation.
-5. Use `file_rename` with a fresh byte hash for root-bounded moves; preflight every source and destination, reject duplicate destinations, lock all endpoints, use no-replace moves, and roll back prior moves when a later move fails. The contract is recoverable on ordinary failures, not crash-atomic. Use `file_chattr` for metadata-only changes. Use `file_delete` with a fresh hash for deletion; it preflights all targets and AST import references before any deletion, rejects referenced source unless `forceReferences` is explicit, then removes empty ancestor directories after releasing locks.
+3. Use one path-keyed `file_patch` object for one or more files. Each value has one `patchStrategy`, ordered `astRules` or `aiderBlocks` arrays, optional `preview`, and normally one fresh `expectedSha256`.
+4. Use one path-keyed `file_write` object for new files or existing non-structurally-rewritable files; existing replacements normally receive their own fresh `expectedSha256`. Use the shared `chattr` object for chmod/chown metadata. Missing parents are created only after a guarded write returns `ENOENT`, followed by path revalidation.
+5. Use `file_rename` with a fresh byte hash for root-bounded moves; preflight every source and destination, reject duplicate destinations, lock all endpoints, use no-replace moves, and roll back prior moves when a later move fails. The contract is recoverable on ordinary failures, not crash-atomic. Use `file_chattr` for metadata-only changes. Use `file_delete` with a fresh hash for deletion; it preflights all targets and AST import references before any deletion, rejects referenced source unless `forceReferences` is explicit, then removes empty ancestor directories after releasing locks. `safety.require_hash = false` makes hashes optional for patch, existing write, rename, and delete, but any supplied hash remains enforced.
 6. Operations for one path are serialized under one lock and one atomic commit. A preview returns a bounded diff and leaves that path unchanged; a failed rule also leaves it unchanged.
 7. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; normal agent mutations belong to `file_patch`.
 8. New files use `file_write`.
@@ -35,5 +35,5 @@ The native TypeScript matcher attempts exact, whitespace-normalized, relative-in
 - `matched N nodes; expected M`: inspect and narrow the rule.
 - `first match per file`: reduce file_patch to one match or use a bounded direct run across files.
 - capped preview or read: narrow paths, glob, pattern, line ranges, or byte caps.
-- dprint preflight failure: the formatter does not support the target under the active configuration; no direct run write occurs.
-- path or symlink rejection: use a real path under `AST_MCP_ROOTS`.
+- formatter preflight failure: the selected external formatter or dprint fallback does not support the target; no write occurs. Formatting is skipped only when `[formatting].enabled = false`.
+- path or symlink rejection: use a real path under an effective workspace root. Final symlinks are followed only when `safety.follow_symlinks = true`, and their resolved targets must remain root-bounded.

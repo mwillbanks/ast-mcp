@@ -15,6 +15,7 @@ import { replaceFileAtomically } from "../runtime/atomic";
 import { assertFormattable, formatFileAtomically } from "../runtime/format";
 import { withFileLocks } from "../runtime/locks";
 import { primaryRoot, resolveWritablePath } from "../runtime/paths";
+import { type ConfiguredExecution, localExecution } from "./configured";
 
 function upstreamSchema(
   jsonSchema: Record<string, unknown>,
@@ -135,7 +136,10 @@ async function callAstBroWithFormatting(
   });
 }
 
-export default function registerAstBroTools(server: McpServer) {
+export default function registerAstBroTools(
+  server: McpServer,
+  execute: ConfiguredExecution = localExecution,
+) {
   for (const toolName of AST_BRO_TOOLS) {
     const definition = metadata[toolName];
     server.registerTool(
@@ -150,11 +154,13 @@ export default function registerAstBroTools(server: McpServer) {
       },
       async (args) => {
         try {
-          const root = await primaryRoot();
-          await validateAstBroPaths(args, root);
-          return toolName === "run"
-            ? await callAstBroWithFormatting(args, root)
-            : await callAstBro(toolName, args, root);
+          return await execute(args, async () => {
+            const root = await primaryRoot();
+            await validateAstBroPaths(args, root);
+            return toolName === "run"
+              ? await callAstBroWithFormatting(args, root)
+              : await callAstBro(toolName, args, root);
+          });
         } catch (error) {
           return {
             content: [

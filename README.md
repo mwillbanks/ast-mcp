@@ -105,26 +105,49 @@ bun run build
 bun run bin/ast-mcp.ts install --scope local --target all --root "$PWD"
 ```
 
-## MCP configuration
+## Configuration
 
-A minimal stdio configuration is:
+Create `ast-mcp.toml` in the project root to configure a local or globally installed server without rewriting host MCP definitions:
 
-```json
-{
-  "mcpServers": {
-    "ast-mcp": {
-      "command": "bun",
-      "args": [
-        "/absolute/path/to/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
-        "mcp"
-      ],
-      "env": { "AST_MCP_ROOTS": "/absolute/project/root" }
-    }
-  }
-}
+```toml
+version = 1
+
+[workspace]
+roots = ["."]
+
+[safety]
+allow_external_roots = false
+follow_symlinks = false
+require_hash = true
+
+[safety.hook]
+enabled = true
+
+[formatting]
+enabled = true
+dprint_config = "./dprint.json"
+
+[[formatting.formatters]]
+extensions = [".rs"]
+command = "rustfmt"
+args = ["--emit", "stdout"]
+
+[http]
+host = "127.0.0.1"
+port = 3000
 ```
 
-The server also supports Streamable HTTP at `/mcp` with `bun run start:http`. It binds to `127.0.0.1` by default; set `AST_MCP_HTTP_HOST=0.0.0.0` only when deliberate network exposure is required. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
+Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
+
+Formatting uses dprint by default, can be disabled, or can route the first matching extension/glob to a shell-free external formatter with dprint fallback. Safety remains strict by default; explicit settings can allow final symlinks inside configured roots, make mutation hashes optional, or tune the host hook allow/block policy.
+
+Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See the [configuration reference](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/) for the full schema, discovery rules, cache behavior, formatter contract, safety semantics, and migration guidance.
+
+## MCP configuration
+
+A minimal global stdio definition needs only the stable executable and `mcp` subcommand. Local installer definitions additionally carry `AST_MCP_PROJECT_ROOT` as a discovery selector; it does not override configuration values.
+
+The server also supports Streamable HTTP at `/mcp` with `bun run start:http`. HTTP binding, port, and session durations use the same layered configuration, with environment variables retained for compatibility. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
 
 `SIGTERM`, `SIGINT`, and `SIGHUP` all initiate graceful shutdown. The stdio process closes its MCP server; the HTTP process stops accepting requests, closes every active MCP session, then closes remaining connections. Successful cleanup exits 0, cleanup failure exits 1, and a second signal forces exit 1 while cleanup is pending. `SIGHUP` intentionally exits after cleanup so the host supervisor can restart ast-mcp from refreshed code and configuration.
 

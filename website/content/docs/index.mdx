@@ -34,7 +34,7 @@ request
        └─ atomically replace ─► verify
 ```
 
-Paths are accepted only beneath `AST_MCP_ROOTS`. Relative paths resolve from the first configured root, external configured roots require an explicit opt-in, and symbolic-link targets are rejected.
+Paths are accepted only beneath the effective layered `workspace.roots`. MCP client roots select the project for global installations, relative paths resolve from the first effective root, external configured roots require an explicit safety opt-in, and symbolic-link targets are rejected.
 
 ## Start here
 

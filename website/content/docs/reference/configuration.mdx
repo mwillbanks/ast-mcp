@@ -1,35 +1,107 @@
 ---
 title: Configuration
-description: Environment variables and minimal server definitions.
+description: Layered project, global, environment, and default configuration.
 icon: Settings2
 ---
 
-## Environment variables
+## Files and precedence
 
-| Variable                        | Default                   | Purpose                                                                   |
-| ------------------------------- | ------------------------- | ------------------------------------------------------------------------- |
-| `AST_MCP_ROOTS`                 | process working directory | Platform-delimited allowed repository roots                               |
-| `AST_MCP_ALLOW_EXTERNAL_ROOTS`  | unset                     | Set to `1` to allow configured roots outside the server working directory |
-| `AST_MCP_HTTP_HOST`             | `127.0.0.1`               | Bind address for Streamable HTTP                                          |
-| HTTP port and timeout variables | runtime defaults          | Configure listener and idle-session timing                                |
+The effective value of each field is selected in this order:
 
-## Minimal stdio configuration
+1. environment override
+2. project `ast-mcp.toml`
+3. global `ast-mcp.toml`
+4. built-in default
 
-```json
-{
-  "mcpServers": {
-    "ast-mcp": {
-      "command": "bun",
-      "args": [
-        "/absolute/project/root/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
-        "mcp"
-      ],
-      "env": {
-        "AST_MCP_ROOTS": "/absolute/project/root"
-      }
-    }
-  }
-}
+The project file is the nearest `ast-mcp.toml` from the selected workspace root up to its Git boundary. The global file is `${XDG_CONFIG_HOME:-~/.config}/ast-mcp/ast-mcp.toml` on POSIX and `%APPDATA%\ast-mcp\ast-mcp.toml` on Windows. Project selection prefers roots advertised by the MCP client, then `AST_MCP_PROJECT_ROOT`, legacy `AST_MCP_ROOTS`, and finally the process working directory.
+
+Objects merge by field and arrays replace the lower-precedence array. Relative paths are resolved from the TOML file that declares them. Unknown sections or keys, unsupported versions, malformed TOML, and invalid values fail with the source path and dotted key instead of being ignored.
+
+## Schema
+
+Every key is optional. Omitting `version` means version 1. The following example shows the complete current schema:
+
+```toml
+version = 1
+
+[workspace]
+roots = [".", "../shared"]
+
+[safety]
+allow_external_roots = false
+follow_symlinks = false
+require_hash = true
+
+[safety.hook]
+enabled = true
+allow_tools = []
+block_tools = []
+
+[formatting]
+enabled = true
+dprint_config = "./dprint.json"
+
+[[formatting.formatters]]
+extensions = [".rs"]
+globs = ["generated/**/*.txt"]
+command = "./scripts/format"
+args = ["--stdin-file", "{file}", "--root", "{project_root}"]
+timeout_ms = 30000
+
+[dependencies]
+ast_bro_binary = "/absolute/path/to/ast-bro"
+dprint_binary = "/absolute/path/to/dprint"
+
+[http]
+host = "127.0.0.1"
+port = 3000
+session_timeout_ms = 1800000
+session_sweep_interval_ms = 60000
 ```
 
-When the package checkout and repository root differ, also set `AST_MCP_ALLOW_EXTERNAL_ROOTS` to `1`. The installer generates the correct host-specific shape automatically.
+Advertised MCP roots and `AST_MCP_PROJECT_ROOT` are trusted project boundaries. Additional configured roots outside that boundary require `safety.allow_external_roots = true`. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
+
+## Formatting
+
+Formatting is enabled by default. `dprint_config` defaults to the package configuration, accepts absolute paths, and resolves relative paths from the TOML file that declares it. Enabled configurations are checked for existence, regular-file type, and valid JSONC during resolution. Set `enabled = false` to skip dprint, external formatters, and atomic formatter rewrites entirely.
+
+Each `[[formatting.formatters]]` entry must declare `command` and at least one `extensions` or `globs` selector. Extensions are case-insensitive; globs match project-relative paths with `/` separators. Entries are evaluated in declaration order and the first match wins. An unmatched file falls back to dprint.
+
+External formatters receive file content on stdin and must return formatted content on stdout. They execute directly without a shell, from the project root. Bare command names use normal executable lookup; relative commands containing a path separator resolve from the declaring TOML file. Arguments may include `{file}` for the absolute target path and `{project_root}` for the absolute selected project. A nonzero exit, spawn error, or timeout fails the write without committing. `timeout_ms` defaults to 30000 and may not exceed 120000.
+
+## Safety
+
+Secure defaults preserve the existing boundary: external roots are rejected, symbolic links are rejected, mutation hashes are required, and the hook remains enabled. `follow_symlinks = true` permits a final symlink only when its resolved target remains inside an effective workspace root. `require_hash = false` makes `expectedSha256` optional for `file_patch`, existing-file `file_write`, `file_rename`, and `file_delete`; a supplied hash is always verified.
+
+Under `[safety.hook]`, `enabled = false` disables hook blocking. `block_tools` explicitly denies matching full or short tool names before normal rules, while `allow_tools` explicitly bypasses normal hook rules. A tool cannot appear in both lists. These settings affect the host hook only; they do not weaken MCP root, symlink, or stale-hash validation.
+
+## Environment compatibility
+
+| Variable                            | Configuration field              |
+| ----------------------------------- | -------------------------------- |
+| `AST_MCP_ROOTS`                     | `workspace.roots`                |
+| `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | `safety.allow_external_roots`    |
+| `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`       |
+| `AST_BRO_BINARY`                    | `dependencies.ast_bro_binary`    |
+| `DPRINT_BINARY`                     | `dependencies.dprint_binary`     |
+| `AST_MCP_HTTP_HOST`                 | `http.host`                      |
+| `PORT`                              | `http.port`                      |
+| `AST_MCP_SESSION_TIMEOUT_MS`        | `http.session_timeout_ms`        |
+| `AST_MCP_SESSION_SWEEP_INTERVAL_MS` | `http.session_sweep_interval_ms` |
+
+Boolean environment values accept `1`, `0`, `true`, or `false`. Invalid explicit overrides are errors.
+
+## Inspect and refresh
+
+```bash
+ast-mcp config validate --root "$PWD"
+ast-mcp config show --root "$PWD"
+```
+
+Both commands emit stable JSON. `show` includes absolute resolved values, source files, environment names, and dotted-key provenance. The runtime caches parsed and resolved layers per project, stats the source files on access, and reloads when a file is created, changed, or deleted. Invalid updated configuration fails closed rather than continuing with stale values.
+
+Local installer definitions use `AST_MCP_PROJECT_ROOT` only to select the project. Global definitions remain project-neutral and use client-advertised roots automatically. Older definitions using `AST_MCP_ROOTS` remain compatible and are migrated by `ast-mcp update`.
+
+## Extension policy
+
+The strict top-level namespaces separate workspace selection, safety, formatting, dependency binaries, and transport settings so later hook, formatter, safety, and plugin features can extend their owning section without weakening validation. Keys are added only when runtime behavior exists; the loader does not accept misleading no-op placeholders.

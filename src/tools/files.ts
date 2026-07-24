@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { patchFiles, writeFilesSafely } from "../patch/engine";
-
 import {
   FILE_READ_MAX_BATCH,
   FILE_READ_MAX_BYTES,
@@ -9,6 +8,7 @@ import {
   hashFilesSafely,
   readFilesSafely,
 } from "../runtime/file-read";
+import { type ConfiguredExecution, localExecution } from "./configured";
 
 const failure = (error: unknown) => ({
   content: [
@@ -19,7 +19,10 @@ const failure = (error: unknown) => ({
   ],
   isError: true,
 });
-export default function registerFileTools(server: McpServer) {
+export default function registerFileTools(
+  server: McpServer,
+  execute: ConfiguredExecution = localExecution,
+) {
   const lineRange = z
     .tuple([z.number().int().nonnegative(), z.number().int().positive()])
     .describe("Zero-based, end-exclusive [start, end] line range");
@@ -75,7 +78,9 @@ export default function registerFileTools(server: McpServer) {
         return {
           content: [
             {
-              text: JSON.stringify({ files: await readFilesSafely(files) }),
+              text: JSON.stringify({
+                files: await execute({ files }, () => readFilesSafely(files)),
+              }),
               type: "text",
             },
           ],
@@ -101,7 +106,9 @@ export default function registerFileTools(server: McpServer) {
           content: [
             {
               text: JSON.stringify({
-                files: await hashFilesSafely(filePaths),
+                files: await execute({ filePaths }, () =>
+                  hashFilesSafely(filePaths),
+                ),
               }),
               type: "text",
             },
@@ -117,7 +124,7 @@ export default function registerFileTools(server: McpServer) {
     "file_write",
     {
       description:
-        "Creates or replaces multiple files in one keyed batch. Each key is a file path and each value contains content plus an optional fresh expectedSha256 for existing non-structurally-rewritable files.",
+        "Creates or replaces multiple files in one keyed batch. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
       inputSchema: boundedBatch(
         writeTarget,
         "file_write requires between 1 and 50 files",
@@ -129,7 +136,9 @@ export default function registerFileTools(server: McpServer) {
         return {
           content: [
             {
-              text: JSON.stringify(await writeFilesSafely(args)),
+              text: JSON.stringify(
+                await execute(args, () => writeFilesSafely(args)),
+              ),
               type: "text",
             },
           ],
@@ -144,13 +153,13 @@ export default function registerFileTools(server: McpServer) {
     "file_patch",
     {
       description:
-        "Patches multiple files in one keyed batch. Each key is a file path and each value contains one expectedSha256, a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. Preview runs the complete guarded operation and returns a bounded diff without committing.",
+        "Patches multiple files in one keyed batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview runs the complete formatted operation without committing.",
       inputSchema: boundedBatch(
         z.object({
           aiderBlocks: z.array(aiderBlock).max(FILE_READ_MAX_BATCH).optional(),
           astRules: z.array(astRule).max(FILE_READ_MAX_BATCH).optional(),
           chattr: chattr.optional(),
-          expectedSha256: z.string().length(64),
+          expectedSha256: z.string().length(64).optional(),
           patchStrategy: z.enum(["ast", "aider_block"]),
           preview: z.boolean().optional(),
         }),
@@ -162,7 +171,10 @@ export default function registerFileTools(server: McpServer) {
       try {
         return {
           content: [
-            { text: JSON.stringify(await patchFiles(args)), type: "text" },
+            {
+              text: JSON.stringify(await execute(args, () => patchFiles(args))),
+              type: "text",
+            },
           ],
         };
       } catch (error) {

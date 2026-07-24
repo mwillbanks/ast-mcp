@@ -51,7 +51,7 @@ test("detects AST languages and hashes deterministically", async () => {
   expect(sha256("abc")).toBe(
     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
   );
-  expect(rootsForDisplay()).toContain(process.cwd());
+  expect(await rootsForDisplay()).toContain(process.cwd());
   expect(await primaryRoot()).toBe(process.cwd());
 });
 test("falls back to the lexical working directory when it cannot be resolved", async () => {

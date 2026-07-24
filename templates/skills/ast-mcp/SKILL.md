@@ -30,7 +30,7 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 
 1. Inspect AST-capable targets with `map`, `show`, `context`, or a bounded `run` search. For unsupported content, use one batched `file_read({ files: [...] })` call with narrow line ranges.
 2. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run, send the same keyed `file_patch` entry with `preview: true`; it returns the formatted bounded diff and never commits.
-3. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per keyed path.
+3. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per keyed path. The runtime can make hashes optional through `safety.require_hash = false`, but the normal agent workflow should still supply them whenever current-state protection matters.
 4. Use one path-keyed `file_patch` batch for one or more files:
    - AST targets: `{ expectedSha256, patchStrategy: "ast", astRules: [{ pattern, fix, expectedMatches: 1 }], preview?: boolean }`
    - Unsupported targets: `{ expectedSha256, patchStrategy: "aider_block", aiderBlocks: [{ search, replace }], preview?: boolean }`
@@ -87,11 +87,11 @@ Read [patch-state-machine.md](references/patch-state-machine.md) for routing and
 - Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because ast-bro rewrites the first match per file, while ordered arrays let one keyed file_patch apply multiple reviewed operations.
 - Capped direct preview: narrow paths, glob, or pattern before writing.
 - Aider ambiguity: request a larger bounded slice and expand the search block with unique surrounding context.
-- Dprint preflight failure: do not write that file until a configured formatter supports it.
+- Formatter preflight failure: inspect the active `[formatting]` policy. Do not write until the matching external formatter or dprint fallback succeeds; `enabled = false` deliberately skips formatting.
 - MCP loss mid-task: stop writing, restore the server, then re-inspect touched and pending files through their correct AST or non-AST routes.
 
 ## Completion check
 
-Confirm the old structure is absent through AST search, callers are correct, touched files were verified through their proper route, dprint-backed writes succeeded, repository validation passes, and no direct-write or whole-file-read bypass was used.
+Confirm the old structure is absent through AST search, callers are correct, touched files were verified through their proper route, configured formatter-backed writes succeeded (or formatting is explicitly disabled), repository validation passes, and no direct-write or whole-file-read bypass was used.
 
 Use `evals:check` for fixture-matrix integrity. `evals:measure` inventories direct MCP transcript records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate the following direct MCP records with that case. An outer `exec` result cannot prove each nested call, so marked nested calls and multi-marker evidence fail closed. Scoring validates schema-relevant inputs, transcript workspace roots, required order, expected output evidence, assertions, and successful per-call outputs. Use `evals:score --strict` only for a complete marked matrix; transcript scoring is matched task-execution evidence, not a blanket agent-quality claim.

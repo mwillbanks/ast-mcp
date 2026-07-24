@@ -31,7 +31,7 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP configuration carries an explicit repository root.
+Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP definition carries `AST_MCP_PROJECT_ROOT` as a discovery selector. It does not override project `ast-mcp.toml` values. A global definition stays project-neutral and follows MCP client workspace roots automatically.
 
 ## ast-bro platform support
 

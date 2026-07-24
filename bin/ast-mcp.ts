@@ -3,6 +3,10 @@ const { runCli } = await import("../src/cli");
 
 try {
   const exitCode = await runCli(process.argv.slice(2), {
+    config: async (args) => {
+      const { runConfigCli } = await import("../src/config-cli");
+      await runConfigCli(args);
+    },
     hook: async () => {
       const { runHook } = await import("../src/hook");
       return runHook();

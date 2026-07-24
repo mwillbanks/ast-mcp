@@ -5,10 +5,11 @@ import { dirname, join } from "node:path";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { resolveWritablePath, rootForPath } from "./paths";
+import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
 export interface FileRenameRequest {
   destination: string;
-  expectedSha256: string;
+  expectedSha256?: string;
 }
 
 export type FileRenameBatch = Record<string, FileRenameRequest>;
@@ -147,10 +148,8 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
         await verifyLinkCapability(entries);
         for (const { filePath, request } of entries) {
           const actual = await sha256File(filePath);
-          if (actual !== request.expectedSha256)
-            throw new Error(
-              `Stale file context: expected ${request.expectedSha256}, found ${actual}`,
-            );
+          await requireExpectedHash(request.expectedSha256, "file_rename");
+          verifyExpectedHash(request.expectedSha256, actual);
         }
         return moveFilesWithRollback(entries);
       },

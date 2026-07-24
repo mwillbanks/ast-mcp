@@ -52,9 +52,10 @@ The pinned `@ast-bro/cli@3.0.0` package has a precompiled binary only for macOS 
 
 ## Activate and verify
 
-1. Restart or reconnect MCP servers in the host; a skill file alone cannot make MCP tools callable. A supervised ast-mcp process may receive `SIGHUP`, which performs graceful cleanup and exits 0 so the host can restart it from refreshed code and configuration.
-2. Confirm `file_hash`, `file_read`, `file_write`, and `file_patch` are present.
-3. Confirm direct intelligence tools such as `digest`, `map`, `show`, `context`, and `impact` are present; there is no proxy tool.
-4. Verify that `file_read` accepts batched `files`, `file_hash` accepts batched `filePaths`, and `file_write`/`file_patch` accept path-keyed batches with ordered per-file operations; the legacy whole-file `file_read({ filePath })` schema is stale.
-5. Rerun `check-install.ts` if the tool list remains incomplete.
-6. If configuration is correct but startup fails, run the package's `bun run tools:check` from its checkout and report the missing dependency or startup error. Do not bypass the write boundary.
+1. Run `ast-mcp config validate --root "$PWD"` before reconnecting. Use `ast-mcp config show --root "$PWD"` when the effective project, global, environment, or default source is unclear.
+2. Restart or reconnect MCP servers in the host; a skill file alone cannot make MCP tools callable. A supervised ast-mcp process may receive `SIGHUP`, which performs graceful cleanup and exits 0 so the host can restart it from refreshed code and configuration.
+3. Confirm `file_hash`, `file_read`, `file_write`, and `file_patch` are present.
+4. Confirm direct intelligence tools such as `digest`, `map`, `show`, `context`, and `impact` are present; there is no proxy tool.
+5. Verify that `file_read` accepts batched `files`, `file_hash` accepts batched `filePaths`, and `file_write`/`file_patch` accept path-keyed batches with ordered per-file operations; the legacy whole-file `file_read({ filePath })` schema is stale.
+6. Rerun `check-install.ts` if the tool list remains incomplete.
+7. If configuration is correct but startup fails, run the package's `bun run tools:check` from its checkout and report the missing dependency or startup error. Do not bypass the write boundary.

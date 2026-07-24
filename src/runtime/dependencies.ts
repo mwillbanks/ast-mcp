@@ -2,8 +2,9 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { currentConfig } from "../config";
 
-export const PACKAGE_ROOT = path.resolve(
+const PACKAGE_ROOT = path.resolve(
   import.meta.dir,
   path.basename(import.meta.dir) === "dist" ? ".." : "../..",
 );
@@ -186,3 +187,11 @@ export const DPRINT_BINARY =
   process.env.DPRINT_BINARY ??
   resolveDependencyBinary("dprint", "dprint") ??
   "dprint";
+
+export async function configuredAstBroBinary(): Promise<string> {
+  return (await currentConfig()).dependencies.astBroBinary ?? AST_BRO_BINARY;
+}
+
+export async function configuredDprintBinary(): Promise<string> {
+  return (await currentConfig()).dependencies.dprintBinary ?? DPRINT_BINARY;
+}

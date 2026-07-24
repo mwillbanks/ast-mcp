@@ -130,12 +130,7 @@ async function jsonMcpCurrent(
   )
     return false;
   if (type && entry.type !== type) return false;
-  if (
-    root &&
-    (entry.env?.AST_MCP_ROOTS !== root ||
-      entry.env?.AST_MCP_ALLOW_EXTERNAL_ROOTS !== "1")
-  )
-    return false;
+  if (root && entry.env?.AST_MCP_PROJECT_ROOT !== root) return false;
   if (!root && Object.keys(entry.env ?? {}).length !== 0) return false;
   if (type === "local" && !Array.isArray(entry.tools)) return false;
   return true;
@@ -154,9 +149,8 @@ async function codexMcpCurrent(file: string, root?: string) {
   )
     return false;
   return root
-    ? block.includes(`AST_MCP_ROOTS = ${JSON.stringify(root)}`) &&
-        block.includes('AST_MCP_ALLOW_EXTERNAL_ROOTS = "1"')
-    : !block.includes("AST_MCP_ROOTS");
+    ? block.includes(`AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)}`)
+    : !block.includes("AST_MCP_PROJECT_ROOT");
 }
 export async function checkInstall(
   args = process.argv.slice(2),

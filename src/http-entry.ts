@@ -1,3 +1,3 @@
 import { startHttpServer } from "./http";
 
-startHttpServer();
+await startHttpServer();

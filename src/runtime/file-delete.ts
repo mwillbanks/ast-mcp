@@ -7,9 +7,10 @@ import { detectAstLanguage } from "../patch/languages";
 import { sha256 } from "./hash";
 import { withFileLocks } from "./locks";
 import { resolveWritablePath, rootForPath } from "./paths";
+import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
 export interface FileDeleteRequest {
-  expectedSha256: string;
+  expectedSha256?: string;
   forceReferences?: boolean;
 }
 
@@ -72,10 +73,8 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
       for (const { filePath, request } of entries) {
         const content = await Bun.file(filePath).text();
         const actual = sha256(content);
-        if (actual !== request.expectedSha256)
-          throw new Error(
-            `Stale file context: expected ${request.expectedSha256}, found ${actual}`,
-          );
+        await requireExpectedHash(request.expectedSha256, "file_delete");
+        verifyExpectedHash(request.expectedSha256, actual);
       }
       for (const { filePath, importers, request } of entries) {
         await rm(filePath);

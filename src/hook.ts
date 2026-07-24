@@ -1,3 +1,4 @@
+import { currentConfig } from "./config";
 import { embeddedShellMutates, shellMutates } from "./shell-policy";
 
 const directTools = new Set([
@@ -108,10 +109,27 @@ export interface HookDecision {
   denied: boolean;
   reason?: string;
 }
-export function evaluateHook(event: Record<string, unknown>): HookDecision {
+export function evaluateHook(
+  event: Record<string, unknown>,
+  policy: {
+    enabled: boolean;
+    allowTools: string[];
+    blockTools: string[];
+  } = { allowTools: [], blockTools: [], enabled: true },
+): HookDecision {
   const name = String(event.tool_name ?? event.toolName ?? event.name ?? "");
   const normalizedName = name.toLowerCase();
   const shortName = normalizedName.split(".").at(-1) ?? normalizedName;
+  const matchesPolicy = (candidate: string) =>
+    candidate.toLowerCase() === normalizedName ||
+    candidate.toLowerCase() === shortName;
+  if (!policy.enabled) return { denied: false };
+  if (policy.blockTools.some(matchesPolicy))
+    return {
+      denied: true,
+      reason: `Tool ${name || "<unknown>"} is blocked by ast-mcp hook policy.`,
+    };
+  if (policy.allowTools.some(matchesPolicy)) return { denied: false };
   if (directTools.has(normalizedName) || directTools.has(shortName))
     return {
       denied: true,
@@ -176,8 +194,10 @@ export async function runHook(
   input: Promise<Record<string, unknown>> = Bun.stdin.json(),
 ): Promise<number> {
   try {
+    const event = await input;
+    const policy = (await currentConfig()).safety.hook;
     process.stdout.write(
-      `${JSON.stringify(decisionPayload(evaluateHook(await input)))}\n`,
+      `${JSON.stringify(decisionPayload(evaluateHook(event, policy)))}\n`,
     );
     return 0;
   } catch (error) {

@@ -6,6 +6,9 @@ function harness() {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const handlers: CliHandlers = {
+    config: async (args) => {
+      calls.push(["config", ...args]);
+    },
     hook: async () => {
       calls.push(["hook"]);
       return 17;
@@ -26,6 +29,7 @@ test("dispatches every command and permits option-free subcommands", async () =>
   const { calls, handlers } = harness();
   expect(await runCli(["mcp"], handlers)).toBeUndefined();
   expect(await runCli(["hook"], handlers)).toBe(17);
+  await runCli(["config", "show", "--root", "."], handlers);
   await runCli(["install"], handlers);
   await runCli(["update", "--scope", "local"], handlers);
   await runCli(["uninstall", "--target", "codex"], handlers);
@@ -33,6 +37,7 @@ test("dispatches every command and permits option-free subcommands", async () =>
   expect(calls).toEqual([
     ["mcp"],
     ["hook"],
+    ["config", "show", "--root", "."],
     ["install"],
     ["update", "--scope", "local"],
     ["uninstall", "--target", "codex"],
@@ -49,6 +54,7 @@ test("prints root help for no arguments and help aliases", async () => {
 
 test("prints help for every subcommand without dispatching it", async () => {
   for (const command of [
+    "config",
     "install",
     "update",
     "uninstall",

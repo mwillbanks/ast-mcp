@@ -7,6 +7,7 @@ import { renameFilesSafely } from "../runtime/file-rename";
 import { sha256 } from "../runtime/hash";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
+import { type ConfiguredExecution, localExecution } from "./configured";
 
 const chattr = z.object({
   chmod: z.number().int().min(0).max(0o777).optional(),
@@ -28,7 +29,10 @@ const failure = (error: unknown) => ({
   isError: true,
 });
 
-export default function registerLifecycleTools(server: McpServer) {
+export default function registerLifecycleTools(
+  server: McpServer,
+  execute: ConfiguredExecution = localExecution,
+) {
   server.registerTool(
     "file_chattr",
     {
@@ -52,11 +56,13 @@ export default function registerLifecycleTools(server: McpServer) {
     },
     async (requests) => {
       try {
-        const entries = await Promise.all(
-          Object.entries(requests).map(async ([inputPath, request]) => ({
-            filePath: await resolveWritablePath(inputPath),
-            request,
-          })),
+        const entries = await execute(requests, () =>
+          Promise.all(
+            Object.entries(requests).map(async ([inputPath, request]) => ({
+              filePath: await resolveWritablePath(inputPath),
+              request,
+            })),
+          ),
         );
         const files: Record<string, unknown> = {};
         await withFileLocks(
@@ -90,12 +96,12 @@ export default function registerLifecycleTools(server: McpServer) {
     "file_delete",
     {
       description:
-        "Deletes hash-guarded files in one reference-preflighted batch and removes empty ancestor directories within configured roots.",
+        "Deletes files in one reference-preflighted batch and removes empty ancestor directories. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
       inputSchema: z
         .record(
           z.string().min(1),
           z.object({
-            expectedSha256: z.string().length(64),
+            expectedSha256: z.string().length(64).optional(),
             forceReferences: z.boolean().optional(),
           }),
         )
@@ -112,7 +118,9 @@ export default function registerLifecycleTools(server: McpServer) {
         return {
           content: [
             {
-              text: JSON.stringify(await deleteFilesSafely(requests)),
+              text: JSON.stringify(
+                await execute(requests, () => deleteFilesSafely(requests)),
+              ),
               type: "text",
             },
           ],
@@ -126,13 +134,13 @@ export default function registerLifecycleTools(server: McpServer) {
     "file_rename",
     {
       description:
-        "Renames hash-guarded files in one root-bounded batch without overwriting existing destinations.",
+        "Renames files in one root-bounded batch without overwriting destinations. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
       inputSchema: z
         .record(
           z.string().min(1),
           z.object({
             destination: z.string().min(1),
-            expectedSha256: z.string().length(64),
+            expectedSha256: z.string().length(64).optional(),
           }),
         )
         .refine(
@@ -148,7 +156,9 @@ export default function registerLifecycleTools(server: McpServer) {
         return {
           content: [
             {
-              text: JSON.stringify(await renameFilesSafely(requests)),
+              text: JSON.stringify(
+                await execute(requests, () => renameFilesSafely(requests)),
+              ),
               type: "text",
             },
           ],

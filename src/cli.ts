@@ -1,4 +1,5 @@
 export interface CliHandlers {
+  config(args: string[]): Promise<void>;
   hook(): Promise<number>;
   installer(args: string[]): Promise<void>;
   mcp(): Promise<void>;
@@ -12,6 +13,7 @@ Usage:
   ast-mcp <command> [options]
 
 Commands:
+  config       Validate or display layered ast-mcp.toml configuration
   install      Configure ast-mcp for one or more supported hosts
   update       Refresh an existing ast-mcp configuration
   uninstall    Remove ast-mcp-managed configuration
@@ -33,6 +35,15 @@ const installerOptions = `Options:
 `;
 
 const commandHelp: Record<string, string> = {
+  config: `Usage:
+  ast-mcp config <validate|show> [options]
+
+Validate configuration or display the resolved values, sources, and provenance.
+
+Options:
+  -r, --root <path>  Project root to resolve (default: current directory)
+  -h, --help         Display help
+`,
   hook: `Usage:
   ast-mcp hook
 
@@ -140,10 +151,15 @@ export async function runCli(
     return handlers.hook();
   }
   try {
-    await handlers.installer([command, ...rest]);
+    if (command === "config") await handlers.config(rest);
+    else await handlers.installer([command, ...rest]);
     return;
   } catch (error) {
-    if (error instanceof Error && error.name === "InstallerUsageError")
+    if (
+      error instanceof Error &&
+      (error.name === "InstallerUsageError" ||
+        error.name === "ConfigurationUsageError")
+    )
       return usageError(handlers, error.message, command);
     throw error;
   }

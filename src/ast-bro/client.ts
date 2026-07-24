@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { AST_BRO_BINARY } from "../runtime/dependencies";
+import { configuredAstBroBinary } from "../runtime/dependencies";
 
 export { AST_BRO_BINARY } from "../runtime/dependencies";
 export const AST_BRO_TOOLS = [
@@ -32,7 +32,7 @@ export async function callAstBro(
   const client = new Client({ name: "ast-mcp", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: ["mcp"],
-    command: AST_BRO_BINARY,
+    command: await configuredAstBroBinary(),
     cwd: root,
   });
   try {

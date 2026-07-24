@@ -20,6 +20,15 @@ When using Bun, run `bun pm trust @ast-bro/cli dprint` once after installation. 
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
 ```
 
+## Configuration
+
+```bash
+ast-mcp config validate --root "$PWD"
+ast-mcp config show --root "$PWD"
+```
+
+Both commands resolve environment, project, global, and default layers. `validate` reports the selected project and sources; `show` also prints effective values and field provenance as JSON.
+
 ## Runtime
 
 ```bash
