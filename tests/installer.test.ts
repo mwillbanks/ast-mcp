@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   access,
   lstat,
@@ -91,41 +91,48 @@ describe("installer", () => {
       ).mcpServers["ast-mcp"].type,
     ).toBe("local");
   });
-  test("runs the installer CLI parser", async () => {
+  test("runs the installer CLI parser without leaking routine output", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-cli-"));
     created.push(root);
-    await runInstallerCli([
-      "--scope",
-      "local",
-      "--target",
-      "codex",
-      "--root",
-      root,
-    ]);
-    expect(
-      await readFile(path.join(root, ".codex/config.toml"), "utf8"),
-    ).toContain("ast-mcp");
-    await runInstallerCli([
-      "update",
-      "--scope",
-      "local",
-      "--target",
-      "codex",
-      "--root",
-      root,
-    ]);
-    await runInstallerCli([
-      "uninstall",
-      "--scope",
-      "local",
-      "--target",
-      "codex",
-      "--root",
-      root,
-    ]);
-    expect(await readFile(path.join(root, ".codex/config.toml"), "utf8")).toBe(
-      "",
+    const stdout = spyOn(process.stdout, "write").mockImplementation(
+      () => true,
     );
+    try {
+      await runInstallerCli([
+        "--scope",
+        "local",
+        "--target",
+        "codex",
+        "--root",
+        root,
+      ]);
+      expect(
+        await readFile(path.join(root, ".codex/config.toml"), "utf8"),
+      ).toContain("ast-mcp");
+      await runInstallerCli([
+        "update",
+        "--scope",
+        "local",
+        "--target",
+        "codex",
+        "--root",
+        root,
+      ]);
+      await runInstallerCli([
+        "uninstall",
+        "--scope",
+        "local",
+        "--target",
+        "codex",
+        "--root",
+        root,
+      ]);
+      expect(
+        await readFile(path.join(root, ".codex/config.toml"), "utf8"),
+      ).toBe("");
+    } finally {
+      stdout.mockRestore();
+    }
     await expect(runInstallerCli(["--unknown"])).rejects.toThrow(
       "Unknown option",
     );

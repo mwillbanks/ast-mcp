@@ -127,12 +127,14 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
   const sources = new Set<string>();
   const destinations = new Set<string>();
   for (const { destinationPath, filePath } of entries) {
-    if (!sources.add(filePath))
+    if (sources.has(filePath))
       throw new Error(`file_rename source appears more than once: ${filePath}`);
-    if (!destinations.add(destinationPath))
+    sources.add(filePath);
+    if (destinations.has(destinationPath))
       throw new Error(
         `file_rename destination appears more than once: ${destinationPath}`,
       );
+    destinations.add(destinationPath);
   }
 
   return {
