@@ -60,6 +60,25 @@ test("file_delete rejects stale hashes without deleting the target", async () =>
   expect(await readFile(filePath, "utf8")).toBe("current\n");
 });
 
+test("file_delete verifies byte-accurate hashes for cache artifacts", async () => {
+  const folder = await temporaryRoot();
+  const chunks = path.join(folder, ".ast-bro", "index", "chunks.bin");
+  const embeddings = path.join(folder, ".ast-bro", "index", "embeddings.f32");
+  const chunkContent = new Uint8Array([0, 255, 254, 1, 128]);
+  const embeddingContent = new Uint8Array([255, 0, 129, 2]);
+  await mkdir(path.dirname(chunks), { recursive: true });
+  await writeFile(chunks, chunkContent);
+  await writeFile(embeddings, embeddingContent);
+
+  await deleteFilesSafely({
+    [chunks]: { expectedSha256: sha256(chunkContent) },
+    [embeddings]: { expectedSha256: sha256(embeddingContent) },
+  });
+
+  expect(await readFile(chunks).catch(() => undefined)).toBeUndefined();
+  expect(await readFile(embeddings).catch(() => undefined)).toBeUndefined();
+});
+
 test("file_delete rejects referenced source unless explicitly overridden", async () => {
   const folder = await temporaryRoot();
   const source = path.join(folder, "source.ts");

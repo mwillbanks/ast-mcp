@@ -5,23 +5,47 @@ import path from "node:path";
 
 type Scope = "local" | "global";
 type Target = "codex" | "claude" | "copilot";
+type Transport = "stdio" | "http";
 
 function parse(args: string[]) {
   let scope: Scope = "local";
   let target: Target = "codex";
   let root = process.cwd();
+  let transport: Transport = "stdio";
+  let host = "127.0.0.1";
+  let port = 3768;
+  let service = false;
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--scope") scope = args[++index] as Scope;
     else if (args[index] === "--target") target = args[++index] as Target;
     else if (args[index] === "--root") root = path.resolve(args[++index]);
+    else if (args[index] === "--transport")
+      transport = args[++index] as Transport;
+    else if (args[index] === "--host") host = args[++index];
+    else if (args[index] === "--port") port = Number(args[++index]);
+    else if (args[index] === "--service") service = true;
     else throw new Error(`Unknown argument: ${args[index]}`);
   }
   if (
     !["local", "global"].includes(scope) ||
-    !["codex", "claude", "copilot"].includes(target)
+    !["codex", "claude", "copilot"].includes(target) ||
+    !["stdio", "http"].includes(transport)
   )
-    throw new Error("Invalid --scope or --target");
-  return { root, scope, target };
+    throw new Error("Invalid --scope, --target, or --transport");
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
+    throw new Error("Invalid --port");
+  if (service && transport !== "http")
+    throw new Error("--service requires --transport http");
+  const clientHost =
+    host === "0.0.0.0"
+      ? "127.0.0.1"
+      : host === "::"
+        ? "::1"
+        : host.startsWith("[") && host.endsWith("]")
+          ? host.slice(1, -1)
+          : host;
+  const url = `http://${clientHost.includes(":") ? `[${clientHost}]` : clientHost}:${port}/mcp`;
+  return { host, port, root, scope, service, target, transport, url };
 }
 
 const instructionsBegin = "<!-- ast-mcp:begin -->";
@@ -119,9 +143,17 @@ async function jsonMcpCurrent(
   section: "mcpServers" | "servers",
   root?: string,
   type?: "local" | "stdio",
+  transport: Transport = "stdio",
+  url?: string,
 ) {
   const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
   const entry = value[section]?.["ast-mcp"];
+  if (transport === "http")
+    return (
+      entry?.type === "http" &&
+      entry.url === url &&
+      (type !== "local" || Array.isArray(entry.tools))
+    );
   if (
     entry?.command !== "bun" ||
     !Array.isArray(entry.args) ||
@@ -136,10 +168,21 @@ async function jsonMcpCurrent(
   return true;
 }
 
-async function codexMcpCurrent(file: string, root?: string) {
+async function codexMcpCurrent(
+  file: string,
+  root?: string,
+  transport: Transport = "stdio",
+  url?: string,
+) {
   const content = await readFile(file, "utf8").catch(() => "");
   const block =
     content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
+  if (transport === "http")
+    return (
+      block.includes("[mcp_servers.ast-mcp]") &&
+      block.includes(`url = ${JSON.stringify(url)}`) &&
+      !block.includes("command =")
+    );
   const args = block.match(/args = \[(".*"), "mcp"\]/);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
@@ -152,6 +195,7 @@ async function codexMcpCurrent(file: string, root?: string) {
     ? block.includes(`AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)}`)
     : !block.includes("AST_MCP_PROJECT_ROOT");
 }
+
 export async function checkInstall(
   args = process.argv.slice(2),
   home = os.homedir(),
@@ -166,6 +210,8 @@ export async function checkInstall(
     checks.mcp = await codexMcpCurrent(
       path.join(base, "config.toml"),
       global ? undefined : options.root,
+      options.transport,
+      options.url,
     );
     checks.hook = await hookCurrent(
       path.join(base, "hooks.json"),
@@ -191,6 +237,9 @@ export async function checkInstall(
         : path.join(options.root, ".mcp.json"),
       "mcpServers",
       global ? undefined : options.root,
+      undefined,
+      options.transport,
+      options.url,
     );
     checks.hook = await hookCurrent(
       path.join(base, "settings.json"),
@@ -219,6 +268,8 @@ export async function checkInstall(
       "mcpServers",
       global ? undefined : options.root,
       "local",
+      options.transport,
+      options.url,
     );
     checks.hook = await hookCurrent(
       path.join(base, "hooks/ast-mcp.json"),
@@ -240,7 +291,39 @@ export async function checkInstall(
         "servers",
         options.root,
         "stdio",
+        options.transport,
+        options.url,
       );
+  }
+  if (options.service) {
+    if (process.platform !== "darwin" && process.platform !== "linux")
+      checks.service = false;
+    else {
+      const digest = new Bun.CryptoHasher("sha256")
+        .update(path.resolve(options.root))
+        .digest("hex")
+        .slice(0, 12);
+      const id = options.scope === "global" ? "ast-mcp" : `ast-mcp-${digest}`;
+      const file =
+        process.platform === "darwin"
+          ? path.join(
+              home,
+              "Library/LaunchAgents",
+              `com.mwillbanks.${id}.plist`,
+            )
+          : path.join(home, ".config/systemd/user", `${id}.service`);
+      let content = "";
+      try {
+        content = await readFile(file, "utf8");
+      } catch {}
+      checks.service =
+        content.includes("--transport") &&
+        content.includes("http") &&
+        content.includes(options.host) &&
+        content.includes(String(options.port)) &&
+        (options.scope === "global" ||
+          content.includes(path.resolve(options.root)));
+    }
   }
   const installed = Object.values(checks).every(Boolean);
   const operation = installed
@@ -248,7 +331,7 @@ export async function checkInstall(
     : Object.values(checks).some(Boolean)
       ? "update"
       : "install";
-  const suffix = `--scope ${options.scope} --target ${options.target}${global ? "" : ` --root ${JSON.stringify(options.root)}`}`;
+  const suffix = `--scope ${options.scope} --target ${options.target}${global ? "" : ` --root ${JSON.stringify(options.root)}`}${options.transport === "http" ? ` --transport http --host ${JSON.stringify(options.host)} --port ${options.port}` : ""}${options.service ? " --service" : ""}`;
   const installCommand = global
     ? `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
     : `bun add --dev @mwillbanks/ast-mcp && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`;

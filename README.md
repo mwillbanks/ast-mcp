@@ -73,6 +73,20 @@ bun pm trust @ast-bro/cli dprint
   --root "$PWD"
 ```
 
+Stdio remains the default. To generate Streamable HTTP entries instead, select HTTP and an endpoint:
+
+```bash
+./node_modules/.bin/ast-mcp install \
+  --scope local \
+  --target all \
+  --root "$PWD" \
+  --transport http \
+  --host 127.0.0.1 \
+  --port 3768
+```
+
+Add `--service` to create and start a macOS LaunchAgent or Linux systemd user unit. Local services require an explicit port. Without `--service`, the installer prints the manual `ast-mcp mcp --transport http` startup command. Windows supports manual HTTP startup but not managed services.
+
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
 
 Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast-mcp update` to reconcile every managed surface and `./node_modules/.bin/ast-mcp uninstall` to remove only marked blocks, managed entries, and the owned `ast-mcp` skill directory.
@@ -134,7 +148,7 @@ args = ["--emit", "stdout"]
 
 [http]
 host = "127.0.0.1"
-port = 3000
+port = 3768
 ```
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
@@ -145,9 +159,9 @@ Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See
 
 ## MCP configuration
 
-A minimal global stdio definition needs only the stable executable and `mcp` subcommand. Local installer definitions additionally carry `AST_MCP_PROJECT_ROOT` as a discovery selector; it does not override configuration values.
+A minimal global stdio definition needs only the stable executable and `mcp` subcommand. Local installer definitions additionally carry `AST_MCP_PROJECT_ROOT` as a discovery selector; it does not override configuration values. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
 
-The server also supports Streamable HTTP at `/mcp` with `bun run start:http`. HTTP binding, port, and session durations use the same layered configuration, with environment variables retained for compatibility. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
+Start HTTP manually with `ast-mcp mcp --transport http [--host <address>] [--port <number>]`, or install a user service with `--service`. CLI flags override environment variables, project TOML, global TOML, and built-in defaults. The endpoint is `/mcp`; wildcard bind addresses generate loopback client URLs, while explicit non-loopback addresses deliberately expose the server. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
 
 `SIGTERM`, `SIGINT`, and `SIGHUP` all initiate graceful shutdown. The stdio process closes its MCP server; the HTTP process stops accepting requests, closes every active MCP session, then closes remaining connections. Successful cleanup exits 0, cleanup failure exits 1, and a second signal forces exit 1 while cleanup is pending. `SIGHUP` intentionally exits after cleanup so the host supervisor can restart ast-mcp from refreshed code and configuration.
 

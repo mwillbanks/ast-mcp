@@ -16,8 +16,8 @@ function harness() {
     installer: async (args) => {
       calls.push(args);
     },
-    mcp: async () => {
-      calls.push(["mcp"]);
+    mcp: async (args) => {
+      calls.push(["mcp", ...args]);
     },
     stderr: (text) => stderr.push(text),
     stdout: (text) => stdout.push(text),
@@ -74,7 +74,7 @@ test("prints help for every subcommand without dispatching it", async () => {
 });
 
 test("reports unknown commands and unsupported positional arguments cleanly", async () => {
-  for (const args of [["unknown"], ["mcp", "extra"], ["hook", "extra"]]) {
+  for (const args of [["unknown"], ["hook", "extra"]]) {
     const { handlers, stderr } = harness();
     expect(await runCli(args, handlers)).toBe(1);
     expect(stderr[0]).toContain("ast-mcp:");

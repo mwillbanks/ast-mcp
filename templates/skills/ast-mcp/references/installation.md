@@ -8,7 +8,7 @@ From the installed skill directory, run the read-only checker:
 
 `bun run scripts/check-install.ts --scope local --target codex --root "$PWD"`
 
-Replace `codex` with `claude` or `copilot`. For a global installation, pass `--scope global`. The JSON result validates the marked guidance against the bundled template, checks the host-specific MCP, hook payload and registration, skill, and prints the appropriate install or update command.
+Replace `codex` with `claude` or `copilot`. For a global installation, pass `--scope global`. For HTTP installations, also pass `--transport http --host <address> --port <number>` so the checker validates the generated URL. The JSON result validates the marked guidance against the bundled template, checks the host-specific MCP, hook payload and registration, skill, and prints the appropriate install or update command.
 
 ## Install from this package checkout
 
@@ -22,7 +22,7 @@ For one host globally:
 
 `bun run bin/ast-mcp.ts install --scope global --target codex`
 
-Targets are `codex`, `claude`, `copilot`, or `all`.
+Targets are `codex`, `claude`, `copilot`, or `all`. Stdio is the default transport. Use `--transport http --host 127.0.0.1 --port 3768` for HTTP host entries and add `--service` only when a macOS LaunchAgent or Linux systemd user unit should be managed.
 
 ## Install from the published package
 

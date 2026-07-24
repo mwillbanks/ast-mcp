@@ -29,6 +29,8 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
   --root "$PWD"
 ```
 
+This installs stdio definitions by default. To install Streamable HTTP definitions, add `--transport http --host 127.0.0.1 --port 3768`. Add `--service` for a macOS LaunchAgent or Linux systemd user service; otherwise start the manual HTTP command printed by the installer. Windows supports manual HTTP startup only.
+
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
 
 Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP definition carries `AST_MCP_PROJECT_ROOT` as a discovery selector. It does not override project `ast-mcp.toml` values. A global definition stays project-neutral and follows MCP client workspace roots automatically.

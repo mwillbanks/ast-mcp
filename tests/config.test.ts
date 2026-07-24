@@ -43,7 +43,7 @@ test("resolves defaults and platform global paths", async () => {
   expect(config.safety.allowExternalRoots).toBeFalse();
   expect(config.http).toEqual({
     host: "127.0.0.1",
-    port: 3000,
+    port: 3768,
     sessionSweepIntervalMs: 60_000,
     sessionTimeoutMs: 1_800_000,
   });
@@ -171,7 +171,7 @@ test("reloads changed and deleted files while caching unchanged resolutions", as
 
   await rm(file);
   const deleted = await resolveConfig({ cwd: root, env: {} });
-  expect(deleted.http.port).toBe(3000);
+  expect(deleted.http.port).toBe(3768);
   expect(deleted.sources.project).toBeUndefined();
 });
 

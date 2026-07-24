@@ -45,7 +45,7 @@ Structural patches and Aider blocks converge on the same candidate pipeline: val
 
 The package publishes one Bun-bundled `ast-mcp` executable with three operational subcommands:
 
-- `ast-mcp mcp` starts the stdio server
+- `ast-mcp mcp` starts stdio by default; `--transport http` starts Streamable HTTP
 - `ast-mcp hook` runs blocking host hooks
 - `ast-mcp install` reconciles installation surfaces; `update` and `uninstall` manage them afterward
 

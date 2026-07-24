@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -57,6 +57,48 @@ test("installer copies only the unified skill and its checker diagnoses the resu
         path.join(root, ".codex/skills/ast-mcp/scripts/check-install.ts"),
       ).href
     );
+    if (process.platform === "darwin" || process.platform === "linux") {
+      const digest = new Bun.CryptoHasher("sha256")
+        .update(path.resolve(root))
+        .digest("hex")
+        .slice(0, 12);
+      const serviceFile =
+        process.platform === "darwin"
+          ? path.join(
+              home,
+              "Library/LaunchAgents",
+              `com.mwillbanks.ast-mcp-${digest}.plist`,
+            )
+          : path.join(
+              home,
+              ".config/systemd/user",
+              `ast-mcp-${digest}.service`,
+            );
+      await mkdir(path.dirname(serviceFile), { recursive: true });
+      await writeFile(
+        serviceFile,
+        `ast-mcp --transport http --host 127.0.0.1 --port 3768 ${root}`,
+      );
+      const serviceResult = await installedChecker.checkInstall(
+        [
+          "--scope",
+          "local",
+          "--target",
+          "codex",
+          "--root",
+          root,
+          "--transport",
+          "http",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "3768",
+          "--service",
+        ],
+        home,
+      );
+      expect(serviceResult.checks.service).toBeTrue();
+    }
     for (const target of targets)
       expect(
         (

@@ -628,7 +628,7 @@ async function resolveForProject(
     },
     http: {
       host: "127.0.0.1",
-      port: 3000,
+      port: 3768,
       session_sweep_interval_ms: 60 * 1000,
       session_timeout_ms: 30 * 60 * 1000,
     },
@@ -691,7 +691,7 @@ async function resolveForProject(
     },
     http: {
       host: value.http?.host ?? "127.0.0.1",
-      port: value.http?.port ?? 3000,
+      port: value.http?.port ?? 3768,
       sessionSweepIntervalMs:
         value.http?.session_sweep_interval_ms ?? 60 * 1000,
       sessionTimeoutMs: value.http?.session_timeout_ms ?? 30 * 60 * 1000,

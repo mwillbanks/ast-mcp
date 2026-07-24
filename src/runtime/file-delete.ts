@@ -4,7 +4,7 @@ import { astCapable } from "../ast-bro/capability";
 import { callAstBro } from "../ast-bro/client";
 import { parseAstBroJson } from "../ast-bro/result";
 import { detectAstLanguage } from "../patch/languages";
-import { sha256 } from "./hash";
+import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { resolveWritablePath, rootForPath } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
@@ -42,7 +42,13 @@ async function emptyParents(filePath: string, root: string) {
       path.isAbsolute(relative)
     )
       break;
-    if ((await readdir(directory)).length !== 0) break;
+    const contents = await readdir(directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return undefined;
+        throw error;
+      },
+    );
+    if (contents?.length !== 0) break;
     await rmdir(directory);
     removedDirectories.push(directory);
     directory = path.dirname(directory);
@@ -71,8 +77,7 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
     async () => {
       const deleted: Record<string, unknown> = {};
       for (const { filePath, request } of entries) {
-        const content = await Bun.file(filePath).text();
-        const actual = sha256(content);
+        const actual = await sha256File(filePath);
         await requireExpectedHash(request.expectedSha256, "file_delete");
         verifyExpectedHash(request.expectedSha256, actual);
       }

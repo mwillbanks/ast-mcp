@@ -15,8 +15,9 @@ try {
       const { runInstallerCli } = await import("../src/installer");
       await runInstallerCli(args);
     },
-    mcp: async () => {
-      await import("../src/index");
+    mcp: async (args) => {
+      const { runMcpCli } = await import("../src/mcp-cli");
+      await runMcpCli(args);
     },
   });
 

@@ -37,6 +37,16 @@ Then manage local host surfaces through the stable repository-local executable:
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
 ```
 
+Stdio is the default. For Streamable HTTP, supply the endpoint and optionally manage it as a user service:
+
+```bash
+./node_modules/.bin/ast-mcp install \
+  --scope local --target all --root "$PWD" \
+  --transport http --host 127.0.0.1 --port 3768 --service
+```
+
+Without `--service`, start the printed manual command before connecting the host. `update` preserves an existing transport when `--transport` is omitted; pass an explicit transport when selected host entries disagree. Use `--no-service` to remove a managed service without uninstalling host entries.
+
 For a persistent global installation:
 
 ```npm

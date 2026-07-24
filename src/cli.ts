@@ -2,82 +2,22 @@ export interface CliHandlers {
   config(args: string[]): Promise<void>;
   hook(): Promise<number>;
   installer(args: string[]): Promise<void>;
-  mcp(): Promise<void>;
+  mcp(args: string[]): Promise<void>;
   stderr?(text: string): void;
   stdout?(text: string): void;
 }
 
-const rootHelp = `ast-mcp - AST-aware Model Context Protocol server
+const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate or display layered ast-mcp.toml configuration\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
 
-Usage:
-  ast-mcp <command> [options]
-
-Commands:
-  config       Validate or display layered ast-mcp.toml configuration
-  install      Configure ast-mcp for one or more supported hosts
-  update       Refresh an existing ast-mcp configuration
-  uninstall    Remove ast-mcp-managed configuration
-  mcp          Start the stdio MCP server
-  hook         Run the pre-tool-use filesystem guard
-  help         Display help for a command
-
-Options:
-  -h, --help   Display help
-
-Run "ast-mcp help <command>" for command-specific help.
-`;
-
-const installerOptions = `Options:
-  -s, --scope <scope>    Installation scope: local or global (default: local)
-  -t, --target <target>  Host: codex, claude, copilot, or all (default: all)
-  -r, --root <path>      Project root for local scope (default: current directory)
-  -h, --help             Display help
-`;
+const installerOptions = `Options:\n  -s, --scope <scope>       Installation scope: local or global (default: local)\n  -t, --target <target>     Host: codex, claude, copilot, or all (default: all)\n  -r, --root <path>         Project root for local scope (default: current directory)\n      --transport <mode>    MCP transport: stdio or http (default: stdio)\n      --host <address>      HTTP bind host (default: layered configuration)\n      --port <number>       HTTP bind port (default: layered configuration)\n      --service             Install and start a managed user HTTP service\n      --no-service          Stop and remove a managed user HTTP service\n  -h, --help                Display help\n`;
 
 const commandHelp: Record<string, string> = {
-  config: `Usage:
-  ast-mcp config <validate|show> [options]
-
-Validate configuration or display the resolved values, sources, and provenance.
-
-Options:
-  -r, --root <path>  Project root to resolve (default: current directory)
-  -h, --help         Display help
-`,
-  hook: `Usage:
-  ast-mcp hook
-
-Run the pre-tool-use filesystem guard. Hook input is read from stdin.
-
-Options:
-  -h, --help   Display help
-`,
-  install: `Usage:
-  ast-mcp install [options]
-
-Configure ast-mcp for supported hosts.
-
-${installerOptions}`,
-  mcp: `Usage:
-  ast-mcp mcp
-
-Start the stdio MCP server. Protocol messages are read from stdin and written to stdout.
-
-Options:
-  -h, --help   Display help
-`,
-  uninstall: `Usage:
-  ast-mcp uninstall [options]
-
-Remove ast-mcp-managed configuration while preserving shared host files.
-
-${installerOptions}`,
-  update: `Usage:
-  ast-mcp update [options]
-
-Refresh managed configuration and installed skill content.
-
-${installerOptions}`,
+  config: `Usage:\n  ast-mcp config <validate|show> [options]\n\nValidate configuration or display the resolved values, sources, and provenance.\n\nOptions:\n  -r, --root <path>  Project root to resolve (default: current directory)\n  -h, --help         Display help\n`,
+  hook: `Usage:\n  ast-mcp hook\n\nRun the pre-tool-use filesystem guard. Hook input is read from stdin.\n\nOptions:\n  -h, --help   Display help\n`,
+  install: `Usage:\n  ast-mcp install [options]\n\nConfigure ast-mcp for supported hosts.\n\n${installerOptions}`,
+  mcp: `Usage:\n  ast-mcp mcp [options]\n\nStart the MCP server. Stdio is the default; HTTP listens on the layered configuration unless flags override it.\n\nOptions:\n      --transport <mode>  MCP transport: stdio or http (default: stdio)\n      --host <address>    HTTP bind host\n      --port <number>     HTTP bind port\n  -h, --help              Display help\n`,
+  uninstall: `Usage:\n  ast-mcp uninstall [options]\n\nRemove ast-mcp-managed configuration while preserving shared host files.\n\n${installerOptions}`,
+  update: `Usage:\n  ast-mcp update [options]\n\nRefresh managed configuration and installed skill content.\n\n${installerOptions}`,
 };
 
 export function getCliHelp(): string;
@@ -132,14 +72,14 @@ export async function runCli(
     return 0;
   }
   if (command === "mcp") {
-    if (rest.length > 0)
-      return usageError(
-        handlers,
-        `Unexpected argument for mcp: ${rest[0]}`,
-        command,
-      );
-    await handlers.mcp();
-    return;
+    try {
+      await handlers.mcp(rest);
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.name === "McpUsageError")
+        return usageError(handlers, error.message, command);
+      throw error;
+    }
   }
   if (command === "hook") {
     if (rest.length > 0)
@@ -158,7 +98,8 @@ export async function runCli(
     if (
       error instanceof Error &&
       (error.name === "InstallerUsageError" ||
-        error.name === "ConfigurationUsageError")
+        error.name === "ConfigurationUsageError" ||
+        error.name === "McpUsageError")
     )
       return usageError(handlers, error.message, command);
     throw error;

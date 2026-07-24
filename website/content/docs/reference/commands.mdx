@@ -16,9 +16,14 @@ When using Bun, run `bun pm trust @ast-bro/cli dprint` once after installation. 
 
 ```bash
 ./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"
-./node_modules/.bin/ast-mcp update --scope local --target all --root "$PWD"
+./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD" \
+  --transport http --host 127.0.0.1 --port 3768 [--service]
+./node_modules/.bin/ast-mcp update --scope local --target all --root "$PWD" \
+  [--transport stdio|http] [--no-service]
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
 ```
+
+Installer output is JSON containing changed paths, the effective transport, HTTP endpoint, service identity/state, and a manual startup command when no service is managed.
 
 ## Configuration
 
@@ -32,11 +37,13 @@ Both commands resolve environment, project, global, and default layers. `validat
 ## Runtime
 
 ```bash
-bun run start
-bun run start:http
+ast-mcp mcp
+ast-mcp mcp --transport http [--host 127.0.0.1] [--port 3768]
 bun run dev
 bun run dev:http
 ```
+
+Runtime HTTP flags have highest precedence. `--host` and `--port` are rejected for stdio, and invalid transport or port values return command-specific usage errors.
 
 ## Quality gates
 

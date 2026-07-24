@@ -4,13 +4,20 @@ description: Run the MCP server over a loopback-first HTTP transport.
 icon: RadioTower
 ---
 
-Stdio is the trusted default. Streamable HTTP is available when a host needs an HTTP connection.
+Stdio is the trusted installer and runtime default. Select Streamable HTTP when a host needs a URL connection:
 
 ```bash
-bun run start:http
+ast-mcp install --transport http --host 127.0.0.1 --port 3768 --target all
+ast-mcp mcp --transport http
 ```
 
-The server reads `http.host`, `http.port`, `http.session_timeout_ms`, and `http.session_sweep_interval_ms` from layered configuration before it starts listening. The defaults remain `127.0.0.1:3000`, a 30-minute idle timeout, and a one-minute sweep. Existing HTTP environment variables and `PORT` override TOML for compatibility. Bind to `0.0.0.0` only when deliberate network exposure is required.
+The server resolves bind values as CLI flags, environment overrides, project TOML, global TOML, then built-in defaults. The built-in port is now `3768` instead of the former development default `3000`; an explicit `http.port` or `PORT` keeps an existing deployment unchanged. The remaining defaults are loopback host `127.0.0.1`, a 30-minute idle timeout, and a one-minute sweep. Existing HTTP environment variables and `PORT` remain compatible. `0.0.0.0` and `::` bind broadly but generate loopback client URLs; any other non-loopback host is an explicit network exposure.
+
+## Installer and services
+
+Codex receives a TOML `url`; Claude Code, Copilot, and VS Code receive their native `type: "http"` entries. Explicit installer `--host` and `--port` values are persisted into the selected project or global `ast-mcp.toml` without removing unrelated settings. Omitting those flags uses the layered configuration.
+
+Add `--service` to install a per-user macOS LaunchAgent or Linux systemd unit. Local services require an explicit `--port`; global services may use the layered/default port. `--no-service` stops and removes the managed unit, while uninstall removes it after the last HTTP host entry is removed. Windows uses manual startup because managed services are not supported.
 
 ## Sessions and responses
 

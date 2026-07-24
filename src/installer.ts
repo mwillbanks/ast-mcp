@@ -9,9 +9,23 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { resolveConfig } from "./config";
+import { globalConfigPath, resolveConfig } from "./config";
+import {
+  type HttpEndpoint,
+  httpEndpoint,
+  type McpTransport,
+  resolveInstallerEndpoint,
+  transports,
+} from "./installer-transport";
 import { isManagedHook } from "./managed-hook";
 import { AST_BRO_BINARY, assertAstBroAvailable } from "./runtime/dependencies";
+import {
+  createServicePlan,
+  installService,
+  preflightService,
+  removeService,
+  type ServiceCommandRunner,
+} from "./service";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
@@ -48,14 +62,24 @@ async function installerAstBroBinary(options: InstallOptions) {
   );
 }
 
-function definition(root?: string) {
+function definition(
+  root: string | undefined,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
+  if (transport === "http") return { type: "http", url: endpoint?.url };
   return {
     args: [cliEntry, "mcp"],
     command: "bun",
     env: root ? { AST_MCP_PROJECT_ROOT: root } : {},
   };
 }
-async function codexMcp(file: string, root?: string) {
+async function codexMcp(
+  file: string,
+  root: string | undefined,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
   const old = await readFile(file, "utf8").catch(() => "");
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
@@ -63,25 +87,43 @@ async function codexMcp(file: string, root?: string) {
   const environment = root
     ? `env = { AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)} }\n`
     : "";
-  const block = `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = [${JSON.stringify(cliEntry)}, "mcp"]\n${environment}# ast-mcp:end`;
+  const block =
+    transport === "http"
+      ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = [${JSON.stringify(cliEntry)}, "mcp"]\n${environment}# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
-async function jsonMcp(file: string, root?: string, copilot = false) {
+async function jsonMcp(
+  file: string,
+  root: string | undefined,
+  copilot: boolean,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
   const value = await json(file);
+  const entry = definition(root, transport, endpoint);
   value.mcpServers = {
     ...(value.mcpServers ?? {}),
     "ast-mcp": copilot
-      ? { type: "local", ...definition(root), tools: ["*"] }
-      : definition(root),
+      ? transport === "stdio"
+        ? { type: "local", ...entry, tools: ["*"] }
+        : { ...entry, tools: ["*"] }
+      : entry,
   };
   await save(file, value);
 }
-async function vscodeMcp(file: string, root: string) {
+async function vscodeMcp(
+  file: string,
+  root: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
   const value = await json(file);
+  const entry = definition(root, transport, endpoint);
   value.servers = {
     ...(value.servers ?? {}),
-    "ast-mcp": { type: "stdio", ...definition(root) },
+    "ast-mcp": transport === "stdio" ? { type: "stdio", ...entry } : entry,
   };
   await save(file, value);
 }
@@ -243,13 +285,98 @@ async function hasLocalInstallation(root: string) {
 export interface InstallOptions {
   astBroBinary?: string;
   home?: string;
+  host?: string;
+  platform?: NodeJS.Platform;
+  port?: number;
   root: string;
   scope: "local" | "global";
+  service?: boolean;
+  serviceRunner?: ServiceCommandRunner;
   targets: Target[];
+  transport?: McpTransport;
 }
 
 class InstallerUsageError extends Error {
   override name = "InstallerUsageError";
+}
+
+async function targetTransport(
+  target: Target,
+  global: boolean,
+  root: string,
+  home: string,
+): Promise<McpTransport | undefined> {
+  if (target === "codex") {
+    const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+    const content = await readFile(
+      path.join(base, "config.toml"),
+      "utf8",
+    ).catch(() => "");
+    const block = content.match(
+      /# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/,
+    )?.[1];
+    if (!block) return undefined;
+    return /^\s*url\s*=/m.test(block) ? "http" : "stdio";
+  }
+  const file =
+    target === "claude"
+      ? global
+        ? path.join(home, ".claude.json")
+        : path.join(root, ".mcp.json")
+      : global
+        ? path.join(home, ".copilot/mcp-config.json")
+        : path.join(root, ".github/mcp.json");
+  const entry = (await json(file)).mcpServers?.["ast-mcp"];
+  if (!entry) return undefined;
+  return typeof entry.url === "string" ? "http" : "stdio";
+}
+
+async function selectedTransport(
+  options: InstallOptions,
+  operation: "install" | "update",
+) {
+  if (options.transport) return options.transport;
+  if (operation === "install") return "stdio" as const;
+  const root = path.resolve(options.root);
+  const home = options.home ?? os.homedir();
+  const global = options.scope === "global";
+  const found = new Set(
+    (
+      await Promise.all(
+        options.targets.map((target) =>
+          targetTransport(target, global, root, home),
+        ),
+      )
+    ).filter((value): value is McpTransport => value !== undefined),
+  );
+  if (found.size > 1)
+    throw new InstallerUsageError(
+      "Selected targets use mixed transports; pass --transport stdio or --transport http",
+    );
+  return found.values().next().value ?? "stdio";
+}
+
+function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
+  return {
+    cliEntry,
+    endpoint,
+    home: options.home ?? os.homedir(),
+    platform: options.platform,
+    root: path.resolve(options.root),
+    runner: options.serviceRunner,
+    scope: options.scope,
+  };
+}
+
+async function hasHttpInstallation(options: InstallOptions) {
+  const root = path.resolve(options.root);
+  const home = options.home ?? os.homedir();
+  const global = options.scope === "global";
+  return (
+    await Promise.all(
+      targets.map((target) => targetTransport(target, global, root, home)),
+    )
+  ).includes("http");
 }
 
 function targetPaths(
@@ -321,21 +448,91 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>) {
     .sort();
 }
 
-async function reconcile(options: InstallOptions) {
+async function reconcile(
+  options: InstallOptions,
+  operation: "install" | "update",
+) {
   assertAstBroAvailable(await installerAstBroBinary(options));
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";
+  const transport = await selectedTransport(options, operation);
+  if (!transports.includes(transport))
+    throw new InstallerUsageError(
+      `Invalid transport "${transport}"; expected stdio or http`,
+    );
+  if (
+    transport === "stdio" &&
+    (options.host !== undefined || options.port !== undefined)
+  )
+    throw new InstallerUsageError("--host and --port require --transport http");
+  if (options.service === true && transport !== "http")
+    throw new InstallerUsageError("--service requires --transport http");
+  if (
+    options.service === true &&
+    options.scope === "local" &&
+    options.port === undefined
+  )
+    throw new InstallerUsageError(
+      "Local managed HTTP services require an explicit --port",
+    );
+  const endpoint =
+    transport === "http"
+      ? await resolveInstallerEndpoint({
+          home,
+          host: options.host,
+          persist: false,
+          port: options.port,
+          root,
+          scope: options.scope,
+        })
+      : undefined;
+  if (options.service === true && endpoint)
+    await preflightService(serviceConfiguration(options, endpoint));
+  if (
+    transport === "http" &&
+    (options.host !== undefined || options.port !== undefined)
+  )
+    await resolveInstallerEndpoint({
+      home,
+      host: options.host,
+      port: options.port,
+      root,
+      scope: options.scope,
+    });
   const paths = options.targets.flatMap((target) =>
     targetPaths(target, global, root, home),
   );
+  if (
+    transport === "http" &&
+    (options.host !== undefined || options.port !== undefined)
+  )
+    paths.push(
+      options.scope === "local"
+        ? path.join(root, "ast-mcp.toml")
+        : globalConfigPath({ home }),
+    );
+  if (options.service !== undefined)
+    paths.push(
+      createServicePlan(
+        serviceConfiguration(
+          options,
+          endpoint ?? httpEndpoint("127.0.0.1", 3768),
+        ),
+      ).file,
+    );
   const before = await snapshot(paths);
   for (const target of options.targets) {
     if (target === "codex") {
       const base = global
         ? path.join(home, ".codex")
         : path.join(root, ".codex");
-      await codexMcp(path.join(base, "config.toml"), global ? undefined : root);
+      await codexMcp(
+        path.join(base, "config.toml"),
+        global ? undefined : root,
+        transport,
+        endpoint,
+      );
       await hook(
         path.join(base, "hooks.json"),
         "PreToolUse",
@@ -355,6 +552,9 @@ async function reconcile(options: InstallOptions) {
       await jsonMcp(
         global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
         global ? undefined : root,
+        false,
+        transport,
+        endpoint,
       );
       await hook(
         path.join(base, "settings.json"),
@@ -373,10 +573,27 @@ async function reconcile(options: InstallOptions) {
         ? path.join(home, ".copilot")
         : path.join(root, ".github");
       if (global)
-        await jsonMcp(path.join(base, "mcp-config.json"), undefined, true);
+        await jsonMcp(
+          path.join(base, "mcp-config.json"),
+          undefined,
+          true,
+          transport,
+          endpoint,
+        );
       else {
-        await jsonMcp(path.join(root, ".github/mcp.json"), root, true);
-        await vscodeMcp(path.join(root, ".vscode/mcp.json"), root);
+        await jsonMcp(
+          path.join(root, ".github/mcp.json"),
+          root,
+          true,
+          transport,
+          endpoint,
+        );
+        await vscodeMcp(
+          path.join(root, ".vscode/mcp.json"),
+          root,
+          transport,
+          endpoint,
+        );
       }
       await hook(
         path.join(base, "hooks/ast-mcp.json"),
@@ -394,15 +611,24 @@ async function reconcile(options: InstallOptions) {
       );
     }
   }
+  if (options.service === true && endpoint)
+    await installService(serviceConfiguration(options, endpoint));
+  else if (options.service === false)
+    await removeService(
+      serviceConfiguration(
+        options,
+        endpoint ?? httpEndpoint("127.0.0.1", 3768),
+      ),
+    );
   return changedFiles(before, await snapshot(paths));
 }
 
 export async function install(options: InstallOptions) {
-  return reconcile(options);
+  return reconcile(options, "install");
 }
 
 export async function update(options: InstallOptions) {
-  return reconcile(options);
+  return reconcile(options, "update");
 }
 
 export async function uninstall(options: InstallOptions) {
@@ -479,6 +705,19 @@ export async function uninstall(options: InstallOptions) {
   }
   if (options.scope === "local" && !(await hasLocalInstallation(root)))
     await removeInstructions(path.join(root, "AGENTS.md"));
+  const platform = options.platform ?? process.platform;
+  if (
+    (platform === "darwin" || platform === "linux") &&
+    !(await hasHttpInstallation(options))
+  ) {
+    const service = serviceConfiguration(
+      options,
+      httpEndpoint("127.0.0.1", 3768),
+    );
+    const plan = createServicePlan(service);
+    if (await lstat(plan.file).catch(() => undefined))
+      await removeService(service);
+  }
   return changedFiles(before, await snapshot(paths));
 }
 
@@ -486,7 +725,9 @@ export async function runInstallerCli(
   args = process.argv.slice(2),
 ): Promise<void> {
   const tokens = args.flatMap((token) => {
-    const match = /^(--(?:scope|root|target))=(.*)$/.exec(token);
+    const match = /^(--(?:scope|root|target|transport|host|port))=(.*)$/.exec(
+      token,
+    );
     return match ? [match[1], match[2]] : [token];
   });
   type Operation = "install" | "update" | "uninstall";
@@ -496,6 +737,10 @@ export async function runInstallerCli(
   let scope: "local" | "global" = "local";
   let root = process.cwd();
   let selected: Target[] = [...targets];
+  let transport: McpTransport | undefined;
+  let host: string | undefined;
+  let port: number | undefined;
+  let service: boolean | undefined;
   const valueAfter = (index: number) => {
     const value = tokens[index + 1];
     if (!value || value.startsWith("-"))
@@ -505,17 +750,43 @@ export async function runInstallerCli(
     return value;
   };
   for (let index = 0; index < tokens.length; index += 1) {
-    if (["--scope", "-s"].includes(tokens[index] ?? "")) {
-      scope = valueAfter(index) as typeof scope;
+    const token = tokens[index];
+    if (["--scope", "-s"].includes(token ?? "")) {
+      scope = valueAfter(index) as "local" | "global";
       index += 1;
-    } else if (["--root", "-r"].includes(tokens[index] ?? "")) {
+    } else if (["--root", "-r"].includes(token ?? "")) {
       root = valueAfter(index);
       index += 1;
-    } else if (["--target", "-t"].includes(tokens[index] ?? "")) {
+    } else if (["--target", "-t"].includes(token ?? "")) {
       const value = valueAfter(index);
       selected = value === "all" ? [...targets] : [value as Target];
       index += 1;
-    } else throw new InstallerUsageError(`Unknown option: ${tokens[index]}`);
+    } else if (token === "--transport") {
+      transport = valueAfter(index) as McpTransport;
+      index += 1;
+    } else if (token === "--host") {
+      host = valueAfter(index);
+      index += 1;
+    } else if (token === "--port") {
+      const value = valueAfter(index);
+      if (!/^\d+$/.test(value))
+        throw new InstallerUsageError(
+          `Invalid HTTP port "${value}"; expected an integer from 1 through 65535`,
+        );
+      port = Number(value);
+      if (!Number.isInteger(port) || port < 1 || port > 65_535)
+        throw new InstallerUsageError(
+          `Invalid HTTP port "${value}"; expected an integer from 1 through 65535`,
+        );
+      index += 1;
+    } else if (token === "--service" || token === "--no-service") {
+      const next = token === "--service";
+      if (service !== undefined && service !== next)
+        throw new InstallerUsageError(
+          "--service and --no-service cannot be used together",
+        );
+      service = next;
+    } else throw new InstallerUsageError(`Unknown option: ${token}`);
   }
   if (!["local", "global"].includes(scope))
     throw new InstallerUsageError(
@@ -526,19 +797,64 @@ export async function runInstallerCli(
     throw new InstallerUsageError(
       `Invalid target "${invalidTarget}"; expected codex, claude, copilot, or all`,
     );
-  const options = { root, scope, targets: selected };
+  if (transport && !transports.includes(transport))
+    throw new InstallerUsageError(
+      `Invalid transport "${transport}"; expected stdio or http`,
+    );
+  const options: InstallOptions = {
+    host,
+    port,
+    root,
+    scope,
+    service,
+    targets: selected,
+    transport,
+  };
   const changed =
     operation === "install"
       ? await install(options)
       : operation === "update"
         ? await update(options)
         : await uninstall(options);
-  const _label =
-    operation === "install"
-      ? "Installed"
-      : operation === "update"
-        ? "Updated"
-        : "Uninstalled";
-  process.stdout.write(`${JSON.stringify({ changed, operation })}\n`);
+  const effectiveTransport =
+    operation === "uninstall"
+      ? (transport ?? "stdio")
+      : ((await targetTransport(
+          selected[0],
+          scope === "global",
+          path.resolve(root),
+          os.homedir(),
+        )) ??
+        transport ??
+        "stdio");
+  const endpoint =
+    effectiveTransport === "http"
+      ? await resolveInstallerEndpoint({
+          home: os.homedir(),
+          host,
+          port,
+          root: path.resolve(root),
+          scope,
+        })
+      : undefined;
+  const servicePlan =
+    service === true && endpoint
+      ? createServicePlan(serviceConfiguration(options, endpoint))
+      : undefined;
+  const manualStart =
+    endpoint && service !== true
+      ? `${scope === "local" ? `cd ${JSON.stringify(path.resolve(root))} && ` : ""}bun ${JSON.stringify(cliEntry)} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
+      : undefined;
+  const result = {
+    changed,
+    endpoint: endpoint?.url,
+    manualStart,
+    operation,
+    service: servicePlan
+      ? { id: servicePlan.id, managed: true }
+      : { managed: false },
+    transport: effectiveTransport,
+  };
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 if (import.meta.main) await runInstallerCli();

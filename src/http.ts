@@ -31,7 +31,9 @@ const sessions = new Map<
 // Clean up idle sessions periodically
 let sessionSweep: ReturnType<typeof setInterval> | undefined;
 
-export async function startHttpServer() {
+export async function startHttpServer(
+  overrides: { host?: string; port?: number } = {},
+) {
   const config = await configuration();
   updateSessionDurations(config);
   sessionSweep = setInterval(() => {
@@ -106,8 +108,11 @@ export async function startHttpServer() {
 
       return new Response("Method not allowed", { status: 405 });
     },
-    port: config.http.port,
-    ...httpBinding(config),
+    port: overrides.port ?? config.http.port,
+    ...httpBinding({
+      ...config,
+      http: { ...config.http, host: overrides.host ?? config.http.host },
+    }),
   });
   let shutdown: Promise<void> | undefined;
   installProcessSignalHandlers(() => {
