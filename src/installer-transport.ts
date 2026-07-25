@@ -13,6 +13,7 @@ export interface HttpEndpoint {
 }
 
 export interface InstallerEndpointOptions {
+  env?: NodeJS.ProcessEnv;
   home: string;
   host?: string;
   persist?: boolean;
@@ -60,18 +61,20 @@ function assignment(name: "host" | "port", value: string | number) {
   return `${name} = ${typeof value === "string" ? JSON.stringify(value) : value}`;
 }
 
-export function updateHttpToml(
-  content: string,
-  values: { host?: string; port?: number },
-) {
-  if (values.host === undefined && values.port === undefined) return content;
+type HttpValues = { host?: string; port?: number };
+type HttpField = "host" | "port";
+
+function assertToml(content: string, message: string) {
   try {
     Bun.TOML.parse(content);
   } catch (error) {
     throw new Error(
-      `Cannot update HTTP configuration because the existing TOML is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      `${message}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+function httpHeader(content: string) {
   if (/^\s*http\.(?:host|port)\s*=/m.test(content))
     throw new Error(
       "Cannot update HTTP configuration with dotted http.host or http.port keys; move them into an [http] table",
@@ -81,51 +84,74 @@ export function updateHttpToml(
     throw new Error(
       "Cannot update HTTP configuration with duplicate [http] tables",
     );
-  let result = content;
-  if (headers.length === 0) {
-    const lines = ["[http]"];
-    if (values.host !== undefined)
-      lines.push(assignment("host", validateHttpHost(values.host)));
-    if (values.port !== undefined)
-      lines.push(assignment("port", validateHttpPort(values.port)));
-    result = `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${lines.join("\n")}\n`;
-  } else {
-    const start = headers[0].index + headers[0][0].length;
-    const nextHeader = /^\s*\[(?!http\])[^\n]+\]\s*(?:#.*)?$/gm;
-    nextHeader.lastIndex = start;
-    const next = nextHeader.exec(content);
-    const end = next?.index ?? content.length;
-    let section = content.slice(start, end);
-    for (const [name, value] of Object.entries(values) as Array<
-      ["host" | "port", string | number | undefined]
-    >) {
-      if (value === undefined) continue;
-      const normalized =
-        name === "host"
-          ? validateHttpHost(String(value))
-          : validateHttpPort(Number(value));
-      const line = assignment(name, normalized);
-      const pattern = new RegExp(
-        `^(\\s*)${name}\\s*=([^#\\n]*)(\\s+#.*)?$`,
-        "m",
-      );
-      section = pattern.test(section)
-        ? section.replace(
-            pattern,
-            (_match, indentation: string, _oldValue: string, comment = "") =>
-              `${indentation}${line}${comment}`,
-          )
-        : `${section.trimEnd()}\n${line}\n`;
-    }
-    result = `${content.slice(0, start)}${section}${content.slice(end)}`;
+  return headers[0];
+}
+
+function normalizedHttpValue(name: HttpField, value: string | number) {
+  return name === "host"
+    ? validateHttpHost(String(value))
+    : validateHttpPort(Number(value));
+}
+
+function newHttpSection(content: string, values: HttpValues) {
+  const lines = ["[http]"];
+  for (const [name, value] of Object.entries(values) as Array<
+    [HttpField, string | number | undefined]
+  >) {
+    if (value !== undefined)
+      lines.push(assignment(name, normalizedHttpValue(name, value)));
   }
-  try {
-    Bun.TOML.parse(result);
-  } catch (error) {
-    throw new Error(
-      `Generated invalid HTTP configuration: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${lines.join("\n")}\n`;
+}
+
+function updateHttpField(
+  section: string,
+  name: HttpField,
+  value: string | number,
+) {
+  const line = assignment(name, normalizedHttpValue(name, value));
+  const pattern = new RegExp(`^(\\s*)${name}\\s*=([^#\\n]*)(\\s+#.*)?$`, "m");
+  return pattern.test(section)
+    ? section.replace(
+        pattern,
+        (_match, indentation: string, _oldValue: string, comment = "") =>
+          `${indentation}${line}${comment}`,
+      )
+    : `${section.trimEnd()}\n${line}\n`;
+}
+
+function updateHttpSection(
+  content: string,
+  header: RegExpMatchArray,
+  values: HttpValues,
+) {
+  const start = (header.index ?? 0) + header[0].length;
+  const nextHeader = /^\s*\[(?!http\])[^\n]+\]\s*(?:#.*)?$/gm;
+  nextHeader.lastIndex = start;
+  const end = nextHeader.exec(content)?.index ?? content.length;
+  let section = content.slice(start, end);
+  for (const [name, value] of Object.entries(values) as Array<
+    [HttpField, string | number | undefined]
+  >) {
+    if (value !== undefined) section = updateHttpField(section, name, value);
   }
+  return `${content.slice(0, start)}${section}${content.slice(end)}`;
+}
+
+export function updateHttpToml(
+  content: string,
+  values: { host?: string; port?: number },
+) {
+  if (values.host === undefined && values.port === undefined) return content;
+  assertToml(
+    content,
+    "Cannot update HTTP configuration because the existing TOML is invalid",
+  );
+  const header = httpHeader(content);
+  const result = header
+    ? updateHttpSection(content, header, values)
+    : newHttpSection(content, values);
+  assertToml(result, "Generated invalid HTTP configuration");
   return result;
 }
 
@@ -135,7 +161,7 @@ export async function resolveInstallerEndpoint(
   const configFile =
     options.scope === "local"
       ? path.join(path.resolve(options.root), "ast-mcp.toml")
-      : globalConfigPath({ home: options.home });
+      : globalConfigPath({ env: options.env, home: options.home });
   if (
     options.persist !== false &&
     (options.host !== undefined || options.port !== undefined)
@@ -154,6 +180,7 @@ export async function resolveInstallerEndpoint(
   }
   const config = await resolveConfig({
     cwd: options.scope === "local" ? options.root : options.home,
+    env: options.env,
     home: options.home,
   });
   return httpEndpoint(

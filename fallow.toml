@@ -1,8 +1,13 @@
 # The build script passes the CLI entry to Bun programmatically.
 entry = ["bin/ast-mcp.ts"]
 
-# Generated host-install surfaces are runtime copies, not source entry points.
-ignorePatterns = [".github/hooks/**", ".github/skills/**"]
+# Generated host-install surfaces and the standalone evaluator policy mirror are
+# runtime copies validated by their source-owned tests, not independent source.
+ignorePatterns = [
+  ".github/hooks/**",
+  ".github/skills/**",
+  "templates/skills/ast-mcp/evals/shell-policy.ts",
+]
 
 # Fumadocs generates the collections aliases during documentation builds.
 ignoreUnresolvedImports = ["collections/browser", "collections/server"]
@@ -11,8 +16,8 @@ ignoreUnresolvedImports = ["collections/browser", "collections/server"]
 ignoreDependencies = ["@ast-bro/cli", "collections", "dprint"]
 
 [duplicates]
-# Focus the gate on broadly repeated copy-paste rather than contextual pairs and triples.
-minOccurrences = 4
+# Surface every duplicated pair so architectural consolidation is comprehensive.
+minOccurrences = 2
 
 [rules]
 # Legacy external-interface suppressions are retained for compatibility with Fallow's

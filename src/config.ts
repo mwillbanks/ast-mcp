@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
 
 const positiveInteger = z.number().int().positive();
 const toolNameSchema = z
@@ -313,7 +314,7 @@ function diagnostic(error: z.ZodError) {
     .join("; ");
 }
 
-function pathValue(value: string, base: string) {
+function _pathValue(value: string, base: string) {
   if (path.isAbsolute(value) || (!value.includes("/") && !value.includes("\\")))
     return value;
   return path.resolve(base, value);
@@ -323,38 +324,7 @@ function normalizeLayer(
   value: AstMcpFileConfig,
   filePath: string,
 ): AstMcpFileConfig {
-  const base = path.dirname(filePath);
-  return {
-    ...value,
-    dependencies: value.dependencies
-      ? {
-          ast_bro_binary: value.dependencies.ast_bro_binary
-            ? pathValue(value.dependencies.ast_bro_binary, base)
-            : undefined,
-          dprint_binary: value.dependencies.dprint_binary
-            ? pathValue(value.dependencies.dprint_binary, base)
-            : undefined,
-        }
-      : undefined,
-    formatting: value.formatting
-      ? {
-          ...value.formatting,
-          dprint_config: value.formatting.dprint_config
-            ? path.resolve(base, value.formatting.dprint_config)
-            : undefined,
-          formatters: value.formatting.formatters?.map((formatter) => ({
-            ...formatter,
-            command: pathValue(formatter.command, base),
-            extensions: formatter.extensions?.map((extension) =>
-              extension.toLowerCase(),
-            ),
-          })),
-        }
-      : undefined,
-    workspace: value.workspace?.roots
-      ? { roots: value.workspace.roots.map((item) => path.resolve(base, item)) }
-      : value.workspace,
-  };
+  return normalizeConfigLayer(value, filePath);
 }
 
 async function loadLayer(filePath: string): Promise<LoadedLayer> {
@@ -419,15 +389,20 @@ function booleanEnvironment(env: NodeJS.ProcessEnv, name: string) {
   );
 }
 
-function environmentLayer(
+class EnvironmentUsage {
+  readonly names: string[] = [];
+
+  use<T>(name: string, value: T | undefined) {
+    if (value !== undefined) this.names.push(name);
+    return value;
+  }
+}
+
+function environmentRoots(
   env: NodeJS.ProcessEnv,
   cwd: string,
-): { names: string[]; value: InternalConfig } {
-  const names: string[] = [];
-  const used = <T>(name: string, value: T | undefined) => {
-    if (value !== undefined) names.push(name);
-    return value;
-  };
+  usage: EnvironmentUsage,
+) {
   const roots = env.AST_MCP_ROOTS?.split(path.delimiter)
     .filter(Boolean)
     .map((item) => path.resolve(cwd, item));
@@ -435,53 +410,79 @@ function environmentLayer(
     throw new ConfigurationError(
       "Environment variable AST_MCP_ROOTS must contain at least one path",
     );
-  used("AST_MCP_ROOTS", roots);
-  const allowExternal = used(
-    "AST_MCP_ALLOW_EXTERNAL_ROOTS",
-    booleanEnvironment(env, "AST_MCP_ALLOW_EXTERNAL_ROOTS"),
-  );
-  const dprintConfig = used(
-    "AST_MCP_DPRINT_CONFIG",
-    env.AST_MCP_DPRINT_CONFIG
-      ? path.resolve(cwd, env.AST_MCP_DPRINT_CONFIG)
-      : undefined,
-  );
-  const astBroBinary = used("AST_BRO_BINARY", env.AST_BRO_BINARY);
-  const dprintBinary = used("DPRINT_BINARY", env.DPRINT_BINARY);
-  const host = used("AST_MCP_HTTP_HOST", env.AST_MCP_HTTP_HOST);
-  const port = used("PORT", integerEnvironment(env, "PORT", 1, 65_535));
-  const sessionTimeout = used(
+  return usage.use("AST_MCP_ROOTS", roots);
+}
+
+function environmentDependencies(
+  env: NodeJS.ProcessEnv,
+  usage: EnvironmentUsage,
+) {
+  const astBroBinary = usage.use("AST_BRO_BINARY", env.AST_BRO_BINARY);
+  const dprintBinary = usage.use("DPRINT_BINARY", env.DPRINT_BINARY);
+  return astBroBinary || dprintBinary
+    ? { ast_bro_binary: astBroBinary, dprint_binary: dprintBinary }
+    : undefined;
+}
+
+function environmentFormatting(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+  usage: EnvironmentUsage,
+) {
+  const configured = env.AST_MCP_DPRINT_CONFIG
+    ? path.resolve(cwd, env.AST_MCP_DPRINT_CONFIG)
+    : undefined;
+  const dprintConfig = usage.use("AST_MCP_DPRINT_CONFIG", configured);
+  return dprintConfig ? { dprint_config: dprintConfig } : undefined;
+}
+
+function environmentHttp(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
+  const host = usage.use("AST_MCP_HTTP_HOST", env.AST_MCP_HTTP_HOST);
+  const port = usage.use("PORT", integerEnvironment(env, "PORT", 1, 65_535));
+  const sessionTimeout = usage.use(
     "AST_MCP_SESSION_TIMEOUT_MS",
     integerEnvironment(env, "AST_MCP_SESSION_TIMEOUT_MS", 1),
   );
-  const sessionSweep = used(
+  const sessionSweep = usage.use(
     "AST_MCP_SESSION_SWEEP_INTERVAL_MS",
     integerEnvironment(env, "AST_MCP_SESSION_SWEEP_INTERVAL_MS", 1),
   );
+  if (!host && !port && !sessionTimeout && !sessionSweep) return undefined;
   return {
-    names,
+    host,
+    port,
+    session_sweep_interval_ms: sessionSweep,
+    session_timeout_ms: sessionTimeout,
+  };
+}
+
+function environmentSafety(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
+  const allowExternal = usage.use(
+    "AST_MCP_ALLOW_EXTERNAL_ROOTS",
+    booleanEnvironment(env, "AST_MCP_ALLOW_EXTERNAL_ROOTS"),
+  );
+  return allowExternal === undefined
+    ? undefined
+    : { allow_external_roots: allowExternal };
+}
+
+function environmentLayer(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): { names: string[]; value: InternalConfig } {
+  const usage = new EnvironmentUsage();
+  const roots = environmentRoots(env, cwd, usage);
+  const safety = environmentSafety(env, usage);
+  const formatting = environmentFormatting(env, cwd, usage);
+  const dependencies = environmentDependencies(env, usage);
+  const http = environmentHttp(env, usage);
+  return {
+    names: usage.names,
     value: {
-      dependencies:
-        astBroBinary || dprintBinary
-          ? {
-              ast_bro_binary: astBroBinary,
-              dprint_binary: dprintBinary,
-            }
-          : undefined,
-      formatting: dprintConfig ? { dprint_config: dprintConfig } : undefined,
-      http:
-        host || port || sessionTimeout || sessionSweep
-          ? {
-              host,
-              port,
-              session_sweep_interval_ms: sessionSweep,
-              session_timeout_ms: sessionTimeout,
-            }
-          : undefined,
-      safety:
-        allowExternal === undefined
-          ? undefined
-          : { allow_external_roots: allowExternal },
+      dependencies,
+      formatting,
+      http,
+      safety,
       workspace: roots ? { roots } : undefined,
     },
   };
@@ -599,27 +600,8 @@ function matchedProjectRoots(
   return matched.length ? matched : [candidates[0] as string];
 }
 
-async function resolveForProject(
-  projectRoot: string,
-  candidates: string[],
-  trustedRoots: string[],
-  options: ResolveConfigOptions,
-) {
-  const env = options.env ?? process.env;
-  const cwd = path.resolve(options.cwd ?? process.cwd());
-  const globalPath = globalConfigPath(options);
-  const projectPath = await projectConfigPath(projectRoot);
-  const [global, project] = await Promise.all([
-    loadLayer(globalPath),
-    projectPath
-      ? loadLayer(projectPath)
-      : Promise.resolve<LoadedLayer>({
-          fingerprint: "missing",
-          path: path.join(projectRoot, "ast-mcp.toml"),
-        }),
-  ]);
-  const environment = environmentLayer(env, cwd);
-  const defaults: InternalConfig = {
+function defaultInternalConfig(candidates: string[]): InternalConfig {
+  return {
     dependencies: {},
     formatting: {
       dprint_config: packageDprintConfig(),
@@ -641,73 +623,101 @@ async function resolveForProject(
     version: 1,
     workspace: { roots: candidates },
   };
-  const layers: Array<{
-    name: "default" | "global" | "project" | "environment";
-    value: InternalConfig;
-  }> = [
-    { name: "default", value: defaults },
-    { name: "global", value: global.value ?? {} },
-    { name: "project", value: project.value ?? {} },
-    { name: "environment", value: environment.value },
-  ];
-  const value = merge(...layers.map((item) => item.value));
+}
+
+type ConfigLayer = {
+  name: "default" | "global" | "project" | "environment";
+  value: InternalConfig;
+};
+
+function configProvenance(layers: ConfigLayer[]) {
   const provenance: ResolvedConfig["provenance"] = {};
   for (const dotted of leaves)
     for (const layer of layers)
       if (leaf(layer.value, dotted) !== undefined)
         provenance[dotted] = layer.name;
-  const formattingEnabled = value.formatting?.enabled ?? true;
-  const dprintConfig = value.formatting?.dprint_config ?? packageDprintConfig();
-  const dprintFingerprint = formattingEnabled
-    ? await validateDprintConfig(dprintConfig)
-    : "disabled";
-  const key = JSON.stringify({
+  return provenance;
+}
+
+function resolvedFormatting(
+  value: InternalConfig,
+  dprintConfig: string,
+): ResolvedConfig["formatting"] {
+  return {
+    dprintConfig,
+    enabled: value.formatting?.enabled ?? true,
+    formatters: (value.formatting?.formatters ?? []).map((formatter) => ({
+      args: formatter.args ?? [],
+      command: formatter.command,
+      extensions: formatter.extensions ?? [],
+      globs: formatter.globs ?? [],
+      timeoutMs: formatter.timeout_ms ?? 30_000,
+    })),
+  };
+}
+
+function resolvedHttp(value: InternalConfig): ResolvedConfig["http"] {
+  return {
+    host: value.http?.host ?? "127.0.0.1",
+    port: value.http?.port ?? 3768,
+    sessionSweepIntervalMs: value.http?.session_sweep_interval_ms ?? 60 * 1000,
+    sessionTimeoutMs: value.http?.session_timeout_ms ?? 30 * 60 * 1000,
+  };
+}
+
+function withDefault<T>(value: T | undefined, fallback: T) {
+  return value === undefined ? fallback : value;
+}
+
+function resolvedHook(value: InternalConfig["safety"]) {
+  return {
+    allowTools: withDefault(value?.hook?.allow_tools, []),
+    blockTools: withDefault(value?.hook?.block_tools, []),
+    enabled: withDefault(value?.hook?.enabled, true),
+  };
+}
+
+function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
+  return {
+    allowExternalRoots: withDefault(value.safety?.allow_external_roots, false),
+    followSymlinks: withDefault(value.safety?.follow_symlinks, false),
+    hook: resolvedHook(value.safety),
+    requireHash: withDefault(value.safety?.require_hash, true),
+  };
+}
+
+function resolvedConfiguration(args: {
+  candidates: string[];
+  dprintConfig: string;
+  environment: ReturnType<typeof environmentLayer>;
+  global: LoadedLayer;
+  project: LoadedLayer;
+  projectRoot: string;
+  provenance: ResolvedConfig["provenance"];
+  trustedRoots: string[];
+  value: InternalConfig;
+}): ResolvedConfig {
+  const {
     candidates,
-    cwd,
-    environment: environment.names.map((name) => [name, env[name]]),
-    globalPath,
-    projectPath,
+    dprintConfig,
+    environment,
+    global,
+    project,
     projectRoot,
+    provenance,
     trustedRoots,
-  });
-  const fingerprint = `${global.fingerprint}|${project.fingerprint}|${dprintFingerprint}`;
-  const cached = resolvedCache.get(key);
-  if (cached?.fingerprint === fingerprint) return cached.value;
-  const resolved: ResolvedConfig = {
+    value,
+  } = args;
+  return {
     dependencies: {
       astBroBinary: value.dependencies?.ast_bro_binary,
       dprintBinary: value.dependencies?.dprint_binary,
     },
-    formatting: {
-      dprintConfig,
-      enabled: formattingEnabled,
-      formatters: (value.formatting?.formatters ?? []).map((formatter) => ({
-        args: formatter.args ?? [],
-        command: formatter.command,
-        extensions: formatter.extensions ?? [],
-        globs: formatter.globs ?? [],
-        timeoutMs: formatter.timeout_ms ?? 30_000,
-      })),
-    },
-    http: {
-      host: value.http?.host ?? "127.0.0.1",
-      port: value.http?.port ?? 3768,
-      sessionSweepIntervalMs:
-        value.http?.session_sweep_interval_ms ?? 60 * 1000,
-      sessionTimeoutMs: value.http?.session_timeout_ms ?? 30 * 60 * 1000,
-    },
+    formatting: resolvedFormatting(value, dprintConfig),
+    http: resolvedHttp(value),
     projectRoot,
     provenance,
-    safety: {
-      allowExternalRoots: value.safety?.allow_external_roots ?? false,
-      followSymlinks: value.safety?.follow_symlinks ?? false,
-      hook: {
-        allowTools: value.safety?.hook?.allow_tools ?? [],
-        blockTools: value.safety?.hook?.block_tools ?? [],
-        enabled: value.safety?.hook?.enabled ?? true,
-      },
-      requireHash: value.safety?.require_hash ?? true,
-    },
+    safety: resolvedSafety(value),
     sources: {
       environment: environment.names,
       global: global.value ? global.path : undefined,
@@ -717,6 +727,110 @@ async function resolveForProject(
     version: 1,
     workspace: { roots: value.workspace?.roots ?? candidates },
   };
+}
+
+function resolutionRuntime(options: ResolveConfigOptions) {
+  return {
+    cwd: path.resolve(options.cwd ?? process.cwd()),
+    env: options.env ?? process.env,
+  };
+}
+
+function missingProjectLayer(projectRoot: string): LoadedLayer {
+  return {
+    fingerprint: "missing",
+    path: path.join(projectRoot, "ast-mcp.toml"),
+  };
+}
+
+async function loadResolutionLayers(
+  globalPath: string,
+  projectPath: string | undefined,
+  projectRoot: string,
+) {
+  return await Promise.all([
+    loadLayer(globalPath),
+    projectPath
+      ? loadLayer(projectPath)
+      : Promise.resolve(missingProjectLayer(projectRoot)),
+  ]);
+}
+
+async function resolvedDprint(value: InternalConfig) {
+  const enabled = value.formatting?.enabled ?? true;
+  const config = value.formatting?.dprint_config ?? packageDprintConfig();
+  const fingerprint = enabled ? await validateDprintConfig(config) : "disabled";
+  return { config, fingerprint };
+}
+
+function resolutionCacheKey(args: {
+  candidates: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  environment: ReturnType<typeof environmentLayer>;
+  globalPath: string;
+  projectPath: string | undefined;
+  projectRoot: string;
+  trustedRoots: string[];
+}) {
+  return JSON.stringify({
+    candidates: args.candidates,
+    cwd: args.cwd,
+    environment: args.environment.names.map((name) => [name, args.env[name]]),
+    globalPath: args.globalPath,
+    projectPath: args.projectPath,
+    projectRoot: args.projectRoot,
+    trustedRoots: args.trustedRoots,
+  });
+}
+
+async function resolveForProject(
+  projectRoot: string,
+  candidates: string[],
+  trustedRoots: string[],
+  options: ResolveConfigOptions,
+) {
+  const { cwd, env } = resolutionRuntime(options);
+  const globalPath = globalConfigPath(options);
+  const projectPath = await projectConfigPath(projectRoot);
+  const [global, project] = await loadResolutionLayers(
+    globalPath,
+    projectPath,
+    projectRoot,
+  );
+  const environment = environmentLayer(env, cwd);
+  const layers: ConfigLayer[] = [
+    { name: "default", value: defaultInternalConfig(candidates) },
+    { name: "global", value: global.value ?? {} },
+    { name: "project", value: project.value ?? {} },
+    { name: "environment", value: environment.value },
+  ];
+  const value = merge(...layers.map((item) => item.value));
+  const dprint = await resolvedDprint(value);
+  const key = resolutionCacheKey({
+    candidates,
+    cwd,
+    env,
+    environment,
+    globalPath,
+    projectPath,
+    projectRoot,
+    trustedRoots,
+  });
+  const fingerprint = `${global.fingerprint}|${project.fingerprint}|${dprint.fingerprint}`;
+  const cached = resolvedCache.get(key);
+  if (cached?.fingerprint === fingerprint) return cached.value;
+  const resolved = resolvedConfiguration({
+    candidates,
+    dprintConfig: dprint.config,
+    environment,
+    global,
+    project,
+    projectRoot,
+    provenance: configProvenance(layers),
+    trustedRoots,
+    value,
+  });
   resolvedCache.set(key, { fingerprint, value: resolved });
   return resolved;
 }
@@ -748,43 +862,7 @@ export async function resolveConfig(
 }
 
 export function configRequestPaths(value: unknown): string[] {
-  const paths: string[] = [];
-  const visit = (item: unknown, key?: string) => {
-    if (typeof item === "string") {
-      if (
-        key &&
-        [
-          "destination",
-          "file",
-          "filePath",
-          "filePaths",
-          "path",
-          "paths",
-          "root",
-        ].includes(key)
-      )
-        paths.push(item);
-      return;
-    }
-    if (Array.isArray(item)) {
-      for (const child of item) visit(child, key);
-      return;
-    }
-    if (!item || typeof item !== "object") return;
-    for (const [childKey, child] of Object.entries(item)) {
-      if (
-        key === undefined &&
-        child &&
-        typeof child === "object" &&
-        !Array.isArray(child) &&
-        !["files", "filePaths", "path", "paths", "root"].includes(childKey)
-      )
-        paths.push(childKey);
-      visit(child, childKey);
-    }
-  };
-  visit(value);
-  return [...new Set(paths)];
+  return [...new Set(collectRequestPaths(value))];
 }
 
 const activeConfig = new AsyncLocalStorage<ResolvedConfig>();

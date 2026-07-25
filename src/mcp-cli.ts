@@ -22,49 +22,82 @@ function valueAfter(args: string[], index: number) {
   return value;
 }
 
-export async function runMcpCli(args: string[], runtime: McpCliRuntime = {}) {
-  const tokens = args.flatMap((token) => {
+interface ParsedMcpOptions {
+  host?: string;
+  port?: number;
+  transport: "stdio" | "http";
+}
+
+function normalizedMcpTokens(args: string[]) {
+  return args.flatMap((token) => {
     const match = /^(--(?:transport|host|port))=(.*)$/.exec(token);
-    return match ? [match[1], match[2]] : [token];
+    return match ? [match[1] as string, match[2] as string] : [token];
   });
-  let transport: "stdio" | "http" = "stdio";
-  let host: string | undefined;
-  let port: number | undefined;
+}
+
+function parsedPort(raw: string) {
+  if (!/^\d+$/.test(raw))
+    throw mcpUsageError(
+      `Invalid HTTP port "${raw}"; expected an integer from 1 through 65535`,
+    );
+  return validateHttpPort(Number(raw));
+}
+
+function parseMcpOptions(args: string[]): ParsedMcpOptions {
+  const tokens = normalizedMcpTokens(args);
+  const options: ParsedMcpOptions = { transport: "stdio" };
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === "--transport") {
-      transport = valueAfter(tokens, index) as typeof transport;
+      options.transport = valueAfter(
+        tokens,
+        index,
+      ) as ParsedMcpOptions["transport"];
       index += 1;
     } else if (token === "--host") {
-      host = valueAfter(tokens, index);
+      options.host = valueAfter(tokens, index);
       index += 1;
     } else if (token === "--port") {
-      const raw = valueAfter(tokens, index);
-      if (!/^\d+$/.test(raw))
-        throw mcpUsageError(
-          `Invalid HTTP port "${raw}"; expected an integer from 1 through 65535`,
-        );
-      port = validateHttpPort(Number(raw));
+      options.port = parsedPort(valueAfter(tokens, index));
       index += 1;
     } else throw mcpUsageError(`Unknown option: ${token}`);
   }
-  if (!transports.includes(transport))
+  return options;
+}
+
+function validateMcpOptions(options: ParsedMcpOptions) {
+  if (!transports.includes(options.transport))
     throw mcpUsageError(
-      `Invalid transport "${transport}"; expected stdio or http`,
+      `Invalid transport "${options.transport}"; expected stdio or http`,
     );
-  if (transport === "stdio") {
-    if (host !== undefined || port !== undefined)
-      throw mcpUsageError("--host and --port require --transport http");
-    runtime.stdio ? await runtime.stdio() : await import("./index");
+  if (
+    options.transport === "stdio" &&
+    (options.host !== undefined || options.port !== undefined)
+  )
+    throw mcpUsageError("--host and --port require --transport http");
+}
+
+async function startStdio(runtime: McpCliRuntime) {
+  if (runtime.stdio) await runtime.stdio();
+  else await import("./index");
+}
+
+async function startHttp(options: ParsedMcpOptions, runtime: McpCliRuntime) {
+  const host =
+    options.host === undefined ? undefined : validateHttpHost(options.host);
+  if (runtime.http) return await runtime.http({ host, port: options.port });
+  const { startHttpServer } = await import("./http");
+  return await startHttpServer({ host, port: options.port });
+}
+
+export async function runMcpCli(args: string[], runtime: McpCliRuntime = {}) {
+  const options = parseMcpOptions(args);
+  validateMcpOptions(options);
+  if (options.transport === "stdio") {
+    await startStdio(runtime);
     return;
   }
-  if (host !== undefined) host = validateHttpHost(host);
-  let server: { url: URL };
-  if (runtime.http) server = await runtime.http({ host, port });
-  else {
-    const { startHttpServer } = await import("./http");
-    server = await startHttpServer({ host, port });
-  }
+  const server = await startHttp(options, runtime);
   const endpoint = new URL("/mcp", server.url);
   process.stderr.write(`ast-mcp: listening on ${endpoint.toString()}\n`);
   return server;

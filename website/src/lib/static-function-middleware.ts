@@ -4,6 +4,7 @@ import {
   getDefaultSerovalPlugins,
 } from "@tanstack/react-start";
 import { fromJSON } from "seroval";
+import { normalizeBaseUrl as normalizeBaseUrlHelper } from "../helpers/url";
 
 type StaticCachedResult = {
   context?: Record<string, unknown>;
@@ -42,8 +43,7 @@ function filenameSafeData(data: unknown): string {
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
-  const leadingSlash = baseUrl.startsWith("/") ? baseUrl : `/${baseUrl}`;
-  return leadingSlash.endsWith("/") ? leadingSlash : `${leadingSlash}/`;
+  return normalizeBaseUrlHelper(baseUrl);
 }
 
 export async function createStaticCacheUrl(

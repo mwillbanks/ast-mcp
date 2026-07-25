@@ -1,5 +1,5 @@
 import path from "node:path";
-
+import { captureProcess, successfulProcessOutput } from "../helpers/process";
 import { AST_BRO_BINARY } from "./client";
 
 type AstBroMapPayload = {
@@ -16,13 +16,8 @@ export async function astCapable(
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [exitCode, stdout, stderr] = await Promise.all([
-    processHandle.exited,
-    new Response(processHandle.stdout).text(),
-    new Response(processHandle.stderr).text(),
-  ]);
-  const failure = stderr.trim() || `ast-bro map exited ${exitCode}`;
-  if (exitCode !== 0) throw new Error(failure);
+  const result = await captureProcess(processHandle);
+  const stdout = successfulProcessOutput("ast-bro map", result);
   const payload = JSON.parse(stdout) as AstBroMapPayload;
   const file = (payload.files ?? []).find(
     (candidate) => candidate.path === filePath,

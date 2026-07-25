@@ -1,4 +1,14 @@
 import { currentConfig } from "./config";
+import {
+  eventCommand,
+  type HookPolicy,
+  policyMatches,
+  toolIdentity,
+} from "./helpers/hook";
+import {
+  compactCallSyntax as compactCallSyntaxHelper,
+  containsToolInvocation,
+} from "./helpers/string";
 import { embeddedShellMutates, shellMutates } from "./shell-policy";
 
 const directTools = new Set([
@@ -19,54 +29,12 @@ const directTools = new Set([
   "multiedit",
   "notebookedit",
 ]);
-function compactCallSyntax(source: string) {
-  let value = "";
-  let quote = "";
-  let escaped = false;
-  for (let index = 0; index < source.length; index++) {
-    const character = source[index];
-    if (quote) {
-      value += character.toLowerCase();
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) quote = "";
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      value += character;
-      continue;
-    }
-    if (character === "/" && source[index + 1] === "/") {
-      while (index < source.length && source[index] !== "\n") index++;
-      continue;
-    }
-    if (character === "/" && source[index + 1] === "*") {
-      index += 2;
-      while (
-        index < source.length &&
-        !(source[index] === "*" && source[index + 1] === "/")
-      )
-        index++;
-      index++;
-      continue;
-    }
-    if (!/\s/.test(character)) value += character.toLowerCase();
-  }
-  return value.replaceAll("tools?.", "tools.");
+function _compactCallSyntax(source: string) {
+  return compactCallSyntaxHelper(source);
 }
 
 function nestedDirect(source: string) {
-  const value = compactCallSyntax(source);
-  return [...directTools].some(
-    (tool) =>
-      value.includes(`tools.${tool}(`) ||
-      value.includes(`tools.${tool}?.(`) ||
-      value.includes(`tools["${tool}"](`) ||
-      value.includes(`tools["${tool}"]?.(`) ||
-      value.includes(`tools['${tool}'](`) ||
-      value.includes(`tools['${tool}']?.(`),
-  );
+  return containsToolInvocation(_compactCallSyntax(source), directTools);
 }
 const shellTools = new Set([
   "bash",
@@ -86,95 +54,91 @@ const executorTools = new Set([
 ]);
 
 function nestedShellCall(source: string) {
-  const value = compactCallSyntax(source);
-  return [
+  return containsToolInvocation(source, [
     "exec_command",
     "bash",
     "shell",
     "terminal",
     "powershell",
     "pwsh",
-  ].some(
-    (tool) =>
-      value.includes(`tools.${tool}(`) ||
-      value.includes(`tools.${tool}?.(`) ||
-      value.includes(`tools["${tool}"](`) ||
-      value.includes(`tools["${tool}"]?.(`) ||
-      value.includes(`tools['${tool}'](`) ||
-      value.includes(`tools['${tool}']?.(`),
-  );
+  ]);
 }
 
 export interface HookDecision {
   denied: boolean;
   reason?: string;
 }
-export function evaluateHook(
-  event: Record<string, unknown>,
-  policy: {
-    enabled: boolean;
-    allowTools: string[];
-    blockTools: string[];
-  } = { allowTools: [], blockTools: [], enabled: true },
-): HookDecision {
-  const name = String(event.tool_name ?? event.toolName ?? event.name ?? "");
-  const normalizedName = name.toLowerCase();
-  const shortName = normalizedName.split(".").at(-1) ?? normalizedName;
-  const matchesPolicy = (candidate: string) =>
-    candidate.toLowerCase() === normalizedName ||
-    candidate.toLowerCase() === shortName;
+function policyDecision(
+  policy: HookPolicy,
+  identity: ReturnType<typeof toolIdentity>,
+): HookDecision | undefined {
   if (!policy.enabled) return { denied: false };
-  if (policy.blockTools.some(matchesPolicy))
+  if (policyMatches(policy.blockTools, identity))
     return {
       denied: true,
-      reason: `Tool ${name || "<unknown>"} is blocked by ast-mcp hook policy.`,
+      reason: `Tool ${identity.name || "<unknown>"} is blocked by ast-mcp hook policy.`,
     };
-  if (policy.allowTools.some(matchesPolicy)) return { denied: false };
-  if (directTools.has(normalizedName) || directTools.has(shortName))
+  if (policyMatches(policy.allowTools, identity)) return { denied: false };
+  return undefined;
+}
+function isDirectTool(identity: ReturnType<typeof toolIdentity>) {
+  return (
+    directTools.has(identity.normalizedName) ||
+    directTools.has(identity.shortName)
+  );
+}
+const deniedMutation = (): HookDecision => ({
+  denied: true,
+  reason: "Route manual file mutation through ast-mcp.",
+});
+
+function executorDecision(
+  executor: boolean,
+  command: string | undefined,
+  raw: unknown,
+): HookDecision | undefined {
+  const nestedMutation =
+    command &&
+    (nestedDirect(command) ||
+      (nestedShellCall(command) && embeddedShellMutates(command)));
+  if (executor && nestedMutation) return deniedMutation();
+  if (executor && typeof raw === "string") return { denied: false };
+  return undefined;
+}
+
+function shellDecision(command: string | undefined): HookDecision {
+  return command && shellMutates(command)
+    ? deniedMutation()
+    : { denied: false };
+}
+
+function commandDecision(
+  event: Record<string, unknown>,
+  identity: ReturnType<typeof toolIdentity>,
+): HookDecision {
+  const { command, raw } = eventCommand(event);
+  const executor = executorTools.has(identity.normalizedName);
+  const executorResult = executorDecision(executor, command, raw);
+  if (executorResult) return executorResult;
+  const shell =
+    shellTools.has(identity.normalizedName) ||
+    shellTools.has(identity.shortName);
+  if (!executor && !shell) return { denied: false };
+  return shellDecision(command);
+}
+export function evaluateHook(
+  event: Record<string, unknown>,
+  policy: HookPolicy = { allowTools: [], blockTools: [], enabled: true },
+): HookDecision {
+  const identity = toolIdentity(event);
+  const configured = policyDecision(policy, identity);
+  if (configured) return configured;
+  if (isDirectTool(identity))
     return {
       denied: true,
       reason: "Route direct file editing through ast-mcp.",
     };
-  const raw =
-    event.tool_input ??
-    event.toolInput ??
-    event.toolArgs ??
-    event.input ??
-    event.args;
-  const input =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const command =
-    typeof raw === "string"
-      ? raw
-      : String(
-          input.cmd ??
-            input.command ??
-            input.script ??
-            input.source ??
-            input.code ??
-            "",
-        );
-  if (executorTools.has(normalizedName)) {
-    if (
-      command &&
-      (nestedDirect(command) ||
-        (nestedShellCall(command) && embeddedShellMutates(command)))
-    )
-      return {
-        denied: true,
-        reason: "Route manual file mutation through ast-mcp.",
-      };
-    if (typeof raw === "string") return { denied: false };
-  }
-  if (
-    !executorTools.has(normalizedName) &&
-    !shellTools.has(normalizedName) &&
-    !shellTools.has(shortName)
-  )
-    return { denied: false };
-  return command && shellMutates(command)
-    ? { denied: true, reason: "Route manual file mutation through ast-mcp." }
-    : { denied: false };
+  return commandDecision(event, identity);
 }
 export function decisionPayload(
   decision: HookDecision,

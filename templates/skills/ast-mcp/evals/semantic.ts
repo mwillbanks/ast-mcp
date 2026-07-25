@@ -1,5 +1,6 @@
 import path from "node:path";
 import { embeddedShellMutates, shellMutates } from "./shell-policy";
+import { advanceQuote } from "./source";
 
 export type EvalCase = {
   id: number;
@@ -41,44 +42,68 @@ function hasKey(input: string, key: string) {
   return new RegExp(`(?:["']${key}["']|\\b${key})\\s*:`).test(input);
 }
 
-function withoutComments(input: string) {
-  let output = "";
-  let quote = "";
-  let escaped = false;
-  for (let index = 0; index < input.length; index += 1) {
-    const character = input[index] as string;
-    const next = input[index + 1];
-    if (quote) {
-      output += character;
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) quote = "";
-      continue;
+class CommentStripper {
+  private index = 0;
+  private output = "";
+  private quote = "";
+  private escaped = false;
+
+  constructor(private readonly input: string) {}
+
+  read() {
+    while (this.index < this.input.length) {
+      if (this.quote) this.readQuoted();
+      else this.readCode();
+      this.index += 1;
     }
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      output += character;
-      continue;
-    }
-    if (character === "/" && next === "/") {
-      while (index + 1 < input.length && input[index + 1] !== "\n") index += 1;
-      output += "\n";
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      index += 2;
-      while (
-        index + 1 < input.length &&
-        !(input[index] === "*" && input[index + 1] === "/")
-      )
-        index += 1;
-      index += 1;
-      output += " ";
-      continue;
-    }
-    output += character;
+    return this.output;
   }
-  return output;
+
+  private readQuoted() {
+    const character = this.input[this.index] as string;
+    this.output += character;
+    const state = advanceQuote(character, this.quote, this.escaped);
+    this.quote = state.quote;
+    this.escaped = state.escaped;
+  }
+
+  private readCode() {
+    const character = this.input[this.index] as string;
+    const next = this.input[this.index + 1];
+    if ("\"'`".includes(character)) return this.beginQuote(character);
+    if (character === "/" && next === "/") return this.skipLineComment();
+    if (character === "/" && next === "*") return this.skipBlockComment();
+    this.output += character;
+  }
+
+  private beginQuote(character: string) {
+    this.quote = character;
+    this.output += character;
+  }
+
+  private skipLineComment() {
+    while (
+      this.index + 1 < this.input.length &&
+      this.input[this.index + 1] !== "\n"
+    )
+      this.index += 1;
+    this.output += "\n";
+  }
+
+  private skipBlockComment() {
+    this.index += 2;
+    while (
+      this.index + 1 < this.input.length &&
+      !(this.input[this.index] === "*" && this.input[this.index + 1] === "/")
+    )
+      this.index += 1;
+    this.index += 1;
+    this.output += " ";
+  }
+}
+
+function withoutComments(input: string) {
+  return new CommentStripper(input).read();
 }
 
 function hasBoolean(input: string, key: string, value: boolean) {
@@ -87,28 +112,29 @@ function hasBoolean(input: string, key: string, value: boolean) {
   ).test(input);
 }
 
+type InputValidator = (input: string) => boolean;
+
+const hasKeyedPath = (input: string) => /["'][^"']+["']\s*:/.test(input);
+const inputValidators: Record<string, InputValidator> = {
+  file_chattr: (input) => hasKey(input, "chattr") && hasKeyedPath(input),
+  file_delete: (input) =>
+    hasKey(input, "expectedSha256") && hasKeyedPath(input),
+  file_patch: (input) =>
+    hasKey(input, "expectedSha256") &&
+    hasKey(input, "patchStrategy") &&
+    (hasKey(input, "astRules") || hasKey(input, "aiderBlocks")),
+  file_rename: (input) =>
+    hasKey(input, "expectedSha256") &&
+    hasKey(input, "destination") &&
+    hasKeyedPath(input),
+  file_write: (input) => hasKey(input, "content") && hasKeyedPath(input),
+};
+
 function meaningfulInput(invocation: Invocation) {
   const input = withoutComments(invocation.input).trim();
   if (!input || input === "{}") return false;
-  if (invocation.tool === "file_patch") {
-    return (
-      hasKey(input, "expectedSha256") &&
-      hasKey(input, "patchStrategy") &&
-      (hasKey(input, "astRules") || hasKey(input, "aiderBlocks"))
-    );
-  }
-  if (invocation.tool === "file_write")
-    return hasKey(input, "content") && /["'][^"']+["']\s*:/.test(input);
-  if (invocation.tool === "file_chattr")
-    return hasKey(input, "chattr") && /["'][^"']+["']\s*:/.test(input);
-  if (invocation.tool === "file_delete")
-    return hasKey(input, "expectedSha256") && /["'][^"']+["']\s*:/.test(input);
-  if (invocation.tool === "file_rename")
-    return (
-      hasKey(input, "expectedSha256") &&
-      hasKey(input, "destination") &&
-      /["'][^"']+["']\s*:/.test(input)
-    );
+  const validator = inputValidators[invocation.tool];
+  if (validator) return validator(input);
   return (toolKeys[invocation.tool] ?? []).every((key) => hasKey(input, key));
 }
 
@@ -124,33 +150,50 @@ function pathIsWithinRoot(candidate: string, roots: string[]) {
   });
 }
 
+const singlePathExpression =
+  /["']?(?:filePath|file|path|root|destination)["']?\s*:\s*["']([^"']+)["']/g;
+const pathArrayExpression =
+  /["']?(?:filePaths|paths)["']?\s*:\s*\[([^\]]*)\]/gs;
+const keyedPathExpression =
+  /["']([^"']+)["']\s*:\s*\{\s*(?:content|expectedSha256|destination|chattr|astRules|aiderBlocks|patchStrategy)\s*:/g;
+
+function expressionValues(input: string, expression: RegExp) {
+  expression.lastIndex = 0;
+  const values: string[] = [];
+  for (const match of input.matchAll(expression))
+    if (match[1]) values.push(match[1]);
+  return values;
+}
+
+function pathCandidates(input: string) {
+  const candidates = [
+    ...expressionValues(input, singlePathExpression),
+    ...expressionValues(input, keyedPathExpression),
+  ];
+  pathArrayExpression.lastIndex = 0;
+  for (const match of input.matchAll(pathArrayExpression)) {
+    for (const value of match[1]?.matchAll(/["']([^"']+)["']/g) ?? []) {
+      if (value[1]) candidates.push(value[1]);
+    }
+  }
+  return candidates;
+}
+
+function escapedPath(candidate: string, roots: string[]) {
+  const pathLike = candidate.includes("/") || candidate.includes("\\");
+  return pathLike && !pathIsWithinRoot(candidate, roots);
+}
+
 function pathErrors(invocations: Invocation[], roots: string[]) {
   const errors: string[] = [];
-  const singlePath =
-    /["']?(?:filePath|file|path|root|destination)["']?\s*:\s*["']([^"']+)["']/g;
-  const pathArray = /["']?(?:filePaths|paths)["']?\s*:\s*\[([^\]]*)\]/gs;
-  const keyedPath =
-    /["']([^"']+)["']\s*:\s*\{\s*(?:content|expectedSha256|destination|chattr|astRules|aiderBlocks|patchStrategy)\s*:/g;
   for (const invocation of invocations) {
-    const input = withoutComments(invocation.input);
-    const candidates: string[] = [];
-    for (const expression of [singlePath, keyedPath]) {
-      expression.lastIndex = 0;
-      for (const match of input.matchAll(expression))
-        if (match[1]) candidates.push(match[1]);
-    }
-    pathArray.lastIndex = 0;
-    for (const match of input.matchAll(pathArray))
-      for (const value of match[1]?.matchAll(/["']([^"']+)["']/g) ?? [])
-        if (value[1]) candidates.push(value[1]);
-    for (const candidate of candidates)
-      if (
-        (candidate.includes("/") || candidate.includes("\\")) &&
-        !pathIsWithinRoot(candidate, roots)
-      )
+    const candidates = pathCandidates(withoutComments(invocation.input));
+    for (const candidate of candidates) {
+      if (escapedPath(candidate, roots))
         errors.push(
           `${invocation.tool} input escapes transcript workspace roots: ${candidate}`,
         );
+    }
   }
   return errors;
 }
@@ -174,6 +217,30 @@ function isBatch(invocation: Invocation) {
   return false;
 }
 
+type RenameFiles = Record<
+  string,
+  { destinationPath?: string; renamed?: boolean }
+>;
+
+function renameEntryMatches(
+  files: RenameFiles,
+  workspaceRoot: string,
+  entry: [string, unknown],
+) {
+  const [source, value] = entry;
+  if (!value || typeof value !== "object") return false;
+  const destination = (value as { destination?: unknown }).destination;
+  if (typeof destination !== "string") return false;
+  const destinationPath = path.resolve(workspaceRoot, destination);
+  const sourcePath = path.resolve(workspaceRoot, source);
+  const file = files[source] ?? files[sourcePath];
+  return (
+    file?.destinationPath !== undefined &&
+    path.resolve(file.destinationPath) === destinationPath &&
+    file.renamed === true
+  );
+}
+
 function renameResultsCoverInputs(
   call: Invocation,
   output: string,
@@ -181,27 +248,12 @@ function renameResultsCoverInputs(
 ) {
   try {
     const request = JSON.parse(call.input) as Record<string, unknown>;
-    const result = JSON.parse(output) as {
-      files?: Record<string, { destinationPath?: string; renamed?: boolean }>;
-    };
+    const result = JSON.parse(output) as { files?: RenameFiles };
     if (!result.files) return false;
     const workspaceRoot = roots[0] ?? process.cwd();
-    return Object.entries(request).every(([source, value]) => {
-      if (!value || typeof value !== "object") return false;
-      const destination = (value as { destination?: unknown }).destination;
-      const sourcePath = path.resolve(workspaceRoot, source);
-      const destinationPath =
-        typeof destination === "string"
-          ? path.resolve(workspaceRoot, destination)
-          : undefined;
-      const file = result.files?.[source] ?? result.files?.[sourcePath];
-      return (
-        destinationPath !== undefined &&
-        file?.destinationPath !== undefined &&
-        path.resolve(file.destinationPath) === destinationPath &&
-        file.renamed === true
-      );
-    });
+    return Object.entries(request).every((entry) =>
+      renameEntryMatches(result.files as RenameFiles, workspaceRoot, entry),
+    );
   } catch {
     return false;
   }
@@ -211,6 +263,196 @@ function shellMutationSource(source: string) {
   return embeddedShellMutates(source) || shellMutates(source);
 }
 
+interface AssertionContext {
+  evaluation: EvalCase;
+  invocations: Invocation[];
+  normalized: string;
+  output: string;
+  roots: string[];
+  sanitized: Invocation[];
+  source: string;
+  tools: Set<string>;
+}
+
+type AssertionRule = (context: AssertionContext) => boolean | undefined;
+
+function assertionContext(
+  assertion: string,
+  evaluation: EvalCase,
+  invocations: Invocation[],
+  output: string,
+  roots: string[],
+): AssertionContext {
+  const sanitized = invocations.map((invocation) => ({
+    ...invocation,
+    input: withoutComments(invocation.input),
+  }));
+  return {
+    evaluation,
+    invocations,
+    normalized: assertion.toLowerCase(),
+    output,
+    roots,
+    sanitized,
+    source: sanitized.map((invocation) => invocation.input).join("\n"),
+    tools: new Set(sanitized.map((invocation) => invocation.tool)),
+  };
+}
+
+function calls(context: AssertionContext, tool: string) {
+  return context.sanitized.filter((invocation) => invocation.tool === tool);
+}
+
+function rejectedDestinationAssertion(
+  renameCalls: Invocation[],
+  output: string,
+) {
+  return (
+    renameCalls.length > 0 &&
+    /(?:already exists|destination.*exist|exist.*destination|rejected|error|failed)/i.test(
+      output,
+    ) &&
+    /destination/i.test(output)
+  );
+}
+
+function renameReportAssertion(
+  renameCalls: Invocation[],
+  output: string,
+  roots: string[],
+) {
+  if (renameCalls.length === 0) return false;
+  return (
+    renameResultsCoverInputs(renameCalls[0] as Invocation, output, roots) &&
+    /["']?files["']?\s*:/i.test(output) &&
+    /destinationPath|renamed/i.test(output)
+  );
+}
+
+function renameAssertion(context: AssertionContext): boolean | undefined {
+  const { normalized, output, roots } = context;
+  const renameCalls = calls(context, "file_rename");
+  if (
+    normalized.includes("does not overwrite") ||
+    normalized.includes("existing destination")
+  )
+    return rejectedDestinationAssertion(renameCalls, output);
+  if (
+    normalized.includes("reports each source") &&
+    normalized.includes("destination")
+  )
+    return renameReportAssertion(renameCalls, output, roots);
+  return undefined;
+}
+
+function prohibitionAssertion(context: AssertionContext): boolean | undefined {
+  const { evaluation, normalized, source, tools } = context;
+  if (
+    normalized.includes("does not call") ||
+    normalized.includes("does not use") ||
+    normalized.includes("never calls")
+  ) {
+    return (
+      evaluation.forbidden_tools.every((tool) => !tools.has(tool)) &&
+      !(normalized.includes("shell") && shellMutationSource(source))
+    );
+  }
+  if (
+    normalized.includes("direct filesystem") ||
+    normalized.includes("direct editor") ||
+    normalized.includes("shell mutation")
+  )
+    return !shellMutationSource(source);
+  return undefined;
+}
+
+function readAssertion(context: AssertionContext): boolean | undefined {
+  const { normalized } = context;
+  const readCalls = calls(context, "file_read");
+  if (normalized.includes("bounded") && normalized.includes("lines")) {
+    return readCalls.some((call) =>
+      /lines\s*:\s*\[\s*\d+\s*,\s*\d+\s*\]/.test(call.input),
+    );
+  }
+  if (normalized.includes("maxbytes") || normalized.includes("64 kib"))
+    return readCalls.every((call) => hasKey(call.input, "maxBytes"));
+  return undefined;
+}
+
+function hashPrecedesMutation(context: AssertionContext) {
+  const hashIndex = calls(context, "file_hash")[0]?.index;
+  const mutation = context.invocations.find((call) =>
+    ["file_patch", "file_write", "file_delete", "file_rename"].includes(
+      call.tool,
+    ),
+  );
+  return (
+    hashIndex !== undefined &&
+    mutation?.index !== undefined &&
+    hashIndex < mutation.index
+  );
+}
+
+function workflowAssertion(context: AssertionContext): boolean | undefined {
+  const { invocations, normalized } = context;
+  const patchCalls = calls(context, "file_patch");
+  if (normalized.includes("batch") || normalized.includes("one keyed"))
+    return invocations.some(isBatch);
+  if (normalized.includes("fresh") && normalized.includes("hash"))
+    return hashPrecedesMutation(context);
+  if (normalized.includes("preview true"))
+    return patchCalls.some((call) => hasBoolean(call.input, "preview", true));
+  if (normalized.includes("preview") || normalized.includes("dry run")) {
+    return (
+      calls(context, "run").some(
+        (call) => !hasBoolean(call.input, "write", true),
+      ) || patchCalls.some((call) => hasBoolean(call.input, "preview", true))
+    );
+  }
+  return undefined;
+}
+
+function strategyAssertion(context: AssertionContext): boolean | undefined {
+  const { normalized } = context;
+  const patchCalls = calls(context, "file_patch");
+  if (normalized.includes("exactly one match"))
+    return patchCalls.some((call) =>
+      /expectedMatches\s*:\s*1\b/.test(call.input),
+    );
+  if (
+    normalized.includes("ast strategy") ||
+    normalized.includes("patchstrategy ast")
+  )
+    return patchCalls.some((call) =>
+      /patchStrategy\s*:\s*["']ast["']/.test(call.input),
+    );
+  if (normalized.includes("aider"))
+    return patchCalls.some((call) =>
+      /patchStrategy\s*:\s*["']aider_block["']/.test(call.input),
+    );
+  return undefined;
+}
+
+function outputAssertion(context: AssertionContext): boolean | undefined {
+  const { normalized, output } = context;
+  if (
+    normalized.includes("reports") ||
+    normalized.includes("verification") ||
+    normalized.includes("output")
+  )
+    return output.trim().length > 0;
+  return undefined;
+}
+
+const assertionRules: AssertionRule[] = [
+  renameAssertion,
+  prohibitionAssertion,
+  readAssertion,
+  workflowAssertion,
+  strategyAssertion,
+  outputAssertion,
+];
+
 function assertionSatisfied(
   assertion: string,
   evaluation: EvalCase,
@@ -218,130 +460,37 @@ function assertionSatisfied(
   output: string,
   roots: string[] = [],
 ) {
-  const normalized = assertion.toLowerCase();
-  const sanitizedInvocations = invocations.map((invocation) => ({
-    ...invocation,
-    input: withoutComments(invocation.input),
-  }));
-  const tools = new Set(
-    sanitizedInvocations.map((invocation) => invocation.tool),
+  const context = assertionContext(
+    assertion,
+    evaluation,
+    invocations,
+    output,
+    roots,
   );
-  const source = sanitizedInvocations
-    .map((invocation) => invocation.input)
-    .join("\n");
-  const calls = (tool: string) =>
-    sanitizedInvocations.filter((invocation) => invocation.tool === tool);
-  if (
-    normalized.includes("does not overwrite") ||
-    normalized.includes("existing destination")
-  ) {
-    const renameCall = calls("file_rename");
-    return (
-      renameCall.length > 0 &&
-      /(?:already exists|destination.*exist|exist.*destination|rejected|error|failed)/i.test(
-        output,
-      ) &&
-      /destination/i.test(output)
-    );
+  for (const rule of assertionRules) {
+    const result = rule(context);
+    if (result !== undefined) return result;
   }
-  if (
-    normalized.includes("reports each source") &&
-    normalized.includes("destination")
-  )
-    return (
-      calls("file_rename").length > 0 &&
-      renameResultsCoverInputs(calls("file_rename")[0], output, roots) &&
-      /["']?files["']?\s*:/i.test(output) &&
-      /destinationPath|renamed/i.test(output)
-    );
-  if (
-    normalized.includes("does not call") ||
-    normalized.includes("does not use") ||
-    normalized.includes("never calls")
-  )
-    return (
-      evaluation.forbidden_tools.every((tool) => !tools.has(tool)) &&
-      !(normalized.includes("shell") && shellMutationSource(source))
-    );
-  if (
-    normalized.includes("direct filesystem") ||
-    normalized.includes("direct editor") ||
-    normalized.includes("shell mutation")
-  )
-    return !shellMutationSource(source);
-  if (normalized.includes("bounded") && normalized.includes("lines"))
-    return calls("file_read").some((call) =>
-      /lines\s*:\s*\[\s*\d+\s*,\s*\d+\s*\]/.test(call.input),
-    );
-  if (normalized.includes("maxbytes") || normalized.includes("64 kib"))
-    return calls("file_read").every((call) => hasKey(call.input, "maxBytes"));
-  if (normalized.includes("batch") || normalized.includes("one keyed"))
-    return invocations.some(isBatch);
-  if (normalized.includes("fresh") && normalized.includes("hash")) {
-    const hashIndex = calls("file_hash")[0]?.index;
-    const mutationIndex = invocations.find((call) =>
-      ["file_patch", "file_write", "file_delete", "file_rename"].includes(
-        call.tool,
-      ),
-    )?.index;
-    return (
-      hashIndex !== undefined &&
-      mutationIndex !== undefined &&
-      hashIndex < mutationIndex
-    );
-  }
-  if (normalized.includes("preview true"))
-    return calls("file_patch").some((call) =>
-      hasBoolean(call.input, "preview", true),
-    );
-  if (normalized.includes("preview") || normalized.includes("dry run"))
-    return (
-      calls("run").some((call) => !hasBoolean(call.input, "write", true)) ||
-      calls("file_patch").some((call) =>
-        hasBoolean(call.input, "preview", true),
-      )
-    );
-  if (normalized.includes("exactly one match"))
-    return calls("file_patch").some((call) =>
-      /expectedMatches\s*:\s*1\b/.test(call.input),
-    );
-  if (
-    normalized.includes("ast strategy") ||
-    normalized.includes("patchstrategy ast")
-  )
-    return calls("file_patch").some((call) =>
-      /patchStrategy\s*:\s*["']ast["']/.test(call.input),
-    );
-  if (normalized.includes("aider"))
-    return calls("file_patch").some((call) =>
-      /patchStrategy\s*:\s*["']aider_block["']/.test(call.input),
-    );
-  if (
-    normalized.includes("reports") ||
-    normalized.includes("verification") ||
-    normalized.includes("output")
-  )
-    return output.trim().length > 0;
   return (
-    evaluation.required_tools.every((tool) => tools.has(tool)) &&
-    sanitizedInvocations.every(meaningfulInput) &&
-    output.trim().length > 0
+    context.evaluation.required_tools.every((tool) =>
+      context.tools.has(tool),
+    ) &&
+    context.sanitized.every(meaningfulInput) &&
+    context.output.trim().length > 0
   );
 }
 
-export function verifyEvaluation(
-  evaluation: EvalCase,
-  invocations: Invocation[],
-  output: string,
-  roots: string[],
-) {
-  const errors: string[] = [];
-  const sanitizedInvocations = invocations.map((invocation) => ({
+function sanitizeInvocations(invocations: Invocation[]): Invocation[] {
+  return invocations.map((invocation) => ({
     ...invocation,
     input: withoutComments(invocation.input),
   }));
+}
+
+function toolContractErrors(evaluation: EvalCase, invocations: Invocation[]) {
+  const errors: string[] = [];
   const tools = new Set(
-    sanitizedInvocations.map((invocation) => invocation.tool),
+    sanitizeInvocations(invocations).map((invocation) => invocation.tool),
   );
   for (const tool of evaluation.required_tools)
     if (!tools.has(tool)) errors.push(`missing required tool: ${tool}`);
@@ -350,6 +499,11 @@ export function verifyEvaluation(
   for (const invocation of invocations)
     if (!meaningfulInput(invocation))
       errors.push(`${invocation.tool} has empty or schema-incomplete input`);
+  return errors;
+}
+
+function sequenceErrors(evaluation: EvalCase, invocations: Invocation[]) {
+  const errors: string[] = [];
   if (
     evaluation.required_tools.length > 1 &&
     invocations.some(
@@ -365,13 +519,21 @@ export function verifyEvaluation(
       (invocation) => invocation.tool === tool && invocation.index > priorIndex,
     );
     if (!next) {
-      if (tools.has(tool))
+      if (invocations.some((invocation) => invocation.tool === tool))
         errors.push(`required tool sequence is not satisfied at: ${tool}`);
       continue;
     }
     priorIndex = next.index;
   }
-  errors.push(...pathErrors(invocations, roots));
+  return errors;
+}
+
+function fileEvidenceErrors(
+  evaluation: EvalCase,
+  invocations: Invocation[],
+  output: string,
+) {
+  const errors: string[] = [];
   for (const file of evaluation.files) {
     if (
       !invocations.some((invocation) =>
@@ -382,6 +544,30 @@ export function verifyEvaluation(
     if (!output.includes(file))
       errors.push(`output does not prove file result: ${file}`);
   }
+  return errors;
+}
+
+function transportOutputMissing(evaluation: EvalCase, output: string) {
+  if (evaluation.required_tools.length !== 0) return false;
+  return !evaluation.expected_output
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((word) => word.length >= 7)
+    .some((word) => output.toLowerCase().includes(word));
+}
+
+export function verifyEvaluation(
+  evaluation: EvalCase,
+  invocations: Invocation[],
+  output: string,
+  roots: string[],
+) {
+  const errors = [
+    ...toolContractErrors(evaluation, invocations),
+    ...sequenceErrors(evaluation, invocations),
+    ...pathErrors(invocations, roots),
+    ...fileEvidenceErrors(evaluation, invocations, output),
+  ];
   if (
     !assertionSatisfied(
       evaluation.expected_output,
@@ -392,14 +578,7 @@ export function verifyEvaluation(
     )
   )
     errors.push(`expected output not proven: ${evaluation.expected_output}`);
-  if (
-    evaluation.required_tools.length === 0 &&
-    !evaluation.expected_output
-      .toLowerCase()
-      .split(/\W+/)
-      .filter((word) => word.length >= 7)
-      .some((word) => output.toLowerCase().includes(word))
-  )
+  if (transportOutputMissing(evaluation, output))
     errors.push("output does not prove expected transport behavior");
   for (const assertion of evaluation.assertions)
     if (!assertionSatisfied(assertion, evaluation, invocations, output, roots))

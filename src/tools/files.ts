@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import { chattrSchema, toolFailure } from "../helpers/mcp-schema";
 import { patchFiles, writeFilesSafely } from "../patch/engine";
 import {
   FILE_READ_MAX_BATCH,
@@ -10,15 +11,7 @@ import {
 } from "../runtime/file-read";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
-const failure = (error: unknown) => ({
-  content: [
-    {
-      text: error instanceof Error ? error.message : String(error),
-      type: "text" as const,
-    },
-  ],
-  isError: true,
-});
+const failure = toolFailure;
 export default function registerFileTools(
   server: McpServer,
   execute: ConfiguredExecution = localExecution,
@@ -40,15 +33,7 @@ export default function registerFileTools(
     fix: z.string(),
     pattern: z.string().min(1),
   });
-  const chattr = z.object({
-    chmod: z.number().int().min(0).max(0o777).optional(),
-    chown: z
-      .object({
-        gid: z.number().int().nonnegative(),
-        uid: z.number().int().nonnegative(),
-      })
-      .optional(),
-  });
+  const chattr = chattrSchema;
   const writeTarget = z.object({
     chattr: chattr.optional(),
     content: z.string(),

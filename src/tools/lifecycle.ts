@@ -1,33 +1,21 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+import {
+  boundedRecord,
+  chattrSchema,
+  toolFailure,
+} from "../helpers/mcp-schema";
 import { applyFileChattr, type FileChattr } from "../runtime/attributes";
 import { deleteFilesSafely } from "../runtime/file-delete";
-import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
 import { renameFilesSafely } from "../runtime/file-rename";
 import { sha256 } from "../runtime/hash";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
-const chattr = z.object({
-  chmod: z.number().int().min(0).max(0o777).optional(),
-  chown: z
-    .object({
-      gid: z.number().int().nonnegative(),
-      uid: z.number().int().nonnegative(),
-    })
-    .optional(),
-});
+const chattr = chattrSchema;
 
-const failure = (error: unknown) => ({
-  content: [
-    {
-      text: error instanceof Error ? error.message : String(error),
-      type: "text" as const,
-    },
-  ],
-  isError: true,
-});
+const failure = toolFailure;
 
 export default function registerLifecycleTools(
   server: McpServer,
@@ -38,20 +26,13 @@ export default function registerLifecycleTools(
     {
       description:
         "Applies the shared chattr contract to multiple root-bounded files under deterministic locks.",
-      inputSchema: z
-        .record(
-          z.string().min(1),
-          z.object({
-            chattr,
-            expectedSha256: z.string().length(64).optional(),
-          }),
-        )
-        .refine(
-          (value) =>
-            Object.keys(value).length > 0 &&
-            Object.keys(value).length <= FILE_READ_MAX_BATCH,
-          "file_chattr requires between 1 and 50 files",
-        ),
+      inputSchema: boundedRecord(
+        z.object({
+          chattr,
+          expectedSha256: z.string().length(64).optional(),
+        }),
+        "file_chattr requires between 1 and 50 files",
+      ),
       title: "Change File Attributes Safely",
     },
     async (requests) => {
@@ -97,20 +78,13 @@ export default function registerLifecycleTools(
     {
       description:
         "Deletes files in one reference-preflighted batch and removes empty ancestor directories. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
-      inputSchema: z
-        .record(
-          z.string().min(1),
-          z.object({
-            expectedSha256: z.string().length(64).optional(),
-            forceReferences: z.boolean().optional(),
-          }),
-        )
-        .refine(
-          (value) =>
-            Object.keys(value).length > 0 &&
-            Object.keys(value).length <= FILE_READ_MAX_BATCH,
-          "file_delete requires between 1 and 50 files",
-        ),
+      inputSchema: boundedRecord(
+        z.object({
+          expectedSha256: z.string().length(64).optional(),
+          forceReferences: z.boolean().optional(),
+        }),
+        "file_delete requires between 1 and 50 files",
+      ),
       title: "Delete Files Safely",
     },
     async (requests) => {
@@ -135,20 +109,13 @@ export default function registerLifecycleTools(
     {
       description:
         "Renames files in one root-bounded batch without overwriting destinations. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
-      inputSchema: z
-        .record(
-          z.string().min(1),
-          z.object({
-            destination: z.string().min(1),
-            expectedSha256: z.string().length(64).optional(),
-          }),
-        )
-        .refine(
-          (value) =>
-            Object.keys(value).length > 0 &&
-            Object.keys(value).length <= FILE_READ_MAX_BATCH,
-          "file_rename requires between 1 and 50 files",
-        ),
+      inputSchema: boundedRecord(
+        z.object({
+          destination: z.string().min(1),
+          expectedSha256: z.string().length(64).optional(),
+        }),
+        "file_rename requires between 1 and 50 files",
+      ),
       title: "Rename Files Safely",
     },
     async (requests) => {

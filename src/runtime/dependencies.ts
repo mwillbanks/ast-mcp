@@ -98,6 +98,32 @@ function globalBinDirectories(binaryName: string, platform: NodeJS.Platform) {
   return [...directories];
 }
 
+function executableCandidate(candidates: string[], platform: NodeJS.Platform) {
+  return candidates.find((candidate) => isExecutable(candidate, platform));
+}
+
+function ancestorBinaryCandidates(packageRoot: string, names: string[]) {
+  const candidates: string[] = [];
+  for (
+    let current = packageRoot;
+    path.dirname(current) !== current;
+    current = path.dirname(current)
+  ) {
+    for (const name of names)
+      candidates.push(path.join(current, "node_modules/.bin", name));
+  }
+  return candidates;
+}
+
+function directoryBinaryCandidates(directories: string[], names: string[]) {
+  const candidates: string[] = [];
+  for (const directory of directories) {
+    if (!directory) continue;
+    for (const name of names) candidates.push(path.join(directory, name));
+  }
+  return candidates;
+}
+
 export function resolveDependencyBinary(
   binaryName: string,
   packageName = binaryName,
@@ -106,42 +132,26 @@ export function resolveDependencyBinary(
   const platform = options.platform ?? process.platform;
   const packageRoot = options.packageRoot ?? PACKAGE_ROOT;
   const names = executableNames(binaryName, platform);
-  const candidates: string[] = [];
-
-  for (
-    let current = packageRoot;
-    path.dirname(current) !== current;
-    current = path.dirname(current)
-  )
-    for (const name of names)
-      candidates.push(path.join(current, "node_modules/.bin", name));
-
+  const localCandidates = ancestorBinaryCandidates(packageRoot, names);
   const directPackageBinary =
     options.packageBinary ?? packageBinary(packageName, binaryName);
-  if (directPackageBinary) candidates.push(directPackageBinary);
-  const local = candidates.find((candidate) =>
-    isExecutable(candidate, platform),
-  );
+  if (directPackageBinary) localCandidates.push(directPackageBinary);
+  const local = executableCandidate(localCandidates, platform);
   if (local) return local;
-
   const globalDirectories =
     options.globalBinDirectories ?? globalBinDirectories(binaryName, platform);
-  candidates.length = 0;
-  for (const directory of globalDirectories)
-    for (const name of names) candidates.push(path.join(directory, name));
-  const global = candidates.find((candidate) =>
-    isExecutable(candidate, platform),
+  const global = executableCandidate(
+    directoryBinaryCandidates(globalDirectories, names),
+    platform,
   );
   if (global) return global;
-
-  candidates.length = 0;
-  for (const directory of (options.pathValue ?? process.env.PATH ?? "").split(
+  const pathDirectories = (options.pathValue ?? process.env.PATH ?? "").split(
     path.delimiter,
-  ))
-    if (directory)
-      for (const name of names) candidates.push(path.join(directory, name));
-
-  return candidates.find((candidate) => isExecutable(candidate, platform));
+  );
+  return executableCandidate(
+    directoryBinaryCandidates(pathDirectories, names),
+    platform,
+  );
 }
 
 export const AST_BRO_VERSION = "3.0.0";

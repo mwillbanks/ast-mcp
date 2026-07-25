@@ -4,18 +4,11 @@ export interface AstBroResult {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Upstream JSON schemas are intentionally dynamic at this boundary.
-export function parseAstBroJson(result: AstBroResult): Record<string, any> {
-  const text = result.content
-    .filter((item) => item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text)
-    .join("\n");
-  if (result.isError) throw new Error(text || "ast-bro MCP call failed");
-  if (!text) throw new Error("ast-bro MCP returned no JSON text");
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Error(`Invalid ast-bro MCP JSON: ${text}`, { cause: error });
-  }
+type AstBroJson = Record<string, any>;
+
+import { parseTextResultJson } from "../helpers/json";
+export function parseAstBroJson(result: AstBroResult): AstBroJson {
+  return parseTextResultJson(result);
 }
 
 export function astBroMatchFiles(result: AstBroResult): string[] {

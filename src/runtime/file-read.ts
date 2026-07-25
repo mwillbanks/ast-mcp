@@ -35,9 +35,7 @@ async function mapConcurrently<Input, Output>(
   return output;
 }
 
-function validateRequest(request: FileReadRequest) {
-  const [start, end] = request.lines ?? FILE_READ_DEFAULT_LINES;
-  const maxBytes = request.maxBytes ?? FILE_READ_MAX_BYTES;
+function validateLineRange(start: number, end: number) {
   if (!Number.isInteger(start) || start < 0)
     throw new Error("file_read line start must be a non-negative integer");
   if (!Number.isInteger(end) || end <= start)
@@ -46,6 +44,9 @@ function validateRequest(request: FileReadRequest) {
     throw new Error(
       `file_read line ranges are capped at ${FILE_READ_MAX_LINES} lines`,
     );
+}
+
+function validateMaxBytes(maxBytes: number) {
   if (
     !Number.isInteger(maxBytes) ||
     maxBytes < 1 ||
@@ -54,7 +55,90 @@ function validateRequest(request: FileReadRequest) {
     throw new Error(
       `file_read maxBytes must be between 1 and ${FILE_READ_MAX_BYTES}`,
     );
+}
+
+function validateRequest(request: FileReadRequest) {
+  const [start, end] = request.lines ?? FILE_READ_DEFAULT_LINES;
+  const maxBytes = request.maxBytes ?? FILE_READ_MAX_BYTES;
+  validateLineRange(start, end);
+  validateMaxBytes(maxBytes);
   return { lines: [start, end] as [number, number], maxBytes };
+}
+
+class LineRangeCollector {
+  private line = 0;
+  private moreInChunk = false;
+  private readonly selected: Buffer[] = [];
+  private selectedBytes = 0;
+  private truncated = false;
+
+  constructor(
+    private readonly lines: [number, number],
+    private readonly maxBytes: number,
+  ) {}
+
+  consume(chunk: Buffer) {
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(10, offset);
+      const segmentEnd = newline < 0 ? chunk.length : newline + 1;
+      if (this.lineSelected() && this.append(chunk, offset, segmentEnd)) {
+        this.moreInChunk = true;
+        return true;
+      }
+      offset = segmentEnd;
+      if (newline < 0) return false;
+      this.line += 1;
+      if (this.line >= this.lines[1]) {
+        this.moreInChunk = offset < chunk.length;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  result(fileSize: number, bytesRead: number) {
+    const contentBuffer = Buffer.concat(this.selected, this.selectedBytes);
+    const returnedLineCount = bufferLineCount(contentBuffer);
+    return {
+      content: contentBuffer.toString("utf8"),
+      hasMore: this.truncated || this.moreInChunk || bytesRead < fileSize,
+      lines: {
+        requested: this.lines,
+        returned: [this.lines[0], this.lines[0] + returnedLineCount],
+      },
+      truncated: this.truncated,
+    };
+  }
+
+  private lineSelected() {
+    return this.line >= this.lines[0] && this.line < this.lines[1];
+  }
+
+  private append(chunk: Buffer, offset: number, segmentEnd: number) {
+    const remaining = this.maxBytes - this.selectedBytes;
+    const length = segmentEnd - offset;
+    if (length > remaining) {
+      if (remaining > 0) {
+        this.selected.push(chunk.subarray(offset, offset + remaining));
+        this.selectedBytes += remaining;
+      }
+      this.truncated = true;
+      return true;
+    }
+    if (length > 0) {
+      this.selected.push(chunk.subarray(offset, segmentEnd));
+      this.selectedBytes += length;
+    }
+    return false;
+  }
+}
+
+function bufferLineCount(content: Buffer) {
+  let count = 0;
+  for (const byte of content) if (byte === 10) count += 1;
+  if (content.length > 0 && content.at(-1) !== 10) count += 1;
+  return count;
 }
 
 async function readLineRange(
@@ -63,67 +147,17 @@ async function readLineRange(
   lines: [number, number],
   maxBytes: number,
 ) {
-  const [start, end] = lines;
-  const selected: Buffer[] = [];
-  let selectedBytes = 0;
-  let line = 0;
-  let moreInChunk = false;
-  let truncated = false;
+  const collector = new LineRangeCollector(lines, maxBytes);
   const stream = createReadStream(filePath);
-
   try {
-    outer: for await (const raw of stream) {
+    for await (const raw of stream) {
       const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-      let offset = 0;
-      while (offset < chunk.length) {
-        const newline = chunk.indexOf(10, offset);
-        const segmentEnd = newline < 0 ? chunk.length : newline + 1;
-        if (line >= start && line < end) {
-          const remaining = maxBytes - selectedBytes;
-          const length = segmentEnd - offset;
-          if (length > remaining) {
-            if (remaining > 0) {
-              selected.push(chunk.subarray(offset, offset + remaining));
-              selectedBytes += remaining;
-            }
-            truncated = true;
-            moreInChunk = true;
-            break outer;
-          }
-          if (length > 0) {
-            selected.push(chunk.subarray(offset, segmentEnd));
-            selectedBytes += length;
-          }
-        }
-        offset = segmentEnd;
-        if (newline >= 0) {
-          line += 1;
-          if (line >= end) {
-            moreInChunk = offset < chunk.length;
-            break outer;
-          }
-        } else break;
-      }
+      if (collector.consume(chunk)) break;
     }
   } finally {
     stream.destroy();
   }
-
-  const contentBuffer = Buffer.concat(selected, selectedBytes);
-  let returnedLineCount = 0;
-  for (const byte of contentBuffer) if (byte === 10) returnedLineCount += 1;
-  if (contentBuffer.length > 0 && contentBuffer.at(-1) !== 10)
-    returnedLineCount += 1;
-
-  return {
-    content: contentBuffer.toString("utf8"),
-    hasMore: truncated || moreInChunk || stream.bytesRead < fileSize,
-    lines: {
-      requested: lines,
-      returned: [start, start + returnedLineCount],
-    },
-    truncated,
-  };
+  return collector.result(fileSize, stream.bytesRead);
 }
 
 async function hashFileSafely(filePath: string) {

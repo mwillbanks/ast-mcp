@@ -41,6 +41,12 @@ Every path-bearing intelligence and file operation passes through the same confi
 
 Structural patches and Aider blocks converge on the same candidate pipeline: validate current state, transform, format, lock, recheck, and atomically replace. The operation never treats successful text generation as permission to overwrite stale state.
 
+## Helper boundaries
+
+Cross-cutting normalization, parsing, process capture, installer routing, configuration traversal, and MCP schema contracts live in `src/helpers/`, segmented by responsibility. Public modules keep their established entry points while delegating pure transformations to these focused helpers, which keeps protocol and mutation orchestration small and independently testable. Website-only URL normalization follows the same boundary under `website/src/helpers/`.
+
+Fallow analyzes every duplicated pair (`minOccurrences = 2`) so reusable behavior is consolidated early instead of growing into parallel implementations.
+
 ## Distribution
 
 The package publishes one Bun-bundled `ast-mcp` executable with three operational subcommands:

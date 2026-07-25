@@ -68,43 +68,55 @@ export class BatchingStdioServerTransport implements Transport {
     });
   }
 
+  private takeLine() {
+    const newline = this.buffer.indexOf(10);
+    if (newline === -1) return;
+    const line = this.buffer
+      .subarray(0, newline)
+      .toString("utf8")
+      .replace(/\r$/, "");
+    this.buffer = this.buffer.subarray(newline + 1);
+    return line;
+  }
+
+  private deserializeItem(message: unknown) {
+    try {
+      return deserializeMessage(JSON.stringify(message));
+    } catch (error) {
+      this.reportInvalidRequest(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
+  private deserializeBatch(parsed: unknown) {
+    if (Array.isArray(parsed) && parsed.length === 0) {
+      this.reportInvalidRequest(
+        new Error("JSON-RPC batches must not be empty"),
+      );
+      return [];
+    }
+    return (Array.isArray(parsed) ? parsed : [parsed])
+      .map((message) => this.deserializeItem(message))
+      .filter((message): message is JSONRPCMessage => message !== undefined);
+  }
+
+  private processLine(line: string) {
+    try {
+      const messages = this.deserializeBatch(JSON.parse(line));
+      for (const message of messages) this.onmessage?.(message);
+    } catch (error) {
+      this.reportInvalidRequest(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+
   private processReadBuffer() {
     while (true) {
-      const newline = this.buffer.indexOf(10);
-      if (newline === -1) return;
-
-      const line = this.buffer
-        .subarray(0, newline)
-        .toString("utf8")
-        .replace(/\r$/, "");
-      this.buffer = this.buffer.subarray(newline + 1);
-
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (Array.isArray(parsed) && parsed.length === 0) {
-          this.reportInvalidRequest(
-            new Error("JSON-RPC batches must not be empty"),
-          );
-          continue;
-        }
-        const messages = (Array.isArray(parsed) ? parsed : [parsed]).flatMap(
-          (message) => {
-            try {
-              return [deserializeMessage(JSON.stringify(message))];
-            } catch (error) {
-              this.reportInvalidRequest(
-                error instanceof Error ? error : new Error(String(error)),
-              );
-              return [];
-            }
-          },
-        );
-        for (const message of messages) this.onmessage?.(message);
-      } catch (error) {
-        this.reportInvalidRequest(
-          error instanceof Error ? error : new Error(String(error)),
-        );
-      }
+      const line = this.takeLine();
+      if (line === undefined) return;
+      this.processLine(line);
     }
   }
 

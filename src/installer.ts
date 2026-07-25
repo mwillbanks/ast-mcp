@@ -11,6 +11,13 @@ import os from "node:os";
 import path from "node:path";
 import { globalConfigPath, resolveConfig } from "./config";
 import {
+  codexTransport,
+  installerTargetPaths,
+  jsonTargetConfig,
+  jsonTransport,
+  parseInstallerArguments,
+} from "./helpers/installer";
+import {
   type HttpEndpoint,
   httpEndpoint,
   type McpTransport,
@@ -211,11 +218,15 @@ async function instructions(file: string) {
   );
 }
 
-async function removeInstructions(file: string) {
-  const old = await readFile(file, "utf8").catch((error) => {
+async function optionalText(file: string) {
+  return readFile(file, "utf8").catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   });
+}
+
+async function removeInstructions(file: string) {
+  const old = await optionalText(file);
   if (old === undefined) return;
   await writeText(file, old.replace(instructionsPattern, ""));
 }
@@ -236,10 +247,7 @@ async function removeJsonMcp(file: string, section = "mcpServers") {
 }
 
 async function removeCodexMcp(file: string) {
-  const old = await readFile(file, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  const old = await optionalText(file);
   if (old === undefined) return;
   await writeText(
     file,
@@ -312,23 +320,13 @@ async function targetTransport(
       path.join(base, "config.toml"),
       "utf8",
     ).catch(() => "");
-    const block = content.match(
-      /# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/,
-    )?.[1];
-    if (!block) return undefined;
-    return /^\s*url\s*=/m.test(block) ? "http" : "stdio";
+    return codexTransport(content);
   }
-  const file =
-    target === "claude"
-      ? global
-        ? path.join(home, ".claude.json")
-        : path.join(root, ".mcp.json")
-      : global
-        ? path.join(home, ".copilot/mcp-config.json")
-        : path.join(root, ".github/mcp.json");
-  const entry = (await json(file)).mcpServers?.["ast-mcp"];
-  if (!entry) return undefined;
-  return typeof entry.url === "string" ? "http" : "stdio";
+  const file = jsonTargetConfig(target, global, root, home);
+  const entry = (await json(file)).mcpServers?.["ast-mcp"] as
+    | Record<string, unknown>
+    | undefined;
+  return jsonTransport(entry);
 }
 
 async function selectedTransport(
@@ -385,43 +383,7 @@ function targetPaths(
   root: string,
   home: string,
 ) {
-  if (target === "codex") {
-    const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
-    return [
-      path.join(base, "config.toml"),
-      path.join(base, "hooks.json"),
-      path.join(base, "hooks/ast-mcp.ts"),
-      path.join(base, "skills/ast-mcp"),
-      global ? path.join(base, "AGENTS.md") : path.join(root, "AGENTS.md"),
-    ];
-  }
-  if (target === "claude") {
-    const base = global
-      ? path.join(home, ".claude")
-      : path.join(root, ".claude");
-    return [
-      global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
-      path.join(base, "settings.json"),
-      path.join(base, "hooks/ast-mcp.ts"),
-      path.join(base, "skills/ast-mcp"),
-      global ? path.join(base, "CLAUDE.md") : path.join(root, "AGENTS.md"),
-    ];
-  }
-  const base = global
-    ? path.join(home, ".copilot")
-    : path.join(root, ".github");
-  return [
-    global
-      ? path.join(base, "mcp-config.json")
-      : path.join(root, ".github/mcp.json"),
-    ...(global ? [] : [path.join(root, ".vscode/mcp.json")]),
-    path.join(base, "hooks/ast-mcp.json"),
-    path.join(base, "hooks/ast-mcp.ts"),
-    path.join(base, "skills/ast-mcp"),
-    global
-      ? path.join(base, "copilot-instructions.md")
-      : path.join(root, "AGENTS.md"),
-  ];
+  return installerTargetPaths(target, global, root, home);
 }
 
 async function snapshot(paths: string[]) {
@@ -448,26 +410,155 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>) {
     .sort();
 }
 
-async function reconcile(
-  options: InstallOptions,
-  operation: "install" | "update",
+async function installTargetAssets(base: string, instructionsPath: string) {
+  await skills(path.join(base, "skills"));
+  await instructions(instructionsPath);
+}
+
+async function installCodexTarget(
+  global: boolean,
+  root: string,
+  home: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
 ) {
-  assertAstBroAvailable(await installerAstBroBinary(options));
-  const root = path.resolve(options.root);
-  const home = options.home ?? os.homedir();
-  const global = options.scope === "global";
-  const transport = await selectedTransport(options, operation);
+  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  await codexMcp(
+    path.join(base, "config.toml"),
+    global ? undefined : root,
+    transport,
+    endpoint,
+  );
+  await hook(
+    path.join(base, "hooks.json"),
+    "PreToolUse",
+    path.join(base, "hooks/ast-mcp.ts"),
+    global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
+  );
+  await installTargetAssets(
+    base,
+    global ? path.join(base, "AGENTS.md") : path.join(root, "AGENTS.md"),
+  );
+}
+
+async function installClaudeTarget(
+  global: boolean,
+  root: string,
+  home: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
+  const base = global ? path.join(home, ".claude") : path.join(root, ".claude");
+  await jsonMcp(
+    global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
+    global ? undefined : root,
+    false,
+    transport,
+    endpoint,
+  );
+  await hook(
+    path.join(base, "settings.json"),
+    "PreToolUse",
+    path.join(base, "hooks/ast-mcp.ts"),
+    global
+      ? path.join(base, "hooks/ast-mcp.ts")
+      : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
+  );
+  await installTargetAssets(
+    base,
+    global ? path.join(base, "CLAUDE.md") : path.join(root, "AGENTS.md"),
+  );
+}
+
+async function installCopilotTarget(
+  global: boolean,
+  root: string,
+  home: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
+  const base = global
+    ? path.join(home, ".copilot")
+    : path.join(root, ".github");
+  if (global)
+    await jsonMcp(
+      path.join(base, "mcp-config.json"),
+      undefined,
+      true,
+      transport,
+      endpoint,
+    );
+  else {
+    await jsonMcp(
+      path.join(root, ".github/mcp.json"),
+      root,
+      true,
+      transport,
+      endpoint,
+    );
+    await vscodeMcp(
+      path.join(root, ".vscode/mcp.json"),
+      root,
+      transport,
+      endpoint,
+    );
+  }
+  await hook(
+    path.join(base, "hooks/ast-mcp.json"),
+    "preToolUse",
+    path.join(base, "hooks/ast-mcp.ts"),
+    global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
+  );
+  await installTargetAssets(
+    base,
+    global
+      ? path.join(base, "copilot-instructions.md")
+      : path.join(root, "AGENTS.md"),
+  );
+}
+
+async function installTarget(
+  target: Target,
+  global: boolean,
+  root: string,
+  home: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
+  if (target === "codex")
+    return installCodexTarget(global, root, home, transport, endpoint);
+  if (target === "claude")
+    return installClaudeTarget(global, root, home, transport, endpoint);
+  return installCopilotTarget(global, root, home, transport, endpoint);
+}
+
+function validateTransport(transport: McpTransport) {
   if (!transports.includes(transport))
     throw new InstallerUsageError(
       `Invalid transport "${transport}"; expected stdio or http`,
     );
+}
+
+function validateTransportAddress(
+  options: InstallOptions,
+  transport: McpTransport,
+) {
   if (
     transport === "stdio" &&
     (options.host !== undefined || options.port !== undefined)
   )
     throw new InstallerUsageError("--host and --port require --transport http");
+}
+
+function validateServiceTransport(
+  options: InstallOptions,
+  transport: McpTransport,
+) {
   if (options.service === true && transport !== "http")
     throw new InstallerUsageError("--service requires --transport http");
+}
+
+function validateLocalServicePort(options: InstallOptions) {
   if (
     options.service === true &&
     options.scope === "local" &&
@@ -476,41 +567,75 @@ async function reconcile(
     throw new InstallerUsageError(
       "Local managed HTTP services require an explicit --port",
     );
-  const endpoint =
-    transport === "http"
-      ? await resolveInstallerEndpoint({
-          home,
-          host: options.host,
-          persist: false,
-          port: options.port,
-          root,
-          scope: options.scope,
-        })
-      : undefined;
-  if (options.service === true && endpoint)
+}
+
+function validateReconcileOptions(
+  options: InstallOptions,
+  transport: McpTransport,
+) {
+  validateTransport(transport);
+  validateTransportAddress(options, transport);
+  validateServiceTransport(options, transport);
+  validateLocalServicePort(options);
+}
+
+function hasExplicitEndpoint(options: InstallOptions) {
+  return options.host !== undefined || options.port !== undefined;
+}
+
+function installerConfigEnvironment(options: InstallOptions) {
+  return options.home === undefined
+    ? process.env
+    : { ...process.env, APPDATA: undefined, XDG_CONFIG_HOME: undefined };
+}
+
+async function reconcileEndpoint(
+  options: InstallOptions,
+  transport: McpTransport,
+  root: string,
+  home: string,
+) {
+  if (transport !== "http") return undefined;
+  const env = installerConfigEnvironment(options);
+  const endpoint = await resolveInstallerEndpoint({
+    env,
+    home: home,
+    host: options.host,
+    persist: false,
+    port: options.port,
+    root: root,
+    scope: options.scope,
+  });
+  if (options.service === true)
     await preflightService(serviceConfiguration(options, endpoint));
-  if (
-    transport === "http" &&
-    (options.host !== undefined || options.port !== undefined)
-  )
+  if (hasExplicitEndpoint(options))
     await resolveInstallerEndpoint({
-      home,
+      env,
+      home: home,
       host: options.host,
       port: options.port,
-      root,
+      root: root,
       scope: options.scope,
     });
+  return endpoint;
+}
+
+function reconcilePaths(
+  options: InstallOptions,
+  global: boolean,
+  root: string,
+  home: string,
+  transport: McpTransport,
+  endpoint?: HttpEndpoint,
+) {
   const paths = options.targets.flatMap((target) =>
     targetPaths(target, global, root, home),
   );
-  if (
-    transport === "http" &&
-    (options.host !== undefined || options.port !== undefined)
-  )
+  if (transport === "http" && hasExplicitEndpoint(options))
     paths.push(
       options.scope === "local"
         ? path.join(root, "ast-mcp.toml")
-        : globalConfigPath({ home }),
+        : globalConfigPath({ env: installerConfigEnvironment(options), home }),
     );
   if (options.service !== undefined)
     paths.push(
@@ -521,96 +646,13 @@ async function reconcile(
         ),
       ).file,
     );
-  const before = await snapshot(paths);
-  for (const target of options.targets) {
-    if (target === "codex") {
-      const base = global
-        ? path.join(home, ".codex")
-        : path.join(root, ".codex");
-      await codexMcp(
-        path.join(base, "config.toml"),
-        global ? undefined : root,
-        transport,
-        endpoint,
-      );
-      await hook(
-        path.join(base, "hooks.json"),
-        "PreToolUse",
-        path.join(base, "hooks/ast-mcp.ts"),
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : ".codex/hooks/ast-mcp.ts",
-      );
-      await skills(path.join(base, "skills"));
-      await instructions(
-        global ? path.join(base, "AGENTS.md") : path.join(root, "AGENTS.md"),
-      );
-    } else if (target === "claude") {
-      const base = global
-        ? path.join(home, ".claude")
-        : path.join(root, ".claude");
-      await jsonMcp(
-        global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
-        global ? undefined : root,
-        false,
-        transport,
-        endpoint,
-      );
-      await hook(
-        path.join(base, "settings.json"),
-        "PreToolUse",
-        path.join(base, "hooks/ast-mcp.ts"),
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
-      );
-      await skills(path.join(base, "skills"));
-      await instructions(
-        global ? path.join(base, "CLAUDE.md") : path.join(root, "AGENTS.md"),
-      );
-    } else {
-      const base = global
-        ? path.join(home, ".copilot")
-        : path.join(root, ".github");
-      if (global)
-        await jsonMcp(
-          path.join(base, "mcp-config.json"),
-          undefined,
-          true,
-          transport,
-          endpoint,
-        );
-      else {
-        await jsonMcp(
-          path.join(root, ".github/mcp.json"),
-          root,
-          true,
-          transport,
-          endpoint,
-        );
-        await vscodeMcp(
-          path.join(root, ".vscode/mcp.json"),
-          root,
-          transport,
-          endpoint,
-        );
-      }
-      await hook(
-        path.join(base, "hooks/ast-mcp.json"),
-        "preToolUse",
-        path.join(base, "hooks/ast-mcp.ts"),
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : ".github/hooks/ast-mcp.ts",
-      );
-      await skills(path.join(base, "skills"));
-      await instructions(
-        global
-          ? path.join(base, "copilot-instructions.md")
-          : path.join(root, "AGENTS.md"),
-      );
-    }
-  }
+  return paths;
+}
+
+async function reconcileService(
+  options: InstallOptions,
+  endpoint?: HttpEndpoint,
+) {
   if (options.service === true && endpoint)
     await installService(serviceConfiguration(options, endpoint));
   else if (options.service === false)
@@ -620,6 +662,31 @@ async function reconcile(
         endpoint ?? httpEndpoint("127.0.0.1", 3768),
       ),
     );
+}
+
+async function reconcile(
+  options: InstallOptions,
+  operation: "install" | "update",
+) {
+  assertAstBroAvailable(await installerAstBroBinary(options));
+  const root = path.resolve(options.root);
+  const home = options.home ?? os.homedir();
+  const global = options.scope === "global";
+  const transport = await selectedTransport(options, operation);
+  validateReconcileOptions(options, transport);
+  const endpoint = await reconcileEndpoint(options, transport, root, home);
+  const paths = reconcilePaths(
+    options,
+    global,
+    root,
+    home,
+    transport,
+    endpoint,
+  );
+  const before = await snapshot(paths);
+  for (const target of options.targets)
+    await installTarget(target, global, root, home, transport, endpoint);
+  await reconcileService(options, endpoint);
   return changedFiles(before, await snapshot(paths));
 }
 
@@ -631,6 +698,102 @@ export async function update(options: InstallOptions) {
   return reconcile(options, "update");
 }
 
+async function removeTargetAssets(base: string, instructionsPath?: string) {
+  await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
+  await rm(path.join(base, "skills/ast-mcp"), { force: true, recursive: true });
+  if (instructionsPath) await removeInstructions(instructionsPath);
+}
+
+async function uninstallCodexTarget(
+  global: boolean,
+  root: string,
+  home: string,
+) {
+  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  await removeCodexMcp(path.join(base, "config.toml"));
+  await removeHook(
+    path.join(base, "hooks.json"),
+    "PreToolUse",
+    global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
+  );
+  await removeTargetAssets(
+    base,
+    global ? path.join(base, "AGENTS.md") : undefined,
+  );
+}
+
+async function uninstallClaudeTarget(
+  global: boolean,
+  root: string,
+  home: string,
+) {
+  const base = global ? path.join(home, ".claude") : path.join(root, ".claude");
+  await removeJsonMcp(
+    global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
+  );
+  await removeHook(
+    path.join(base, "settings.json"),
+    "PreToolUse",
+    global
+      ? path.join(base, "hooks/ast-mcp.ts")
+      : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
+  );
+  await removeTargetAssets(
+    base,
+    global ? path.join(base, "CLAUDE.md") : undefined,
+  );
+}
+
+async function uninstallCopilotTarget(
+  global: boolean,
+  root: string,
+  home: string,
+) {
+  const base = global
+    ? path.join(home, ".copilot")
+    : path.join(root, ".github");
+  if (global) await removeJsonMcp(path.join(base, "mcp-config.json"));
+  else {
+    await removeJsonMcp(path.join(root, ".github/mcp.json"));
+    await removeJsonMcp(path.join(root, ".vscode/mcp.json"), "servers");
+  }
+  await removeHook(
+    path.join(base, "hooks/ast-mcp.json"),
+    "preToolUse",
+    global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
+  );
+  await removeTargetAssets(
+    base,
+    global ? path.join(base, "copilot-instructions.md") : undefined,
+  );
+}
+
+async function uninstallTarget(
+  target: Target,
+  global: boolean,
+  root: string,
+  home: string,
+) {
+  if (target === "codex") return uninstallCodexTarget(global, root, home);
+  if (target === "claude") return uninstallClaudeTarget(global, root, home);
+  return uninstallCopilotTarget(global, root, home);
+}
+
+async function removeUnusedService(options: InstallOptions, root: string) {
+  if (options.scope === "local" && !(await hasLocalInstallation(root)))
+    await removeInstructions(path.join(root, "AGENTS.md"));
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin" && platform !== "linux") return;
+  if (await hasHttpInstallation(options)) return;
+  const service = serviceConfiguration(
+    options,
+    httpEndpoint("127.0.0.1", 3768),
+  );
+  const plan = createServicePlan(service);
+  if (await lstat(plan.file).catch(() => undefined))
+    await removeService(service);
+}
+
 export async function uninstall(options: InstallOptions) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
@@ -639,211 +802,52 @@ export async function uninstall(options: InstallOptions) {
     targetPaths(target, global, root, home),
   );
   const before = await snapshot(paths);
-  for (const target of options.targets) {
-    if (target === "codex") {
-      const base = global
-        ? path.join(home, ".codex")
-        : path.join(root, ".codex");
-      await removeCodexMcp(path.join(base, "config.toml"));
-      await removeHook(
-        path.join(base, "hooks.json"),
-        "PreToolUse",
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : ".codex/hooks/ast-mcp.ts",
-      );
-      await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
-      await rm(path.join(base, "skills/ast-mcp"), {
-        force: true,
-        recursive: true,
-      });
-      if (global) await removeInstructions(path.join(base, "AGENTS.md"));
-    } else if (target === "claude") {
-      const base = global
-        ? path.join(home, ".claude")
-        : path.join(root, ".claude");
-      await removeJsonMcp(
-        global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
-      );
-      await removeHook(
-        path.join(base, "settings.json"),
-        "PreToolUse",
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
-      );
-      await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
-      await rm(path.join(base, "skills/ast-mcp"), {
-        force: true,
-        recursive: true,
-      });
-      if (global) await removeInstructions(path.join(base, "CLAUDE.md"));
-    } else {
-      const base = global
-        ? path.join(home, ".copilot")
-        : path.join(root, ".github");
-      if (global) await removeJsonMcp(path.join(base, "mcp-config.json"));
-      else {
-        await removeJsonMcp(path.join(root, ".github/mcp.json"));
-        await removeJsonMcp(path.join(root, ".vscode/mcp.json"), "servers");
-      }
-      await removeHook(
-        path.join(base, "hooks/ast-mcp.json"),
-        "preToolUse",
-        global
-          ? path.join(base, "hooks/ast-mcp.ts")
-          : ".github/hooks/ast-mcp.ts",
-      );
-      await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
-      await rm(path.join(base, "skills/ast-mcp"), {
-        force: true,
-        recursive: true,
-      });
-      if (global)
-        await removeInstructions(path.join(base, "copilot-instructions.md"));
-    }
-  }
-  if (options.scope === "local" && !(await hasLocalInstallation(root)))
-    await removeInstructions(path.join(root, "AGENTS.md"));
-  const platform = options.platform ?? process.platform;
-  if (
-    (platform === "darwin" || platform === "linux") &&
-    !(await hasHttpInstallation(options))
-  ) {
-    const service = serviceConfiguration(
-      options,
-      httpEndpoint("127.0.0.1", 3768),
-    );
-    const plan = createServicePlan(service);
-    if (await lstat(plan.file).catch(() => undefined))
-      await removeService(service);
-  }
+  for (const target of options.targets)
+    await uninstallTarget(target, global, root, home);
+  await removeUnusedService(options, root);
   return changedFiles(before, await snapshot(paths));
 }
 
 export async function runInstallerCli(
   args = process.argv.slice(2),
 ): Promise<void> {
-  const tokens = args.flatMap((token) => {
-    const match = /^(--(?:scope|root|target|transport|host|port))=(.*)$/.exec(
-      token,
-    );
-    return match ? [match[1], match[2]] : [token];
-  });
-  type Operation = "install" | "update" | "uninstall";
-  let operation: Operation = "install";
-  if (["install", "update", "uninstall"].includes(tokens[0] ?? ""))
-    operation = tokens.shift() as Operation;
-  let scope: "local" | "global" = "local";
-  let root = process.cwd();
-  let selected: Target[] = [...targets];
-  let transport: McpTransport | undefined;
-  let host: string | undefined;
-  let port: number | undefined;
-  let service: boolean | undefined;
-  const valueAfter = (index: number) => {
-    const value = tokens[index + 1];
-    if (!value || value.startsWith("-"))
-      throw new InstallerUsageError(
-        `Missing value for ${tokens[index] ?? "option"}`,
-      );
-    return value;
-  };
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    if (["--scope", "-s"].includes(token ?? "")) {
-      scope = valueAfter(index) as "local" | "global";
-      index += 1;
-    } else if (["--root", "-r"].includes(token ?? "")) {
-      root = valueAfter(index);
-      index += 1;
-    } else if (["--target", "-t"].includes(token ?? "")) {
-      const value = valueAfter(index);
-      selected = value === "all" ? [...targets] : [value as Target];
-      index += 1;
-    } else if (token === "--transport") {
-      transport = valueAfter(index) as McpTransport;
-      index += 1;
-    } else if (token === "--host") {
-      host = valueAfter(index);
-      index += 1;
-    } else if (token === "--port") {
-      const value = valueAfter(index);
-      if (!/^\d+$/.test(value))
-        throw new InstallerUsageError(
-          `Invalid HTTP port "${value}"; expected an integer from 1 through 65535`,
-        );
-      port = Number(value);
-      if (!Number.isInteger(port) || port < 1 || port > 65_535)
-        throw new InstallerUsageError(
-          `Invalid HTTP port "${value}"; expected an integer from 1 through 65535`,
-        );
-      index += 1;
-    } else if (token === "--service" || token === "--no-service") {
-      const next = token === "--service";
-      if (service !== undefined && service !== next)
-        throw new InstallerUsageError(
-          "--service and --no-service cannot be used together",
-        );
-      service = next;
-    } else throw new InstallerUsageError(`Unknown option: ${token}`);
-  }
-  if (!["local", "global"].includes(scope))
-    throw new InstallerUsageError(
-      `Invalid scope "${scope}"; expected local or global`,
-    );
-  const invalidTarget = selected.find((item) => !targets.includes(item));
-  if (invalidTarget)
-    throw new InstallerUsageError(
-      `Invalid target "${invalidTarget}"; expected codex, claude, copilot, or all`,
-    );
-  if (transport && !transports.includes(transport))
-    throw new InstallerUsageError(
-      `Invalid transport "${transport}"; expected stdio or http`,
-    );
-  const options: InstallOptions = {
-    host,
-    port,
-    root,
-    scope,
-    service,
-    targets: selected,
-    transport,
-  };
-  const changed =
-    operation === "install"
-      ? await install(options)
-      : operation === "update"
-        ? await update(options)
-        : await uninstall(options);
+  const { operation, options: parsedOptions } = parseInstallerArguments(
+    args,
+    process.cwd(),
+  );
+  const options: InstallOptions = parsedOptions;
+  const operationHandlers = { install, uninstall, update };
+  const changed = await operationHandlers[operation](options);
+  const root = path.resolve(options.root);
+  const global = options.scope === "global";
   const effectiveTransport =
     operation === "uninstall"
-      ? (transport ?? "stdio")
+      ? (options.transport ?? "stdio")
       : ((await targetTransport(
-          selected[0],
-          scope === "global",
-          path.resolve(root),
+          options.targets[0],
+          global,
+          root,
           os.homedir(),
         )) ??
-        transport ??
+        options.transport ??
         "stdio");
   const endpoint =
     effectiveTransport === "http"
       ? await resolveInstallerEndpoint({
           home: os.homedir(),
-          host,
-          port,
-          root: path.resolve(root),
-          scope,
+          host: options.host,
+          port: options.port,
+          root,
+          scope: options.scope,
         })
       : undefined;
   const servicePlan =
-    service === true && endpoint
+    options.service === true && endpoint
       ? createServicePlan(serviceConfiguration(options, endpoint))
       : undefined;
   const manualStart =
-    endpoint && service !== true
-      ? `${scope === "local" ? `cd ${JSON.stringify(path.resolve(root))} && ` : ""}bun ${JSON.stringify(cliEntry)} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
+    endpoint && options.service !== true
+      ? `${global ? "" : `cd ${JSON.stringify(root)} && `}bun ${JSON.stringify(cliEntry)} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
       : undefined;
   const result = {
     changed,

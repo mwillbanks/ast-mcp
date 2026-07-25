@@ -1,14 +1,7 @@
-import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
+import { replaceFileAtomically } from "./atomic";
 import { configuredDprintBinary } from "./dependencies";
 import { runCommandInput } from "./process-input";
 
@@ -83,20 +76,5 @@ export async function formatFileAtomically(filePath: string): Promise<void> {
     filePath,
     await readFile(filePath, "utf8"),
   );
-  const extension = path.extname(filePath);
-  const temporary = path.join(
-    path.dirname(filePath),
-    `${path.basename(filePath, extension)}.ast-mcp-format-${randomUUID()}${extension}`,
-  );
-  try {
-    await writeFile(temporary, formatted, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: metadata.mode,
-    });
-    await chmod(temporary, metadata.mode);
-    await rename(temporary, filePath);
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-  }
+  await replaceFileAtomically(filePath, formatted, metadata.mode);
 }

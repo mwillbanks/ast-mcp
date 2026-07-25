@@ -162,186 +162,269 @@ function previewDiff(filePath: string, before: string, after: string): string {
     : lines.join("\n");
 }
 
+interface PatchContext {
+  actual: string;
+  aiderBlocks: AiderBlock[];
+  astRules: AstRule[];
+  filePath: string;
+  language: ReturnType<typeof detectAstLanguage>;
+  original: string;
+  request: PatchBatchRequest;
+  rewritable: boolean;
+}
+
+interface PreviewMetadata {
+  matches?: number;
+  matchMethods?: string[];
+  operations: number;
+  strategy: "ast" | "aider_block";
+}
+
+async function createPatchContext(
+  filePath: string,
+  request: PatchBatchRequest,
+): Promise<PatchContext> {
+  const original = await readFile(filePath, "utf8");
+  const actual = sha256(original);
+  await requireExpectedHash(request.expectedSha256, "file_patch");
+  verifyExpectedHash(request.expectedSha256, actual);
+  const language = detectAstLanguage(filePath);
+  return {
+    actual,
+    aiderBlocks: request.aiderBlocks ?? [],
+    astRules: request.astRules ?? [],
+    filePath,
+    language,
+    original,
+    request,
+    rewritable: await astRewritable(filePath, language),
+  };
+}
+
+async function patchPreview(
+  context: PatchContext,
+  candidate: string,
+  metadata: PreviewMetadata,
+) {
+  const formatted = await formatContent(context.filePath, candidate);
+  return {
+    changed: formatted !== context.original,
+    diff: previewDiff(context.filePath, context.original, formatted),
+    filePath: context.filePath,
+    matches: metadata.matches,
+    matchMethods: metadata.matchMethods,
+    operations: metadata.operations,
+    preview: true,
+    sha256: sha256(formatted),
+    strategy: metadata.strategy,
+  };
+}
+
+function validateAstStrategy(
+  context: PatchContext,
+): asserts context is PatchContext & {
+  language: NonNullable<PatchContext["language"]>;
+} {
+  if (!context.rewritable || !context.language)
+    throw new Error(
+      "REJECTED: non-structurally-rewritable files require patchStrategy 'aider_block' with aiderBlocks",
+    );
+  if (context.astRules.length === 0 || context.aiderBlocks.length > 0)
+    throw new Error(
+      "REJECTED: patchStrategy 'ast' requires astRules and no aiderBlocks",
+    );
+}
+
+type AstPatchContext = PatchContext & {
+  language: NonNullable<PatchContext["language"]>;
+};
+
+async function previewAstRule(
+  context: AstPatchContext,
+  next: string,
+  rule: AstRule,
+) {
+  const preview = parseAstBroJson(
+    await callAstBro(
+      "run",
+      {
+        json: true,
+        lang: context.language,
+        paths: [next],
+        pattern: rule.pattern,
+      },
+      path.dirname(context.filePath),
+    ),
+  );
+  if (preview.error_count)
+    throw new Error(
+      `ast-bro preview failed with ${preview.error_count} errors`,
+    );
+  const matches = Array.isArray(preview.matches) ? preview.matches.length : 0;
+  const expected = rule.expectedMatches ?? 1;
+  if (matches !== expected)
+    throw new Error(`AST rule matched ${matches} nodes; expected ${expected}`);
+  if (expected !== 1)
+    throw new Error(
+      "ast-bro run rewrites only the first match per file; narrow the AST rule to exactly one node",
+    );
+  return matches;
+}
+
+async function rewriteAstRule(
+  context: AstPatchContext,
+  next: string,
+  rule: AstRule,
+) {
+  const rewritten = parseAstBroJson(
+    await callAstBro(
+      "run",
+      {
+        json: true,
+        lang: context.language,
+        paths: [next],
+        pattern: rule.pattern,
+        rewrite: rule.fix,
+        write: true,
+      },
+      path.dirname(context.filePath),
+    ),
+  );
+  if (
+    rewritten.error_count ||
+    rewritten.rewrite_count !== 1 ||
+    rewritten.files?.[0]?.status !== "rewritten"
+  )
+    throw new Error("ast-bro run did not rewrite exactly one file");
+}
+
+async function applyAstRules(context: AstPatchContext, next: string) {
+  let totalMatches = 0;
+  for (const rule of context.astRules) {
+    totalMatches += await previewAstRule(context, next, rule);
+    await rewriteAstRule(context, next, rule);
+  }
+  return totalMatches;
+}
+
+async function astPatchResult(
+  context: AstPatchContext,
+  candidate: string,
+  mode: number,
+  totalMatches: number,
+) {
+  if (context.request.preview)
+    return patchPreview(context, candidate, {
+      matches: totalMatches,
+      operations: context.astRules.length,
+      strategy: "ast",
+    });
+  await commit(
+    context.filePath,
+    candidate,
+    mode,
+    context.actual,
+    context.request.chattr,
+  );
+  const updated = await readFile(context.filePath, "utf8");
+  return {
+    engine: "ast-bro.run",
+    filePath: context.filePath,
+    matches: totalMatches,
+    operations: context.astRules.length,
+    preview: false,
+    sha256: sha256(updated),
+    strategy: "ast",
+  };
+}
+
+async function applyAstPatch(context: PatchContext) {
+  validateAstStrategy(context);
+  const next = temporary(context.filePath);
+  const metadata = await lstat(context.filePath);
+  try {
+    await writeFile(next, context.original, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: metadata.mode,
+    });
+    const totalMatches = await applyAstRules(context, next);
+    const candidate = await readFile(next, "utf8");
+    return await astPatchResult(
+      context,
+      candidate,
+      metadata.mode,
+      totalMatches,
+    );
+  } finally {
+    await removeTemporary(next);
+  }
+}
+
+function validateAiderStrategy(context: PatchContext) {
+  if (context.rewritable)
+    throw new Error(
+      "REJECTED: structurally rewritable files require patchStrategy 'ast' with astRules",
+    );
+  if (context.aiderBlocks.length === 0 || context.astRules.length > 0)
+    throw new Error(
+      "REJECTED: patchStrategy 'aider_block' requires aiderBlocks and no astRules",
+    );
+}
+
+function applyAiderBlocks(content: string, blocks: AiderBlock[]) {
+  const methods: string[] = [];
+  for (const block of blocks) {
+    const result = applyAiderBlock(content, block.search, block.replace);
+    content = result.content;
+    methods.push(result.method);
+  }
+  return { content, methods };
+}
+
+async function applyAiderPatch(context: PatchContext) {
+  validateAiderStrategy(context);
+  const { content, methods } = applyAiderBlocks(
+    context.original,
+    context.aiderBlocks,
+  );
+  if (context.request.preview)
+    return patchPreview(context, content, {
+      matchMethods: methods,
+      operations: context.aiderBlocks.length,
+      strategy: "aider_block",
+    });
+  await commit(
+    context.filePath,
+    content,
+    (await lstat(context.filePath)).mode,
+    context.actual,
+    context.request.chattr,
+  );
+  const updated = await readFile(context.filePath, "utf8");
+  return {
+    filePath: context.filePath,
+    matchMethods: methods,
+    operations: context.aiderBlocks.length,
+    preview: false,
+    sha256: sha256(updated),
+    strategy: "aider_block",
+  };
+}
+
+async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
+  const context = await createPatchContext(filePath, request);
+  return request.patchStrategy === "ast"
+    ? applyAstPatch(context)
+    : applyAiderPatch(context);
+}
+
 async function applyPatchBatch(
   inputPath: string,
   request: PatchBatchRequest,
 ): Promise<Record<string, unknown>> {
   const filePath = await resolveWritablePath(inputPath);
-  return withFileLock(filePath, async () => {
-    const original = await readFile(filePath, "utf8");
-    const actual = sha256(original);
-    await requireExpectedHash(request.expectedSha256, "file_patch");
-    verifyExpectedHash(request.expectedSha256, actual);
-
-    const astRules = request.astRules ?? [];
-    const aiderBlocks = request.aiderBlocks ?? [];
-    const language = detectAstLanguage(filePath);
-    const rewritable = await astRewritable(filePath, language);
-    const previewResult = async (
-      candidate: string,
-      metadata: {
-        operations: number;
-        strategy: "ast" | "aider_block";
-        matches?: number;
-        matchMethods?: string[];
-      },
-    ) => {
-      const formatted = await formatContent(filePath, candidate);
-      return {
-        changed: formatted !== original,
-        diff: previewDiff(filePath, original, formatted),
-        filePath,
-        matches: metadata.matches,
-        matchMethods: metadata.matchMethods,
-        operations: metadata.operations,
-        preview: true,
-        sha256: sha256(formatted),
-        strategy: metadata.strategy,
-      };
-    };
-
-    if (request.patchStrategy === "ast") {
-      if (!rewritable || !language)
-        throw new Error(
-          "REJECTED: non-structurally-rewritable files require patchStrategy 'aider_block' with aiderBlocks",
-        );
-      if (astRules.length === 0 || aiderBlocks.length > 0)
-        throw new Error(
-          "REJECTED: patchStrategy 'ast' requires astRules and no aiderBlocks",
-        );
-
-      const next = temporary(filePath);
-      const metadata = await lstat(filePath);
-      try {
-        await writeFile(next, original, {
-          encoding: "utf8",
-          flag: "wx",
-          mode: metadata.mode,
-        });
-        let totalMatches = 0;
-        for (const rule of astRules) {
-          const preview = parseAstBroJson(
-            await callAstBro(
-              "run",
-              {
-                json: true,
-                lang: language,
-                paths: [next],
-                pattern: rule.pattern,
-              },
-              path.dirname(filePath),
-            ),
-          );
-          if (preview.error_count)
-            throw new Error(
-              `ast-bro preview failed with ${preview.error_count} errors`,
-            );
-          const matches = Array.isArray(preview.matches)
-            ? preview.matches.length
-            : 0;
-          const expected = rule.expectedMatches ?? 1;
-          if (matches !== expected)
-            throw new Error(
-              `AST rule matched ${matches} nodes; expected ${expected}`,
-            );
-          if (expected !== 1)
-            throw new Error(
-              "ast-bro run rewrites only the first match per file; narrow the AST rule to exactly one node",
-            );
-
-          const rewritten = parseAstBroJson(
-            await callAstBro(
-              "run",
-              {
-                json: true,
-                lang: language,
-                paths: [next],
-                pattern: rule.pattern,
-                rewrite: rule.fix,
-                write: true,
-              },
-              path.dirname(filePath),
-            ),
-          );
-          if (
-            rewritten.error_count ||
-            rewritten.rewrite_count !== 1 ||
-            rewritten.files?.[0]?.status !== "rewritten"
-          )
-            throw new Error("ast-bro run did not rewrite exactly one file");
-          totalMatches += matches;
-        }
-
-        const candidate = await readFile(next, "utf8");
-        if (request.preview)
-          return previewResult(candidate, {
-            matches: totalMatches,
-            operations: astRules.length,
-            strategy: "ast",
-          });
-
-        await commit(
-          filePath,
-          candidate,
-          metadata.mode,
-          actual,
-          request.chattr,
-        );
-        const updated = await readFile(filePath, "utf8");
-        return {
-          engine: "ast-bro.run",
-          filePath,
-          matches: totalMatches,
-          operations: astRules.length,
-          preview: false,
-          sha256: sha256(updated),
-          strategy: "ast",
-        };
-      } finally {
-        await removeTemporary(next);
-      }
-    }
-
-    if (rewritable)
-      throw new Error(
-        "REJECTED: structurally rewritable files require patchStrategy 'ast' with astRules",
-      );
-    if (aiderBlocks.length === 0 || astRules.length > 0)
-      throw new Error(
-        "REJECTED: patchStrategy 'aider_block' requires aiderBlocks and no astRules",
-      );
-
-    let content = original;
-    const methods: string[] = [];
-    for (const block of aiderBlocks) {
-      const result = applyAiderBlock(content, block.search, block.replace);
-      content = result.content;
-      methods.push(result.method);
-    }
-    if (request.preview)
-      return previewResult(content, {
-        matchMethods: methods,
-        operations: aiderBlocks.length,
-        strategy: "aider_block",
-      });
-
-    await commit(
-      filePath,
-      content,
-      (await lstat(filePath)).mode,
-      actual,
-      request.chattr,
-    );
-    const updated = await readFile(filePath, "utf8");
-    return {
-      filePath,
-      matchMethods: methods,
-      operations: aiderBlocks.length,
-      preview: false,
-      sha256: sha256(updated),
-      strategy: "aider_block",
-    };
-  });
+  return withFileLock(filePath, () => applyLockedPatch(filePath, request));
 }
 
 export async function patchFile(
@@ -356,18 +439,26 @@ export async function patchFile(
   });
 }
 
-export async function patchFiles(
-  requests: PatchBatch,
+async function processFileBatch<T>(
+  tool: "file_patch" | "file_write",
+  requests: Record<string, T>,
+  handler: (filePath: string, request: T) => Promise<Record<string, unknown>>,
 ): Promise<Record<string, unknown>> {
   const entries = Object.entries(requests);
   if (entries.length < 1 || entries.length > FILE_READ_MAX_BATCH)
     throw new Error(
-      `file_patch requires between 1 and ${FILE_READ_MAX_BATCH} files`,
+      `${tool} requires between 1 and ${FILE_READ_MAX_BATCH} files`,
     );
   const files: Record<string, unknown> = {};
   for (const [filePath, request] of entries)
-    files[filePath] = await applyPatchBatch(filePath, request);
+    files[filePath] = await handler(filePath, request);
   return { files };
+}
+
+export async function patchFiles(
+  requests: PatchBatch,
+): Promise<Record<string, unknown>> {
+  return processFileBatch("file_patch", requests, applyPatchBatch);
 }
 
 export async function writeFileSafely(args: {
@@ -418,18 +509,12 @@ export async function writeFileSafely(args: {
 export async function writeFilesSafely(
   requests: FileWriteBatch,
 ): Promise<Record<string, unknown>> {
-  const entries = Object.entries(requests);
-  if (entries.length < 1 || entries.length > FILE_READ_MAX_BATCH)
-    throw new Error(
-      `file_write requires between 1 and ${FILE_READ_MAX_BATCH} files`,
-    );
-  const files: Record<string, unknown> = {};
-  for (const [filePath, request] of entries)
-    files[filePath] = await writeFileSafely({
+  return processFileBatch("file_write", requests, (filePath, request) =>
+    writeFileSafely({
       chattr: request.chattr,
       content: request.content,
       expectedSha256: request.expectedSha256,
       filePath,
-    });
-  return { files };
+    }),
+  );
 }

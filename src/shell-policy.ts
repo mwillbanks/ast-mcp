@@ -34,52 +34,77 @@ const wrappers = new Set([
   "chrt",
 ]);
 
+const wrapperValueOptions: Record<string, Set<string>> = {
+  doas: new Set([
+    "-u",
+    "-g",
+    "-p",
+    "-r",
+    "-t",
+    "-C",
+    "-D",
+    "-R",
+    "-T",
+    "--user",
+    "--group",
+    "--prompt",
+    "--role",
+    "--type",
+    "--close-from",
+    "--chdir",
+    "--chroot",
+    "--command-timeout",
+  ]),
+  env: new Set(["-u", "-C", "--unset", "--chdir"]),
+  nice: new Set(["-n", "--adjustment"]),
+  sudo: new Set([
+    "-u",
+    "-g",
+    "-p",
+    "-r",
+    "-t",
+    "-C",
+    "-D",
+    "-R",
+    "-T",
+    "--user",
+    "--group",
+    "--prompt",
+    "--role",
+    "--type",
+    "--close-from",
+    "--chdir",
+    "--chroot",
+    "--command-timeout",
+  ]),
+};
+
+function commandName(value = "") {
+  return value.split("/").at(-1)?.toLowerCase() ?? "";
+}
+
+function skipWrapper(values: string[], index: number) {
+  const wrapper = commandName(values[index]);
+  let cursor = index + 1;
+  while (values[cursor]?.startsWith("-")) {
+    const option = values[cursor] as string;
+    cursor += wrapperValueOptions[wrapper]?.has(option) ? 2 : 1;
+  }
+  if (wrapper === "env")
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(values[cursor] ?? "")) cursor += 1;
+  if ((wrapper === "timeout" || wrapper === "chrt") && cursor < values.length)
+    cursor += 1;
+  return cursor;
+}
+
 function executable(command: Command) {
   const values = [command.name, ...command.suffix].map(
     (word) => word?.value ?? "",
   );
   let index = 0;
-  while (wrappers.has(values[index]?.split("/").at(-1)?.toLowerCase() ?? "")) {
-    const wrapper = values[index++].split("/").at(-1)?.toLowerCase();
-    while (values[index]?.startsWith("-")) {
-      const option = values[index++];
-      if (
-        (wrapper === "env" &&
-          ["-u", "-C", "--unset", "--chdir"].includes(option)) ||
-        ((wrapper === "sudo" || wrapper === "doas") &&
-          [
-            "-u",
-            "-g",
-            "-p",
-            "-r",
-            "-t",
-            "-C",
-            "-D",
-            "-R",
-            "-T",
-            "--user",
-            "--group",
-            "--prompt",
-            "--role",
-            "--type",
-            "--close-from",
-            "--chdir",
-            "--chroot",
-            "--command-timeout",
-          ].includes(option)) ||
-        (wrapper === "nice" && ["-n", "--adjustment"].includes(option))
-      )
-        index++;
-    }
-    if (wrapper === "env")
-      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(values[index] ?? "")) index++;
-    if ((wrapper === "timeout" || wrapper === "chrt") && index < values.length)
-      index++;
-  }
-  return {
-    args: values.slice(index + 1),
-    name: values[index]?.split("/").at(-1)?.toLowerCase() ?? "",
-  };
+  while (wrappers.has(commandName(values[index])))
+    index = skipWrapper(values, index);
+  return { args: values.slice(index + 1), name: commandName(values[index]) };
 }
 
 function inlineMutates(source: string) {
@@ -126,76 +151,115 @@ function payloadAfter(args: string[], flags: string[]) {
   return separator >= 0 ? argument.slice(separator + 1) : args[index + 1];
 }
 
-function commandMutates(command: Command) {
-  const original = command.name?.value.split("/").at(-1)?.toLowerCase() ?? "";
-  const originalArgs = command.suffix.map((word) => word.value);
+type CommandMutationHandler = (args: string[]) => boolean;
+
+function sedMutates(args: string[]) {
+  return args.some(
+    (arg) =>
+      arg === "--in-place" ||
+      arg.startsWith("--in-place=") ||
+      /^-[^-]*i/.test(arg),
+  );
+}
+
+function astGrepMutates(args: string[]) {
+  const rewrites = args.some(
+    (arg) => arg === "--rewrite" || arg.startsWith("--rewrite="),
+  );
+  return rewrites && args.some((arg) => arg === "-U" || arg === "--update-all");
+}
+
+function findMutates(args: string[]) {
+  if (args.includes("-delete")) return true;
+  const action = args.findIndex((arg) =>
+    ["-exec", "-execdir", "-ok", "-okdir"].includes(arg),
+  );
+  return action >= 0 && shellMutates(args.slice(action + 1).join(" "));
+}
+
+function shellInterpreterMutates(args: string[]) {
+  const grouped = args.findIndex((arg) => /^-[A-Za-z]*c[A-Za-z]*$/.test(arg));
+  const payload =
+    payloadAfter(args, ["-c", "--command", "-Command"]) ??
+    (grouped >= 0 ? args[grouped + 1] : undefined);
+  return payload ? shellMutates(payload) : false;
+}
+
+function inlineInterpreterMutates(name: string, args: string[]) {
+  const flags = name.startsWith("python") ? ["-c"] : ["-e", "--eval"];
+  const payload = payloadAfter(args, flags);
+  return payload ? inlineMutates(payload) : false;
+}
+
+const shellInterpreters = new Set([
+  "bash",
+  "sh",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "pwsh",
+  "powershell",
+]);
+const mutationHandlers: Record<string, CommandMutationHandler> = {
+  "ast-grep": astGrepMutates,
+  eval: (args) => shellMutates(args.join(" ")),
+  find: findMutates,
+  sed: sedMutates,
+  xargs: (args) => shellMutates(args.join(" ")),
+};
+
+function originalCommandDecision(
+  original: string,
+  args: string[],
+): boolean | undefined {
   if (
     original === "command" &&
-    originalArgs.some((arg) => arg === "-v" || arg === "-V")
+    args.some((arg) => arg === "-v" || arg === "-V")
   )
     return false;
-  if (original === "env") {
-    const dispatched = payloadAfter(originalArgs, ["-S", "--split-string"]);
-    if (dispatched) return shellMutates(dispatched);
-  }
+  if (original !== "env") return undefined;
+  const dispatched = payloadAfter(args, ["-S", "--split-string"]);
+  return dispatched ? shellMutates(dispatched) : undefined;
+}
+
+function commandMutates(command: Command) {
+  const original = commandName(command.name?.value);
+  const originalArgs = command.suffix.map((word) => word.value);
+  const originalDecision = originalCommandDecision(original, originalArgs);
+  if (originalDecision !== undefined) return originalDecision;
   const { args, name } = executable(command);
   if (name === "git") return false;
   if (mutators.has(name)) return true;
-  if (name === "sed")
-    return args.some(
-      (arg) =>
-        arg === "--in-place" ||
-        arg.startsWith("--in-place=") ||
-        /^-[^-]*i/.test(arg),
-    );
-  if (name === "ast-grep")
-    return (
-      args.some((arg) => arg === "--rewrite" || arg.startsWith("--rewrite=")) &&
-      args.some((arg) => arg === "-U" || arg === "--update-all")
-    );
-  if (name === "find") {
-    if (args.includes("-delete")) return true;
-    const action = args.findIndex((arg) =>
-      ["-exec", "-execdir", "-ok", "-okdir"].includes(arg),
-    );
-    return action >= 0 && shellMutates(args.slice(action + 1).join(" "));
-  }
-  if (name === "xargs") return shellMutates(args.join(" "));
-  if (name === "eval") return shellMutates(args.join(" "));
-  if (
-    ["bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell"].includes(
-      name,
-    )
-  ) {
-    const grouped = args.findIndex((arg) => /^-[A-Za-z]*c[A-Za-z]*$/.test(arg));
-    const payload =
-      payloadAfter(args, ["-c", "--command", "-Command"]) ??
-      (grouped >= 0 ? args[grouped + 1] : undefined);
-    return payload ? shellMutates(payload) : false;
-  }
-  if (/^(?:node|python\d*(?:\.\d+)*|ruby|perl|php|bun|deno)$/.test(name)) {
-    const flags = name.startsWith("python") ? ["-c"] : ["-e", "--eval"];
-    const payload = payloadAfter(args, flags);
-    return payload ? inlineMutates(payload) : false;
-  }
+  const handler = mutationHandlers[name];
+  if (handler) return handler(args);
+  if (shellInterpreters.has(name)) return shellInterpreterMutates(args);
+  if (/^(?:node|python\d*(?:\.\d+)*|ruby|perl|php|bun|deno)$/.test(name))
+    return inlineInterpreterMutates(name, args);
   return false;
 }
 
-function visit(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(visit);
+function nodeChildren(value: Record<string, unknown>) {
   const node = value as {
     command?: unknown;
     commands?: unknown[];
     parts?: unknown[];
     script?: unknown;
-    type?: string;
   };
-  if (node.type === "Command" && commandMutates(node as Command)) return true;
-  if (node.script && visit(node.script)) return true;
-  if (node.command && visit(node.command)) return true;
-  if (node.commands?.some(visit)) return true;
-  if (node.parts?.some(visit)) return true;
+  return [
+    node.script,
+    node.command,
+    ...(node.commands ?? []),
+    ...(node.parts ?? []),
+  ];
+}
+
+function visit(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(visit);
+  const node = value as { type?: string };
+  if (node.type === "Command" && commandMutates(value as Command)) return true;
+  if (nodeChildren(value as Record<string, unknown>).some(visit)) return true;
   return Object.values(value).some(visit);
 }
 
@@ -227,26 +291,41 @@ function stringLiteral(source: string, start: number) {
   return undefined;
 }
 
+interface EmbeddedKey {
+  end: number;
+  key: string;
+}
+
+function embeddedKey(source: string, index: number): EmbeddedKey | undefined {
+  const literal = stringLiteral(source, index);
+  if (literal) return { end: literal.end, key: literal.value };
+  if (!/[A-Za-z_$]/.test(source[index] ?? "")) return undefined;
+  let end = index;
+  while (/[A-Za-z0-9_$]/.test(source[end] ?? "")) end += 1;
+  return { end, key: source.slice(index, end) };
+}
+
+function skipWhitespace(source: string, index: number) {
+  while (/\s/.test(source[index] ?? "")) index += 1;
+  return index;
+}
+
+function embeddedPayload(source: string, key: EmbeddedKey) {
+  let index = skipWhitespace(source, key.end);
+  if (source[index] !== ":") return undefined;
+  index = skipWhitespace(source, index + 1);
+  return stringLiteral(source, index)?.value;
+}
+
 export function embeddedShellMutates(source: string) {
   if (source.length > 100_000) return false;
-  for (let index = 0; index < source.length; index++) {
-    let key = "";
-    let end = index;
-    const literal = stringLiteral(source, index);
-    if (literal) {
-      key = literal.value;
-      end = literal.end;
-    } else if (/[A-Za-z_$]/.test(source[index] ?? "")) {
-      while (/[A-Za-z0-9_$]/.test(source[end] ?? "")) end++;
-      key = source.slice(index, end);
-    } else continue;
-    index = end - 1;
-    if (!embeddedKeys.has(key)) continue;
-    while (/\s/.test(source[end] ?? "")) end++;
-    if (source[end++] !== ":") continue;
-    while (/\s/.test(source[end] ?? "")) end++;
-    const payload = stringLiteral(source, end);
-    if (payload && shellMutates(payload.value)) return true;
+  for (let index = 0; index < source.length; index += 1) {
+    const key = embeddedKey(source, index);
+    if (!key) continue;
+    index = key.end - 1;
+    if (!embeddedKeys.has(key.key)) continue;
+    const payload = embeddedPayload(source, key);
+    if (payload && shellMutates(payload)) return true;
   }
   return false;
 }

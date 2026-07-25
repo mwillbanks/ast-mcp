@@ -47,6 +47,62 @@ function usageError(handlers: CliHandlers, message: string, command?: string) {
   return 1;
 }
 
+function runHelpCommand(rest: string[], handlers: CliHandlers) {
+  const [topic, ...extra] = rest;
+  if (extra.length > 0)
+    return usageError(handlers, `Unexpected argument: ${extra[0]}`);
+  if (topic && !Object.hasOwn(commandHelp, topic))
+    return usageError(handlers, `Unknown command: ${topic}`);
+  writeHelp(handlers, topic);
+  return 0;
+}
+
+async function runMcpCommand(rest: string[], handlers: CliHandlers) {
+  try {
+    await handlers.mcp(rest);
+    return undefined;
+  } catch (error) {
+    if (error instanceof Error && error.name === "McpUsageError")
+      return usageError(handlers, error.message, "mcp");
+    throw error;
+  }
+}
+
+function runHookCommand(rest: string[], handlers: CliHandlers) {
+  if (rest.length > 0)
+    return usageError(
+      handlers,
+      `Unexpected argument for hook: ${rest[0]}`,
+      "hook",
+    );
+  return handlers.hook();
+}
+
+function isCliUsageError(error: unknown): error is Error {
+  if (!(error instanceof Error)) return false;
+  return [
+    "InstallerUsageError",
+    "ConfigurationUsageError",
+    "McpUsageError",
+  ].includes(error.name);
+}
+
+async function runConfiguredCommand(
+  command: string,
+  rest: string[],
+  handlers: CliHandlers,
+) {
+  try {
+    if (command === "config") await handlers.config(rest);
+    else await handlers.installer([command, ...rest]);
+    return undefined;
+  } catch (error) {
+    if (isCliUsageError(error))
+      return usageError(handlers, error.message, command);
+    throw error;
+  }
+}
+
 export async function runCli(
   args: string[],
   handlers: CliHandlers,
@@ -56,52 +112,14 @@ export async function runCli(
     writeHelp(handlers);
     return 0;
   }
-  if (command === "help") {
-    const [topic, ...extra] = rest;
-    if (extra.length > 0)
-      return usageError(handlers, `Unexpected argument: ${extra[0]}`);
-    if (topic && !Object.hasOwn(commandHelp, topic))
-      return usageError(handlers, `Unknown command: ${topic}`);
-    writeHelp(handlers, topic);
-    return 0;
-  }
+  if (command === "help") return runHelpCommand(rest, handlers);
   if (!Object.hasOwn(commandHelp, command))
     return usageError(handlers, `Unknown command: ${command}`);
   if (rest.includes("--help") || rest.includes("-h")) {
     writeHelp(handlers, command);
     return 0;
   }
-  if (command === "mcp") {
-    try {
-      await handlers.mcp(rest);
-      return;
-    } catch (error) {
-      if (error instanceof Error && error.name === "McpUsageError")
-        return usageError(handlers, error.message, command);
-      throw error;
-    }
-  }
-  if (command === "hook") {
-    if (rest.length > 0)
-      return usageError(
-        handlers,
-        `Unexpected argument for hook: ${rest[0]}`,
-        command,
-      );
-    return handlers.hook();
-  }
-  try {
-    if (command === "config") await handlers.config(rest);
-    else await handlers.installer([command, ...rest]);
-    return;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.name === "InstallerUsageError" ||
-        error.name === "ConfigurationUsageError" ||
-        error.name === "McpUsageError")
-    )
-      return usageError(handlers, error.message, command);
-    throw error;
-  }
+  if (command === "mcp") return runMcpCommand(rest, handlers);
+  if (command === "hook") return runHookCommand(rest, handlers);
+  return runConfiguredCommand(command, rest, handlers);
 }
