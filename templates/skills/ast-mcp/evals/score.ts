@@ -5,11 +5,7 @@ import {
   type EvalCase as SemanticEvalCase,
   verifyEvaluation,
 } from "./semantic";
-import {
-  executableSource as executableSourceHelper,
-  extractExecInvocations as extractExecInvocationsHelper,
-  isInsidePromiseAll as isInsidePromiseAllHelper,
-} from "./source";
+import { extractExecInvocations as extractExecInvocationsHelper } from "./source";
 
 type EvalCase = SemanticEvalCase;
 
@@ -71,13 +67,6 @@ function messageText(content: unknown) {
         : "",
     )
     .join("\n");
-}
-
-function _executableSource(source: string) {
-  return executableSourceHelper(source);
-}
-function _isInsidePromiseAll(source: string, position: number) {
-  return isInsidePromiseAllHelper(source, position);
 }
 
 function extractExecInvocations(source: string) {

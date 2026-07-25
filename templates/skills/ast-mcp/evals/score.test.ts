@@ -111,3 +111,65 @@ test("rejects nested exec evidence and duplicate identifiers", async () => {
     "eval 91 uses nested exec evidence that cannot be bound to individual MCP results",
   );
 });
+
+test("evaluates successful and failed direct evidence", async () => {
+  const { sessionPath } = await transcript([
+    record("turn_context", {
+      cwd: process.cwd(),
+      workspace_roots: [process.cwd()],
+    }),
+    record("response_item", {
+      call_id: "valid-hash",
+      input: '// ast-mcp-eval:71\n{"filePaths":["src/server.ts"]}',
+      name: "mcp__ast_mcp__file_hash",
+      type: "custom_tool_call",
+    }),
+    record("response_item", {
+      call_id: "valid-hash",
+      output: [
+        { text: '{"filePath":"src/server.ts","sha256":"abc","size":1}' },
+      ],
+      type: "custom_tool_call_output",
+    }),
+    record("response_item", {
+      call_id: "failed-hash",
+      input: '// ast-mcp-eval:999\n{"filePaths":["src/server.ts"]}',
+      name: "mcp__ast_mcp__file_hash",
+      type: "custom_tool_call",
+    }),
+    record("response_item", {
+      call_id: "failed-hash",
+      isError: true,
+      output: "hash failed",
+      type: "custom_tool_call_output",
+    }),
+  ]);
+
+  const score = await scoreTranscript(sessionPath);
+  expect(score.passed).toBeFalse();
+  expect(score.evaluatedCases).toBe(2);
+  expect(score.verifiedAssertions).toBe(3);
+  expect(score.toolCalls.file_hash).toBe(2);
+  expect(score.errors).toContain("failed call ID: failed-hash");
+  expect(score.errors).toContain("unknown eval ID: 999");
+});
+
+test("accepts supported user message content shapes", async () => {
+  const { sessionPath } = await transcript(
+    [
+      "ast-mcp-eval:71",
+      {},
+      [null, {}, { text: null }, { text: "ast-mcp-eval:71" }],
+    ].map((content) =>
+      record("response_item", {
+        content,
+        role: "user",
+        type: "message",
+      }),
+    ),
+  );
+
+  const score = await scoreTranscript(sessionPath);
+  expect(score.passed).toBeTrue();
+  expect(score.evaluatedCases).toBe(0);
+});
