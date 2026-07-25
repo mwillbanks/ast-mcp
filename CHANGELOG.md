@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.3...ast-mcp-v0.2.0) (2026-07-25)
+
+
+### Features
+
+* add guarded file rename support ([c39cee2](https://github.com/mwillbanks/ast-mcp/commit/c39cee26634faabe6f6d42e409cb0a27c77f2ae8))
+* **config:** ast-mcp.toml configuration ([0260052](https://github.com/mwillbanks/ast-mcp/commit/026005259ff32d2f2a17df7554c622d4dd1b160e))
+* http, installer, root fixes ([f84daa1](https://github.com/mwillbanks/ast-mcp/commit/f84daa1c8af0474e1688531d37a04db55aa9d35c))
+
+
+### Bug Fixes
+
+* github actions cache ([553e9b5](https://github.com/mwillbanks/ast-mcp/commit/553e9b504a48afd1c283bf49e3c4d8d412a98664))
+* **hooks:** utilize unbash to aid in hook detection ([17b0f2d](https://github.com/mwillbanks/ast-mcp/commit/17b0f2d3caec2e9cfa67fa9c48f72d91bb85736b))
+* stabilize CI coverage validation ([1cddb93](https://github.com/mwillbanks/ast-mcp/commit/1cddb931db03f20d27acd92660967ef955018971))
+
 ## [0.1.3](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.2...ast-mcp-v0.1.3) (2026-07-23)
 
 
