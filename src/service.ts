@@ -83,7 +83,7 @@ export function createServicePlan(options: ServiceOptions): ServicePlan {
       `${label}.plist`,
     );
     const state = path.join(options.home, ".local/state/ast-mcp");
-    const programArguments = [process.execPath, ...args]
+    const programArguments = args
       .map((value) => `      <string>${xml(value)}</string>`)
       .join("\n");
     const environmentVariables = Object.entries(environment)
@@ -113,9 +113,7 @@ export function createServicePlan(options: ServiceOptions): ServicePlan {
   const environmentLines = Object.entries(environment)
     .map(([name, value]) => `Environment="${name}=${systemd(value)}"`)
     .join("\n");
-  const command = [process.execPath, ...args]
-    .map((value) => `"${systemd(value)}"`)
-    .join(" ");
+  const command = args.map((value) => `"${systemd(value)}"`).join(" ");
   const workingDirectory = systemd(
     options.scope === "local" ? path.resolve(options.root) : options.home,
   );

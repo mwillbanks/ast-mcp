@@ -96,23 +96,13 @@ const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
 
 async function astMcpEntry(entry: unknown): Promise<boolean> {
-  if (typeof entry !== "string" || path.basename(entry) !== "ast-mcp.js")
+  if (entry === "./node_modules/.bin/ast-mcp") return true;
+  if (typeof entry !== "string" || path.basename(entry) !== "ast-mcp")
     return false;
-  let folder = path.dirname(path.resolve(entry));
-  while (true) {
-    try {
-      const manifest = JSON.parse(
-        await readFile(path.join(folder, "package.json"), "utf8"),
-      );
-      return (
-        manifest.name === "@mwillbanks/ast-mcp" &&
-        path.resolve(entry) === path.join(folder, "dist/ast-mcp.js")
-      );
-    } catch {}
-    const parent = path.dirname(folder);
-    if (parent === folder) return false;
-    folder = parent;
-  }
+  const bin = path.dirname(entry);
+  return (
+    path.basename(bin) === "bin" && path.basename(path.dirname(bin)) === ".bun"
+  );
 }
 
 async function expectedReference(
@@ -173,7 +163,7 @@ async function hookCurrent(
         );
   for (const command of commands) {
     if (typeof command !== "string") continue;
-    const match = command.match(/^bun (.+) hook$/);
+    const match = command.match(/^(.+) hook$/);
     if (!match) continue;
     try {
       if (await astMcpEntry(JSON.parse(match[1]))) return true;
@@ -203,10 +193,10 @@ function httpJsonMcpCurrent(
 }
 async function stdioCommandCurrent(entry: McpEntry | undefined) {
   return (
-    entry?.command === "bun" &&
-    Array.isArray(entry.args) &&
-    entry.args[1] === "mcp" &&
-    (await astMcpEntry(entry.args[0]))
+    (await astMcpEntry(entry?.command)) &&
+    Array.isArray(entry?.args) &&
+    entry.args.length === 1 &&
+    entry.args[0] === "mcp"
   );
 }
 
@@ -266,12 +256,12 @@ function codexHttpMcpCurrent(block: string, url: string | undefined) {
   );
 }
 async function codexStdioMcpCurrent(block: string, root: string | undefined) {
-  const args = block.match(/args = \[(".*"), "mcp"\]/);
+  const command = block.match(/command = (".*")/);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
-    !block.includes('command = "bun"') ||
-    !args ||
-    !(await astMcpEntry(JSON.parse(args[1])))
+    !block.includes('args = ["mcp"]') ||
+    !command ||
+    !(await astMcpEntry(JSON.parse(command[1])))
   )
     return false;
   return root

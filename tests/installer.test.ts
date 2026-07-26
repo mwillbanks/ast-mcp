@@ -60,9 +60,9 @@ describe("installer", () => {
       path.join(root, ".github/hooks/ast-mcp.json"),
       "utf8",
     );
-    expect(codexHook).toContain("dist/ast-mcp.js");
-    expect(claudeHook).toContain("dist/ast-mcp.js");
-    expect(copilotHook).toContain("dist/ast-mcp.js");
+    expect(codexHook).toContain("./node_modules/.bin/ast-mcp");
+    expect(claudeHook).toContain("./node_modules/.bin/ast-mcp");
+    expect(copilotHook).toContain("./node_modules/.bin/ast-mcp");
     expect(codexHook).not.toContain(root);
     expect(claudeHook).not.toContain(root);
     expect(copilotHook).not.toContain(root);
@@ -85,11 +85,17 @@ describe("installer", () => {
     expect(
       await readFile(path.join(home, ".claude/CLAUDE.md"), "utf8"),
     ).toContain("AST MCP");
+    const globalCopilot = JSON.parse(
+      await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
+    ).mcpServers["ast-mcp"];
+    expect(globalCopilot.type).toBe("local");
+    expect(globalCopilot).toMatchObject({
+      args: ["mcp"],
+      command: path.join(home, ".bun/bin/ast-mcp"),
+    });
     expect(
-      JSON.parse(
-        await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
-      ).mcpServers["ast-mcp"].type,
-    ).toBe("local");
+      await readFile(path.join(home, ".codex/config.toml"), "utf8"),
+    ).toContain(path.join(home, ".bun/bin/ast-mcp"));
   });
   test("runs the installer CLI parser without leaking routine output", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-cli-"));

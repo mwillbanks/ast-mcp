@@ -36,6 +36,10 @@ import {
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
+const localCliEntry = "./node_modules/.bin/ast-mcp";
+function cliEntryFor(root: string | undefined, home: string) {
+  return root ? localCliEntry : path.join(home, ".bun/bin/ast-mcp");
+}
 const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
 type Target = (typeof targets)[number];
@@ -71,19 +75,21 @@ async function installerAstBroBinary(options: InstallOptions) {
 
 function definition(
   root: string | undefined,
+  home: string,
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
   return {
-    args: [cliEntry, "mcp"],
-    command: "bun",
+    args: ["mcp"],
+    command: cliEntryFor(root, home),
     env: root ? { AST_MCP_PROJECT_ROOT: root } : {},
   };
 }
 async function codexMcp(
   file: string,
   root: string | undefined,
+  home: string,
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
@@ -97,19 +103,20 @@ async function codexMcp(
   const block =
     transport === "http"
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = [${JSON.stringify(cliEntry)}, "mcp"]\n${environment}# ast-mcp:end`;
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(cliEntryFor(root, home))}\nargs = ["mcp"]\n${environment}# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
 async function jsonMcp(
   file: string,
   root: string | undefined,
+  home: string,
   copilot: boolean,
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
   const value = await json(file);
-  const entry = definition(root, transport, endpoint);
+  const entry = definition(root, home, transport, endpoint);
   value.mcpServers = {
     ...(value.mcpServers ?? {}),
     "ast-mcp": copilot
@@ -123,11 +130,12 @@ async function jsonMcp(
 async function vscodeMcp(
   file: string,
   root: string,
+  home: string,
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
   const value = await json(file);
-  const entry = definition(root, transport, endpoint);
+  const entry = definition(root, home, transport, endpoint);
   value.servers = {
     ...(value.servers ?? {}),
     "ast-mcp": transport === "stdio" ? { type: "stdio", ...entry } : entry,
@@ -139,16 +147,18 @@ async function hook(
   file: string,
   event: "PreToolUse" | "preToolUse",
   scriptFile: string,
-  _commandPath?: string,
+  commandPath: string,
 ) {
   await rm(scriptFile, { force: true });
   const value = await json(file);
   if (event === "preToolUse") value.version ??= 1;
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
-  const command = `bun ${JSON.stringify(cliEntry)} hook`;
+  const command = `${JSON.stringify(commandPath)} hook`;
+  const managedCommands = [command, `bun ${JSON.stringify(cliEntry)} hook`];
   const kept = prior.filter(
-    (item: unknown) => !isManagedHook(item, event, command),
+    (item: unknown) =>
+      !managedCommands.some((managed) => isManagedHook(item, event, managed)),
   );
   const item =
     event === "preToolUse"
@@ -259,6 +269,7 @@ async function removeHook(
   file: string,
   event: "PreToolUse" | "preToolUse",
   commandPath: string,
+  cliAlias: string,
 ) {
   const value = await json(file);
   const hooks = value.hooks;
@@ -266,6 +277,7 @@ async function removeHook(
   const commands = [
     `bun ${JSON.stringify(commandPath)}`,
     `bun ${JSON.stringify(cliEntry)} hook`,
+    `${JSON.stringify(cliAlias)} hook`,
   ];
   hooks[event] = hooks[event].filter(
     (item: unknown) =>
@@ -355,12 +367,14 @@ async function selectedTransport(
 }
 
 function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
+  const root = path.resolve(options.root);
+  const home = options.home ?? os.homedir();
   return {
-    cliEntry,
+    cliEntry: cliEntryFor(options.scope === "local" ? root : undefined, home),
     endpoint,
-    home: options.home ?? os.homedir(),
+    home,
     platform: options.platform,
-    root: path.resolve(options.root),
+    root,
     runner: options.serviceRunner,
     scope: options.scope,
   };
@@ -426,6 +440,7 @@ async function installCodexTarget(
   await codexMcp(
     path.join(base, "config.toml"),
     global ? undefined : root,
+    home,
     transport,
     endpoint,
   );
@@ -433,7 +448,7 @@ async function installCodexTarget(
     path.join(base, "hooks.json"),
     "PreToolUse",
     path.join(base, "hooks/ast-mcp.ts"),
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
+    cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
     base,
@@ -452,6 +467,7 @@ async function installClaudeTarget(
   await jsonMcp(
     global ? path.join(home, ".claude.json") : path.join(root, ".mcp.json"),
     global ? undefined : root,
+    home,
     false,
     transport,
     endpoint,
@@ -460,9 +476,7 @@ async function installClaudeTarget(
     path.join(base, "settings.json"),
     "PreToolUse",
     path.join(base, "hooks/ast-mcp.ts"),
-    global
-      ? path.join(base, "hooks/ast-mcp.ts")
-      : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
+    cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
     base,
@@ -484,6 +498,7 @@ async function installCopilotTarget(
     await jsonMcp(
       path.join(base, "mcp-config.json"),
       undefined,
+      home,
       true,
       transport,
       endpoint,
@@ -492,6 +507,7 @@ async function installCopilotTarget(
     await jsonMcp(
       path.join(root, ".github/mcp.json"),
       root,
+      home,
       true,
       transport,
       endpoint,
@@ -499,6 +515,7 @@ async function installCopilotTarget(
     await vscodeMcp(
       path.join(root, ".vscode/mcp.json"),
       root,
+      home,
       transport,
       endpoint,
     );
@@ -507,7 +524,7 @@ async function installCopilotTarget(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
     path.join(base, "hooks/ast-mcp.ts"),
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
+    cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
     base,
@@ -715,6 +732,7 @@ async function uninstallCodexTarget(
     path.join(base, "hooks.json"),
     "PreToolUse",
     global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
+    cliEntryFor(global ? undefined : root, home),
   );
   await removeTargetAssets(
     base,
@@ -737,6 +755,7 @@ async function uninstallClaudeTarget(
     global
       ? path.join(base, "hooks/ast-mcp.ts")
       : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
+    cliEntryFor(global ? undefined : root, home),
   );
   await removeTargetAssets(
     base,
@@ -761,6 +780,7 @@ async function uninstallCopilotTarget(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
     global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
+    cliEntryFor(global ? undefined : root, home),
   );
   await removeTargetAssets(
     base,
@@ -847,7 +867,7 @@ export async function runInstallerCli(
       : undefined;
   const manualStart =
     endpoint && options.service !== true
-      ? `${global ? "" : `cd ${JSON.stringify(root)} && `}bun ${JSON.stringify(cliEntry)} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
+      ? `${global ? "" : `cd ${JSON.stringify(root)} && `}${JSON.stringify(cliEntryFor(global ? undefined : root, options.home ?? os.homedir()))} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
       : undefined;
   const result = {
     changed,

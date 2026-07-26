@@ -90,7 +90,7 @@ test("renders escaped LaunchAgents and rejects unknown service platforms", () =>
     scope: "local",
   });
   expect(plan.content).toContain("com.mwillbanks.ast-mcp-");
-  expect(plan.content).toContain(process.execPath);
+  expect(plan.content).not.toContain(process.execPath);
   expect(plan.content).toContain("with &amp; value");
   expect(plan.installCommands[1]).toContain("bootstrap");
   expect(() =>
