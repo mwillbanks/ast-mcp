@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.0...ast-mcp-v0.2.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* use installed CLI wrappers for host integrations ([5cab5fb](https://github.com/mwillbanks/ast-mcp/commit/5cab5fbca96d3c96c79d5adf5b8596b78ad0ff31))
+
 ## [0.2.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.1.3...ast-mcp-v0.2.0) (2026-07-25)
 
 
