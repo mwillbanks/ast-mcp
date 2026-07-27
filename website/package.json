@@ -23,7 +23,7 @@
     "lucide-react": "^1.24.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "seroval": "1.5.5"
+    "seroval": "1.5.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.5",
