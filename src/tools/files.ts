@@ -1,6 +1,10 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { chattrSchema, toolFailure } from "../helpers/mcp-schema";
+import {
+  boundedFileBatch,
+  chattrSchema,
+  toolFailure,
+} from "../helpers/mcp-schema";
 import { patchFiles, writeFilesSafely } from "../patch/engine";
 import {
   FILE_READ_MAX_BATCH,
@@ -39,15 +43,6 @@ export default function registerFileTools(
     content: z.string(),
     expectedSha256: z.string().length(64).optional(),
   });
-  const boundedBatch = <T extends z.ZodType>(schema: T, label: string) =>
-    z
-      .record(z.string().min(1), schema)
-      .refine(
-        (value) =>
-          Object.keys(value).length > 0 &&
-          Object.keys(value).length <= FILE_READ_MAX_BATCH,
-        label,
-      );
 
   server.registerTool(
     "file_read",
@@ -109,20 +104,20 @@ export default function registerFileTools(
     "file_write",
     {
       description:
-        "Creates or replaces multiple files in one keyed batch. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
-      inputSchema: boundedBatch(
+        "Creates or replaces multiple files in one declared files batch. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
+      inputSchema: boundedFileBatch(
         writeTarget,
         "file_write requires between 1 and 50 files",
       ),
       title: "Write Files Safely",
     },
-    async (args) => {
+    async ({ files }) => {
       try {
         return {
           content: [
             {
               text: JSON.stringify(
-                await execute(args, () => writeFilesSafely(args)),
+                await execute({ files }, () => writeFilesSafely(files)),
               ),
               type: "text",
             },
@@ -138,8 +133,8 @@ export default function registerFileTools(
     "file_patch",
     {
       description:
-        "Patches multiple files in one keyed batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview runs the complete formatted operation without committing.",
-      inputSchema: boundedBatch(
+        "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview runs the complete formatted operation without committing.",
+      inputSchema: boundedFileBatch(
         z.object({
           aiderBlocks: z.array(aiderBlock).max(FILE_READ_MAX_BATCH).optional(),
           astRules: z.array(astRule).max(FILE_READ_MAX_BATCH).optional(),
@@ -152,12 +147,14 @@ export default function registerFileTools(
       ),
       title: "Patch Files Through the Enforced State Machine",
     },
-    async (args) => {
+    async ({ files }) => {
       try {
         return {
           content: [
             {
-              text: JSON.stringify(await execute(args, () => patchFiles(args))),
+              text: JSON.stringify(
+                await execute({ files }, () => patchFiles(files)),
+              ),
               type: "text",
             },
           ],

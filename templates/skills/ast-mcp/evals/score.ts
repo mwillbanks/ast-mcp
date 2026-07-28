@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  type FileOperationPolicy,
   type Invocation,
   type EvalCase as SemanticEvalCase,
   verifyEvaluation,
@@ -341,6 +342,7 @@ function evaluateCase(
   calls: TranscriptCall[],
   evaluation: EvalCase | undefined,
   roots: string[],
+  fileOperationPolicy: FileOperationPolicy,
   errors: string[],
 ) {
   if (!evaluation) {
@@ -363,6 +365,7 @@ function evaluateCase(
     evaluationInvocations(calls),
     evaluationText(calls),
     roots,
+    fileOperationPolicy,
   );
   for (const error of semanticErrors) errors.push(`eval ${evalId} ${error}`);
   return !executionFailed && semanticErrors.length === 0
@@ -374,6 +377,7 @@ function evaluateGroups(
   grouped: GroupedEvaluations,
   cases: Map<number, EvalCase>,
   roots: string[],
+  fileOperationPolicy: FileOperationPolicy,
   errors: string[],
 ): EvaluationResult {
   let evaluatedCases = 0;
@@ -385,6 +389,7 @@ function evaluateGroups(
       calls,
       cases.get(evalId),
       roots,
+      fileOperationPolicy,
       errors,
     );
   }
@@ -414,6 +419,7 @@ function validateStrictMatrix(
 export async function scoreTranscript(
   sessionPath: string,
   strict = false,
+  fileOperationPolicy: FileOperationPolicy = {},
 ): Promise<TranscriptScore> {
   const collector = await collectTranscript(sessionPath);
   const toolCalls: Record<string, number> = {};
@@ -426,6 +432,7 @@ export async function scoreTranscript(
     grouped,
     cases,
     [...collector.roots],
+    fileOperationPolicy,
     collector.errors,
   );
   validateStrictMatrix(

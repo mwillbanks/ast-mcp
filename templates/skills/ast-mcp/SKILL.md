@@ -26,32 +26,36 @@ Treat ast-mcp as the only code-intelligence and filesystem boundary. Do not call
 
 Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combinations.
 
-## Mutate through keyed file_patch and file_write
+## Mutate through declared file batches
 
 1. Inspect AST-capable targets with `map`, `show`, `context`, or a bounded `run` search. For unsupported content, use one batched `file_read({ files: [...] })` call with narrow line ranges.
-2. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run, send the same keyed `file_patch` entry with `preview: true`; it returns the formatted bounded diff and never commits.
-3. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per keyed path. The runtime can make hashes optional through `safety.require_hash = false`, but the normal agent workflow should still supply them whenever current-state protection matters.
-4. Use one path-keyed `file_patch` batch for one or more files:
+2. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run, send the same `file_patch` file entry with `preview: true`; it returns the formatted bounded diff and never commits.
+3. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per file. The runtime can make hashes optional through `safety.require_hash = false`, but the normal agent workflow should still supply them whenever current-state protection matters.
+4. Mutation tools accept a declared `files` property whose value is a path-keyed object. Use one `file_patch({ files: { ... } })` call for one or more files:
    - AST targets: `{ expectedSha256, patchStrategy: "ast", astRules: [{ pattern, fix, expectedMatches: 1 }], preview?: boolean }`
    - Unsupported targets: `{ expectedSha256, patchStrategy: "aider_block", aiderBlocks: [{ search, replace }], preview?: boolean }`
      Operations in each array run in order under one file lock; preview returns without committing and normal mode commits atomically.
-5. Use one path-keyed `file_write` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files. Supply the shared `chattr` object when chmod/chown metadata is required; missing parents are created only after a guarded `ENOENT` write and path revalidation.
-6. Use one path-keyed `file_rename` batch for hash-guarded, root-bounded file moves; validate every source and destination, reject existing destinations, and use no-replace moves. Ordinary failures roll back completed entries when possible; the operation is not crash-atomic.
-7. Use `file_chattr` for metadata-only changes. Use hash-guarded `file_delete` for deletion; it preflights all targets and AST import references before any deletion, requires an explicit `forceReferences` override for referenced source, and removes empty ancestor directories after lock release.
+5. Use one `file_write({ files: { ... } })` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files. Supply the shared `chattr` object when chmod/chown metadata is required; missing parents are created only after a guarded `ENOENT` write and path revalidation.
+6. Use one `file_rename({ files: { ... } })` batch for hash-guarded moves; validate every source and destination, reject existing destinations, and use no-replace moves. Ordinary failures roll back completed entries when possible; the operation is not crash-atomic.
+7. Use `file_chattr({ files: { ... } })` for metadata-only changes. Use hash-guarded `file_delete({ files: { ... } })` for deletion; it preflights all targets and AST import references before any deletion, requires an explicit `forceReferences` override for referenced source, and removes empty ancestor directories after lock release.
 8. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; it is not the normal agent patch route and still rewrites only the first match per file.
-9. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation.
+9. Verify results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation.
+
+The OS temporary directory is an allowed file-operation root by default. Set `safety.allow_temp_directory = false` to disable it. `safety.allow_any_path = true` is an explicit unrestricted mode for file tools; do not enable it merely to avoid configuring a workspace root.
 
 Example batched AST patch:
 
 ```json
 file_patch({
-  "/repo/src/service.ts": {
-    "expectedSha256": "<from file_hash>",
-    "patchStrategy": "ast",
-    "astRules": [
-      { "pattern": "oldName($$$ARGS)", "fix": "newName($$$ARGS)", "expectedMatches": 1 },
-      { "pattern": "oldFlag", "fix": "newFlag", "expectedMatches": 1 }
-    ]
+  "files": {
+    "/repo/src/service.ts": {
+      "expectedSha256": "<from file_hash>",
+      "patchStrategy": "ast",
+      "astRules": [
+        { "pattern": "oldName($$$ARGS)", "fix": "newName($$$ARGS)", "expectedMatches": 1 },
+        { "pattern": "oldFlag", "fix": "newFlag", "expectedMatches": 1 }
+      ]
+    }
   }
 })
 ```
@@ -60,10 +64,12 @@ Example batched Aider patch:
 
 ```json
 file_patch({
-  "/repo/notes.md": {
-    "expectedSha256": "<from file_hash>",
-    "patchStrategy": "aider_block",
-    "aiderBlocks": [{ "search": "old paragraph", "replace": "new paragraph" }]
+  "files": {
+    "/repo/notes.md": {
+      "expectedSha256": "<from file_hash>",
+      "patchStrategy": "aider_block",
+      "aiderBlocks": [{ "search": "old paragraph", "replace": "new paragraph" }]
+    }
   }
 })
 ```
@@ -72,8 +78,10 @@ Example batched file write:
 
 ```json
 file_write({
-  "/repo/new-a.txt": { "content": "alpha\\n" },
-  "/repo/existing.txt": { "content": "beta\\n", "expectedSha256": "<from file_hash>" }
+  "files": {
+    "/repo/new-a.txt": { "content": "alpha\\n" },
+    "/repo/existing.txt": { "content": "beta\\n", "expectedSha256": "<from file_hash>" }
+  }
 })
 ```
 
@@ -84,7 +92,7 @@ Read [patch-state-machine.md](references/patch-state-machine.md) for routing and
 ## Recover safely
 
 - Stale SHA: refresh `file_hash`, re-inspect through AST or a bounded unsupported-content slice, and rebuild the patch.
-- Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because ast-bro rewrites the first match per file, while ordered arrays let one keyed file_patch apply multiple reviewed operations.
+- Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because ast-bro rewrites the first match per file, while ordered arrays let one declared `file_patch.files` entry apply multiple reviewed operations.
 - Capped direct preview: narrow paths, glob, or pattern before writing.
 - Aider ambiguity: request a larger bounded slice and expand the search block with unique surrounding context.
 - Formatter preflight failure: inspect the active `[formatting]` policy. Do not write until the matching external formatter or dprint fallback succeeds; `enabled = false` deliberately skips formatting.
@@ -94,4 +102,4 @@ Read [patch-state-machine.md](references/patch-state-machine.md) for routing and
 
 Confirm the old structure is absent through AST search, callers are correct, touched files were verified through their proper route, configured formatter-backed writes succeeded (or formatting is explicitly disabled), repository validation passes, and no direct-write or whole-file-read bypass was used.
 
-Use `evals:check` for fixture-matrix integrity. `evals:measure` inventories direct MCP transcript records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate the following direct MCP records with that case. An outer `exec` result cannot prove each nested call, so marked nested calls and multi-marker evidence fail closed. Scoring validates schema-relevant inputs, transcript workspace roots, required order, expected output evidence, assertions, and successful per-call outputs. Use `evals:score --strict` only for a complete marked matrix; transcript scoring is matched task-execution evidence, not a blanket agent-quality claim.
+Use `evals:check` for fixture-matrix integrity. `evals:measure` inventories direct MCP transcript records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate the following direct MCP records with that case. An outer `exec` result cannot prove each nested call, so marked nested calls and multi-marker evidence fail closed. Scoring validates schema-relevant inputs, transcript workspace roots, required order, expected output evidence, assertions, and successful per-call outputs. When the measured run used non-default file safety, pass the validated scorer options `--allow-any-path` and/or `--no-temp-directory`; the scorer does not infer layered project configuration from a transcript. Use `evals:score --strict` only for a complete marked matrix; transcript scoring is matched task-execution evidence, not a blanket agent-quality claim.

@@ -36,22 +36,26 @@ test("file tool handlers execute keyed batches without transport indirection", a
       }
     ).inputSchema;
     expect(
-      writeSchema.safeParse({ [first]: { content: "x" } }).success,
+      writeSchema.safeParse({ files: { [first]: { content: "x" } } }).success,
     ).toBeTrue();
     expect(
       patchSchema.safeParse({
-        [notes]: {
-          aiderBlocks: [{ replace: "x", search: "alpha" }],
-          expectedSha256: "0".repeat(64),
-          patchStrategy: "aider_block",
+        files: {
+          [notes]: {
+            aiderBlocks: [{ replace: "x", search: "alpha" }],
+            expectedSha256: "0".repeat(64),
+            patchStrategy: "aider_block",
+          },
         },
       }).success,
     ).toBeTrue();
     await writeFile(notes, "alpha\nbeta\n");
 
     const written = await (registered.get("file_write") as RegisteredTool)({
-      [first]: { content: "first\n" },
-      [second]: { content: "second\n" },
+      files: {
+        [first]: { content: "first\n" },
+        [second]: { content: "second\n" },
+      },
     });
     expect(written.isError).not.toBeTrue();
 
@@ -75,20 +79,24 @@ test("file tool handlers execute keyed batches without transport indirection", a
 
     const writeFailure = await (registered.get("file_write") as RegisteredTool)(
       {
-        [path.join(process.cwd(), "src/server.ts")]: { content: "x" },
+        files: {
+          [path.join(process.cwd(), "src/server.ts")]: { content: "x" },
+        },
       },
     );
     expect(writeFailure.isError).toBeTrue();
 
     const original = await readFile(notes, "utf8");
     const patched = await (registered.get("file_patch") as RegisteredTool)({
-      [notes]: {
-        aiderBlocks: [
-          { replace: "one", search: "alpha" },
-          { replace: "two", search: "beta" },
-        ],
-        expectedSha256: createHash("sha256").update(original).digest("hex"),
-        patchStrategy: "aider_block",
+      files: {
+        [notes]: {
+          aiderBlocks: [
+            { replace: "one", search: "alpha" },
+            { replace: "two", search: "beta" },
+          ],
+          expectedSha256: createHash("sha256").update(original).digest("hex"),
+          patchStrategy: "aider_block",
+        },
       },
     });
     expect(patched.isError).not.toBeTrue();

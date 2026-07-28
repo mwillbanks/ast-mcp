@@ -81,7 +81,9 @@ const fileSchema = z
       .optional(),
     safety: z
       .object({
+        allow_any_path: z.boolean().optional(),
         allow_external_roots: z.boolean().optional(),
+        allow_temp_directory: z.boolean().optional(),
         follow_symlinks: z.boolean().optional(),
         hook: hookSchema.optional(),
         require_hash: z.boolean().optional(),
@@ -120,7 +122,9 @@ export interface ResolvedConfig {
   projectRoot: string;
   provenance: Record<string, "default" | "global" | "project" | "environment">;
   safety: {
+    allowAnyPath: boolean;
     allowExternalRoots: boolean;
+    allowTempDirectory: boolean;
     followSymlinks: boolean;
     hook: { allowTools: string[]; blockTools: string[]; enabled: boolean };
     requireHash: boolean;
@@ -170,7 +174,9 @@ interface InternalConfig {
     session_sweep_interval_ms?: number;
   };
   safety?: {
+    allow_any_path?: boolean;
     allow_external_roots?: boolean;
+    allow_temp_directory?: boolean;
     follow_symlinks?: boolean;
     hook?: {
       allow_tools?: string[];
@@ -457,13 +463,29 @@ function environmentHttp(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
 }
 
 function environmentSafety(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
-  const allowExternal = usage.use(
+  const allowAnyPath = usage.use(
+    "AST_MCP_ALLOW_ANY_PATH",
+    booleanEnvironment(env, "AST_MCP_ALLOW_ANY_PATH"),
+  );
+  const allowExternalRoots = usage.use(
     "AST_MCP_ALLOW_EXTERNAL_ROOTS",
     booleanEnvironment(env, "AST_MCP_ALLOW_EXTERNAL_ROOTS"),
   );
-  return allowExternal === undefined
-    ? undefined
-    : { allow_external_roots: allowExternal };
+  const allowTempDirectory = usage.use(
+    "AST_MCP_ALLOW_TEMP_DIRECTORY",
+    booleanEnvironment(env, "AST_MCP_ALLOW_TEMP_DIRECTORY"),
+  );
+  if (
+    allowAnyPath === undefined &&
+    allowExternalRoots === undefined &&
+    allowTempDirectory === undefined
+  )
+    return undefined;
+  return {
+    allow_any_path: allowAnyPath,
+    allow_external_roots: allowExternalRoots,
+    allow_temp_directory: allowTempDirectory,
+  };
 }
 
 function environmentLayer(
@@ -491,7 +513,9 @@ function environmentLayer(
 const leaves = [
   "version",
   "workspace.roots",
+  "safety.allow_any_path",
   "safety.allow_external_roots",
+  "safety.allow_temp_directory",
   "safety.follow_symlinks",
   "safety.hook.allow_tools",
   "safety.hook.block_tools",
@@ -615,7 +639,9 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       session_timeout_ms: 30 * 60 * 1000,
     },
     safety: {
+      allow_any_path: false,
       allow_external_roots: false,
+      allow_temp_directory: true,
       follow_symlinks: false,
       hook: { allow_tools: [], block_tools: [], enabled: true },
       require_hash: true,
@@ -679,7 +705,9 @@ function resolvedHook(value: InternalConfig["safety"]) {
 
 function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
   return {
+    allowAnyPath: withDefault(value.safety?.allow_any_path, false),
     allowExternalRoots: withDefault(value.safety?.allow_external_roots, false),
+    allowTempDirectory: withDefault(value.safety?.allow_temp_directory, true),
     followSymlinks: withDefault(value.safety?.follow_symlinks, false),
     hook: resolvedHook(value.safety),
     requireHash: withDefault(value.safety?.require_hash, true),

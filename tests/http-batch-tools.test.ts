@@ -82,7 +82,7 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
           jsonrpc: "2.0",
           method: "tools/call",
           params: {
-            arguments: { [created]: { content: "created\n" } },
+            arguments: { files: { [created]: { content: "created\n" } } },
             name: "file_write",
           },
         },
@@ -112,13 +112,15 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
           method: "tools/call",
           params: {
             arguments: {
-              [notes]: {
-                aiderBlocks: [
-                  { replace: "one", search: "alpha" },
-                  { replace: "two", search: "beta" },
-                ],
-                expectedSha256: sha256(notesContent),
-                patchStrategy: "aider_block",
+              files: {
+                [notes]: {
+                  aiderBlocks: [
+                    { replace: "one", search: "alpha" },
+                    { replace: "two", search: "beta" },
+                  ],
+                  expectedSha256: sha256(notesContent),
+                  patchStrategy: "aider_block",
+                },
               },
             },
             name: "file_patch",

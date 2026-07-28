@@ -1,8 +1,51 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import os, { tmpdir } from "node:os";
+import path, { join } from "node:path";
 import { scoreTranscript } from "./score";
+
+test("threads file-operation policy through transcript scoring", async () => {
+  const temporaryPath = path.join(os.tmpdir(), "ast-mcp-score-policy.ts");
+  const { sessionPath } = await transcript([
+    record("turn_context", {
+      cwd: "/workspace",
+      workspace_roots: ["/workspace"],
+    }),
+    record("response_item", {
+      call_id: "policy-hash",
+      input: `// ast-mcp-eval:71\n${JSON.stringify({ filePaths: [temporaryPath] })}`,
+      name: "mcp__ast_mcp__file_hash",
+      type: "custom_tool_call",
+    }),
+    record("response_item", {
+      call_id: "policy-hash",
+      output: [
+        {
+          text: JSON.stringify({
+            filePath: temporaryPath,
+            sha256: "abc",
+            size: 1,
+          }),
+        },
+      ],
+      type: "custom_tool_call_output",
+    }),
+  ]);
+
+  const protectedScore = await scoreTranscript(sessionPath, false, {
+    allowTempDirectory: false,
+  });
+  expect(protectedScore.errors).toContain(
+    `eval 71 file_hash input escapes transcript file-operation roots: ${temporaryPath}`,
+  );
+  const unrestrictedScore = await scoreTranscript(sessionPath, false, {
+    allowAnyPath: true,
+    allowTempDirectory: false,
+  });
+  expect(unrestrictedScore.errors).not.toContain(
+    `eval 71 file_hash input escapes transcript file-operation roots: ${temporaryPath}`,
+  );
+});
 
 const directories: string[] = [];
 
@@ -78,7 +121,7 @@ test("binds direct calls to their marker and counts tool output", async () => {
 });
 
 test("rejects nested exec evidence and duplicate identifiers", async () => {
-  const source = `// ast-mcp-eval:91\ntext(await tools.mcp__ast_mcp__file_rename({"a.ts":{"expectedSha256":"abc","destination":"b.ts"}}));`;
+  const source = `// ast-mcp-eval:91\ntext(await tools.mcp__ast_mcp__file_rename({files:{"a.ts":{"expectedSha256":"abc","destination":"b.ts"}}}));`;
   const { sessionPath } = await transcript([
     record("response_item", {
       call_id: "nested",

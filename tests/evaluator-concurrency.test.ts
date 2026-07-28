@@ -42,7 +42,7 @@ test("semantic scoring preserves sequential order around unrelated Promise.all c
         JSON.stringify(
           call(
             "sequential",
-            '// ast-mcp-eval:75\nawait tools.mcp__ast_mcp__file_hash({ filePaths: ["notes/existing.txt"] });\nawait Promise.all([tools.mcp__ast_mcp__search({ query: "unrelated" })]);\nawait tools.mcp__ast_mcp__file_write({\n  "notes/new.txt": { content: "new" },\n  "notes/existing.txt": { content: "next", expectedSha256: "abc" },\n});',
+            '// ast-mcp-eval:75\nawait tools.mcp__ast_mcp__file_hash({ filePaths: ["notes/existing.txt"] });\nawait Promise.all([tools.mcp__ast_mcp__search({ query: "unrelated" })]);\nawait tools.mcp__ast_mcp__file_write({\n  files: {\n    "notes/new.txt": { content: "new" },\n    "notes/existing.txt": { content: "next", expectedSha256: "abc" },\n  },\n});',
           ),
         ),
         JSON.stringify(

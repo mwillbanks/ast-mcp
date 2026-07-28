@@ -56,6 +56,6 @@ The pinned `@ast-bro/cli@3.0.0` package has a precompiled binary only for macOS 
 2. Restart or reconnect MCP servers in the host; a skill file alone cannot make MCP tools callable. A supervised ast-mcp process may receive `SIGHUP`, which performs graceful cleanup and exits 0 so the host can restart it from refreshed code and configuration.
 3. Confirm `file_hash`, `file_read`, `file_write`, and `file_patch` are present.
 4. Confirm direct intelligence tools such as `digest`, `map`, `show`, `context`, and `impact` are present; there is no proxy tool.
-5. Verify that `file_read` accepts batched `files`, `file_hash` accepts batched `filePaths`, and `file_write`/`file_patch` accept path-keyed batches with ordered per-file operations; the legacy whole-file `file_read({ filePath })` schema is stale.
+5. Verify that `file_read` accepts batched `files`, `file_hash` accepts batched `filePaths`, and every mutation tool accepts a declared `files` object containing path-keyed per-file operations; dictionary-only top-level mutation schemas and the legacy whole-file `file_read({ filePath })` schema are stale.
 6. Rerun `check-install.ts` if the tool list remains incomplete.
 7. If configuration is correct but startup fails, run the package's `bun run tools:check` from its checkout and report the missing dependency or startup error. Do not bypass the write boundary.

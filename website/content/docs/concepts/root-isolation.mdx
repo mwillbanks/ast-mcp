@@ -12,11 +12,13 @@ The effective `workspace.roots` list comes from environment overrides, project a
 - `AST_MCP_PROJECT_ROOT` selects a project without overriding its policy.
 - Relative tool paths resolve from the first effective workspace root.
 - Every explicit path-bearing argument is validated.
-- Symbolic-link targets are rejected by default. `safety.follow_symlinks = true` permits only final symlinks whose resolved target remains inside an effective workspace root.
+- File tools also allow the canonical OS temporary directory by default; `safety.allow_temp_directory = false` disables that allowance.
+- `safety.allow_any_path = true` is an explicit unrestricted mode for file tools only. It does not broaden direct ast-bro intelligence roots.
+- Symbolic-link targets are rejected by default. `safety.follow_symlinks = true` permits final symlinks only when the resolved target remains inside the roots allowed for that surface; unrestricted file mode is the explicit exception.
 - Configured roots outside the trusted boundary require `safety.allow_external_roots = true` or the compatible environment override.
 - Error messages display the active boundary without exposing unrelated contents.
 
-The same request-scoped configuration applies to file operations and direct ast-bro tools, including `path`, `root`, `paths`, keyed file paths, and destinations.
+The same request-scoped configuration selects policy for file operations and direct ast-bro tools. Mutation inputs declare a `files` object containing path keys and destinations. Temporary-directory and unrestricted-path allowances apply only inside the file-operation boundary; direct ast-bro intelligence remains scoped to workspace roots.
 
 ## Multiple workspaces
 

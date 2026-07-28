@@ -15,7 +15,7 @@ test("guidance routes normal AST and Aider mutations through file_patch", async 
     expect(guidance).toContain("not the normal agent patch route");
   }
 
-  expect(skill).toContain("Mutate through keyed file_patch and file_write");
+  expect(skill).toContain("Mutate through declared file batches");
   expect(evals).toContain('"variant": "ordered-ast-rules"');
   expect(evals).toContain(
     "Uses run only to preview or verify and sends the mutation through file_patch.",

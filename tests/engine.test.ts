@@ -79,7 +79,7 @@ describe("write state machine", () => {
     await expect(
       writeFileSafely({
         content: "x",
-        filePath: path.join(os.tmpdir(), "outside.md"),
+        filePath: path.join(path.parse(folder).root, "ast-mcp-outside.md"),
       }),
     ).rejects.toThrow("outside");
   });

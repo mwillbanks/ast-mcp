@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import registerLifecycleTools from "../src/tools/lifecycle";
 
-test("registers lifecycle tools with keyed batch schemas", () => {
+test("registers lifecycle tools with declared files batch schemas", () => {
   const definitions = new Map<string, unknown>();
   registerLifecycleTools({
     registerTool(name: string, definition: unknown) {
@@ -22,14 +22,16 @@ test("registers lifecycle tools with keyed batch schemas", () => {
 
   expect(
     schema("file_rename").safeParse({
-      "source.txt": {
-        destination: "renamed.txt",
-        expectedSha256: "a".repeat(64),
+      files: {
+        "source.txt": {
+          destination: "renamed.txt",
+          expectedSha256: "a".repeat(64),
+        },
       },
     }).success,
   ).toBeTrue();
   for (const name of ["file_chattr", "file_delete", "file_rename"])
-    expect(schema(name).safeParse({}).success).toBeFalse();
+    expect(schema(name).safeParse({ files: {} }).success).toBeFalse();
 });
 
 test("lifecycle handlers execute successful and failed requests", async () => {
@@ -37,7 +39,9 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     content: Array<{ text?: string; type: string }>;
     isError?: boolean;
   };
-  type ToolHandler = (requests: Record<string, unknown>) => Promise<ToolResult>;
+  type ToolHandler = (request: {
+    files: Record<string, unknown>;
+  }) => Promise<ToolResult>;
   const handlers = new Map<string, ToolHandler>();
   registerLifecycleTools({
     registerTool(name: string, _definition: unknown, handler: ToolHandler) {
@@ -66,9 +70,11 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     await writeFile(attributesPath, "attributes");
     const changed = success(
       await handler("file_chattr")({
-        [attributesPath]: {
-          chattr: { chmod: 0o600 },
-          expectedSha256: digest("attributes"),
+        files: {
+          [attributesPath]: {
+            chattr: { chmod: 0o600 },
+            expectedSha256: digest("attributes"),
+          },
         },
       }),
     );
@@ -76,9 +82,11 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     expect(changed.content[0]?.text).toContain(attributesPath);
 
     const stale = await handler("file_chattr")({
-      [attributesPath]: {
-        chattr: { chmod: 0o600 },
-        expectedSha256: "0".repeat(64),
+      files: {
+        [attributesPath]: {
+          chattr: { chmod: 0o600 },
+          expectedSha256: "0".repeat(64),
+        },
       },
     });
     expect(stale.isError).toBeTrue();
@@ -89,7 +97,9 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     await writeFile(source, "rename");
     const renamed = success(
       await handler("file_rename")({
-        [source]: { destination, expectedSha256: digest("rename") },
+        files: {
+          [source]: { destination, expectedSha256: digest("rename") },
+        },
       }),
     );
     expect(renamed.isError).toBeUndefined();
@@ -97,13 +107,17 @@ test("lifecycle handlers execute successful and failed requests", async () => {
 
     const deleted = success(
       await handler("file_delete")({
-        [destination]: { expectedSha256: digest("rename") },
+        files: {
+          [destination]: { expectedSha256: digest("rename") },
+        },
       }),
     );
     expect(deleted.isError).toBeUndefined();
     expect(deleted.content[0]?.text).toContain(destination);
     const missing = await handler("file_delete")({
-      [destination]: { expectedSha256: digest("rename") },
+      files: {
+        [destination]: { expectedSha256: digest("rename") },
+      },
     });
     expect(missing.isError).toBeTrue();
   } finally {

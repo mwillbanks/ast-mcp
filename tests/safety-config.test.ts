@@ -15,7 +15,10 @@ import { evaluateHook, runHook } from "../src/hook";
 import { patchFiles, writeFileSafely } from "../src/patch/engine";
 import { deleteFilesSafely } from "../src/runtime/file-delete";
 import { renameFilesSafely } from "../src/runtime/file-rename";
-import { resolveWritablePath } from "../src/runtime/paths";
+import {
+  resolveWorkspacePath,
+  resolveWritablePath,
+} from "../src/runtime/paths";
 
 const created: string[] = [];
 
@@ -31,15 +34,17 @@ async function project(prefix: string, config = "version = 1\n") {
 afterEach(async () => {
   clearConfigCache();
   await Promise.all(
-    created.splice(0).map((root) => rm(root, { recursive: true })),
+    created.splice(0).map((root) => rm(root, { force: true, recursive: true })),
   );
 });
 
-test("safety defaults remain strict", async () => {
+test("file access defaults allow temp paths while preserving workspace protection", async () => {
   const root = await project("ast-mcp-safety-defaults-");
   const config = await resolveConfig({ cwd: root, env: {} });
   expect(config.safety).toEqual({
+    allowAnyPath: false,
     allowExternalRoots: false,
+    allowTempDirectory: true,
     followSymlinks: false,
     hook: { allowTools: [], blockTools: [], enabled: true },
     requireHash: true,
@@ -53,6 +58,71 @@ test("safety defaults remain strict", async () => {
     ),
   ).rejects.toThrow(/requires expectedSha256/);
   expect(await readFile(filePath, "utf8")).toBe("before");
+
+  const temporaryPath = path.join(
+    await realpath(os.tmpdir()),
+    `${path.basename(root)}-external.txt`,
+  );
+  created.push(temporaryPath);
+  expect(
+    await withConfig({ cwd: root, env: {} }, () =>
+      resolveWritablePath(temporaryPath),
+    ),
+  ).toBe(temporaryPath);
+
+  const protectedRoot = await project(
+    "ast-mcp-safety-protected-",
+    "version = 1\n[safety]\nallow_temp_directory = false\n",
+  );
+  await expect(
+    withConfig({ cwd: protectedRoot, env: {} }, () =>
+      resolveWritablePath(temporaryPath),
+    ),
+  ).rejects.toThrow(/outside configured file-operation roots/);
+
+  const unrestrictedRoot = await project(
+    "ast-mcp-safety-unrestricted-",
+    "version = 1\n[formatting]\nenabled = false\n[safety]\nrequire_hash = false\n",
+  );
+  const unrestrictedAstPath = path.join(
+    await realpath(os.tmpdir()),
+    `${path.basename(root)}-unrestricted.ts`,
+  );
+  created.push(unrestrictedAstPath);
+  await withConfig(
+    {
+      cwd: unrestrictedRoot,
+      env: {
+        AST_MCP_ALLOW_ANY_PATH: "1",
+        AST_MCP_ALLOW_TEMP_DIRECTORY: "0",
+      },
+    },
+    async () => {
+      await writeFileSafely({
+        content: "unrestricted",
+        filePath: temporaryPath,
+      });
+      expect(await readFile(temporaryPath, "utf8")).toBe("unrestricted");
+      await writeFileSafely({
+        content: "export const unrestricted = true;\n",
+        filePath: unrestrictedAstPath,
+      });
+      await expect(
+        deleteFilesSafely({ [unrestrictedAstPath]: {} }),
+      ).rejects.toThrow(/references cannot be verified/);
+      const forcedDeletion = await deleteFilesSafely({
+        [unrestrictedAstPath]: { forceReferences: true },
+      });
+      expect(forcedDeletion.files[unrestrictedAstPath]).toMatchObject({
+        forcedReferences: false,
+        referenceVerificationBypassed: true,
+      });
+      expect(await Bun.file(unrestrictedAstPath).exists()).toBe(false);
+      await expect(resolveWorkspacePath(temporaryPath)).rejects.toThrow(
+        /outside AST_MCP_ROOTS/,
+      );
+    },
+  );
 });
 
 test("hash enforcement can be disabled while supplied stale hashes still fail", async () => {
@@ -114,7 +184,7 @@ test("symlink following is opt-in and remains root bounded", async () => {
 
   await writeFile(
     path.join(root, "ast-mcp.toml"),
-    "version = 1\n[formatting]\nenabled = false\n[safety]\nfollow_symlinks = true\nrequire_hash = false\n",
+    "version = 1\n[formatting]\nenabled = false\n[safety]\nallow_temp_directory = false\nfollow_symlinks = true\nrequire_hash = false\n",
   );
   clearConfigCache();
   await withConfig({ cwd: root, env: {} }, async () => {
@@ -133,7 +203,7 @@ test("symlink following is opt-in and remains root bounded", async () => {
   await symlink(outsideTarget, outsideLink);
   await expect(
     withConfig({ cwd: root, env: {} }, () => resolveWritablePath(outsideLink)),
-  ).rejects.toThrow(/outside configured workspace roots/);
+  ).rejects.toThrow(/outside configured file-operation roots/);
 });
 
 test("hook policy can disable, allow, and block tools with block precedence", async () => {

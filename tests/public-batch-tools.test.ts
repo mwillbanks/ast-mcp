@@ -9,7 +9,7 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-test("public file tools execute keyed read, hash, write, and patch batches", async () => {
+test("public file tools execute declared read, hash, write, and patch batches", async () => {
   const root = path.resolve(import.meta.dir, "..");
   const folder = await mkdtemp(path.join(root, ".tmp-public-batch-"));
   const notes = path.join(folder, "notes.md");
@@ -31,8 +31,10 @@ test("public file tools execute keyed read, hash, write, and patch batches", asy
 
     const written = await client.callTool({
       arguments: {
-        [first]: { content: "first\n" },
-        [second]: { content: "second\n" },
+        files: {
+          [first]: { content: "first\n" },
+          [second]: { content: "second\n" },
+        },
       },
       name: "file_write",
     });
@@ -57,13 +59,15 @@ test("public file tools execute keyed read, hash, write, and patch batches", asy
 
     const patched = await client.callTool({
       arguments: {
-        [notes]: {
-          aiderBlocks: [
-            { replace: "one", search: "alpha" },
-            { replace: "two", search: "beta" },
-          ],
-          expectedSha256: sha256(originalNotes),
-          patchStrategy: "aider_block",
+        files: {
+          [notes]: {
+            aiderBlocks: [
+              { replace: "one", search: "alpha" },
+              { replace: "two", search: "beta" },
+            ],
+            expectedSha256: sha256(originalNotes),
+            patchStrategy: "aider_block",
+          },
         },
       },
       name: "file_patch",

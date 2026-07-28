@@ -3,7 +3,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
-test("file tools advertise keyed batch schemas", async () => {
+test("mutation tools advertise a declared files batch schema", async () => {
   const root = path.resolve(import.meta.dir, "..");
   const client = new Client({ name: "batch-schema-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
@@ -16,29 +16,42 @@ test("file tools advertise keyed batch schemas", async () => {
   try {
     await client.connect(transport);
     const tools = (await client.listTools()).tools;
-    const patch = tools.find((tool) => tool.name === "file_patch");
-    const write = tools.find((tool) => tool.name === "file_write");
-    const patchSchema = patch?.inputSchema as {
-      additionalProperties?: {
-        properties?: Record<string, unknown>;
+    const batchSchema = (name: string) =>
+      tools.find((tool) => tool.name === name)?.inputSchema as {
+        additionalProperties?: unknown;
+        properties?: {
+          files?: {
+            additionalProperties?: {
+              properties?: Record<string, unknown>;
+            };
+            type?: string;
+          };
+        };
       };
-      properties?: Record<string, unknown>;
-    };
-    const writeSchema = write?.inputSchema as {
-      additionalProperties?: {
-        properties?: Record<string, unknown>;
-      };
-      properties?: Record<string, unknown>;
-    };
 
-    expect(patchSchema.properties?.filePath).toBeUndefined();
-    expect(patchSchema.additionalProperties?.properties?.astRules).toBeTruthy();
-    expect(patchSchema.additionalProperties?.properties?.preview).toBeTruthy();
+    for (const name of [
+      "file_write",
+      "file_patch",
+      "file_chattr",
+      "file_delete",
+      "file_rename",
+    ]) {
+      const schema = batchSchema(name);
+      expect(schema.properties?.files?.type).toBe("object");
+      expect(schema.additionalProperties).toBeFalse();
+    }
     expect(
-      patchSchema.additionalProperties?.properties?.aiderBlocks,
+      batchSchema("file_patch").properties?.files?.additionalProperties
+        ?.properties?.astRules,
     ).toBeTruthy();
-    expect(writeSchema.properties?.filePath).toBeUndefined();
-    expect(writeSchema.additionalProperties?.properties?.content).toBeTruthy();
+    expect(
+      batchSchema("file_patch").properties?.files?.additionalProperties
+        ?.properties?.aiderBlocks,
+    ).toBeTruthy();
+    expect(
+      batchSchema("file_write").properties?.files?.additionalProperties
+        ?.properties?.content,
+    ).toBeTruthy();
   } finally {
     await client.close();
   }

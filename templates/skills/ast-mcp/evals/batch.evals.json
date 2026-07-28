@@ -1,12 +1,12 @@
 [
   {
     "assertions": [
-      "Uses one keyed batch instead of one call per file.",
+      "Uses one declared files batch instead of one call per file.",
       "Uses schema-valid content values keyed by file path.",
       "Reports each created file for verification."
     ],
     "category": "positive",
-    "expected_output": "Uses one path-keyed file_write object whose values contain content and reports every created file.",
+    "expected_output": "Uses one file_write object with a declared files property whose path-keyed values contain content and reports every created file.",
     "files": ["notes/one.txt", "notes/two.txt", "notes/three.txt"],
     "forbidden_tools": ["file_patch"],
     "id": 74,
@@ -22,7 +22,7 @@
       "Does not route either operation through file_patch."
     ],
     "category": "variant",
-    "expected_output": "Uses one keyed file_write batch and includes expectedSha256 only for the existing file.",
+    "expected_output": "Uses one declared file_write.files batch and includes expectedSha256 only for the existing file.",
     "files": [],
     "forbidden_tools": ["file_patch"],
     "id": 75,
@@ -54,7 +54,7 @@
       "Uses run only to preview or verify and sends the mutation through file_patch."
     ],
     "category": "positive",
-    "expected_output": "Uses one path-keyed file_patch object with ordered astRules arrays and one expectedSha256 per file; run is used only for preview and verification.",
+    "expected_output": "Uses one file_patch object with a declared files property, ordered astRules arrays, and one expectedSha256 per file; run is used only for preview and verification.",
     "files": [],
     "forbidden_tools": ["file_write"],
     "id": 77,
@@ -70,7 +70,7 @@
       "Preserves Aider ambiguity and atomic-commit safeguards."
     ],
     "category": "variant",
-    "expected_output": "Uses one path-keyed file_patch entry with patchStrategy aider_block and an ordered aiderBlocks array.",
+    "expected_output": "Uses one declared file_patch.files entry with patchStrategy aider_block and an ordered aiderBlocks array.",
     "files": [],
     "forbidden_tools": ["file_write"],
     "id": 78,
@@ -99,10 +99,10 @@
     "assertions": [
       "Does not use run with write:true for a normal agent mutation.",
       "Uses file_patch with patchStrategy ast for the reviewed edit.",
-      "Previews exact AST matches before the keyed file_patch mutation."
+      "Previews exact AST matches before the declared file_patch.files mutation."
     ],
     "category": "negative",
-    "expected_output": "Uses run only for preview or verification and routes the mutation through keyed file_patch with astRules.",
+    "expected_output": "Uses run only for preview or verification and routes the mutation through declared file_patch.files entries with astRules.",
     "files": [],
     "forbidden_tools": ["file_write"],
     "id": 81,
@@ -166,7 +166,7 @@
       "Does not treat a preview result as a committed change."
     ],
     "category": "variant",
-    "expected_output": "Uses the same keyed file_patch entry with preview true, a fresh hash, and the appropriate ordered astRules or aiderBlocks; it verifies the bounded diff and then sends the guarded mutation.",
+    "expected_output": "Uses the same declared file_patch.files entry with preview true, a fresh hash, and the appropriate ordered astRules or aiderBlocks; it verifies the bounded diff and then sends the guarded mutation.",
     "files": [],
     "forbidden_tools": ["run"],
     "id": 83,
@@ -273,7 +273,7 @@
   },
   {
     "assertions": [
-      "Uses one path-keyed file_rename batch.",
+      "Uses one declared file_rename.files batch.",
       "Obtains a fresh source hash before renaming.",
       "Reports each source and destination result."
     ],

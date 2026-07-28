@@ -1,4 +1,23 @@
 import { expect, test } from "bun:test";
+
+test("evals:measure rejects unknown policy options", async () => {
+  const process = Bun.spawn(
+    [
+      "bun",
+      "run",
+      "templates/skills/ast-mcp/evals/measure.ts",
+      "--unknown-policy",
+    ],
+    { stderr: "pipe", stdout: "pipe" },
+  );
+  const [exitCode, stderr] = await Promise.all([
+    process.exited,
+    new Response(process.stderr).text(),
+  ]);
+  expect(exitCode).toBe(2);
+  expect(stderr).toContain("Unknown option: --unknown-policy");
+});
+
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,14 +37,16 @@ test("evals:measure reads nested ast-mcp calls from a real Codex exec transcript
           payload: {
             call_id: "call-1",
             input: `const hash = await tools.mcp__ast_mcp__file_hash({ filePaths: ["fixture.ts"] });
-const patched = await tools.mcp__ast_mcp__file_patch({
-  "fixture.ts": {
-    expectedSha256: "abc",
-    patchStrategy: "ast",
-    astRules: [{ pattern: "old()", fix: "next()", expectedMatches: 1 }],
-  },
-});
-text(JSON.stringify({ hash, patched }));`,
+          const patched = await tools.mcp__ast_mcp__file_patch({
+            files: {
+              "fixture.ts": {
+                expectedSha256: "abc",
+                patchStrategy: "ast",
+                astRules: [{ pattern: "old()", fix: "next()", expectedMatches: 1 }],
+              },
+            },
+          });
+          text(JSON.stringify({ hash, patched }));`,
             name: "exec",
             type: "custom_tool_call",
           },

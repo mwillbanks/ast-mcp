@@ -4,7 +4,7 @@ description: Hash, read, write, patch, rename, change attributes, and delete wit
 icon: Files
 ---
 
-File operations are root-bounded, batch-oriented, and explicit about state.
+File operations are batch-oriented and explicit about state. Mutation tools declare a `files` object whose keys are paths, avoiding dictionary-only top-level schemas that some hosts cannot encode.
 
 ## file_hash
 
@@ -18,11 +18,11 @@ AST-capable files are rejected so callers use structural intelligence instead.
 
 ## file_write
 
-Creates new files atomically. Replacing an existing non-structurally-rewritable file requires a fresh `expectedSha256` by default. Setting `safety.require_hash = false` makes the hash optional, but any supplied hash is still verified. Parent directories are created only after a guarded missing-parent result and a second root validation.
+Accepts `file_write({ files: { "<path>": { content, ... } } })` and creates new files atomically. Replacing an existing non-structurally-rewritable file requires a fresh `expectedSha256` by default. Setting `safety.require_hash = false` makes the hash optional, but any supplied hash is still verified. Parent directories are created only after a guarded missing-parent result and a second root validation.
 
 ## file_patch
 
-The normal mutation API accepts a path-keyed batch. Each file receives one fresh hash and ordered operations under one deterministic lock:
+The normal mutation API accepts `file_patch({ files: { ... } })`. The declared `files` property contains the path-keyed batch, and each file receives one fresh hash and ordered operations under one deterministic lock:
 
 - `astRules` for parseable, rewrite-supported source
 - `aiderBlocks` for unsupported, unparseable, or inspection-only formats
@@ -31,8 +31,8 @@ Set `preview: true` to execute the formatted dry-run contract without committing
 
 ## file_rename
 
-Renames multiple regular files in one root-bounded operation. Sources and destinations must share a configured root, destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
+Accepts `file_rename({ files: { ... } })` and renames multiple regular files in one file-operation-root-bounded operation. Sources and destinations must share an effective file-operation root (workspace or default OS temporary root) unless `safety.allow_any_path = true`; destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
 
 ## file_chattr and file_delete
 
-`file_chattr` applies bounded chmod and same-owner chown changes. `file_delete` requires a fresh hash by default, checks AST import references before deletion, and removes only newly empty ancestors inside the configured root. `safety.require_hash = false` permits omission for deletion, while supplied hashes remain enforced.
+`file_chattr({ files: { ... } })` applies bounded chmod and same-owner chown changes. `file_delete({ files: { ... } })` requires a fresh hash by default, checks AST import references before deletion, and removes only newly empty ancestors inside the allowed operation root. `safety.require_hash = false` permits omission for deletion, while supplied hashes remain enforced. The OS temporary directory is an allowed operation root by default; set `safety.allow_temp_directory = false` to disable it. `safety.allow_any_path = true` is an explicit unrestricted mode for file tools. Deleting AST-capable files outside configured operation roots requires `forceReferences: true` because a bounded reference scan cannot be proven, and the result reports `referenceVerificationBypassed: true` separately from known forced importers.

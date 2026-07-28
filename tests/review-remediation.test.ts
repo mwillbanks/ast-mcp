@@ -288,7 +288,7 @@ test("transcript scoring requires named filesystem result evidence", async () =>
     payload: {
       call_id: "call-files",
       input:
-        '// ast-mcp-eval:74\n{"notes/one.txt":{"content":"one"},"notes/two.txt":{"content":"two"},"notes/three.txt":{"content":"three"}}',
+        '// ast-mcp-eval:74\n{"files":{"notes/one.txt":{"content":"one"},"notes/two.txt":{"content":"two"},"notes/three.txt":{"content":"three"}}}',
       name: "mcp__ast_mcp__file_write",
       type: "custom_tool_call",
     },
@@ -397,7 +397,7 @@ test("transcript scoring aggregates eval batches and rejects integrity failures"
         output("hash", '{"filePath":"notes/existing.txt"}'),
         execCall(
           "write",
-          `// ast-mcp-eval:75\nawait tools.mcp__ast_mcp__file_write({ "notes/new.txt": { content: "new" }, "notes/existing.txt": { content: "next", expectedSha256: "abc" } });`,
+          `// ast-mcp-eval:75\nawait tools.mcp__ast_mcp__file_write({ files: { "notes/new.txt": { content: "new" }, "notes/existing.txt": { content: "next", expectedSha256: "abc" } } });`,
         ),
         output("write", '{"files":{"notes/new.txt":{}}}'),
       ]

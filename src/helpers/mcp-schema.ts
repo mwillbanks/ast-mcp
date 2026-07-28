@@ -18,6 +18,13 @@ export function boundedRecord<T extends z.ZodType>(schema: T, label: string) {
   }, label);
 }
 
+export function boundedFileBatch<T extends z.ZodType>(
+  schema: T,
+  label: string,
+) {
+  return z.object({ files: boundedRecord(schema, label) }).strict();
+}
+
 export function toolFailure(error: unknown) {
   return {
     content: [

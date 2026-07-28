@@ -28,7 +28,9 @@ version = 1
 roots = [".", "../shared"]
 
 [safety]
+allow_any_path = false
 allow_external_roots = false
+allow_temp_directory = true
 follow_symlinks = false
 require_hash = true
 
@@ -71,7 +73,7 @@ External formatters receive file content on stdin and must return formatted cont
 
 ## Safety
 
-Secure defaults preserve the existing boundary: external roots are rejected, symbolic links are rejected, mutation hashes are required, and the hook remains enabled. `follow_symlinks = true` permits a final symlink only when its resolved target remains inside an effective workspace root. `require_hash = false` makes `expectedSha256` optional for `file_patch`, existing-file `file_write`, `file_rename`, and `file_delete`; a supplied hash is always verified.
+Secure defaults preserve the workspace boundary while allowing file operations in the OS temporary directory: arbitrary paths and external configured roots are rejected, symbolic links are rejected, mutation hashes are required, and the hook remains enabled. Set `allow_temp_directory = false` to remove the default temporary-directory allowance. Set `allow_any_path = true` only for explicit unrestricted file-tool access; it bypasses workspace and temporary-directory path protection but does not disable hash, regular-file, locking, or symlink policy. `follow_symlinks = true` permits a final symlink only when its resolved target remains inside an allowed root for that surface: workspace roots for AST intelligence, and workspace or enabled temporary-directory roots for file tools. Unrestricted file mode permits any resolved target. `require_hash = false` makes `expectedSha256` optional for `file_patch`, existing-file `file_write`, `file_rename`, and `file_delete`; a supplied hash is always verified.
 
 Under `[safety.hook]`, `enabled = false` disables hook blocking. `block_tools` explicitly denies matching full or short tool names before normal rules, while `allow_tools` explicitly bypasses normal hook rules. A tool cannot appear in both lists. These settings affect the host hook only; they do not weaken MCP root, symlink, or stale-hash validation.
 
@@ -80,7 +82,9 @@ Under `[safety.hook]`, `enabled = false` disables hook blocking. `block_tools` e
 | Variable                            | Configuration field              |
 | ----------------------------------- | -------------------------------- |
 | `AST_MCP_ROOTS`                     | `workspace.roots`                |
+| `AST_MCP_ALLOW_ANY_PATH`            | `safety.allow_any_path`          |
 | `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | `safety.allow_external_roots`    |
+| `AST_MCP_ALLOW_TEMP_DIRECTORY`      | `safety.allow_temp_directory`    |
 | `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`       |
 | `AST_BRO_BINARY`                    | `dependencies.ast_bro_binary`    |
 | `DPRINT_BINARY`                     | `dependencies.dprint_binary`     |

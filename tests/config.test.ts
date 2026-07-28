@@ -40,7 +40,11 @@ test("resolves defaults and platform global paths", async () => {
   });
   expect(config.projectRoot).toBe(root);
   expect(config.workspace.roots).toEqual([root]);
-  expect(config.safety.allowExternalRoots).toBeFalse();
+  expect(config.safety).toMatchObject({
+    allowAnyPath: false,
+    allowExternalRoots: false,
+    allowTempDirectory: true,
+  });
   expect(config.http).toEqual({
     host: "127.0.0.1",
     port: 3768,
@@ -211,12 +215,14 @@ test("uses client roots and rejects a request crossing conflicting policies", as
   ).rejects.toThrow("conflicting ast-mcp policies");
 });
 
-test("extracts paths from direct and keyed tool request shapes", () => {
+test("extracts paths from declared file batches and direct tool shapes", () => {
   expect(
     configRequestPaths({
-      "/repo/a.ts": {
-        destination: "/repo/b.ts",
-        expectedSha256: "a".repeat(64),
+      files: {
+        "/repo/a.ts": {
+          destination: "/repo/b.ts",
+          expectedSha256: "a".repeat(64),
+        },
       },
       paths: ["src", "/repo/c.ts"],
     }),

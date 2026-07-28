@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
-import { resolveWritablePath, rootForPath } from "./paths";
+import { pathsShareRoot, resolveWritablePath } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
 export interface FileRenameRequest {
@@ -112,9 +112,7 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
         throw new Error(
           `file_rename source and destination must differ: ${inputPath}`,
         );
-      if (
-        (await rootForPath(filePath)) !== (await rootForPath(destinationPath))
-      )
+      if (!(await pathsShareRoot(filePath, destinationPath)))
         throw new Error(
           `file_rename source and destination must share a root: ${inputPath}`,
         );

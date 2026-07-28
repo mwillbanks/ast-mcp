@@ -14,7 +14,7 @@ import metadata from "../ast-bro/tools.json";
 import { replaceFileAtomically } from "../runtime/atomic";
 import { assertFormattable, formatFileAtomically } from "../runtime/format";
 import { withFileLocks } from "../runtime/locks";
-import { primaryRoot, resolveWritablePath } from "../runtime/paths";
+import { primaryRoot, resolveWorkspacePath } from "../runtime/paths";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
 function upstreamSchema(
@@ -39,7 +39,7 @@ function upstreamSchema(
   };
 }
 async function boundedPath(root: string, value: string): Promise<string> {
-  return resolveWritablePath(
+  return resolveWorkspacePath(
     path.isAbsolute(value) ? value : path.resolve(root, value),
   );
 }
@@ -147,7 +147,7 @@ export default function registerAstBroTools(
       {
         description:
           toolName === "run"
-            ? "AST structural search and rewrite. Use for bounded inspection and previews; direct write is a lower-level escape hatch for exceptional cases. Normal agent edits belong in keyed file_patch, which supports ordered AST rules and Aider blocks."
+            ? "AST structural search and rewrite. Use for bounded inspection and previews; direct write is a lower-level escape hatch for exceptional cases. Normal agent edits belong in file_patch's declared files batch, which supports ordered AST rules and Aider blocks."
             : definition.description,
         inputSchema: upstreamSchema(definition.inputSchema),
         title: `ast-bro ${toolName}`,

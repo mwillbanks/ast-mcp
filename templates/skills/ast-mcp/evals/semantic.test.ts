@@ -1,5 +1,169 @@
 import { expect, test } from "bun:test";
+import os from "node:os";
+import path from "node:path";
 import { verifyEvaluation } from "./semantic";
+
+test("semantic evaluator scopes declared batches and file-operation paths", () => {
+  const evaluation = {
+    assertions: ["Uses declared files property."],
+    expected_output: "verification output",
+    files: [],
+    forbidden_tools: [],
+    id: 97,
+    required_tools: ["file_write"],
+  };
+  const legacy = verifyEvaluation(
+    evaluation,
+    [
+      {
+        index: 0,
+        input: '{ files: {}, "/outside.ts": { content: "legacy" } }',
+        tool: "file_write",
+      },
+    ],
+    "verification output",
+    ["/workspace"],
+  );
+  expect(legacy).toContain("file_write has empty or schema-incomplete input");
+  const nested = verifyEvaluation(
+    evaluation,
+    [
+      {
+        index: 0,
+        input:
+          '{ wrapper: { files: { "/outside.ts": { content: "nested" } } } }',
+        tool: "file_write",
+      },
+    ],
+    "verification output",
+    ["/workspace"],
+  );
+  expect(nested).toContain("file_write has empty or schema-incomplete input");
+
+  for (const [tool, input] of [
+    [
+      "file_patch",
+      JSON.stringify({
+        files: {
+          "/workspace/file.ts": {
+            astRules: [{ fix: "new", pattern: "old" }],
+            expectedSha256: "a".repeat(64),
+            patchStrategy: "ast",
+            preview: true,
+          },
+        },
+      }),
+    ],
+    [
+      "file_delete",
+      JSON.stringify({
+        files: {
+          "/workspace/file.ts": {
+            expectedSha256: "a".repeat(64),
+            forceReferences: true,
+          },
+        },
+      }),
+    ],
+  ] as const) {
+    const ordered = verifyEvaluation(
+      { ...evaluation, required_tools: [tool] },
+      [{ index: 0, input, tool }],
+      "verification output",
+      ["/workspace"],
+    );
+    expect(ordered).not.toContain(
+      `${tool} has empty or schema-incomplete input`,
+    );
+  }
+
+  const forceFirstBatch = `{"files":{"/outside-one.ts":{"forceReferences":true,"expectedSha256":"${"a".repeat(64)}"},"/outside-two.ts":{"forceReferences":true,"expectedSha256":"${"b".repeat(64)}"}}}`;
+  const batchErrors = verifyEvaluation(
+    {
+      ...evaluation,
+      assertions: ["Uses one keyed batch."],
+      required_tools: ["file_delete"],
+    },
+    [{ index: 0, input: forceFirstBatch, tool: "file_delete" }],
+    "verification output",
+    ["/workspace"],
+  );
+  expect(batchErrors).toContain(
+    "file_delete input escapes transcript file-operation roots: /outside-one.ts",
+  );
+  expect(batchErrors).toContain(
+    "file_delete input escapes transcript file-operation roots: /outside-two.ts",
+  );
+  expect(batchErrors).not.toContain(
+    "assertion not proven: Uses one keyed batch.",
+  );
+
+  const previewFirstErrors = verifyEvaluation(
+    { ...evaluation, required_tools: ["file_patch"] },
+    [
+      {
+        index: 0,
+        input: `{"files":{"/outside-preview.ts":{"preview":true,"expectedSha256":"${"a".repeat(64)}","patchStrategy":"ast","astRules":[{"pattern":"old","fix":"new"}]}}}`,
+        tool: "file_patch",
+      },
+    ],
+    "verification output",
+    ["/workspace"],
+  );
+  expect(previewFirstErrors).toContain(
+    "file_patch input escapes transcript file-operation roots: /outside-preview.ts",
+  );
+
+  const temporaryPath = path.join(os.tmpdir(), "ast-mcp-eval.ts");
+  expect(
+    verifyEvaluation(
+      evaluation,
+      [
+        {
+          index: 0,
+          input: JSON.stringify({
+            files: { [temporaryPath]: { content: "temporary" } },
+          }),
+          tool: "file_write",
+        },
+      ],
+      "verification output",
+      ["/workspace"],
+    ),
+  ).toEqual([]);
+  expect(
+    verifyEvaluation(
+      evaluation,
+      [
+        {
+          index: 0,
+          input: JSON.stringify({
+            files: { "/etc/ast-mcp-eval.ts": { content: "unrestricted" } },
+          }),
+          tool: "file_write",
+        },
+      ],
+      "verification output",
+      ["/workspace"],
+      { allowAnyPath: true },
+    ),
+  ).toEqual([]);
+
+  const astErrors = verifyEvaluation(
+    {
+      ...evaluation,
+      assertions: [],
+      required_tools: ["map"],
+    },
+    [{ index: 0, input: '{ paths: ["/etc"] }', tool: "map" }],
+    "verification output",
+    ["/workspace"],
+    { allowAnyPath: true },
+  );
+  expect(astErrors).toContain(
+    "map input escapes transcript workspace roots: /etc",
+  );
+});
 
 const evaluation = {
   assertions: ["Reports each source and destination result."],
@@ -17,7 +181,12 @@ test("rename evaluator accepts root-relative runtime results", () => {
       {
         index: 0,
         input: JSON.stringify({
-          "source.txt": { destination: "renamed.txt", expectedSha256: "hash" },
+          files: {
+            "source.txt": {
+              destination: "renamed.txt",
+              expectedSha256: "hash",
+            },
+          },
         }),
         tool: "file_rename",
       },
@@ -42,13 +211,15 @@ test("rename evaluator rejects incomplete per-file results", () => {
       {
         index: 0,
         input: JSON.stringify({
-          "/tmp/ast-mcp-root/one.txt": {
-            destination: "/tmp/ast-mcp-root/one-new.txt",
-            expectedSha256: "hash",
-          },
-          "/tmp/ast-mcp-root/two.txt": {
-            destination: "/tmp/ast-mcp-root/two-new.txt",
-            expectedSha256: "hash",
+          files: {
+            "/tmp/ast-mcp-root/one.txt": {
+              destination: "/tmp/ast-mcp-root/one-new.txt",
+              expectedSha256: "hash",
+            },
+            "/tmp/ast-mcp-root/two.txt": {
+              destination: "/tmp/ast-mcp-root/two-new.txt",
+              expectedSha256: "hash",
+            },
           },
         }),
         tool: "file_rename",
@@ -121,7 +292,7 @@ test("semantic evaluator proves every supported assertion shape", () => {
       ),
     ).toEqual([]);
   };
-  const patch = `{ "src/file.ts": { expectedSha256: "${"a".repeat(64)}", patchStrategy: "ast", astRules: [{ pattern: "old", fix: "next", expectedMatches: 1 }], preview: true } }`;
+  const patch = `{ files: { "src/file.ts": { expectedSha256: "${"a".repeat(64)}", patchStrategy: "ast", astRules: [{ pattern: "old", fix: "next", expectedMatches: 1 }], preview: true } } }`;
 
   verify(
     "Does not overwrite an existing destination.",
@@ -129,9 +300,11 @@ test("semantic evaluator proves every supported assertion shape", () => {
       invocation(
         "file_rename",
         JSON.stringify({
-          "source.txt": {
-            destination: "destination.txt",
-            expectedSha256: "a".repeat(64),
+          files: {
+            "source.txt": {
+              destination: "destination.txt",
+              expectedSha256: "a".repeat(64),
+            },
           },
         }),
       ),
@@ -176,34 +349,42 @@ test("semantic evaluator proves every supported assertion shape", () => {
     [
       "file_write",
       JSON.stringify({
-        "src/a.ts": { content: "a" },
-        "src/b.ts": { content: "b" },
+        files: {
+          "src/a.ts": { content: "a" },
+          "src/b.ts": { content: "b" },
+        },
       }),
     ],
     [
       "file_chattr",
       JSON.stringify({
-        "src/a.ts": { chattr: { chmod: 384 } },
-        "src/b.ts": { chattr: { chmod: 384 } },
+        files: {
+          "src/a.ts": { chattr: { chmod: 384 } },
+          "src/b.ts": { chattr: { chmod: 384 } },
+        },
       }),
     ],
     [
       "file_delete",
       JSON.stringify({
-        "src/a.ts": { expectedSha256: "a".repeat(64) },
-        "src/b.ts": { expectedSha256: "b".repeat(64) },
+        files: {
+          "src/a.ts": { expectedSha256: "a".repeat(64) },
+          "src/b.ts": { expectedSha256: "b".repeat(64) },
+        },
       }),
     ],
     [
       "file_rename",
       JSON.stringify({
-        "src/a.ts": {
-          destination: "src/a-new.ts",
-          expectedSha256: "a".repeat(64),
-        },
-        "src/b.ts": {
-          destination: "src/b-new.ts",
-          expectedSha256: "b".repeat(64),
+        files: {
+          "src/a.ts": {
+            destination: "src/a-new.ts",
+            expectedSha256: "a".repeat(64),
+          },
+          "src/b.ts": {
+            destination: "src/b-new.ts",
+            expectedSha256: "b".repeat(64),
+          },
         },
       }),
     ],
@@ -214,7 +395,7 @@ test("semantic evaluator proves every supported assertion shape", () => {
     invocation("file_hash", '{ filePaths: ["src/a.ts"] }', 0),
     invocation(
       "file_write",
-      JSON.stringify({ "src/a.ts": { content: "next" } }),
+      JSON.stringify({ files: { "src/a.ts": { content: "next" } } }),
       1,
     ),
   ]);
@@ -230,7 +411,7 @@ test("semantic evaluator proves every supported assertion shape", () => {
   verify("Uses an Aider block.", [
     invocation(
       "file_patch",
-      `{ "README.md": { expectedSha256: "${"a".repeat(64)}", patchStrategy: "aider_block", aiderBlocks: [{ search: "old", replace: "new" }] } }`,
+      `{ files: { "README.md": { expectedSha256: "${"a".repeat(64)}", patchStrategy: "aider_block", aiderBlocks: [{ search: "old", replace: "new" }] } } }`,
     ),
   ]);
   verify("Reports verification output.", []);
@@ -275,7 +456,7 @@ test("semantic evaluator reports every validation failure class", () => {
     "file_hash has empty or schema-incomplete input",
     "required tool sequence is concurrent and cannot be proven",
     "required tool sequence is not satisfied at: file_write",
-    "file_write input escapes transcript workspace roots: /etc/out.txt",
+    "file_write input escapes transcript file-operation roots: /etc/out.txt",
     "output does not prove file result: required.txt",
     "expected output not proven: expected transport behavior",
     "assertion not proven: Uses bounded lines.",

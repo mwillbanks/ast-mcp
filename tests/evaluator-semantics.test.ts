@@ -87,7 +87,7 @@ test("transcript semantics enforce roots, sequence, expected output, and asserti
     const outside = await measure(sessionPath);
     expect(outside.exitCode).toBe(1);
     expect(outside.stdout).toContain(
-      "file_hash input escapes transcript workspace roots: /etc/hosts",
+      "file_hash input escapes transcript file-operation roots: /etc/hosts",
     );
 
     await writeFile(
@@ -98,13 +98,15 @@ test("transcript semantics enforce roots, sequence, expected output, and asserti
           call(
             "concurrent",
             `// ast-mcp-eval:75
-await Promise.all([
-  tools.mcp__ast_mcp__file_hash({ filePaths: ["notes/existing.txt"] }),
-  tools.mcp__ast_mcp__file_write({
-    "notes/new.txt": { content: "new" },
-    "notes/existing.txt": { content: "next", expectedSha256: "abc" },
-  }),
-]);`,
+          await Promise.all([
+            tools.mcp__ast_mcp__file_hash({ filePaths: ["notes/existing.txt"] }),
+            tools.mcp__ast_mcp__file_write({
+              files: {
+                "notes/new.txt": { content: "new" },
+                "notes/existing.txt": { content: "next", expectedSha256: "abc" },
+              },
+            }),
+          ]);`,
           ),
         ),
         JSON.stringify(output("concurrent", '{"files":{"notes/new.txt":{}}}')),

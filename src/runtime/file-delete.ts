@@ -6,7 +6,11 @@ import { parseAstBroJson } from "../ast-bro/result";
 import { detectAstLanguage } from "../patch/languages";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
-import { resolveWritablePath, rootForPath } from "./paths";
+import {
+  configuredRootForPath,
+  resolveWritablePath,
+  rootForPath,
+} from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
 export interface FileDeleteRequest {
@@ -64,12 +68,30 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
       if (!metadata.isFile())
         throw new Error(`file_delete accepts files only: ${inputPath}`);
       const root = await rootForPath(filePath);
-      const importers = await importersFor(filePath, root);
+      const referenceRoot = await configuredRootForPath(filePath);
+      const language = detectAstLanguage(filePath);
+      if (
+        !referenceRoot &&
+        (await astCapable(filePath, language)) &&
+        !request.forceReferences
+      )
+        throw new Error(
+          `file_delete rejected ${inputPath}: references cannot be verified outside configured file-operation roots; set forceReferences to override`,
+        );
+      const importers = referenceRoot
+        ? await importersFor(filePath, referenceRoot)
+        : [];
       if (importers.length > 0 && !request.forceReferences)
         throw new Error(
           `file_delete rejected ${inputPath}: referenced by ${importers.join(", ")}; set forceReferences to override`,
         );
-      return { filePath, importers, request, root };
+      return {
+        filePath,
+        importers,
+        referencesVerified: referenceRoot !== undefined,
+        request,
+        root,
+      };
     }),
   );
   const files = await withFileLocks(
@@ -81,12 +103,19 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
         await requireExpectedHash(request.expectedSha256, "file_delete");
         verifyExpectedHash(request.expectedSha256, actual);
       }
-      for (const { filePath, importers, request } of entries) {
+      for (const {
+        filePath,
+        importers,
+        referencesVerified,
+        request,
+      } of entries) {
         await rm(filePath);
         deleted[filePath] = {
           deleted: true,
           forcedReferences:
             importers.length > 0 && request.forceReferences === true,
+          referenceVerificationBypassed:
+            !referencesVerified && request.forceReferences === true,
         };
       }
       return deleted;

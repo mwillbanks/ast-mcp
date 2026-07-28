@@ -130,7 +130,9 @@ version = 1
 roots = ["."]
 
 [safety]
+allow_any_path = false
 allow_external_roots = false
+allow_temp_directory = true
 follow_symlinks = false
 require_hash = true
 
@@ -153,7 +155,7 @@ port = 3768
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
 
-Formatting uses dprint by default, can be disabled, or can route the first matching extension/glob to a shell-free external formatter with dprint fallback. Safety remains strict by default; explicit settings can allow final symlinks inside configured roots, make mutation hashes optional, or tune the host hook allow/block policy.
+Formatting uses dprint by default, can be disabled, or can route the first matching extension/glob to a shell-free external formatter with dprint fallback. Mutation tools expose a host-compatible declared `files` batch. File operations allow the OS temporary directory by default; this can be disabled, while `allow_any_path = true` provides an explicit unrestricted mode. Other safety settings can allow final symlinks inside permitted roots, make mutation hashes optional, or tune the host hook allow/block policy.
 
 Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See the [configuration reference](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/) for the full schema, discovery rules, cache behavior, formatter contract, safety semantics, and migration guidance.
 

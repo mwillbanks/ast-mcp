@@ -139,11 +139,13 @@ function isKeyedBatchPath(
   childKey: string,
   child: unknown,
 ): boolean {
+  const isBatchEntry =
+    parentKey === "files" ||
+    (parentKey === undefined && !keyedBatchExclusions.has(childKey));
   return (
-    parentKey === undefined &&
+    isBatchEntry &&
     Boolean(child) &&
     typeof child === "object" &&
-    !Array.isArray(child) &&
-    !keyedBatchExclusions.has(childKey)
+    !Array.isArray(child)
   );
 }

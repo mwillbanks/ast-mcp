@@ -37,7 +37,7 @@ test("stdio server exposes only ast-mcp tools", async () => {
       (tool) => tool.name === "run",
     )?.description;
     expect(runDescription).toContain(
-      "Normal agent edits belong in keyed file_patch",
+      "Normal agent edits belong in file_patch's declared files batch",
     );
     expect(
       (runSchema as { properties?: Record<string, unknown> }).properties

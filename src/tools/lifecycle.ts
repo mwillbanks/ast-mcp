@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {
-  boundedRecord,
+  boundedFileBatch,
   chattrSchema,
   toolFailure,
 } from "../helpers/mcp-schema";
@@ -25,8 +25,8 @@ export default function registerLifecycleTools(
     "file_chattr",
     {
       description:
-        "Applies the shared chattr contract to multiple root-bounded files under deterministic locks.",
-      inputSchema: boundedRecord(
+        "Applies the shared chattr contract to multiple files in one declared files batch under deterministic locks.",
+      inputSchema: boundedFileBatch(
         z.object({
           chattr,
           expectedSha256: z.string().length(64).optional(),
@@ -35,9 +35,9 @@ export default function registerLifecycleTools(
       ),
       title: "Change File Attributes Safely",
     },
-    async (requests) => {
+    async ({ files: requests }) => {
       try {
-        const entries = await execute(requests, () =>
+        const entries = await execute({ files: requests }, () =>
           Promise.all(
             Object.entries(requests).map(async ([inputPath, request]) => ({
               filePath: await resolveWritablePath(inputPath),
@@ -77,8 +77,8 @@ export default function registerLifecycleTools(
     "file_delete",
     {
       description:
-        "Deletes files in one reference-preflighted batch and removes empty ancestor directories. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
-      inputSchema: boundedRecord(
+        "Deletes files in one declared files batch after reference preflight and removes empty ancestor directories. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+      inputSchema: boundedFileBatch(
         z.object({
           expectedSha256: z.string().length(64).optional(),
           forceReferences: z.boolean().optional(),
@@ -87,13 +87,13 @@ export default function registerLifecycleTools(
       ),
       title: "Delete Files Safely",
     },
-    async (requests) => {
+    async ({ files }) => {
       try {
         return {
           content: [
             {
               text: JSON.stringify(
-                await execute(requests, () => deleteFilesSafely(requests)),
+                await execute({ files }, () => deleteFilesSafely(files)),
               ),
               type: "text",
             },
@@ -108,8 +108,8 @@ export default function registerLifecycleTools(
     "file_rename",
     {
       description:
-        "Renames files in one root-bounded batch without overwriting destinations. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
-      inputSchema: boundedRecord(
+        "Renames files in one declared files batch without overwriting destinations. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+      inputSchema: boundedFileBatch(
         z.object({
           destination: z.string().min(1),
           expectedSha256: z.string().length(64).optional(),
@@ -118,13 +118,13 @@ export default function registerLifecycleTools(
       ),
       title: "Rename Files Safely",
     },
-    async (requests) => {
+    async ({ files }) => {
       try {
         return {
           content: [
             {
               text: JSON.stringify(
-                await execute(requests, () => renameFilesSafely(requests)),
+                await execute({ files }, () => renameFilesSafely(files)),
               ),
               type: "text",
             },

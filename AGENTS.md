@@ -11,7 +11,7 @@ CRITICAL INSTRUCTION: You are operating in an AST-isolated environment.
 - Use `file_read` only for bounded slices of non-AST content, and batch multiple files in one call.
 - Use `file_hash` for fresh whole-file SHA-256 values without retrieving content.
 - For new files, use only `file_write`.
-- For existing files, call `file_hash` immediately before a guarded `file_patch`; use its path-keyed batch shape for both AST and Aider operations.
+- For existing files, call `file_hash` immediately before a guarded `file_patch`; mutation tools declare a `files` property containing the path-keyed batch.
 - Parseable rewrite-supported files use `file_patch` with `patchStrategy: "ast"` and ordered `astRules`; unsupported, unparseable, or inspection-only formats use `patchStrategy: "aider_block"` and ordered `aiderBlocks`.
 
 ## Available ast-mcp tools
@@ -20,7 +20,7 @@ File boundary: `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chatt
 
 Code intelligence: `digest`, `map`, `show`, `search`, `find_related`, `surface`, `deps`, `reverse_deps`, `cycles`, `graph`, `callers`, `callees`, `trace`, `impact`, `context`, `implements`, `index`, `run`, `squeeze`.
 
-Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All `file_patch`, `file_write`, `file_chattr`, and `file_delete` batches are root-bounded, SHA-guarded where required, and atomically committed per keyed path. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
+Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All mutation tools accept a declared `files` object, are file-operation-root bounded, SHA-guarded where required, and atomically committed per keyed path. The OS temporary directory is allowed by default; `safety.allow_temp_directory = false` disables it, while `safety.allow_any_path = true` explicitly enables unrestricted file paths. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
 
 ## Forbidden mutation paths
 
@@ -37,11 +37,11 @@ Use ast-mcp intelligence tools as the primary repository search surface: `digest
 1. Explore AST-capable content with the smallest direct intelligence call; use `impact` before shared API changes. Use batched, bounded `file_read` slices only for non-AST content.
 2. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` when you need the full guarded and formatted dry-run contract.
 3. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
-4. Call one keyed `file_patch` batch with one fresh hash and ordered operations per path:
+4. Call one `file_patch({ files: { ... } })` batch with one fresh hash and ordered operations per path:
    - AST targets: `{ expectedSha256, patchStrategy: "ast", astRules: [...] }`
    - Unsupported targets: `{ expectedSha256, patchStrategy: "aider_block", aiderBlocks: [...] }`
      Each keyed path is locked and atomically committed once; preview every AST rule before the batch.
-5. Use one keyed `file_write` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files.
+5. Use one `file_write({ files: { ... } })` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files.
 6. Use direct `run` with `rewrite` and `write: true` only when an intentionally bounded lower-level rewrite is required; do not use it instead of `file_patch` for normal agent edits.
 7. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation and review the final diff without mutating through Git.
 
@@ -51,7 +51,7 @@ A stale hash, ambiguous Aider block, unexpected match count, capped run preview,
 
 A JSON-RPC transport batch may contain requests and notifications. Stdio emits one framed response per request; live streamable HTTP uses SSE by default and emits one event per request. Notifications never receive responses. Preserve every request ID and do not assume the live HTTP response is a JSON array unless `enableJsonResponse` is configured.
 
-`evals:measure` inventories direct MCP records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate following direct MCP records with that case. Marked nested `exec` evidence and multi-marker evidence fail closed because an outer result cannot prove each nested call. Scoring requires schema-relevant inputs, workspace-root compliance from transcript context, required sequencing, expected output evidence, fixture assertions, and a successful output bound to each direct call.
+`evals:measure` inventories direct MCP records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate following direct MCP records with that case. Marked nested `exec` evidence and multi-marker evidence fail closed because an outer result cannot prove each nested call. Scoring requires schema-relevant inputs, workspace-root compliance from transcript context, required sequencing, expected output evidence, fixture assertions, and a successful output bound to each direct call. Pass `--allow-any-path` and/or `--no-temp-directory` when the measured run used non-default file safety; scorer options are validated rather than inferred from layered project configuration.
 
 ## Missing MCP
 

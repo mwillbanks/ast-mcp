@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { embeddedShellMutates, shellMutates } from "./shell-policy";
 import { advanceQuote } from "./source";
@@ -114,20 +115,33 @@ function hasBoolean(input: string, key: string, value: boolean) {
 
 type InputValidator = (input: string) => boolean;
 
-const hasKeyedPath = (input: string) => /["'][^"']+["']\s*:/.test(input);
+const fileEntryKeyPattern =
+  "(?:aiderBlocks|astRules|chattr|content|destination|expectedSha256|forceReferences|patchStrategy|preview)";
+const declaredFileBatchExpression = new RegExp(
+  `^\\s*(?:(?:await\\s+)?tools\\.mcp__ast_mcp__file_(?:chattr|delete|patch|rename|write)\\s*\\(\\s*)?\\{\\s*["']?files["']?\\s*:\\s*\\{\\s*["']([^"']+)["']\\s*:\\s*\\{\\s*["']?${fileEntryKeyPattern}["']?\\s*:`,
+  "s",
+);
+
+const hasDeclaredFileBatch = (input: string) => {
+  declaredFileBatchExpression.lastIndex = 0;
+  return declaredFileBatchExpression.test(withoutComments(input));
+};
 const inputValidators: Record<string, InputValidator> = {
-  file_chattr: (input) => hasKey(input, "chattr") && hasKeyedPath(input),
+  file_chattr: (input) =>
+    hasKey(input, "chattr") && hasDeclaredFileBatch(input),
   file_delete: (input) =>
-    hasKey(input, "expectedSha256") && hasKeyedPath(input),
+    hasKey(input, "expectedSha256") && hasDeclaredFileBatch(input),
   file_patch: (input) =>
     hasKey(input, "expectedSha256") &&
     hasKey(input, "patchStrategy") &&
+    hasDeclaredFileBatch(input) &&
     (hasKey(input, "astRules") || hasKey(input, "aiderBlocks")),
   file_rename: (input) =>
     hasKey(input, "expectedSha256") &&
     hasKey(input, "destination") &&
-    hasKeyedPath(input),
-  file_write: (input) => hasKey(input, "content") && hasKeyedPath(input),
+    hasDeclaredFileBatch(input),
+  file_write: (input) =>
+    hasKey(input, "content") && hasDeclaredFileBatch(input),
 };
 
 function meaningfulInput(invocation: Invocation) {
@@ -154,8 +168,10 @@ const singlePathExpression =
   /["']?(?:filePath|file|path|root|destination)["']?\s*:\s*["']([^"']+)["']/g;
 const pathArrayExpression =
   /["']?(?:filePaths|paths)["']?\s*:\s*\[([^\]]*)\]/gs;
-const keyedPathExpression =
-  /["']([^"']+)["']\s*:\s*\{\s*(?:content|expectedSha256|destination|chattr|astRules|aiderBlocks|patchStrategy)\s*:/g;
+const keyedPathExpression = new RegExp(
+  `["']([^"']+)["']\\s*:\\s*\\{\\s*["']?${fileEntryKeyPattern}["']?\\s*:`,
+  "g",
+);
 
 function expressionValues(input: string, expression: RegExp) {
   expression.lastIndex = 0;
@@ -184,18 +200,80 @@ function escapedPath(candidate: string, roots: string[]) {
   return pathLike && !pathIsWithinRoot(candidate, roots);
 }
 
-function pathErrors(invocations: Invocation[], roots: string[]) {
-  const errors: string[] = [];
-  for (const invocation of invocations) {
-    const candidates = pathCandidates(withoutComments(invocation.input));
-    for (const candidate of candidates) {
-      if (escapedPath(candidate, roots))
-        errors.push(
-          `${invocation.tool} input escapes transcript workspace roots: ${candidate}`,
-        );
-    }
-  }
-  return errors;
+const fileOperationTools = new Set([
+  "file_chattr",
+  "file_delete",
+  "file_hash",
+  "file_patch",
+  "file_read",
+  "file_rename",
+  "file_write",
+]);
+
+export interface FileOperationPolicy {
+  allowAnyPath?: boolean;
+  allowTempDirectory?: boolean;
+  roots?: string[];
+}
+
+interface InvocationPathPolicy {
+  allowAnyPath: boolean;
+  boundary: string;
+  roots: string[];
+}
+
+function effectiveFileOperationRoots(
+  workspaceRoots: string[],
+  policy: FileOperationPolicy,
+) {
+  if (policy.roots) return policy.roots;
+  return policy.allowTempDirectory === false
+    ? workspaceRoots
+    : [...workspaceRoots, os.tmpdir()];
+}
+
+function invocationPathPolicy(
+  invocation: Invocation,
+  workspaceRoots: string[],
+  fileOperationPolicy: FileOperationPolicy,
+): InvocationPathPolicy {
+  if (!fileOperationTools.has(invocation.tool))
+    return {
+      allowAnyPath: false,
+      boundary: "transcript workspace roots",
+      roots: workspaceRoots,
+    };
+  return {
+    allowAnyPath: fileOperationPolicy.allowAnyPath === true,
+    boundary: "transcript file-operation roots",
+    roots: effectiveFileOperationRoots(workspaceRoots, fileOperationPolicy),
+  };
+}
+
+function invocationPathErrors(
+  invocation: Invocation,
+  policy: InvocationPathPolicy,
+) {
+  if (policy.allowAnyPath) return [];
+  return pathCandidates(withoutComments(invocation.input))
+    .filter((candidate) => escapedPath(candidate, policy.roots))
+    .map(
+      (candidate) =>
+        `${invocation.tool} input escapes ${policy.boundary}: ${candidate}`,
+    );
+}
+
+function pathErrors(
+  invocations: Invocation[],
+  workspaceRoots: string[],
+  fileOperationPolicy: FileOperationPolicy,
+) {
+  return invocations.flatMap((invocation) =>
+    invocationPathErrors(
+      invocation,
+      invocationPathPolicy(invocation, workspaceRoots, fileOperationPolicy),
+    ),
+  );
 }
 
 function isBatch(invocation: Invocation) {
@@ -208,8 +286,10 @@ function isBatch(invocation: Invocation) {
       "file_delete",
       "file_rename",
     ].includes(invocation.tool)
-  )
-    return (input.match(/["'][^"']+["']\s*:\s*\{/g) ?? []).length > 1;
+  ) {
+    keyedPathExpression.lastIndex = 0;
+    return expressionValues(input, keyedPathExpression).length > 1;
+  }
   if (invocation.tool === "file_hash")
     return /filePaths\s*:\s*\[[^\]]+,[^\]]+\]/s.test(input);
   if (invocation.tool === "file_read")
@@ -247,11 +327,13 @@ function renameResultsCoverInputs(
   roots: string[] = [],
 ) {
   try {
-    const request = JSON.parse(call.input) as Record<string, unknown>;
+    const request = JSON.parse(call.input) as {
+      files?: Record<string, unknown>;
+    };
     const result = JSON.parse(output) as { files?: RenameFiles };
-    if (!result.files) return false;
+    if (!request.files || !result.files) return false;
     const workspaceRoot = roots[0] ?? process.cwd();
-    return Object.entries(request).every((entry) =>
+    return Object.entries(request.files).every((entry) =>
       renameEntryMatches(result.files as RenameFiles, workspaceRoot, entry),
     );
   } catch {
@@ -393,23 +475,52 @@ function hashPrecedesMutation(context: AssertionContext) {
   );
 }
 
-function workflowAssertion(context: AssertionContext): boolean | undefined {
+function declaredFileBatchAssertion(
+  context: AssertionContext,
+): boolean | undefined {
   const { invocations, normalized } = context;
+  if (!normalized.includes("declared") || !normalized.includes("files"))
+    return undefined;
+  const requireBatch = normalized.includes("batch");
+  return invocations.some(
+    (invocation) =>
+      [
+        "file_patch",
+        "file_write",
+        "file_chattr",
+        "file_delete",
+        "file_rename",
+      ].includes(invocation.tool) &&
+      hasDeclaredFileBatch(invocation.input) &&
+      (!requireBatch || isBatch(invocation)),
+  );
+}
+
+function previewAssertion(context: AssertionContext): boolean | undefined {
   const patchCalls = calls(context, "file_patch");
+  if (context.normalized.includes("preview true"))
+    return patchCalls.some((call) => hasBoolean(call.input, "preview", true));
+  if (
+    !context.normalized.includes("preview") &&
+    !context.normalized.includes("dry run")
+  )
+    return undefined;
+  return (
+    calls(context, "run").some(
+      (call) => !hasBoolean(call.input, "write", true),
+    ) || patchCalls.some((call) => hasBoolean(call.input, "preview", true))
+  );
+}
+
+function workflowAssertion(context: AssertionContext): boolean | undefined {
+  const declaredBatch = declaredFileBatchAssertion(context);
+  if (declaredBatch !== undefined) return declaredBatch;
+  const { invocations, normalized } = context;
   if (normalized.includes("batch") || normalized.includes("one keyed"))
     return invocations.some(isBatch);
   if (normalized.includes("fresh") && normalized.includes("hash"))
     return hashPrecedesMutation(context);
-  if (normalized.includes("preview true"))
-    return patchCalls.some((call) => hasBoolean(call.input, "preview", true));
-  if (normalized.includes("preview") || normalized.includes("dry run")) {
-    return (
-      calls(context, "run").some(
-        (call) => !hasBoolean(call.input, "write", true),
-      ) || patchCalls.some((call) => hasBoolean(call.input, "preview", true))
-    );
-  }
-  return undefined;
+  return previewAssertion(context);
 }
 
 function strategyAssertion(context: AssertionContext): boolean | undefined {
@@ -561,11 +672,12 @@ export function verifyEvaluation(
   invocations: Invocation[],
   output: string,
   roots: string[],
+  fileOperationPolicy: FileOperationPolicy = {},
 ) {
   const errors = [
     ...toolContractErrors(evaluation, invocations),
     ...sequenceErrors(evaluation, invocations),
-    ...pathErrors(invocations, roots),
+    ...pathErrors(invocations, roots, fileOperationPolicy),
     ...fileEvidenceErrors(evaluation, invocations, output),
   ];
   if (
