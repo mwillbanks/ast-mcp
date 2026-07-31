@@ -27,6 +27,8 @@ test("configuration tools expose health, policy, and bounded document selectors"
   const root = await mkdtemp(
     path.join(os.tmpdir(), "ast-mcp-config-tools-v2-"),
   );
+  const previousRoots = process.env.AST_MCP_ROOTS;
+  process.env.AST_MCP_ROOTS = root;
   const registered = new Map<string, ToolHandler>();
   const server = {
     registerTool(name: string, _definition: unknown, handler: ToolHandler) {
@@ -44,7 +46,10 @@ test("configuration tools expose health, policy, and bounded document selectors"
     withConfig(
       {
         cwd: root,
-        env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+        env: {
+          AST_MCP_ROOTS: root,
+          XDG_CONFIG_HOME: path.join(root, "xdg"),
+        },
       },
       operation,
     );
@@ -69,7 +74,17 @@ test("configuration tools expose health, policy, and bounded document selectors"
     const status = await (registered.get("config_status") as ToolHandler)({});
     expect(status.isError).not.toBeTrue();
     expect(status.structuredContent).toMatchObject({
-      data: { generation: 1, healthy: true, version: 2 },
+      data: {
+        diagnostics: [
+          {
+            code: "deprecated_root_environment",
+            source: "AST_MCP_ROOTS",
+          },
+        ],
+        generation: 1,
+        healthy: true,
+        version: 2,
+      },
       ok: true,
     });
 
@@ -208,6 +223,8 @@ test("configuration tools expose health, policy, and bounded document selectors"
       },
     });
   } finally {
+    if (previousRoots === undefined) delete process.env.AST_MCP_ROOTS;
+    else process.env.AST_MCP_ROOTS = previousRoots;
     await rm(root, { force: true, recursive: true });
   }
 });

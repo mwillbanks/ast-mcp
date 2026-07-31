@@ -279,8 +279,21 @@ function statusPayload(
   };
   const config = snapshot.config;
   if (!config) return base;
+  const diagnostics: Array<{
+    code: string;
+    message: string;
+    source: string;
+  }> = [];
+  for (const name of config.sources.environment)
+    if (name === "AST_MCP_PROJECT_ROOT" || name === "AST_MCP_ROOTS")
+      diagnostics.push({
+        code: "deprecated_root_environment",
+        message: `${name} is deprecated; configure workspace.roots in ast-mcp.toml.`,
+        source: name,
+      });
   return {
     ...base,
+    diagnostics,
     formatting: formattingStatus(config),
     projectRoot: config.projectRoot,
     provenance: config.provenance,

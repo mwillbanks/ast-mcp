@@ -6,9 +6,9 @@ Use this only when the ast-mcp tools are absent, incomplete, or disconnected. Do
 
 From the installed skill directory, run the read-only checker:
 
-`bun run scripts/check-install.ts --scope local --target codex --root "$PWD"`
+`bun run scripts/check-install.ts --scope local --target codex`
 
-Replace `codex` with `claude` or `copilot`. For a global installation, pass `--scope global`. For HTTP installations, also pass `--transport http --host <address> --port <number>` so the checker validates the generated URL. The JSON result validates the marked guidance against the bundled template, checks the host-specific MCP, hook payload and registration, skill, and prints the appropriate install or update command.
+Replace `codex` with `claude` or `copilot`. Pass `--scope global` for a global installation. Pass the HTTP address and port for HTTP installations. The checker validates guidance, MCP definitions, hooks, skills, and managed assets. It also prints the required install or update command.
 
 ## Install from this package checkout
 
@@ -16,13 +16,13 @@ When the `@mwillbanks/ast-mcp` source checkout is already available, install its
 
 `bun install && bun run build`
 
-`bun run bin/ast-mcp.ts install --scope local --target all --root "$PWD"`
+`bun run bin/ast-mcp.ts install --scope local --target all`
 
 For one host globally:
 
 `bun run bin/ast-mcp.ts install --scope global --target codex`
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Stdio is the default transport. Use `--transport http --host 127.0.0.1 --port 3768` for HTTP host entries and add `--service` only when a macOS LaunchAgent or Linux systemd user unit should be managed.
+Targets are `codex`, `claude`, `copilot`, or `all`. Stdio is the default transport. Use the HTTP options for HTTP host entries. Add `--service` to manage a macOS LaunchAgent or Linux systemd user unit.
 
 ## Install from the published package
 
@@ -36,7 +36,7 @@ When installing with Bun, allow the pinned native installers:
 
 `bun pm trust @ast-bro/cli dprint`
 
-`./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"`
+`./node_modules/.bin/ast-mcp install --scope local --target all`
 
 For a global host surface, use the package manager's persistent global install:
 
@@ -44,18 +44,18 @@ For a global host surface, use the package manager's persistent global install:
 npm install --global @mwillbanks/ast-mcp
 ```
 
-Then run `ast-mcp install --scope global --target codex`. Yarn 2+ should use a project-local installation because it does not provide the Yarn Classic global workflow. Bun blocks transitive lifecycle scripts by default; explicitly trusting `@ast-bro/cli` and `dprint` runs their pinned native installers instead of leaving stale or missing cache paths. If another manager blocks dependency build scripts, approve those two packages through that manager.
+Then run `ast-mcp install --scope global --target codex`. Use a project-local installation with Yarn 2+. Yarn 2+ does not provide the Yarn Classic global workflow. Bun blocks transitive lifecycle scripts by default. Trust `@ast-bro/cli` and `dprint` to run their pinned native installers. Approve those packages when another manager blocks dependency build scripts.
 
-Do not use an ephemeral package executor for host installation because its temporary package path can disappear after configuration is written. The runtime checks ancestor `node_modules/.bin` directories, package metadata, Bun/pnpm/npm/Yarn global bins, and finally `PATH`. The installer records the stable installed CLI and uses its `mcp` and `hook` subcommands. For a local installation, run `./node_modules/.bin/ast-mcp update` to refresh managed surfaces and `./node_modules/.bin/ast-mcp uninstall` to remove them; global installations use `ast-mcp update` and `ast-mcp uninstall`.
+Invoke the executable that must remain available. The installer records that path in MCP, hook, service, and manual-start output. The runtime checks package binaries, package metadata, global bins, and `PATH`. The installer uses the stable CLI and its `mcp` and `hook` subcommands. Run the local binary for local updates and removal. Run `ast-mcp update` or `ast-mcp uninstall` for global installations.
 
-The pinned `@ast-bro/cli@4.0.0` package has a precompiled binary only for macOS Apple Silicon. On Linux or macOS Intel, install it with `cargo install ast-bro --version 4.0.0 --locked`, set `AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"`, and persist that export in `~/.profile` or `~/.zprofile`. On Windows, use the same Cargo command and persist `AST_BRO_BINARY` as `$HOME\.cargo\bin\ast-bro.exe` in the user environment. GUI-launched hosts must inherit that variable from their launcher. The ast-mcp installer verifies the binary before modifying host configuration and returns these commands when manual setup is required.
+The pinned package provides a precompiled binary for macOS Apple Silicon. Install ast-bro with Cargo on Linux or macOS Intel. Set `AST_BRO_BINARY` to the installed path and persist the export. Use the Cargo executable path on Windows. Ensure GUI-launched hosts inherit the variable. The installer verifies the binary before changing host configuration. It returns setup commands when required.
 
 ## Activate and verify
 
-1. Run `ast-mcp config validate --root "$PWD"` before reconnecting. Use `ast-mcp config show --root "$PWD"` when the effective project, global, environment, or default source is unclear.
-2. Restart or reconnect MCP servers in the host; a skill file alone cannot make MCP tools callable. A supervised ast-mcp process may receive `SIGHUP`, which performs graceful cleanup and exits 0 so the host can restart it from refreshed code and configuration.
+1. Run `ast-mcp config validate` before reconnecting. Use `ast-mcp config show` when the effective source is unclear. `--root` remains deprecated for one release.
+2. Restart or reconnect MCP servers in the host. A skill file cannot make MCP tools callable. Send `SIGHUP` to request graceful cleanup and restart.
 3. Confirm `file_hash`, `file_read`, `file_write`, and `file_patch` are present.
 4. Confirm direct intelligence tools such as `digest`, `map`, `show`, `context`, and `impact` are present; there is no proxy tool.
-5. Verify that `file_read` accepts batched `files`, `file_hash` accepts batched `filePaths`, and every mutation tool accepts a declared `files` object containing path-keyed per-file operations; dictionary-only top-level mutation schemas and the legacy whole-file `file_read({ filePath })` schema are stale.
+5. Verify that read and mutation tools accept their current batch fields. Reject dictionary-only mutation schemas and the legacy whole-file read schema.
 6. Rerun `check-install.ts` if the tool list remains incomplete.
-7. If configuration is correct but startup fails, run the package's `bun run tools:check` from its checkout and report the missing dependency or startup error. Do not bypass the write boundary.
+7. Run `bun run tools:check` from the package checkout when startup fails. Report the missing dependency or startup error. Preserve the write boundary.

@@ -39,10 +39,14 @@ describe("installer", () => {
     expect(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
     ).toContain("[mcp_servers.ast-mcp]");
-    expect(
-      JSON.parse(await readFile(path.join(root, ".mcp.json"), "utf8"))
-        .mcpServers["ast-mcp"],
-    ).toBeTruthy();
+    const claudeMcp = JSON.parse(
+      await readFile(path.join(root, ".mcp.json"), "utf8"),
+    ).mcpServers["ast-mcp"];
+    expect(claudeMcp).toBeTruthy();
+    expect(claudeMcp.env).toBeUndefined();
+    const config = await readFile(path.join(root, "ast-mcp.toml"), "utf8");
+    expect(config).toContain("version = 2");
+    expect(config).toContain('roots = ["."]');
     expect(
       JSON.parse(
         await readFile(path.join(root, ".github/hooks/ast-mcp.json"), "utf8"),
@@ -69,6 +73,31 @@ describe("installer", () => {
     const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(agents.match(/ast-mcp:begin/g)).toHaveLength(1);
   });
+  test("records the invoked executable, including paths with spaces", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
+    created.push(root);
+    const entry = path.join(root, "dist with spaces/ast-mcp.js");
+    await install({
+      cliEntry: entry,
+      root,
+      scope: "local",
+      targets: ["codex", "claude", "copilot"],
+    });
+    const expected = "./dist with spaces/ast-mcp.js";
+    expect(
+      await readFile(path.join(root, ".codex/config.toml"), "utf8"),
+    ).toContain(expected);
+    for (const file of [".mcp.json", ".github/mcp.json"]) {
+      const definition = JSON.parse(
+        await readFile(path.join(root, file), "utf8"),
+      ).mcpServers?.["ast-mcp"];
+      if (definition) {
+        expect(definition.command).toBe(expected);
+        expect(definition.env).toBeUndefined();
+      }
+    }
+  });
+
   test("installs global target locations", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
@@ -271,6 +300,9 @@ describe("installer", () => {
 
     expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(
       "user guidance\n",
+    );
+    expect(await readFile(path.join(root, "ast-mcp.toml"), "utf8")).toContain(
+      "version = 2",
     );
     expect(await readFile(path.join(root, ".codex/config.toml"), "utf8")).toBe(
       "# user config\n",

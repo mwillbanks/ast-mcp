@@ -20,6 +20,9 @@
     "src/**/*",
     "bin/**/*",
     "tests/**/*",
+    "scripts/check-prose.ts",
+    "scripts/check-prose-cli.ts",
+    "scripts/check-template-drift.ts",
     "templates/skills/ast-mcp/scripts/**/*"
   ]
 }

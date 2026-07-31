@@ -166,10 +166,12 @@ export async function resolveInstallerEndpoint(
     options.persist !== false &&
     (options.host !== undefined || options.port !== undefined)
   ) {
-    const current = await readFile(configFile, "utf8").catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
-      throw error;
-    });
+    let current = "";
+    try {
+      current = await readFile(configFile, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     const updated = updateHttpToml(current, {
       host: options.host,
       port: options.port,

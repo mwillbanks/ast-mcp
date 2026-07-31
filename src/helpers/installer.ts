@@ -8,6 +8,7 @@ export type InstallerOperation = "install" | "update" | "uninstall";
 export interface ParsedInstallerCommand {
   operation: InstallerOperation;
   options: {
+    deprecatedRoot?: boolean;
     host?: string;
     port?: number;
     root: string;
@@ -165,6 +166,13 @@ export function parseInstallerArguments(
     applyValueOption(token, requiredValue(tokens, index), options);
     index += 1;
   }
+  if (
+    args.some(
+      (token) =>
+        token === "--root" || token === "-r" || token.startsWith("--root="),
+    )
+  )
+    options.deprecatedRoot = true;
   validateOptions(options);
   return { operation, options };
 }

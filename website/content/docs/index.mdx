@@ -34,7 +34,7 @@ request
        └─ atomically replace ─► verify
 ```
 
-AST intelligence is accepted only beneath the effective layered `workspace.roots`. File operations additionally allow the canonical OS temporary directory by default; `safety.allow_temp_directory = false` removes that root, while the explicit `safety.allow_any_path = true` escape hatch applies only to file operations. MCP client roots select the project for global installations, relative paths resolve from the first effective root, external configured roots require an explicit safety opt-in, and symbolic-link targets are rejected unless following is enabled within the applicable boundary.
+AST intelligence stays beneath effective `workspace.roots`. Version 2 requires explicit `[[paths]]` rules for external and temporary paths. MCP client roots select projects for global installations. Relative paths resolve from the first effective root. Path rules must authorize symbolic links and their targets.
 
 ## Start here
 

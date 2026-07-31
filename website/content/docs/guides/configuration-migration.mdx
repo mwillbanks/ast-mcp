@@ -9,7 +9,7 @@ Version 2 replaces permissive safety booleans with explicit path policies and ma
 ## Preview first
 
 ```bash
-ast-mcp config migrate --root "$PWD"
+ast-mcp config migrate
 ast-mcp config migrate --file ./ast-mcp.toml
 ast-mcp config migrate --global
 ```
@@ -19,7 +19,7 @@ Preview is the default and does not write. Use `--check` in CI: exit code `0` me
 ## Write atomically
 
 ```bash
-ast-mcp config migrate --root "$PWD" --to 2 --write
+ast-mcp config migrate --to 2 --write
 ast-mcp config migrate --global --write --no-backup
 ```
 

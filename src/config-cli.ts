@@ -184,6 +184,15 @@ export async function runConfigCli(
   args: string[],
   write: (text: string) => void = stdout.write.bind(stdout),
 ): Promise<number | undefined> {
+  if (
+    args.some(
+      (token) =>
+        token === "--root" || token === "-r" || token.startsWith("--root="),
+    )
+  )
+    process.stderr.write(
+      "ast-mcp: --root is deprecated; run this command from the project root.\n",
+    );
   const tokens = normalizeTokens(args);
   const operation = configOperation(tokens.shift());
   const options = configOptions(tokens);

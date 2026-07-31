@@ -15,12 +15,12 @@ When using Bun, run `bun pm trust @ast-bro/cli dprint` once after installation. 
 ## Manage host surfaces
 
 ```bash
-./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD"
-./node_modules/.bin/ast-mcp install --scope local --target all --root "$PWD" \
+./node_modules/.bin/ast-mcp install --scope local --target all
+./node_modules/.bin/ast-mcp install --scope local --target all \
   --transport http --host 127.0.0.1 --port 3768 [--service]
-./node_modules/.bin/ast-mcp update --scope local --target all --root "$PWD" \
+./node_modules/.bin/ast-mcp update --scope local --target all \
   [--transport stdio|http] [--no-service]
-./node_modules/.bin/ast-mcp uninstall --scope local --target all --root "$PWD"
+./node_modules/.bin/ast-mcp uninstall --scope local --target all
 ```
 
 Installer output is JSON containing changed paths, the effective transport, HTTP endpoint, service identity/state, and a manual startup command when no service is managed.
@@ -28,11 +28,11 @@ Installer output is JSON containing changed paths, the effective transport, HTTP
 ## Configuration
 
 ```bash
-ast-mcp config validate --root "$PWD"
-ast-mcp config show --root "$PWD"
-ast-mcp config migrate --root "$PWD"
-ast-mcp config migrate --root "$PWD" --check
-ast-mcp config migrate --root "$PWD" --write [--no-backup]
+ast-mcp config validate
+ast-mcp config show
+ast-mcp config migrate
+ast-mcp config migrate --check
+ast-mcp config migrate --write [--no-backup]
 ast-mcp config migrate --file ./ast-mcp.toml [--to 2]
 ast-mcp config migrate --global [--check|--write]
 ```

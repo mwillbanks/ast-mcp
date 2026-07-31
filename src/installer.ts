@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   cp,
   lstat,
@@ -9,7 +10,8 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { globalConfigPath, resolveConfig } from "./config";
+import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
+import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
 import {
   codexTransport,
   installerTargetPaths,
@@ -36,9 +38,25 @@ import {
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
-const localCliEntry = "./node_modules/.bin/ast-mcp";
-function cliEntryFor(root: string | undefined, home: string) {
-  return root ? localCliEntry : path.join(home, ".bun/bin/ast-mcp");
+const installerRuntime = new AsyncLocalStorage<{ cliEntry: string }>();
+function configuredCliEntry(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  return options.cliEntry
+    ? path.resolve(options.cliEntry)
+    : options.scope === "local"
+      ? path.join(root, "node_modules/.bin/ast-mcp")
+      : path.join(home, ".bun/bin/ast-mcp");
+}
+function cliEntryFor(root: string | undefined, _home: string) {
+  const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
+  if (!root) return entry;
+  const relative = path.relative(root, entry);
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+    return `./${relative.split(path.sep).join("/")}`;
+  return entry;
 }
 const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
@@ -59,13 +77,9 @@ async function save(file: string, value: unknown) {
 }
 async function installerAstBroBinary(options: InstallOptions) {
   const root = path.resolve(options.root);
-  const env =
-    options.scope === "local"
-      ? { ...process.env, AST_MCP_PROJECT_ROOT: root }
-      : process.env;
   const config = await resolveConfig({
     cwd: root,
-    env,
+    env: installerConfigEnvironment(options),
     home: options.home,
   });
   return (
@@ -80,11 +94,7 @@ function definition(
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
-  return {
-    args: ["mcp"],
-    command: cliEntryFor(root, home),
-    env: root ? { AST_MCP_PROJECT_ROOT: root } : {},
-  };
+  return { args: ["mcp"], command: cliEntryFor(root, home) };
 }
 async function codexMcp(
   file: string,
@@ -97,13 +107,10 @@ async function codexMcp(
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
-  const environment = root
-    ? `env = { AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)} }\n`
-    : "";
   const block =
     transport === "http"
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(cliEntryFor(root, home))}\nargs = ["mcp"]\n${environment}# ast-mcp:end`;
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(cliEntryFor(root, home))}\nargs = ["mcp"]\n# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
@@ -304,6 +311,8 @@ async function hasLocalInstallation(root: string) {
 
 export interface InstallOptions {
   astBroBinary?: string;
+  cliEntry?: string;
+  deprecatedRoot?: boolean;
   home?: string;
   host?: string;
   platform?: NodeJS.Platform;
@@ -606,6 +615,103 @@ function installerConfigEnvironment(options: InstallOptions) {
     : { ...process.env, APPDATA: undefined, XDG_CONFIG_HOME: undefined };
 }
 
+function installerConfigPath(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  return options.scope === "local"
+    ? path.join(root, "ast-mcp.toml")
+    : globalConfigPath({ env: installerConfigEnvironment(options), home });
+}
+
+function installerConfigSeed(local: boolean) {
+  const common = [
+    "version = 2",
+    "",
+    "[files.read]",
+    'modes = ["ast", "text"]',
+    "",
+    "[files.patch]",
+    'strategies = ["ast", "aider_block"]',
+    'aider_matchers = ["exact", "whitespace", "relative-indentation", "diff-match-patch"]',
+    "",
+    "[formatting]",
+    "enabled = true",
+    'fallback = "preserve"',
+    "",
+    "[safety]",
+    "require_hash = true",
+    "",
+    "[safety.hook]",
+    "enabled = true",
+    "allow_tools = []",
+    "block_tools = []",
+    "",
+    "[http]",
+    'host = "127.0.0.1"',
+    "port = 3768",
+    "session_timeout_ms = 1800000",
+    "session_sweep_interval_ms = 60000",
+  ];
+  if (!local) return `${common.join("\n")}\n`;
+  return `${[
+    "version = 2",
+    "",
+    "[workspace]",
+    'roots = ["."]',
+    "",
+    ...common.slice(2),
+    "",
+    "[[paths]]",
+    'id = "workspace"',
+    'path = "."',
+    'policies = { read = "allow", write = "allow", delete = "deny" }',
+    "follow_symlinks = false",
+    'includes = ["**/*"]',
+    'excludes = [".git/**"]',
+  ].join("\n")}\n`;
+}
+
+async function ensureInstallerConfig(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  const file = installerConfigPath(options, root, home);
+  const existing = await readFile(file, "utf8").catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  clearConfigCache();
+  await resolveConfig({
+    cwd: options.scope === "local" ? root : home,
+    env: installerConfigEnvironment(options),
+    home,
+  });
+  if (existing === undefined) {
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, installerConfigSeed(options.scope === "local"), {
+      flag: "wx",
+    });
+  } else {
+    try {
+      const migration = migrateConfigSource(existing, file);
+      if (migration.changed) await writeMigratedConfig(file, migration.source);
+    } catch (error) {
+      throw new Error(
+        `invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  clearConfigCache();
+  await resolveConfig({
+    cwd: options.scope === "local" ? root : home,
+    env: installerConfigEnvironment(options),
+    home,
+  });
+}
+
 async function reconcileEndpoint(
   options: InstallOptions,
   transport: McpTransport,
@@ -642,18 +748,13 @@ function reconcilePaths(
   global: boolean,
   root: string,
   home: string,
-  transport: McpTransport,
+  _transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
   const paths = options.targets.flatMap((target) =>
     targetPaths(target, global, root, home),
   );
-  if (transport === "http" && hasExplicitEndpoint(options))
-    paths.push(
-      options.scope === "local"
-        ? path.join(root, "ast-mcp.toml")
-        : globalConfigPath({ env: installerConfigEnvironment(options), home }),
-    );
+  paths.push(installerConfigPath(options, root, home));
   if (options.service !== undefined)
     paths.push(
       createServicePlan(
@@ -685,26 +786,44 @@ async function reconcile(
   options: InstallOptions,
   operation: "install" | "update",
 ) {
-  assertAstBroAvailable(await installerAstBroBinary(options));
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";
-  const transport = await selectedTransport(options, operation);
-  validateReconcileOptions(options, transport);
-  const endpoint = await reconcileEndpoint(options, transport, root, home);
-  const paths = reconcilePaths(
-    options,
-    global,
-    root,
-    home,
-    transport,
-    endpoint,
+  return installerRuntime.run(
+    { cliEntry: configuredCliEntry(options, root, home) },
+    async () => {
+      const transport = await selectedTransport(options, operation);
+      validateReconcileOptions(options, transport);
+      const paths = reconcilePaths(
+        options,
+        global,
+        root,
+        home,
+        transport,
+        undefined,
+      );
+      const before = await snapshot(paths);
+      if (transport === "http" && options.service === true) {
+        const endpoint = await resolveInstallerEndpoint({
+          env: installerConfigEnvironment(options),
+          home,
+          host: options.host,
+          persist: false,
+          port: options.port,
+          root,
+          scope: options.scope,
+        });
+        await preflightService(serviceConfiguration(options, endpoint));
+      }
+      await ensureInstallerConfig(options, root, home);
+      assertAstBroAvailable(await installerAstBroBinary(options));
+      const endpoint = await reconcileEndpoint(options, transport, root, home);
+      for (const target of options.targets)
+        await installTarget(target, global, root, home, transport, endpoint);
+      await reconcileService(options, endpoint);
+      return changedFiles(before, await snapshot(paths));
+    },
   );
-  const before = await snapshot(paths);
-  for (const target of options.targets)
-    await installTarget(target, global, root, home, transport, endpoint);
-  await reconcileService(options, endpoint);
-  return changedFiles(before, await snapshot(paths));
 }
 
 export async function install(options: InstallOptions) {
@@ -817,15 +936,20 @@ async function removeUnusedService(options: InstallOptions, root: string) {
 export async function uninstall(options: InstallOptions) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
-  const global = options.scope === "global";
-  const paths = options.targets.flatMap((target) =>
-    targetPaths(target, global, root, home),
+  return installerRuntime.run(
+    { cliEntry: configuredCliEntry(options, root, home) },
+    async () => {
+      const global = options.scope === "global";
+      const paths = options.targets.flatMap((target) =>
+        targetPaths(target, global, root, home),
+      );
+      const before = await snapshot(paths);
+      for (const target of options.targets)
+        await uninstallTarget(target, global, root, home);
+      await removeUnusedService(options, root);
+      return changedFiles(before, await snapshot(paths));
+    },
   );
-  const before = await snapshot(paths);
-  for (const target of options.targets)
-    await uninstallTarget(target, global, root, home);
-  await removeUnusedService(options, root);
-  return changedFiles(before, await snapshot(paths));
 }
 
 export async function runInstallerCli(
@@ -835,7 +959,14 @@ export async function runInstallerCli(
     args,
     process.cwd(),
   );
-  const options: InstallOptions = parsedOptions;
+  const options: InstallOptions = {
+    ...parsedOptions,
+    cliEntry: process.argv[1],
+  };
+  if (options.deprecatedRoot)
+    process.stderr.write(
+      "ast-mcp: --root is deprecated; run this command from the project root.\n",
+    );
   const operationHandlers = { install, uninstall, update };
   const changed = await operationHandlers[operation](options);
   const root = path.resolve(options.root);
@@ -867,7 +998,17 @@ export async function runInstallerCli(
       : undefined;
   const manualStart =
     endpoint && options.service !== true
-      ? `${global ? "" : `cd ${JSON.stringify(root)} && `}${JSON.stringify(cliEntryFor(global ? undefined : root, options.home ?? os.homedir()))} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`
+      ? installerRuntime.run(
+          {
+            cliEntry: configuredCliEntry(
+              options,
+              root,
+              options.home ?? os.homedir(),
+            ),
+          },
+          () =>
+            `${global ? "" : `cd ${JSON.stringify(root)} && `}${JSON.stringify(cliEntryFor(global ? undefined : root, options.home ?? os.homedir()))} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`,
+        )
       : undefined;
   const result = {
     changed,

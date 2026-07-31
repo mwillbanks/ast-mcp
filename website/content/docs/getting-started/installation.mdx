@@ -25,15 +25,14 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
 ```bash
 ./node_modules/.bin/ast-mcp install \
   --scope local \
-  --target all \
-  --root "$PWD"
+  --target all
 ```
 
 This installs stdio definitions by default. To install Streamable HTTP definitions, add `--transport http --host 127.0.0.1 --port 3768`. Add `--service` for a macOS LaunchAgent or Linux systemd user service; otherwise start the manual HTTP command printed by the installer. Windows supports manual HTTP startup only.
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local installation is the safest default because the generated MCP definition carries `AST_MCP_PROJECT_ROOT` as a discovery selector. It does not override project `ast-mcp.toml` values. A global definition stays project-neutral and follows MCP client workspace roots automatically.
+Targets are `codex`, `claude`, `copilot`, or `all`. The installer records the invoked executable and omits MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration.
 
 ## ast-bro platform support
 
@@ -64,8 +63,7 @@ bun install
 bun run build
 bun run bin/ast-mcp.ts install \
   --scope local \
-  --target all \
-  --root "$PWD"
+  --target all
 ```
 
 Restart or reconnect the host's MCP servers after installation. A configuration file cannot activate a server in an already-running host process.
@@ -88,18 +86,17 @@ The installed skill includes a checker:
 ```bash
 bun run scripts/check-install.ts \
   --scope local \
-  --target codex \
-  --root "$PWD"
+  --target codex
 ```
 
 ## Update or remove
 
-Use `update` to reconcile every managed MCP entry, hook payload, registration, skill, and marked instruction block. Use `uninstall` to remove only ast-mcp-managed surfaces.
+Use `update` to reconcile managed surfaces and migrate version 1 configuration. Use `uninstall` to remove managed host surfaces while preserving configuration. `--root` remains deprecated for one release.
 
 ```bash
 ./node_modules/.bin/ast-mcp update \
-  --scope local --target all --root "$PWD"
+  --scope local --target all
 
 ./node_modules/.bin/ast-mcp uninstall \
-  --scope local --target all --root "$PWD"
+  --scope local --target all
 ```
