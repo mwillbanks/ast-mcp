@@ -25,12 +25,14 @@ const toolKeys: Record<string, string[]> = {
   context: ["target"],
   deps: ["file"],
   digest: ["paths"],
+  document_query: ["filePath", "selectors"],
   file_hash: ["filePaths"],
   file_read: ["files"],
   find_related: ["path", "line"],
   impact: ["target"],
   implements: ["paths", "target"],
   map: ["paths"],
+  policy_check: ["checks"],
   reverse_deps: ["file"],
   run: ["pattern"],
   search: ["query"],
@@ -146,7 +148,7 @@ const inputValidators: Record<string, InputValidator> = {
 
 function meaningfulInput(invocation: Invocation) {
   const input = withoutComments(invocation.input).trim();
-  if (!input || input === "{}") return false;
+  if (!input || input === "{}") return invocation.tool === "config_status";
   const validator = inputValidators[invocation.tool];
   if (validator) return validator(input);
   return (toolKeys[invocation.tool] ?? []).every((key) => hasKey(input, key));

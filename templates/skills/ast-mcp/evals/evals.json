@@ -34,19 +34,19 @@
     },
     {
       "assertions": [
-        "Does not call file_read for AST-capable source.",
-        "Uses map for shape and show for the named implementation.",
-        "Avoids whole-file content reads."
+        "Uses file_read with mode ast for AST-capable source.",
+        "Requests the named symbol instead of retrieving whole-file text.",
+        "Reports resolved mode, capabilities, and whole-file hash."
       ],
-      "category": "negative",
-      "expected_output": "Uses AST intelligence for the TypeScript file and never calls file_read.",
+      "category": "variant",
+      "expected_output": "Uses file_read AST mode with the createServer symbol.",
       "files": [],
-      "forbidden_tools": ["file_read"],
+      "forbidden_tools": [],
       "id": 3,
-      "prompt": "Inspect the declarations and implementation of createServer in src/server.ts.",
-      "required_tools": ["map", "show"],
+      "prompt": "Inspect the declarations and implementation of createServer in src/server.ts through file_read AST mode.",
+      "required_tools": ["file_read"],
       "surface": "file_read",
-      "variant": "ast-capable-near-miss"
+      "variant": "ast-mode"
     },
     {
       "assertions": [
@@ -1175,9 +1175,221 @@
       "required_tools": [],
       "surface": "skill",
       "variant": "trigger-negative"
+    },
+    {
+      "assertions": [
+        "Uses one file_capabilities call for the target.",
+        "Reports intrinsic and configuration-filtered read, patch, and search methods.",
+        "Performs no mutation."
+      ],
+      "category": "positive",
+      "expected_output": "Batches capability inspection and reports intrinsic and effective methods.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 180,
+      "prompt": "Report whether package.json supports AST or text reads and AST or Aider patches before editing it.",
+      "required_tools": ["file_capabilities"],
+      "surface": "file_capabilities",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Batches all three paths in one call.",
+        "Distinguishes intrinsic support from effective configuration.",
+        "Uses the result to recommend a valid agent-selected strategy."
+      ],
+      "category": "variant",
+      "expected_output": "Uses one batched capability call and explains method differences.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 181,
+      "prompt": "Compare supported read and patch methods for a TypeScript file, Markdown file, and TOML file.",
+      "required_tools": ["file_capabilities"],
+      "surface": "file_capabilities",
+      "variant": "batch"
+    },
+    {
+      "assertions": [
+        "Uses file_hash rather than file_capabilities.",
+        "Does not retrieve content.",
+        "Performs no mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Uses file_hash directly.",
+      "files": [],
+      "forbidden_tools": ["file_capabilities"],
+      "id": 182,
+      "prompt": "Return the SHA-256 for README.md without inspecting its contents.",
+      "required_tools": ["file_hash"],
+      "surface": "file_capabilities",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses config_status before mutation when policy or formatting is uncertain.",
+        "Reports the effective generation, health, and configuration provenance.",
+        "Does not mutate files or manually reread configuration sources."
+      ],
+      "category": "positive",
+      "expected_output": "Inspects the effective configuration generation and provenance.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 171,
+      "prompt": "Check the effective AST MCP configuration before editing.",
+      "required_tools": ["config_status"],
+      "surface": "config_status",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses one read-only status call and reports formatter selection order.",
+        "Reports the global formatting enabled value and explicit fallback.",
+        "Preserves first-match ordering and per-formatter enabled overrides."
+      ],
+      "category": "variant",
+      "expected_output": "Reports formatting fallback and formatter selection.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 172,
+      "prompt": "Which formatter would AST MCP use for this project?",
+      "required_tools": ["config_status"],
+      "surface": "config_status",
+      "variant": "formatting"
+    },
+    {
+      "assertions": [
+        "Does not inspect repository configuration for an unrelated prose request.",
+        "Makes no MCP or filesystem tool call.",
+        "Answers only from the supplied prose."
+      ],
+      "category": "negative",
+      "expected_output": "Answers without tool use.",
+      "files": [],
+      "forbidden_tools": ["config_status"],
+      "id": 173,
+      "prompt": "Rewrite this sentence more concisely.",
+      "required_tools": [],
+      "surface": "config_status",
+      "variant": "unrelated"
+    },
+    {
+      "assertions": [
+        "Batches multiple path decisions in one policy_check call.",
+        "Includes canonical path, operation, tool, and matched rule evidence.",
+        "Performs no mutation while explaining each decision."
+      ],
+      "category": "positive",
+      "expected_output": "Explains read, write, and delete decisions without mutation.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 174,
+      "prompt": "Preflight read, write, and delete policy for three paths.",
+      "required_tools": ["policy_check"],
+      "surface": "policy_check",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Checks all independent paths in one batch.",
+        "Reports matched rule source and specificity for every destination.",
+        "Distinguishes allow, request, and deny without granting approval."
+      ],
+      "category": "variant",
+      "expected_output": "Returns matched rules and provenance for each path.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 175,
+      "prompt": "Explain which safety rules match two external destinations.",
+      "required_tools": ["policy_check"],
+      "surface": "policy_check",
+      "variant": "external"
+    },
+    {
+      "assertions": [
+        "Uses file_hash rather than policy_check when only a digest is requested.",
+        "Uses one bounded hash call for the requested path.",
+        "Does not retrieve file contents or invoke policy_check."
+      ],
+      "category": "negative",
+      "expected_output": "Hashes the file directly.",
+      "files": [],
+      "forbidden_tools": ["policy_check"],
+      "id": 176,
+      "prompt": "Return the SHA-256 for README.md.",
+      "required_tools": ["file_hash"],
+      "surface": "policy_check",
+      "variant": "hash-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses RFC 6901 selectors and returns a whole-file hash.",
+        "Batches both selectors in one document_query call.",
+        "Returns bounded values and source locations without whole-file content."
+      ],
+      "category": "positive",
+      "expected_output": "Queries bounded values from a TOML manifest.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 177,
+      "prompt": "Read /version and /formatting/fallback from ast-mcp.toml.",
+      "required_tools": ["document_query"],
+      "surface": "document_query",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Batches multiple selectors in one document_query call.",
+        "Uses RFC 6901 escaping and selector semantics.",
+        "Reports selected values, source locations, and the whole-file hash."
+      ],
+      "category": "variant",
+      "expected_output": "Returns selected JSONC values and locations.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 178,
+      "prompt": "Inspect three keys from a JSONC manifest without reading the entire file.",
+      "required_tools": ["document_query"],
+      "surface": "document_query",
+      "variant": "jsonc-batch"
+    },
+    {
+      "assertions": [
+        "Uses AST intelligence rather than document_query for TypeScript source.",
+        "Uses show for the requested createServer implementation.",
+        "Does not read the whole source file or invoke document_query."
+      ],
+      "category": "negative",
+      "expected_output": "Routes source inspection to show.",
+      "files": [],
+      "forbidden_tools": ["document_query"],
+      "id": 179,
+      "prompt": "Show the createServer implementation in src/server.ts.",
+      "required_tools": ["show"],
+      "surface": "document_query",
+      "variant": "ast-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses file_hash when only a whole-file digest is requested.",
+        "Does not retrieve source, document values, or bounded text.",
+        "Performs no mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Routes hash-only inspection directly to file_hash.",
+      "files": [],
+      "forbidden_tools": ["file_read"],
+      "id": 183,
+      "prompt": "Return the SHA-256 for src/server.ts without reading its contents.",
+      "required_tools": ["file_hash"],
+      "surface": "file_read",
+      "variant": "hash-only-near-miss"
     }
   ],
   "mcp_tools": [
+    "config_status",
+    "document_query",
+    "file_capabilities",
+    "policy_check",
     "file_chattr",
     "file_delete",
     "file_rename",

@@ -29,6 +29,10 @@ JSON-RPC batches may mix requests and notifications:
 - HTTP emits one SSE event per request by default
 - notifications never receive responses
 - JSON-array HTTP responses require `enableJsonResponse`
+- execution failures use structured `isError` tool results; JSON-RPC errors are reserved for malformed calls
+- `request` policy uses capability-driven `input_required` elicitation, with legacy SDK compatibility for older clients
+
+Clients without elicitation fail closed with `approval_required` and exact configuration or CLI remediation. Once and session grants are connection- and generation-bound; persistent grants are written as the narrowest user-global rule.
 
 ## Shutdown
 

@@ -23,6 +23,9 @@ test("stdio server exposes only ast-mcp tools", async () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [
         ...AST_BRO_TOOLS,
+        "config_status",
+        "document_query",
+        "file_capabilities",
         "file_chattr",
         "file_delete",
         "file_hash",
@@ -30,6 +33,7 @@ test("stdio server exposes only ast-mcp tools", async () => {
         "file_read",
         "file_rename",
         "file_write",
+        "policy_check",
       ].sort(),
     );
     const runSchema = tools.find((tool) => tool.name === "run")?.inputSchema;
@@ -146,7 +150,7 @@ test("stdio rejects outside paths for every path-bearing ast-bro tool", async ()
       expect(result.isError).toBeTrue();
       expect(result.content[0]?.type).toBe("text");
       expect((result.content[0] as { text: string }).text).toContain(
-        "outside AST_MCP_ROOTS",
+        "outside configured workspace and paths roots",
       );
     }
   } finally {

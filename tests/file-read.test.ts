@@ -64,14 +64,18 @@ test("file_read batches bounded slices with a streaming whole-file hash", async 
   });
 });
 
-test("file_read rejects AST-capable files and routes to intelligence tools", async () => {
+test("file_read lets the agent select AST or text mode", async () => {
   const folder = await temporaryFolder();
   const filePath = path.join(folder, "value.ts");
   await writeFile(filePath, "export const value = 1;\n");
 
-  await expect(readFileSafely({ filePath })).rejects.toThrow(
-    "AST-capable files must use map, show, search, context, or run",
-  );
+  const automatic = await readFileSafely({ filePath });
+  expect(automatic.resolvedMode).toBe("ast");
+  expect(automatic.ast).toBeDefined();
+
+  const text = await readFileSafely({ filePath, mode: "text" });
+  expect(text.resolvedMode).toBe("text");
+  expect(text.content).toContain("export const value = 1");
 });
 
 test("file_hash streams AST-capable files without returning content", async () => {

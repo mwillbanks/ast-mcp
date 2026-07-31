@@ -40,14 +40,18 @@ type TranscriptCall = {
 
 export type TranscriptScore = {
   astMcpOutputChars: number;
+  batchDensity: number;
+  callsPerModelTurn: number;
   errors: string[];
   evaluatedCases: number;
   execBatches: number;
   mutationCalls: number;
+  parallelReadOnlyCalls: number;
   passed: boolean;
   session: string;
   toolCalls: Record<string, number>;
   unscoredBatches: number;
+  validationErrorCodes: Record<string, number>;
   verifiedAssertions: number;
 };
 
@@ -416,6 +420,50 @@ function validateStrictMatrix(
   }
 }
 
+function targetCount(value: unknown, key = ""): number {
+  if (Array.isArray(value))
+    return [
+      "filePaths",
+      "paths",
+      "symbols",
+      "files",
+      "checks",
+      "selectors",
+    ].includes(key)
+      ? value.length
+      : Math.max(0, ...value.map((item) => targetCount(item)));
+  if (!value || typeof value !== "object") return 0;
+  const record = value as Record<string, unknown>;
+  const own = key === "files" ? Object.keys(record).length : 0;
+  return Math.max(
+    own,
+    ...Object.entries(record).map(([childKey, child]) =>
+      targetCount(child, childKey),
+    ),
+  );
+}
+
+function invocationTargetCount(invocation: Invocation): number {
+  try {
+    return targetCount(JSON.parse(invocation.input));
+  } catch {
+    const match = invocation.input.match(
+      /(?:filePaths|paths|symbols)\s*:\s*\[([^\]]*)\]/s,
+    );
+    return match?.[1]?.trim() ? match[1].split(",").filter(Boolean).length : 0;
+  }
+}
+
+function validationErrorCodes(calls: Map<string, TranscriptCall>) {
+  const codes: Record<string, number> = {};
+  for (const call of calls.values()) {
+    const text = outputText(call.output?.output);
+    for (const match of text.matchAll(/["']code["']\s*:\s*["']([^"']+)["']/g))
+      codes[match[1]] = (codes[match[1]] ?? 0) + 1;
+  }
+  return codes;
+}
+
 export async function scoreTranscript(
   sessionPath: string,
   strict = false,
@@ -446,16 +494,48 @@ export async function scoreTranscript(
     (toolCalls.file_patch ?? 0) +
     (toolCalls.file_write ?? 0) +
     (toolCalls.file_rename ?? 0);
+  const invocations = [...collector.calls.values()].flatMap(
+    (call) => call.invocations,
+  );
+  const batched = invocations.filter(
+    (invocation) => invocationTargetCount(invocation) > 1,
+  ).length;
+  const statefulTools = new Set([
+    "file_chattr",
+    "file_delete",
+    "file_patch",
+    "file_rename",
+    "file_write",
+    "find_related",
+    "index",
+    "search",
+  ]);
+  const parallelReadOnlyCalls = invocations.filter(
+    (invocation) =>
+      invocation.concurrent &&
+      !statefulTools.has(invocation.tool) &&
+      !(
+        invocation.tool === "run" &&
+        /(?:["']write["']|\bwrite)\s*:\s*true/.test(invocation.input)
+      ),
+  ).length;
   return {
     astMcpOutputChars: outputChars,
+    batchDensity: invocations.length === 0 ? 0 : batched / invocations.length,
+    callsPerModelTurn:
+      collector.calls.size === 0
+        ? 0
+        : invocations.length / collector.calls.size,
     errors: collector.errors,
     evaluatedCases: result.evaluatedCases,
     execBatches: collector.calls.size,
     mutationCalls,
+    parallelReadOnlyCalls,
     passed: collector.errors.length === 0,
     session: sessionPath,
     toolCalls,
     unscoredBatches: grouped.unscoredBatches,
+    validationErrorCodes: validationErrorCodes(collector.calls),
     verifiedAssertions: result.verifiedAssertions,
   };
 }

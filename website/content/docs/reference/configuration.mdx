@@ -19,36 +19,50 @@ Objects merge by field and arrays replace the lower-precedence array. Relative p
 
 ## Schema
 
-Every key is optional. Omitting `version` means version 1. The following example shows the complete current schema:
+Version 2 is the long-term schema. Omitting `version` retains version 1 compatibility and emits deprecation diagnostics; ast-mcp never rewrites configuration automatically.
 
 ```toml
-version = 1
+version = 2
 
 [workspace]
 roots = [".", "../shared"]
 
+[files.read]
+modes = ["ast", "text"]
+
+[files.patch]
+strategies = ["ast", "aider_block"]
+aider_matchers = ["exact", "whitespace", "relative-indentation", "diff-match-patch"]
+
+[formatting]
+enabled = true
+fallback = "preserve" # preserve | dprint | reject
+dprint_config = "./dprint.json"
+
+[[formatting.formatters]]
+id = "biome"
+enabled = true
+extensions = [".ts", ".tsx", ".json"]
+command = "bunx"
+args = ["biome", "format", "--write", "{file}"]
+mode = "in_place" # stdout | in_place
+timeout_ms = 30000
+
 [safety]
-allow_any_path = false
-allow_external_roots = false
-allow_temp_directory = true
-follow_symlinks = false
 require_hash = true
+
+[[paths]]
+id = "workspace-source"
+path = "."
+policies = { read = "allow", write = "request" }
+follow_symlinks = false
+includes = ["**/*"]
+excludes = [".git/**"]
 
 [safety.hook]
 enabled = true
 allow_tools = []
 block_tools = []
-
-[formatting]
-enabled = true
-dprint_config = "./dprint.json"
-
-[[formatting.formatters]]
-extensions = [".rs"]
-globs = ["generated/**/*.txt"]
-command = "./scripts/format"
-args = ["--stdin-file", "{file}", "--root", "{project_root}"]
-timeout_ms = 30000
 
 [dependencies]
 ast_bro_binary = "/absolute/path/to/ast-bro"
@@ -61,30 +75,38 @@ session_timeout_ms = 1800000
 session_sweep_interval_ms = 60000
 ```
 
-Advertised MCP roots and `AST_MCP_PROJECT_ROOT` are trusted project boundaries. Additional configured roots outside that boundary require `safety.allow_external_roots = true`. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
+Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not authorization. Server-side top-level `paths` rules remain authoritative. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
+
+## File methods
+
+`[files.read].modes` filters the agent-selectable `ast` and `text` modes. `[files.patch].strategies` filters `ast` and `aider_block`; it does not auto-select a strategy. Version 2 enables every supported Aider matcher shown above by default. Repositories may narrow the list when they intentionally require stricter matching; ambiguity still fails closed. `file_capabilities` reports intrinsic and effective methods for each target.
 
 ## Formatting
 
-Formatting is enabled by default. `dprint_config` defaults to the package configuration, accepts absolute paths, and resolves relative paths from the TOML file that declares it. Enabled configurations are checked for existence, regular-file type, and valid JSONC during resolution. Set `enabled = false` to skip dprint, external formatters, and atomic formatter rewrites entirely.
+Version 2 defaults to `fallback = "preserve"`. select `dprint` or `reject` explicitly when unmatched content must be formatted or rejected. `dprint_config` accepts absolute paths and resolves relative paths from its declaring TOML file.
 
-Each `[[formatting.formatters]]` entry must declare `command` and at least one `extensions` or `globs` selector. Extensions are case-insensitive; globs match project-relative paths with `/` separators. Entries are evaluated in declaration order and the first match wins. An unmatched file falls back to dprint.
+Each formatter declares a stable `id`, `command`, `mode`, and at least one `extensions` or `globs` selector. Entries are evaluated in declaration order and the first enabled match wins. An entry's `enabled` value overrides the global formatting default, so a globally disabled configuration can selectively enable a formatter.
 
-External formatters receive file content on stdin and must return formatted content on stdout. They execute directly without a shell, from the project root. Bare command names use normal executable lookup; relative commands containing a path separator resolve from the declaring TOML file. Arguments may include `{file}` for the absolute target path and `{project_root}` for the absolute selected project. A nonzero exit, spawn error, or timeout fails the write without committing. `timeout_ms` defaults to 30000 and may not exceed 120000.
+In `stdout` mode, candidate content enters stdin and stdout becomes the formatted result. In `in_place` mode, ast-mcp writes the candidate to an adjacent staged file, expands `{file}` to that stage, runs the command, reads the stage, and removes it; the formatter never receives the live target. `{source_file}` names the logical target and `{project_root}` names the selected project. Stdout is ignored in in-place mode. Nonzero exits, spawn errors, cleanup failures, or timeouts fail without committing.
 
 ## Safety
 
-Secure defaults preserve the workspace boundary while allowing file operations in the OS temporary directory: arbitrary paths and external configured roots are rejected, symbolic links are rejected, mutation hashes are required, and the hook remains enabled. Set `allow_temp_directory = false` to remove the default temporary-directory allowance. Set `allow_any_path = true` only for explicit unrestricted file-tool access; it bypasses workspace and temporary-directory path protection but does not disable hash, regular-file, locking, or symlink policy. `follow_symlinks = true` permits a final symlink only when its resolved target remains inside an allowed root for that surface: workspace roots for AST intelligence, and workspace or enabled temporary-directory roots for file tools. Unrestricted file mode permits any resolved target. `require_hash = false` makes `expectedSha256` optional for `file_patch`, existing-file `file_write`, `file_rename`, and `file_delete`; a supplied hash is always verified.
+Version 2 grants no implicit OS-temporary access. Each top-level `[[paths]]` rule anchors an exact file or directory; globs belong in `includes` and `excludes`, with exclusions winning. Policies are `allow`, `request`, or `deny`, and omitted `delete` inherits `write`.
 
-Under `[safety.hook]`, `enabled = false` disables hook blocking. `block_tools` explicitly denies matching full or short tool names before normal rules, while `allow_tools` explicitly bypasses normal hook rules. A tool cannot appear in both lists. These settings affect the host hook only; they do not weaken MCP root, symlink, or stale-hash validation.
+Exact files outrank directories; otherwise the deepest anchor and longest include literal prefix wins. Equal specificity resolves `deny` before `request` before `allow`. Rename needs source `delete` and destination `write`; metadata uses `write`; hashing and intelligence use `read`. Both a symlink and its resolved target must be authorized, and the winning rule must enable `follow_symlinks`.
+
+Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets and always require explicit approval for mutation. Clients without elicitation fail closed with `approval_required` remediation.
+
+`require_hash = false` makes `expectedSha256` optional for guarded mutations, but supplied hashes are always checked. Hook allow/block settings affect only the host hook and never weaken server-side path, symlink, approval, or hash enforcement.
 
 ## Environment compatibility
 
 | Variable                            | Configuration field              |
 | ----------------------------------- | -------------------------------- |
 | `AST_MCP_ROOTS`                     | `workspace.roots`                |
-| `AST_MCP_ALLOW_ANY_PATH`            | `safety.allow_any_path`          |
-| `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | `safety.allow_external_roots`    |
-| `AST_MCP_ALLOW_TEMP_DIRECTORY`      | `safety.allow_temp_directory`    |
+| `AST_MCP_ALLOW_ANY_PATH`            | v1 deprecated compatibility      |
+| `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | v1 deprecated compatibility      |
+| `AST_MCP_ALLOW_TEMP_DIRECTORY`      | v1 deprecated compatibility      |
 | `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`       |
 | `AST_BRO_BINARY`                    | `dependencies.ast_bro_binary`    |
 | `DPRINT_BINARY`                     | `dependencies.dprint_binary`     |
@@ -100,9 +122,12 @@ Boolean environment values accept `1`, `0`, `true`, or `false`. Invalid explicit
 ```bash
 ast-mcp config validate --root "$PWD"
 ast-mcp config show --root "$PWD"
+ast-mcp config migrate --root "$PWD"          # preview
+ast-mcp config migrate --root "$PWD" --check  # 0 current, 2 required, 1 invalid
+ast-mcp config migrate --root "$PWD" --write  # atomic write plus .v1.bak
 ```
 
-Both commands emit stable JSON. `show` includes absolute resolved values, source files, environment names, and dotted-key provenance. The runtime caches parsed and resolved layers per project, stats the source files on access, and reloads when a file is created, changed, or deleted. Invalid updated configuration fails closed rather than continuing with stale values.
+The `config_status` tool returns redacted effective configuration, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
 
 Local installer definitions use `AST_MCP_PROJECT_ROOT` only to select the project. Global definitions remain project-neutral and use client-advertised roots automatically. Older definitions using `AST_MCP_ROOTS` remain compatible and are migrated by `ast-mcp update`.
 

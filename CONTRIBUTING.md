@@ -47,6 +47,18 @@ bun pm pack --dry-run
 
 The formatter command intentionally applies Biome's safe and unsafe fixes and treats every remaining warning as a failure.
 
+### Optional live host smoke checks
+
+Live model-host checks are disabled by default. `bun run smoke:hosts` does not spawn Codex, Claude, Copilot, or any other host unless an environment variable named `AST_MCP_HOST_SMOKE_<NAME>` is present. These checks are deliberately separate from `bun run check`, CI, and release workflows.
+
+The variable value is a JSON object with a shell-free `command` argument array, optional `expect` marker or marker array, and optional `timeoutMs`. The suffix is arbitrary, so every host uses the same opt-in contract without ast-mcp assuming a particular CLI is installed or authenticated. Independent enabled checks run concurrently.
+
+```bash
+AST_MCP_HOST_SMOKE_MY_HOST='{"command":["my-host","--non-interactive","run an ast-mcp config_status smoke check"],"expect":["config_status","generation"]}' bun run smoke:hosts
+```
+
+The default timeout is 60 seconds. Set `AST_MCP_HOST_SMOKE_TIMEOUT_MS` to change it for every enabled check, or use `timeoutMs` in one host definition. A configured host failure fails this optional command, while an unconfigured host is always skipped.
+
 ## Pull requests
 
 - Keep changes focused and explain the user-visible or boundary-level behavior.

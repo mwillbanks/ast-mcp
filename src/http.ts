@@ -5,6 +5,7 @@ import { serve } from "bun";
 
 import { type ResolvedConfig, resolveConfig } from "./config";
 import { createServer, installProcessSignalHandlers } from "./lifecycle";
+import { clearSessionApprovals } from "./runtime/approval";
 
 const configuration = resolveConfig;
 
@@ -34,15 +35,17 @@ let sessionSweep: ReturnType<typeof setInterval> | undefined;
 function discardSession(sessionId: string) {
   const session = sessions.get(sessionId);
   if (!session) return;
-  void session.server.close();
   sessions.delete(sessionId);
+  clearSessionApprovals(sessionId);
+  void session.server.close().catch(() => undefined);
 }
 
 async function closeSession(sessionId: string) {
   const session = sessions.get(sessionId);
   if (!session) return;
-  await session.server.close();
   sessions.delete(sessionId);
+  clearSessionApprovals(sessionId);
+  await session.server.close();
 }
 
 function sweepExpiredSessions() {
@@ -119,8 +122,10 @@ function handleMcpRequest(request: Request) {
 async function shutdownHttpServer(httpServer: ReturnType<typeof serve>) {
   httpServer.stop(false);
   if (sessionSweep) clearInterval(sessionSweep);
+  const activeSessions = [...sessions.entries()];
+  for (const [sessionId] of activeSessions) clearSessionApprovals(sessionId);
   const results = await Promise.allSettled(
-    [...sessions.values()].map((session) => session.server.close()),
+    activeSessions.map(([, session]) => session.server.close()),
   );
   sessions.clear();
   httpServer.stop(true);

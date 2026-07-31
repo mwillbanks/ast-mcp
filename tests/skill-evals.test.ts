@@ -54,7 +54,9 @@ test("eval matrix covers every registered MCP surface", async () => {
     })();
 
     expect([...suite.mcp_tools].sort()).toEqual([...registered].sort());
-    const batchCases = suite.evals.filter((evaluation) => evaluation.id >= 74);
+    const batchCases = suite.evals.filter(
+      (evaluation) => evaluation.id >= 74 && evaluation.id <= 93,
+    );
     expect(batchCases).toHaveLength(20);
     expect(
       batchCases.some(

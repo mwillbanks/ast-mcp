@@ -103,8 +103,11 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
 
   const entries = await Promise.all(
     Object.entries(requests).map(async ([inputPath, request]) => {
-      const filePath = await resolveWritablePath(inputPath);
-      const destinationPath = await resolveWritablePath(request.destination);
+      const filePath = await resolveWritablePath(inputPath, "delete");
+      const destinationPath = await resolveWritablePath(
+        request.destination,
+        "write",
+      );
       const metadata = await lstat(filePath);
       if (!metadata.isFile())
         throw new Error(`file_rename accepts files only: ${inputPath}`);

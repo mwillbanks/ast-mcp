@@ -10,29 +10,31 @@ File operations are batch-oriented and explicit about state. Mutation tools decl
 
 Streams up to 50 complete files into SHA-256 without returning their contents. Use it immediately before guarded changes, including AST-capable files.
 
-## file_read
+## file_capabilities and file_read
 
-Returns bounded slices from non-AST files only. Requests use zero-based, end-exclusive line ranges and are capped at 1,000 lines and 1 MiB. Responses include content, whole-file hash, size, truncation, and continuation metadata.
+`file_capabilities({ filePaths })` reports file kind, language, parse health, configuration generation, intrinsic AST/text/Aider support, and effective methods after configuration filtering.
 
-AST-capable files are rejected so callers use structural intelligence instead.
+`file_read` accepts `mode: "auto" | "ast" | "text"`. AST mode returns a source map/requested `symbols` or RFC 6901-selected JSON, JSONC, TOML, or YAML values through `selectors`; text mode returns bounded exact content; auto prefers AST when available. Text requests use `range: { start, end }`, while the numeric zero-based, end-exclusive `lines: [start, end]` tuple remains a permanent compatibility alias. Results include the whole-file hash, size, resolved mode, and capabilities.
 
 ## file_write
 
-Accepts `file_write({ files: { "<path>": { content, ... } } })` and creates new files atomically. Replacing an existing non-structurally-rewritable file requires a fresh `expectedSha256` by default. Setting `safety.require_hash = false` makes the hash optional, but any supplied hash is still verified. Parent directories are created only after a guarded missing-parent result and a second root validation.
+Accepts `file_write({ files: { "<path>": { content, ... } } })` and creates new files atomically. Replacing an existing non-structurally-rewritable file requires a fresh `expectedSha256` by default. Setting `safety.require_hash = false` makes the hash optional, but any supplied hash is still verified. The complete batch policy preflight runs before filesystem preparation. For a new nested target, in-place formatter staging may transiently create, revalidate, and remove missing parents before the guarded commit recreates them; the live target is not written before commit.
 
 ## file_patch
 
 The normal mutation API accepts `file_patch({ files: { ... } })`. The declared `files` property contains the path-keyed batch, and each file receives one fresh hash and ordered operations under one deterministic lock:
 
-- `astRules` for parseable, rewrite-supported source
-- `aiderBlocks` for unsupported, unparseable, or inspection-only formats
+- `patchStrategy: "ast"` with `astRules` for structural changes
+- `patchStrategy: "aider_block"` with `aiderBlocks` for exact text changes
 
-Set `preview: true` to execute the formatted dry-run contract without committing. A fresh hash is required by default; `safety.require_hash = false` permits omission while retaining internal compare-and-swap protection and verification of any supplied hash. Formatting follows `[formatting]`: disabled mode preserves content, the first matching external route runs without a shell, and unmatched files use dprint.
+The agent selects either strategy when `file_capabilities` reports it as effective; parseable source commonly supports both. Configuration can narrow strategies but does not auto-select one.
+
+Set `preview: true` to execute the formatted dry-run contract without committing and receive an opaque one-use `previewReceipt`; commit with that receipt to reuse the reviewed candidate after policy, approval, generation, and hash checks. AST and Aider failures include per-operation evidence and a recovery suggestion. A fresh hash is required by default; `safety.require_hash = false` permits omission while retaining internal compare-and-swap protection and verification of any supplied hash. Formatting follows version 2 inheritance: the first enabled matching formatter wins, `stdout` consumes candidate stdin, `in_place` edits an adjacent staged file, and unmatched files use explicit `preserve`, `dprint`, or `reject` fallback.
 
 ## file_rename
 
-Accepts `file_rename({ files: { ... } })` and renames multiple regular files in one file-operation-root-bounded operation. Sources and destinations must share an effective file-operation root (workspace or default OS temporary root) unless `safety.allow_any_path = true`; destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
+Accepts `file_rename({ files: { ... } })` and preflights multiple regular files as one operation. Every source requires `delete` policy and every destination requires `write`; one denied or unapproved endpoint prevents all renames. Destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
 
 ## file_chattr and file_delete
 
-`file_chattr({ files: { ... } })` applies bounded chmod and same-owner chown changes. `file_delete({ files: { ... } })` requires a fresh hash by default, checks AST import references before deletion, and removes only newly empty ancestors inside the allowed operation root. `safety.require_hash = false` permits omission for deletion, while supplied hashes remain enforced. The OS temporary directory is an allowed operation root by default; set `safety.allow_temp_directory = false` to disable it. `safety.allow_any_path = true` is an explicit unrestricted mode for file tools. Deleting AST-capable files outside configured operation roots requires `forceReferences: true` because a bounded reference scan cannot be proven, and the result reports `referenceVerificationBypassed: true` separately from known forced importers.
+`file_chattr({ files: { ... } })` applies bounded chmod and same-owner chown changes under `write` policy. `file_delete({ files: { ... } })` requires `delete` policy and a fresh hash by default, checks AST import references before deletion, and removes only newly empty authorized ancestors. `safety.require_hash = false` permits omission, while supplied hashes remain enforced. Version 2 grants no implicit OS temporary-directory or unrestricted access; express required scope through narrow top-level `[[paths]]` rules. Deleting AST-capable files when a bounded reference scan cannot be proven requires `forceReferences: true`, and the result reports `referenceVerificationBypassed: true` separately from known forced importers.

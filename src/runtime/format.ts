@@ -1,4 +1,5 @@
-import { lstat, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
@@ -24,14 +25,27 @@ function matchesFormatter(
 }
 function formatterArgs(
   config: ResolvedConfig,
-  filePath: string,
+  sourceFile: string,
+  formatterFile: string,
   args: string[],
 ) {
   return args.map((argument) =>
     argument
-      .replaceAll("{file}", filePath)
+      .replaceAll("{file}", formatterFile)
+      .replaceAll("{source_file}", sourceFile)
       .replaceAll("{project_root}", config.projectRoot),
   );
+}
+
+async function removeFormatterStage(staged: string): Promise<void> {
+  try {
+    await unlink(staged);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+      throw new Error(`Failed to remove formatter stage ${staged}`, {
+        cause: error,
+      });
+  }
 }
 
 export async function formatContent(
@@ -39,29 +53,55 @@ export async function formatContent(
   content: string,
 ): Promise<string> {
   const config = await currentConfig();
-  if (!config.formatting.enabled) return content;
-  const formatter = config.formatting.formatters.find((candidate) =>
-    matchesFormatter(config, filePath, candidate),
+  const formatter = config.formatting.formatters.find(
+    (candidate) =>
+      (candidate.enabled ?? config.formatting.enabled) &&
+      matchesFormatter(config, filePath, candidate),
   );
-  const result = formatter
-    ? await runCommandInput(
+  if (formatter) {
+    if (formatter.mode === "stdout") {
+      const result = await runCommandInput(
         formatter.command,
-        formatterArgs(config, filePath, formatter.args),
+        formatterArgs(config, filePath, filePath, formatter.args),
         content,
         { cwd: config.projectRoot, timeoutMs: formatter.timeoutMs },
-      )
-    : await runCommandInput(
-        await dprint(),
-        [
-          "fmt",
-          "--config",
-          config.formatting.dprintConfig,
-          "--stdin",
-          formatterPath(config, filePath),
-        ],
-        content,
-        { cwd: config.projectRoot },
       );
+      return result.stdout;
+    }
+    const extension = path.extname(filePath);
+    const staged = path.join(
+      path.dirname(filePath),
+      `.ast-mcp-format-${randomUUID()}${extension}`,
+    );
+    try {
+      await writeFile(staged, content, { flag: "wx" });
+      await runCommandInput(
+        formatter.command,
+        formatterArgs(config, filePath, staged, formatter.args),
+        "",
+        { cwd: config.projectRoot, timeoutMs: formatter.timeoutMs },
+      );
+      return await readFile(staged, "utf8");
+    } finally {
+      await removeFormatterStage(staged);
+    }
+  }
+  if (!config.formatting.enabled || config.formatting.fallback === "preserve")
+    return content;
+  if (config.formatting.fallback === "reject")
+    throw new Error(`No enabled formatter matches ${filePath}`);
+  const result = await runCommandInput(
+    await dprint(),
+    [
+      "fmt",
+      "--config",
+      config.formatting.dprintConfig,
+      "--stdin",
+      formatterPath(config, filePath),
+    ],
+    content,
+    { cwd: config.projectRoot },
+  );
   return result.stdout;
 }
 
@@ -70,11 +110,9 @@ export async function assertFormattable(filePath: string): Promise<void> {
 }
 
 export async function formatFileAtomically(filePath: string): Promise<void> {
-  if (!(await currentConfig()).formatting.enabled) return;
   const metadata = await lstat(filePath);
-  const formatted = await formatContent(
-    filePath,
-    await readFile(filePath, "utf8"),
-  );
-  await replaceFileAtomically(filePath, formatted, metadata.mode);
+  const source = await readFile(filePath, "utf8");
+  const formatted = await formatContent(filePath, source);
+  if (formatted !== source)
+    await replaceFileAtomically(filePath, formatted, metadata.mode);
 }

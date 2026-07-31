@@ -8,17 +8,17 @@ The effective `workspace.roots` list comes from environment overrides, project a
 
 ## Resolution rules
 
-- Client-advertised MCP roots are the preferred trusted workspace signal.
-- `AST_MCP_PROJECT_ROOT` selects a project without overriding its policy.
-- Relative tool paths resolve from the first effective workspace root.
-- Every explicit path-bearing argument is validated.
-- File tools also allow the canonical OS temporary directory by default; `safety.allow_temp_directory = false` disables that allowance.
-- `safety.allow_any_path = true` is an explicit unrestricted mode for file tools only. It does not broaden direct ast-bro intelligence roots.
-- Symbolic-link targets are rejected by default. `safety.follow_symlinks = true` permits final symlinks only when the resolved target remains inside the roots allowed for that surface; unrestricted file mode is the explicit exception.
-- Configured roots outside the trusted boundary require `safety.allow_external_roots = true` or the compatible environment override.
-- Error messages display the active boundary without exposing unrelated contents.
+- Server-side top-level `paths` rules are authoritative; client-advertised MCP roots provide only a host baseline.
+- Exact files outrank directories, then the deepest directory/include literal prefix wins. Equal specificity resolves `deny`, then `request`, then `allow`.
+- Exclusions override includes inside a rule, and `delete` inherits `write` when omitted.
+- Project rules that broaden the host baseline are reduced from `allow` to `request`; persistent grants belong only in user-level configuration.
+- Version 2 never grants OS temporary-directory access implicitly. Add a narrow rule when a workflow requires it.
+- Reads, hashes, and intelligence calls require `read`; writes and metadata changes require `write`; deletion requires `delete`; rename requires source `delete` and destination `write`.
+- A symbolic link and its resolved target must both be authorized, and the winning rule must enable symlink traversal.
+- Active global and project configuration files are protected targets: model-initiated mutation always requires approval.
+- Version 1 safety booleans remain readable with deprecation diagnostics and can be translated with `ast-mcp config migrate`.
 
-The same request-scoped configuration selects policy for file operations and direct ast-bro tools. Mutation inputs declare a `files` object containing path keys and destinations. Temporary-directory and unrestricted-path allowances apply only inside the file-operation boundary; direct ast-bro intelligence remains scoped to workspace roots.
+One canonical policy engine serves file tools, AST intelligence, hooks, previews, and migration validation. Mutation batches are completely preflighted before the first side effect, so one denied or unapproved target rejects the entire batch.
 
 ## Multiple workspaces
 

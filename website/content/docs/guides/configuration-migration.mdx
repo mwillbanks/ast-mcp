@@ -1,0 +1,41 @@
+---
+title: Migrate configuration to version 2
+description: Preview, validate, and atomically migrate ast-mcp.toml without losing v1 behavior.
+icon: Replace
+---
+
+Version 2 replaces permissive safety booleans with explicit path policies and makes formatter input/output behavior unambiguous. Version 1 remains readable for compatibility, but ast-mcp never migrates a file automatically.
+
+## Preview first
+
+```bash
+ast-mcp config migrate --root "$PWD"
+ast-mcp config migrate --file ./ast-mcp.toml
+ast-mcp config migrate --global
+```
+
+Preview is the default and does not write. Use `--check` in CI: exit code `0` means current, `2` means migration is required, and `1` means the input is invalid or unsupported.
+
+## Write atomically
+
+```bash
+ast-mcp config migrate --root "$PWD" --to 2 --write
+ast-mcp config migrate --global --write --no-backup
+```
+
+A write uses an adjacent temporary file and atomic replacement, preserves file mode and newline style, and creates `<file>.v1.bak` unless `--no-backup` is explicit. Comments and untouched source bytes remain intact. Re-running migration on version 2 is idempotent.
+
+## Compatibility mapping
+
+- Existing custom formatters gain a stable `id`, `enabled = true`, and `mode = "stdout"` because v1 consumed stdout.
+- Formatting gains `fallback = "dprint"` where needed to preserve v1 unmatched-file behavior.
+- Workspace roots become explicit top-level `[[paths]]` rules.
+- Enabled temporary-directory access becomes an explicit OS-temp rule.
+- `allow_any_path = true` becomes an explicit catch-all rule and emits an `UNRESTRICTED` warning.
+- `delete` inherits `write` when omitted; migrated compatibility rules spell out all policies.
+
+Review every generated rule before writing, especially catch-all, temporary, external, or symlink-enabled rules. Prefer `request` for access that is not universally safe. Persistent user approvals belong only in the user-global version 2 configuration.
+
+## Rollout
+
+After migration, restart or reconnect long-lived MCP hosts once so they discover the new server/tool schemas. Subsequent configuration changes hot reload in place. Run `config_status` to verify the effective generation and formatter order, then use `policy_check` for representative read, write, delete, and external paths before the first mutation.

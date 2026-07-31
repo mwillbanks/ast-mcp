@@ -1,8 +1,14 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
-import { astCapable } from "../ast-bro/capability";
-import { detectAstLanguage } from "../patch/languages";
+import { callAstBro } from "../ast-bro/client";
+import { currentConfig } from "../config";
+import { selectDocumentValues } from "./document-inspection";
+import {
+  type FileCapabilities,
+  type FileReadMode,
+  inspectFileCapabilities,
+} from "./file-capabilities";
 import { sha256File } from "./hash";
 import { resolveWritablePath } from "./paths";
 
@@ -13,8 +19,26 @@ export const FILE_READ_MAX_LINES = 1000;
 
 export interface FileReadRequest {
   filePath: string;
+  language?: string;
   lines?: [number, number];
   maxBytes?: number;
+  mode?: FileReadMode;
+  selectors?: string[];
+  symbols?: string[];
+}
+
+export interface FileReadResult {
+  ast?: unknown;
+  capabilities?: FileCapabilities;
+  content: string;
+  filePath: string;
+  hasMore: boolean;
+  lines: { requested: [number, number]; returned: number[] };
+  requestedMode?: FileReadMode;
+  resolvedMode?: Exclude<FileReadMode, "auto">;
+  sha256: string;
+  size: number;
+  truncated: boolean;
 }
 
 async function mapConcurrently<Input, Output>(
@@ -161,7 +185,7 @@ async function readLineRange(
 }
 
 async function hashFileSafely(filePath: string) {
-  const resolved = await resolveWritablePath(filePath);
+  const resolved = await resolveWritablePath(filePath, "read");
   const metadata = await stat(resolved);
   if (!metadata.isFile()) throw new Error(`Not a regular file: ${filePath}`);
   return {
@@ -179,25 +203,129 @@ export async function hashFilesSafely(filePaths: string[]) {
   return mapConcurrently(filePaths, hashFileSafely);
 }
 
-export async function readFileSafely(request: FileReadRequest) {
-  const resolved = await resolveWritablePath(request.filePath);
-  const language = detectAstLanguage(resolved);
-  if (await astCapable(resolved, language))
-    throw new Error(
-      "REJECTED: AST-capable files must use map, show, search, context, or run; use file_hash when only SHA-256 is required",
-    );
+function resolveReadMode(
+  requestedMode: FileReadMode,
+  capabilities: FileCapabilities,
+): Exclude<FileReadMode, "auto"> {
+  if (requestedMode !== "auto") return requestedMode;
+  return capabilities.effective.read.includes("ast") ? "ast" : "text";
+}
 
+function assertReadMode(
+  resolved: string,
+  requestedMode: FileReadMode,
+  resolvedMode: Exclude<FileReadMode, "auto">,
+  capabilities: FileCapabilities,
+): void {
+  if (capabilities.effective.read.includes(resolvedMode)) return;
+  throw Object.assign(
+    new Error(
+      `file_read mode '${resolvedMode}' is unavailable for ${resolved}; available modes: ${capabilities.effective.read.join(", ") || "none"}`,
+    ),
+    {
+      code: "read_mode_unavailable",
+      details: { capabilities, requestedMode, resolvedMode },
+      retryable: true,
+      suggestedNextCall: "file_capabilities",
+    },
+  );
+}
+
+async function readDocumentAst(
+  resolved: string,
+  size: number,
+  selectors: string[] | undefined,
+): Promise<unknown> {
+  if (size > FILE_READ_MAX_BYTES)
+    throw Object.assign(
+      new Error(
+        `Structured document exceeds the ${FILE_READ_MAX_BYTES}-byte inspection limit; use bounded text mode`,
+      ),
+      {
+        code: "document_source_too_large",
+        retryable: true,
+        suggestedNextCall: "file_read",
+      },
+    );
+  const source = await readFile(resolved, "utf8");
+  return {
+    schema: "ast-mcp.document-read.v1",
+    values: selectDocumentValues(
+      resolved,
+      source,
+      selectors?.length ? selectors : [""],
+    ),
+  };
+}
+
+async function readSourceAst(
+  resolved: string,
+  symbols: string[] | undefined,
+): Promise<unknown> {
+  const config = await currentConfig();
+  if (symbols?.length)
+    return callAstBro(
+      "show",
+      { json: true, path: resolved, symbols },
+      config.projectRoot,
+    );
+  return callAstBro(
+    "map",
+    { json: true, paths: [resolved] },
+    config.projectRoot,
+  );
+}
+
+async function readAst(
+  request: FileReadRequest,
+  resolved: string,
+  size: number,
+  capabilities: FileCapabilities,
+): Promise<unknown> {
+  if (capabilities.kind === "document")
+    return readDocumentAst(resolved, size, request.selectors);
+  return readSourceAst(resolved, request.symbols);
+}
+
+export async function readFileSafely(
+  request: FileReadRequest,
+): Promise<FileReadResult> {
+  const resolved = await resolveWritablePath(request.filePath, "read");
   const metadata = await stat(resolved);
   if (!metadata.isFile())
     throw new Error(`Not a regular file: ${request.filePath}`);
+  const capabilities = await inspectFileCapabilities(
+    resolved,
+    request.language,
+  );
+  const requestedMode = request.mode ?? "auto";
+  const resolvedMode = resolveReadMode(requestedMode, capabilities);
+  assertReadMode(resolved, requestedMode, resolvedMode, capabilities);
+  const sha256 = await sha256File(resolved);
+  if (resolvedMode === "ast") {
+    const ast = await readAst(request, resolved, metadata.size, capabilities);
+    return {
+      ast,
+      capabilities,
+      content: JSON.stringify(ast),
+      filePath: resolved,
+      hasMore: false,
+      lines: { requested: [0, 0], returned: [0, 0] },
+      requestedMode,
+      resolvedMode,
+      sha256,
+      size: metadata.size,
+      truncated: false,
+    };
+  }
   const { lines, maxBytes } = validateRequest(request);
-  const [slice, sha256] = await Promise.all([
-    readLineRange(resolved, metadata.size, lines, maxBytes),
-    sha256File(resolved),
-  ]);
+  const slice = await readLineRange(resolved, metadata.size, lines, maxBytes);
   return {
     ...slice,
+    capabilities,
     filePath: resolved,
+    requestedMode,
+    resolvedMode,
     sha256,
     size: metadata.size,
   };

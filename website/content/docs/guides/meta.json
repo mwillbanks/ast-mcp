@@ -1,4 +1,9 @@
 {
   "title": "Guides",
-  "pages": ["host-installation", "http-transport", "skill-evaluations"]
+  "pages": [
+    "host-installation",
+    "configuration-migration",
+    "http-transport",
+    "skill-evaluations"
+  ]
 }

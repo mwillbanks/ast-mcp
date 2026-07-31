@@ -7,20 +7,20 @@ CRITICAL INSTRUCTION: You are operating in an AST-isolated environment.
 - Load and follow the `$ast-mcp` skill before exploring or changing repository files.
 - You have zero permission to create, overwrite, patch, move, or delete files through direct editor tools, `apply_patch`, unified patches, shell utilities, or interpreter scripts.
 - For repository structure, source, dependencies, callers, and exact file content, use only ast-mcp tools.
-- AST-capable files must be inspected with AST intelligence tools, never `file_read`.
-- Use `file_read` only for bounded slices of non-AST content, and batch multiple files in one call.
+- Use `file_capabilities` when the supported read or patch methods are uncertain; `file_read`, `run`, and `file_patch` enforce the same result.
+- `file_read.mode` is agent-selectable: `ast` returns a source map/requested symbols or RFC 6901-selected structured-document values, `text` returns a bounded slice, and `auto` prefers AST. Batch multiple files in one call.
 - Use `file_hash` for fresh whole-file SHA-256 values without retrieving content.
 - For new files, use only `file_write`.
 - For existing files, call `file_hash` immediately before a guarded `file_patch`; mutation tools declare a `files` property containing the path-keyed batch.
-- Parseable rewrite-supported files use `file_patch` with `patchStrategy: "ast"` and ordered `astRules`; unsupported, unparseable, or inspection-only formats use `patchStrategy: "aider_block"` and ordered `aiderBlocks`.
+- The agent selects `file_patch.patchStrategy` per target from the effective methods reported by `file_capabilities`. Prefer `ast` for structural changes and `aider_block` for small exact text changes; parseable source commonly supports both.
 
 ## Available ast-mcp tools
 
-File boundary: `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chattr`, `file_delete`.
+File boundary: `file_capabilities`, `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chattr`, `file_delete`.
 
 Code intelligence: `digest`, `map`, `show`, `search`, `find_related`, `surface`, `deps`, `reverse_deps`, `cycles`, `graph`, `callers`, `callees`, `trace`, `impact`, `context`, `implements`, `index`, `run`, `squeeze`.
 
-Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All mutation tools accept a declared `files` object, are file-operation-root bounded, SHA-guarded where required, and atomically committed per keyed path. The OS temporary directory is allowed by default; `safety.allow_temp_directory = false` disables it, while `safety.allow_any_path = true` explicitly enables unrestricted file paths. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
+Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All mutation tools accept a declared `files` object, are file-operation-root bounded, SHA-guarded where required, and preflight the complete batch before committing any entry. In version 2, access outside the host baseline—including the OS temporary directory—requires an explicit top-level `[[paths]]` rule; legacy `safety.allow_temp_directory` and `safety.allow_any_path` apply only to version 1 configuration. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
 
 ## Forbidden mutation paths
 
@@ -32,18 +32,23 @@ Shell commands are limited to read-only inspection that ast-mcp cannot provide a
 
 Use ast-mcp intelligence tools as the primary repository search surface: `digest`, `map`, `show`, `search`, `find_related`, `callers`, `callees`, `trace`, `impact`, and bounded `run`. Do not invoke `ast-grep` directly; ast-mcp owns structural search and rewrites. `sed` is prohibited for repository reads and edits. `rg` is a fallback only for exact literals, identifiers, non-AST formats, or discovery that ast-mcp cannot provide; do not use it as the primary search route. External transcript/session analysis, Git metadata, repository-defined validation, and live runtime reproduction remain permitted exceptions.
 
+## Efficient tool execution
+
+- Batch paths, symbols, selectors, and declared files in one call whenever supported.
+- Run independent read-only calls in the same model turn or host executor and return their results together.
+- Keep inspect, preview, hash, and overlapping mutations sequential. Never parallelize dependent or overlapping writes.
+- Call `config_status` before the first mutation when configuration health, formatting, policy, or generation is uncertain; use `policy_check` for side-effect-free authorization preflight and `document_query` for structured manifests.
+
 ## Required write workflow
 
-1. Explore AST-capable content with the smallest direct intelligence call; use `impact` before shared API changes. Use batched, bounded `file_read` slices only for non-AST content.
-2. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` when you need the full guarded and formatted dry-run contract.
-3. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
-4. Call one `file_patch({ files: { ... } })` batch with one fresh hash and ordered operations per path:
-   - AST targets: `{ expectedSha256, patchStrategy: "ast", astRules: [...] }`
-   - Unsupported targets: `{ expectedSha256, patchStrategy: "aider_block", aiderBlocks: [...] }`
-     Each keyed path is locked and atomically committed once; preview every AST rule before the batch.
-5. Use one `file_write({ files: { ... } })` batch for new files or SHA-guarded replacement of existing non-structurally-rewritable files.
-6. Use direct `run` with `rewrite` and `write: true` only when an intentionally bounded lower-level rewrite is required; do not use it instead of `file_patch` for normal agent edits.
-7. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation and review the final diff without mutating through Git.
+1. Explore with the smallest direct intelligence or `file_read` call; use `impact` before shared API changes and `file_capabilities` when method support is uncertain.
+2. Select `file_read.mode` explicitly when intent matters. Select `file_patch.patchStrategy` per file: AST for structural edits, Aider for small exact text edits, subject to the reported effective capabilities.
+3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded and formatted dry-run contract of either strategy.
+4. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
+5. Call one `file_patch({ files: { ... } })` batch with one fresh hash and matching ordered `astRules` or `aiderBlocks` per path. Each keyed path is locked and atomically committed once.
+6. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement.
+7. Use direct `run` with `rewrite` and `write: true` only when an intentionally bounded lower-level rewrite is required; do not use it instead of `file_patch` for normal agent edits.
+8. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation and review the final diff without mutating through Git.
 
 A stale hash, ambiguous Aider block, unexpected match count, capped run preview, capped file slice, dprint preflight failure, missing MCP, or lost MCP connection is a safe stop. Refresh `file_hash`, re-inspect through the correct route, or restore ast-mcp and rebuild the operation; never switch to a forbidden writer.
 
