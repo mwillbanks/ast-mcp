@@ -20,6 +20,8 @@ for (const command of [
   "env -S \"bash -lc 'rm blocked'\"",
   "env FOO=bar bash -c 'rm blocked'",
   "echo $(touch blocked)",
+  "cat <(touch blocked)",
+  "printf value > >(touch blocked)",
   "sudo --user bob touch blocked",
   "doas -u user touch blocked",
   "env -u PATH touch blocked",
@@ -69,6 +71,9 @@ for (const command of [
   "bun test --bail",
   "dprint fmt",
   "echo 'unterminated",
+  "echo $(touch blocked",
+  "cat <(touch blocked",
+  "printf value > >(touch blocked",
   "unknown-command file",
 ]) {
   test(`shell policy permits host-governed execution: ${command}`, () => {
