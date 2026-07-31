@@ -5,6 +5,7 @@ Thanks for helping improve ast-mcp. Changes should preserve its core promise: re
 ## Prerequisites
 
 - Bun 1.3 or newer
+- Node.js 22.19 or newer when running MCP Inspector commands
 - the pinned `ast-bro` and `dprint` binaries installed by `bun install`
 - a checkout with no unrelated changes in files you plan to edit
 
