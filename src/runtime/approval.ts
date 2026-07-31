@@ -325,6 +325,10 @@ function requestApproval(
     inputRequired({
       inputRequests: {
         [responseKey]: inputRequired.elicit({
+          _meta: {
+            codex_approval_kind: "mcp_tool_call",
+            persist: ["session", "always"],
+          },
           message: [
             `${scope.tool} requests ${decision.operation} access.`,
             `Path: ${decision.canonicalPath}`,

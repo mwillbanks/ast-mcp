@@ -193,10 +193,21 @@ test("approval flow fails closed and supports once, session, and persistent gran
       );
     } catch (error) {
       if (!(error instanceof InputRequiredSignal)) throw error;
-      return Object.keys(
-        (error.result as { inputRequests: Record<string, unknown> })
-          .inputRequests,
-      )[0] as string;
+      const requests = (
+        error.result as { inputRequests: Record<string, unknown> }
+      ).inputRequests;
+      const responseKey = Object.keys(requests)[0] as string;
+      expect(requests[responseKey]).toMatchObject({
+        method: "elicitation/create",
+        params: {
+          _meta: {
+            codex_approval_kind: "mcp_tool_call",
+            persist: ["session", "always"],
+          },
+          mode: "form",
+        },
+      });
+      return responseKey;
     }
     throw new Error("Expected an approval challenge");
   };

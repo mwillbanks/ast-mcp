@@ -120,16 +120,16 @@ Boolean environment values accept `1`, `0`, `true`, or `false`. Invalid explicit
 ## Inspect and refresh
 
 ```bash
-ast-mcp config validate --root "$PWD"
-ast-mcp config show --root "$PWD"
-ast-mcp config migrate --root "$PWD"          # preview
-ast-mcp config migrate --root "$PWD" --check  # 0 current, 2 required, 1 invalid
-ast-mcp config migrate --root "$PWD" --write  # atomic write plus .v1.bak
+ast-mcp config validate
+ast-mcp config show
+ast-mcp config migrate          # preview
+ast-mcp config migrate --check  # 0 current, 2 required, 1 invalid
+ast-mcp config migrate --write  # atomic write plus .v1.bak
 ```
 
 The `config_status` tool returns redacted effective configuration, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
 
-Local installer definitions use `AST_MCP_PROJECT_ROOT` only to select the project. Global definitions remain project-neutral and use client-advertised roots automatically. Older definitions using `AST_MCP_ROOTS` remain compatible and are migrated by `ast-mcp update`.
+Local installer definitions omit environment fields and use project `ast-mcp.toml`. Global definitions remain project-neutral. `AST_MCP_PROJECT_ROOT`, `AST_MCP_ROOTS`, and `--root` remain deprecated for one release.
 
 ## Extension policy
 

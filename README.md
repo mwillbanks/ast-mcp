@@ -69,8 +69,7 @@ bun pm trust @ast-bro/cli dprint
 ```bash
 ./node_modules/.bin/ast-mcp install \
   --scope local \
-  --target all \
-  --root "$PWD"
+  --target all
 ```
 
 Stdio remains the default. To generate Streamable HTTP entries instead, select HTTP and an endpoint:
@@ -79,7 +78,6 @@ Stdio remains the default. To generate Streamable HTTP entries instead, select H
 ./node_modules/.bin/ast-mcp install \
   --scope local \
   --target all \
-  --root "$PWD" \
   --transport http \
   --host 127.0.0.1 \
   --port 3768
@@ -89,7 +87,7 @@ Add `--service` to create and start a macOS LaunchAgent or Linux systemd user un
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast-mcp update` to reconcile every managed surface and `./node_modules/.bin/ast-mcp uninstall` to remove only marked blocks, managed entries, and the owned `ast-mcp` skill directory.
+Targets are `codex`, `claude`, `copilot`, or `all`. The installer records the invoked executable, creates version 2 configuration, and omits MCP environment fields. Uninstall preserves configuration.
 
 ### ast-bro platform support
 
@@ -116,25 +114,29 @@ From a source checkout:
 ```bash
 bun install
 bun run build
-bun run bin/ast-mcp.ts install --scope local --target all --root "$PWD"
+bun run bin/ast-mcp.ts install --scope local --target all
 ```
 
 ## Configuration
 
-Create `ast-mcp.toml` in the project root to configure a local or globally installed server without rewriting host MCP definitions:
+Install or update ast-mcp to create `ast-mcp.toml`. The installer migrates version 1 files and preserves version 2 files.
 
 ```toml
-version = 1
+version = 2
 
 [workspace]
 roots = ["."]
 
 [safety]
-allow_any_path = false
-allow_external_roots = false
-allow_temp_directory = true
-follow_symlinks = false
 require_hash = true
+
+[[paths]]
+id = "workspace"
+path = "."
+policies = { read = "allow", write = "allow", delete = "deny" }
+follow_symlinks = false
+includes = ["**/*"]
+excludes = [".git/**"]
 
 [safety.hook]
 enabled = true
@@ -155,13 +157,13 @@ port = 3768
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
 
-Formatting uses dprint by default, can be disabled, or can route the first matching extension/glob to a shell-free external formatter with dprint fallback. Mutation tools expose a host-compatible declared `files` batch. File operations allow the OS temporary directory by default; this can be disabled, while `allow_any_path = true` provides an explicit unrestricted mode. Other safety settings can allow final symlinks inside permitted roots, make mutation hashes optional, or tune the host hook allow/block policy.
+Formatting uses dprint by default and supports shell-free external formatters. Mutation tools expose a declared `files` batch. Version 2 requires explicit `[[paths]]` rules outside the host baseline, including temporary paths. Path rules control symlinks, hashes, and hook policy.
 
 Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See the [configuration reference](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/) for the full schema, discovery rules, cache behavior, formatter contract, safety semantics, and migration guidance.
 
 ## MCP configuration
 
-A minimal global stdio definition needs only the stable executable and `mcp` subcommand. Local installer definitions additionally carry `AST_MCP_PROJECT_ROOT` as a discovery selector; it does not override configuration values. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
+A stdio definition contains the invoked executable and `mcp` subcommand. Generated definitions omit environment fields. Project configuration supplies local roots. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
 
 Start HTTP manually with `ast-mcp mcp --transport http [--host <address>] [--port <number>]`, or install a user service with `--service`. CLI flags override environment variables, project TOML, global TOML, and built-in defaults. The endpoint is `/mcp`; wildcard bind addresses generate loopback client URLs, while explicit non-loopback addresses deliberately expose the server. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
 

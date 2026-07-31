@@ -96,13 +96,8 @@ const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
 
 async function astMcpEntry(entry: unknown): Promise<boolean> {
-  if (entry === "./node_modules/.bin/ast-mcp") return true;
-  if (typeof entry !== "string" || path.basename(entry) !== "ast-mcp")
-    return false;
-  const bin = path.dirname(entry);
-  return (
-    path.basename(bin) === "bin" && path.basename(path.dirname(bin)) === ".bun"
-  );
+  if (typeof entry !== "string") return false;
+  return ["ast-mcp", "ast-mcp.js", "ast-mcp.ts"].includes(path.basename(entry));
 }
 
 async function expectedReference(
@@ -209,10 +204,8 @@ function entryTypeCurrent(
   return type !== "local" || Array.isArray(entry.tools);
 }
 
-function entryRootCurrent(entry: McpEntry, root: string | undefined) {
-  return root
-    ? entry.env?.AST_MCP_PROJECT_ROOT === root
-    : Object.keys(entry.env ?? {}).length === 0;
+function entryRootCurrent(entry: McpEntry, _root: string | undefined) {
+  return Object.keys(entry.env ?? {}).length === 0;
 }
 
 function stdioMetadataCurrent(
@@ -255,7 +248,7 @@ function codexHttpMcpCurrent(block: string, url: string | undefined) {
     !block.includes("command =")
   );
 }
-async function codexStdioMcpCurrent(block: string, root: string | undefined) {
+async function codexStdioMcpCurrent(block: string, _root: string | undefined) {
   const command = block.match(/command = (".*")/);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
@@ -264,9 +257,7 @@ async function codexStdioMcpCurrent(block: string, root: string | undefined) {
     !(await astMcpEntry(JSON.parse(command[1])))
   )
     return false;
-  return root
-    ? block.includes(`AST_MCP_PROJECT_ROOT = ${JSON.stringify(root)}`)
-    : !block.includes("AST_MCP_PROJECT_ROOT");
+  return !block.includes("AST_MCP_PROJECT_ROOT") && !block.includes("env =");
 }
 async function codexMcpCurrent(
   file: string,
@@ -428,8 +419,8 @@ function installOperation(checks: InstallChecks) {
     ? ("update" as const)
     : ("install" as const);
 }
-function commandSuffix(options: CheckOptions, global: boolean) {
-  return `--scope ${options.scope} --target ${options.target}${global ? "" : ` --root ${JSON.stringify(options.root)}`}${options.transport === "http" ? ` --transport http --host ${JSON.stringify(options.host)} --port ${options.port}` : ""}${options.service ? " --service" : ""}`;
+function commandSuffix(options: CheckOptions, _global: boolean) {
+  return `--scope ${options.scope} --target ${options.target}${options.transport === "http" ? ` --transport http --host ${JSON.stringify(options.host)} --port ${options.port}` : ""}${options.service ? " --service" : ""}`;
 }
 function installCommands(options: CheckOptions, global: boolean) {
   const suffix = commandSuffix(options, global);
