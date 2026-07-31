@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.1...ast-mcp-v0.2.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* support host-safe file batches ([fce8ea7](https://github.com/mwillbanks/ast-mcp/commit/fce8ea7ed5d022060801f7c916ede5d67c86c639))
+
 ## [0.2.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.0...ast-mcp-v0.2.1) (2026-07-26)
 
 
