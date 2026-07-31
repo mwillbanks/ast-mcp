@@ -48,6 +48,16 @@ test("stdio server exposes only ast-mcp tools", async () => {
         ?.pattern,
     ).toBeTruthy();
 
+    const mapSchema = tools.find((tool) => tool.name === "map")
+      ?.inputSchema as {
+      properties?: Record<string, { enum?: string[] }>;
+    };
+    expect(mapSchema.properties?.detail?.enum).toEqual([
+      "names",
+      "signatures",
+      "full",
+    ]);
+
     const fileReadSchema = tools.find((tool) => tool.name === "file_read")
       ?.inputSchema as { properties?: Record<string, unknown> };
     expect(fileReadSchema.properties?.files).toBeTruthy();

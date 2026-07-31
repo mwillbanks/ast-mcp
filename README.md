@@ -93,10 +93,10 @@ Targets are `codex`, `claude`, `copilot`, or `all`. Use `./node_modules/.bin/ast
 
 ### ast-bro platform support
 
-`@ast-bro/cli@3.0.0` currently publishes a precompiled binary only for macOS Apple Silicon. The ast-mcp installer verifies that the pinned binary can execute before writing host configuration. On Linux, Windows, or macOS Intel, install it through Cargo and set `AST_BRO_BINARY` to the resulting executable before rerunning the installer:
+`@ast-bro/cli@4.0.0` currently publishes a precompiled binary only for macOS Apple Silicon. The ast-mcp installer verifies that the pinned binary can execute before writing host configuration. On Linux, Windows, or macOS Intel, install it through Cargo and set `AST_BRO_BINARY` to the resulting executable before rerunning the installer:
 
 ```bash
-cargo install ast-bro --version 3.0.0 --locked
+cargo install ast-bro --version 4.0.0 --locked
 export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
 printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
 ```
@@ -104,7 +104,7 @@ printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.prof
 For Windows PowerShell:
 
 ```powershell
-cargo install ast-bro --version 3.0.0 --locked
+cargo install ast-bro --version 4.0.0 --locked
 $env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
 [Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
 ```

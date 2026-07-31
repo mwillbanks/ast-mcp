@@ -154,7 +154,7 @@ export function resolveDependencyBinary(
   );
 }
 
-export const AST_BRO_VERSION = "3.0.0";
+export const AST_BRO_VERSION = "4.0.0";
 export const AST_BRO_BINARY =
   process.env.AST_BRO_BINARY ??
   resolveDependencyBinary("ast-bro", "@ast-bro/cli") ??

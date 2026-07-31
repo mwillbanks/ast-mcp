@@ -7,7 +7,7 @@
     "url": "https://github.com/mwillbanks/ast-mcp/issues"
   },
   "dependencies": {
-    "@ast-bro/cli": "3.0.0",
+    "@ast-bro/cli": "4.0.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "diff-match-patch-ts": "^2.0.0",
@@ -58,6 +58,8 @@
     "url": "git+https://github.com/mwillbanks/ast-mcp.git"
   },
   "scripts": {
+    "ast-bro:schemas": "bun run scripts/sync-ast-bro-tools.ts --write",
+    "ast-bro:schemas:check": "bun run scripts/sync-ast-bro-tools.ts",
     "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run format:check && bun run typecheck && bun run test",
     "dev": "bun run --watch src/index.ts",
@@ -78,7 +80,7 @@
     "start": "bun run src/index.ts",
     "start:http": "bun run src/http-entry.ts",
     "test": "bun test --bail --max-concurrency=1 --timeout=30000",
-    "tools:check": "bun run scripts/verify-tools.ts",
+    "tools:check": "bun run scripts/verify-tools.ts && bun run ast-bro:schemas:check",
     "typecheck": "bunx tsc --noEmit"
   },
   "sideEffects": false,

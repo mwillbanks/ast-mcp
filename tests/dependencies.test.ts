@@ -147,5 +147,5 @@ test("validates ast-bro versions and reports platform recovery", () => {
   ).toThrow("$HOME\\.cargo\\bin\\ast-bro.exe");
   expect(() =>
     assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-  ).toThrow("No precompiled ast-bro 3.0.0 binary");
+  ).toThrow("No precompiled ast-bro 4.0.0 binary");
 });

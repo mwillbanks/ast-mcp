@@ -11,7 +11,15 @@ const result = (value: unknown): AstBroResult => ({
 });
 
 test("parses ast-bro JSON and extracts unique files", () => {
-  expect(parseAstBroJson(result({ ok: true }))).toEqual({ ok: true });
+  expect(
+    parseAstBroJson(
+      result({ dropped_members: 2, missing_paths: ["missing.ts"], ok: true }),
+    ),
+  ).toEqual({
+    dropped_members: 2,
+    missing_paths: ["missing.ts"],
+    ok: true,
+  });
   expect(
     astBroMatchFiles(
       result({ matches: [{ file: "/a.ts" }, { file: "/a.ts" }, {}] }),

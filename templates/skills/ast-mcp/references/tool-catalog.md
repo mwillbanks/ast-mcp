@@ -40,7 +40,7 @@ All tools are exposed directly by ast-mcp. Do not wrap ast-bro calls in a proxy 
 - dry-run per-file diffs when `rewrite` is present and `write` is false or omitted;
 - disk rewrite when both `rewrite` and `write: true` are present.
 
-For pinned ast-bro 3.0.0, write mode changes the first match per file, caps a call at 50 files, and reports rewritten files rather than node counts. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, each candidate is checked against dprint, and each rewritten file is atomically formatted. Narrow rules to one intended match per file.
+For pinned ast-bro 4.0.0, write mode changes the first match per file, caps a call at 50 files, and reports rewritten files rather than node counts. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, each candidate is checked against dprint, and each rewritten file is atomically formatted. Narrow rules to one intended match per file.
 
 - `squeeze({ path, start?, end?, raw?, json? })`: compression for repetitive logs/text, not source code.
 
