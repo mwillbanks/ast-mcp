@@ -5,7 +5,7 @@
     "": {
       "name": "@mwillbanks/ast-mcp",
       "dependencies": {
-        "@ast-bro/cli": "3.0.0",
+        "@ast-bro/cli": "4.0.0",
         "@modelcontextprotocol/client": "2.0.0",
         "@modelcontextprotocol/server": "2.0.0",
         "diff-match-patch-ts": "^2.0.0",
@@ -28,7 +28,7 @@
     "@ast-bro/cli",
   ],
   "packages": {
-    "@ast-bro/cli": ["@ast-bro/cli@3.0.0", "", { "bin": { "ast-bro": "bin/ast-bro.js", "ast-outline": "bin/ast-bro.js", "sb": "bin/ast-bro.js" } }, "sha512-wH7n8Moicfp15B67YRRDZUPtbjlfY4cBNRXVY9fsAYFdWEmkXXN7RhH76CI+KC9szI8x9xd++8j729kPvLKa3g=="],
+    "@ast-bro/cli": ["@ast-bro/cli@4.0.0", "", { "bin": { "ast-bro": "bin/ast-bro.js", "ast-outline": "bin/ast-bro.js", "sb": "bin/ast-bro.js" } }, "sha512-eVbJFc2msHSRyl9t8oh69VGdfhviGFZkiTROePVM99PPYyPe6iYHr+3kzHTwnrwKjUWjJU2wlDdxX1jSezWpZQ=="],
 
     "@biomejs/biome": ["@biomejs/biome@2.5.6", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.6", "@biomejs/cli-darwin-x64": "2.5.6", "@biomejs/cli-linux-arm64": "2.5.6", "@biomejs/cli-linux-arm64-musl": "2.5.6", "@biomejs/cli-linux-x64": "2.5.6", "@biomejs/cli-linux-x64-musl": "2.5.6", "@biomejs/cli-win32-arm64": "2.5.6", "@biomejs/cli-win32-x64": "2.5.6" }, "bin": { "biome": "bin/biome" } }, "sha512-lxVNjv7UF6KfhMJfL9gaUHbWdJdHbsAj6OSmwSYNdhRuG67NxNQ4Xdvh3TUxsSK9sBzJBQhEJj3AopmmNJ5pSA=="],
 

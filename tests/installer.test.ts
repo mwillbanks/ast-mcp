@@ -164,7 +164,7 @@ describe("installer", () => {
     };
     for (const operation of [install, update])
       await expect(operation(options)).rejects.toThrow(
-        "cargo install ast-bro --version 3.0.0 --locked",
+        "cargo install ast-bro --version 4.0.0 --locked",
       );
     await expect(
       access(path.join(root, ".codex/config.toml")),

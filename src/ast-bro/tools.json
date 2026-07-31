@@ -15,6 +15,11 @@
         "json": {
           "type": "boolean"
         },
+        "limit": {
+          "description": "Cap result count (default 200). The reported total stays exact.",
+          "minimum": 1,
+          "type": "integer"
+        },
         "path": {
           "description": "Repo root (default \".\").",
           "type": "string"
@@ -146,9 +151,13 @@
     }
   },
   "digest": {
-    "description": "One-page module map for an unfamiliar directory: every file's types and public methods. Returns text by default; set `json: true` for `ast-bro.map.v1`.",
+    "description": "One-page module map for an unfamiliar directory: every file's types and public methods. Alias for `map` with detail=names, public-only, max_members=50. Returns text by default; set `json: true` for `ast-bro.map.v1`.",
     "inputSchema": {
       "properties": {
+        "glob": {
+          "description": "Glob filter applied during directory walk.",
+          "type": "string"
+        },
         "include_fields": {
           "type": "boolean"
         },
@@ -159,7 +168,8 @@
           "type": "boolean"
         },
         "max_members": {
-          "description": "Cap members per type (default 50).",
+          "description": "Cap members per type (default 50); the output reports what was cut.",
+          "minimum": 0,
           "type": "integer"
         },
         "paths": {
@@ -330,6 +340,11 @@
     "description": "AST-based structural map of source files — signatures with line ranges, no method bodies. Returns text by default (5–10× smaller than reading the file). Set `json: true` for the machine-readable schema `ast-bro.map.v1`.",
     "inputSchema": {
       "properties": {
+        "detail": {
+          "description": "Detail level: `full` (signatures + docs, default), `signatures` (no docs), `names` (bare member names — the digest renderer).",
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
         "glob": {
           "description": "Glob filter applied during directory walk.",
           "type": "string"
@@ -337,6 +352,11 @@
         "json": {
           "description": "Return JSON (schema `ast-bro.map.v1`) instead of text.",
           "type": "boolean"
+        },
+        "max_members": {
+          "description": "Cap members shown per type; the output reports what was cut.",
+          "minimum": 0,
+          "type": "integer"
         },
         "no_attrs": {
           "description": "Hide attributes / decorators.",

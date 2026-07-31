@@ -29,13 +29,7 @@ function appendRelatedArguments(
 ): void {
   if (typeof args.path !== "string" || typeof args.line !== "number")
     throw new Error("ast-bro find_related requires path and line");
-  command.push(
-    "--file",
-    args.path,
-    "--line",
-    String(args.line),
-    stringArgument(args, "root", root),
-  );
+  command.push(`${args.path}:${args.line}`, stringArgument(args, "root", root));
 }
 
 function appendCommonArguments(

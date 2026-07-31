@@ -22,7 +22,7 @@ MCP transport requests may contain a JSON-RPC array of requests and notification
 - Use `$NODE` for one node and `$$NODES` for zero or more nodes.
 - Preview with the same language, explicit paths, and optional glob.
 - Inspect search matches, then use `file_patch` with `preview: true` for the full guarded diff; keep direct `run.write` for exceptional lower-level rewrites only.
-- ast-bro 3.0.0 changes only the first match in each file; narrow ambiguous patterns rather than assuming replace-all behavior.
+- ast-bro 4.0.0 changes only the first match in each file; narrow ambiguous patterns rather than assuming replace-all behavior.
 - Split declarations, calls, and type references into separate rules.
 
 ## Aider block discipline

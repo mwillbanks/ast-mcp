@@ -46,20 +46,20 @@ jobs:
         id: ast-bro-cache
         uses: actions/cache/restore@v6.1.0
         with:
-          path: ~/.cache/ast-bro/3.0.0
-          key: ast-bro-v1-3.0.0-${{ runner.os }}-${{ runner.arch }}
+          path: ~/.cache/ast-bro/4.0.0
+          key: ast-bro-v1-4.0.0-${{ runner.os }}-${{ runner.arch }}
       - name: Install ast-bro for Linux
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
         run: |
-          cargo install ast-bro --version 3.0.0 --locked --root "$HOME/.cache/ast-bro/3.0.0"
+          cargo install ast-bro --version 4.0.0 --locked --root "$HOME/.cache/ast-bro/4.0.0"
       - name: Save ast-bro binary
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
-          path: ~/.cache/ast-bro/3.0.0
-          key: ast-bro-v1-3.0.0-${{ runner.os }}-${{ runner.arch }}
+          path: ~/.cache/ast-bro/4.0.0
+          key: ast-bro-v1-4.0.0-${{ runner.os }}-${{ runner.arch }}
       - name: Configure ast-bro
-        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/3.0.0/bin/ast-bro" >> "$GITHUB_ENV"
+        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/4.0.0/bin/ast-bro" >> "$GITHUB_ENV"
       - run: bun run check
       - run: bun run skill:check
       - run: bun run evals:check
