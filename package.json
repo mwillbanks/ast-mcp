@@ -8,8 +8,8 @@
   },
   "dependencies": {
     "@ast-bro/cli": "3.0.0",
-    "@modelcontextprotocol/client": "2.0.0-beta.5",
-    "@modelcontextprotocol/server": "^2.0.0-beta.5",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
     "diff-match-patch-ts": "^2.0.0",
     "dprint": "0.55.2",
     "unbash": "^4.0.4",
