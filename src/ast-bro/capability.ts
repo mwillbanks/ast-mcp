@@ -6,21 +6,30 @@ type AstBroMapPayload = {
   files?: Array<{ error_count?: number; path?: unknown }>;
 };
 
+export async function astErrorCount(
+  filePath: string,
+  language?: string,
+): Promise<number | undefined> {
+  const command = [AST_BRO_BINARY, "map", "--json", filePath];
+  void language;
+  const process = Bun.spawn(command, {
+    cwd: path.dirname(filePath),
+    env: { ...Bun.env, NO_COLOR: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const output = successfulProcessOutput(
+    "ast-bro map",
+    await captureProcess(process),
+  );
+  const payload = JSON.parse(output) as AstBroMapPayload;
+  const file = (payload.files ?? []).find((entry) => entry.path === filePath);
+  return file ? (file.error_count ?? 0) : undefined;
+}
+
 export async function astCapable(
   filePath: string,
   language?: string,
 ): Promise<boolean> {
-  if (!language) return false;
-  const processHandle = Bun.spawn([AST_BRO_BINARY, "map", "--json", filePath], {
-    cwd: path.dirname(filePath),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const result = await captureProcess(processHandle);
-  const stdout = successfulProcessOutput("ast-bro map", result);
-  const payload = JSON.parse(stdout) as AstBroMapPayload;
-  const file = (payload.files ?? []).find(
-    (candidate) => candidate.path === filePath,
-  );
-  return file?.error_count === 0;
+  return (await astErrorCount(filePath, language)) === 0;
 }

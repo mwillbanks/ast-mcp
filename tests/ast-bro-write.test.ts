@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { patchFile } from "../src/patch/engine";
@@ -18,7 +19,13 @@ afterEach(async () => {
 async function astMcpClient(root: string) {
   process.env.AST_MCP_ROOTS = root;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
-  const client = new Client({ name: "ast-bro-write-test", version: "1.0.0" });
+  const client = new Client(
+    { name: "ast-bro-write-test", version: "1.0.0" },
+    { capabilities: { roots: {} } },
+  );
+  client.setRequestHandler("roots/list", async () => ({
+    roots: [{ name: "write-test", uri: pathToFileURL(root).href }],
+  }));
   const transport = new StdioClientTransport({
     args: [path.resolve(import.meta.dir, "../src/index.ts")],
     command: "bun",
@@ -59,6 +66,46 @@ test("direct run.write rewrites the first match per file and dprint formats it",
     expect(await readFile(filePath, "utf8")).toBe(
       "newName(a);\noldName(b);\nconst compact = { x: 1 };\n",
     );
+  } finally {
+    await client.close();
+  }
+});
+
+test("direct run.write enforces write policy on matched files", async () => {
+  folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-run-write-policy-"));
+  await writeFile(
+    path.join(folder, "ast-mcp.toml"),
+    [
+      "version = 2",
+      "[formatting]",
+      "enabled = false",
+      'fallback = "preserve"',
+      "[[paths]]",
+      'id = "workspace"',
+      'path = "."',
+      'policies = { read = "allow", write = "deny" }',
+      "",
+    ].join("\n"),
+  );
+  const filePath = path.join(folder, "value.ts");
+  const original = "oldName(a);\n";
+  await writeFile(filePath, original);
+  const client = await astMcpClient(folder);
+  try {
+    const result = await client.callTool({
+      arguments: {
+        json: true,
+        lang: "typescript",
+        paths: [filePath],
+        pattern: "oldName(a)",
+        rewrite: "newName(a)",
+        write: true,
+      },
+      name: "run",
+    });
+    expect(result.isError).toBeTrue();
+    expect(JSON.stringify(result.structuredContent)).toContain("path_denied");
+    expect(await readFile(filePath, "utf8")).toBe(original);
   } finally {
     await client.close();
   }

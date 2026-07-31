@@ -5,37 +5,38 @@ import {
   mkdir,
   readFile,
   rename,
+  rmdir,
   unlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { callAstBro } from "../ast-bro/client";
-import { parseAstBroJson } from "../ast-bro/result";
-import { astRewritable } from "../ast-bro/rewrite-capability";
+import { currentConfig } from "../config";
+import { approvalSessionId } from "../runtime/approval";
 import {
   applyFileChattr,
   type FileChattr,
   resultingFileChattr,
+  validateFileChattr,
 } from "../runtime/attributes";
+import {
+  type FileCapabilities,
+  inspectFileCapabilities,
+  validateStructuredCandidate,
+} from "../runtime/file-capabilities";
 import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
 import { formatContent } from "../runtime/format";
 import { sha256 } from "../runtime/hash";
-import { withFileLock } from "../runtime/locks";
+import { withFileLock, withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
+import {
+  type AiderBlock,
+  type AstRule,
+  type PatchStrategyContext,
+  type PatchStrategyMetadata,
+  patchStrategyAdapter,
+} from "./strategy";
 
-import { applyAiderBlock } from "./aider";
-import { detectAstLanguage } from "./languages";
-
-export interface AstRule {
-  expectedMatches?: number;
-  fix: string;
-  pattern: string;
-}
-export interface AiderBlock {
-  replace: string;
-  search: string;
-}
 export interface PatchRequest {
   aiderBlock?: AiderBlock;
   astRule?: AstRule;
@@ -50,8 +51,9 @@ export interface PatchBatchRequest {
   astRules?: AstRule[];
   chattr?: FileChattr;
   expectedSha256?: string;
-  patchStrategy: "ast" | "aider_block";
+  patchStrategy?: "ast" | "aider_block";
   preview?: boolean;
+  previewReceipt?: string;
 }
 
 export type PatchBatch = Record<string, PatchBatchRequest>;
@@ -95,26 +97,46 @@ async function ensureParent(filePath: string): Promise<string[]> {
   return created;
 }
 
+async function ignoreFailure(operation: Promise<unknown>): Promise<void> {
+  try {
+    await operation;
+  } catch {}
+}
+
+async function removeCreatedDirectories(directories: string[]): Promise<void> {
+  for (const directory of [...directories].reverse())
+    await ignoreFailure(rmdir(directory));
+}
+
 async function commit(
   filePath: string,
   content: string,
   mode?: number,
   expectedSha256?: string,
   chattr?: FileChattr,
-): Promise<string[]> {
+  alreadyFormatted = false,
+): Promise<{
+  chattr: Awaited<ReturnType<typeof resultingFileChattr>>;
+  createdDirectories: string[];
+  sha256: string;
+}> {
   const next = temporary(filePath);
   let createdDirectories: string[] = [];
+  let committed = false;
   try {
-    const formatted = await formatContent(filePath, content);
-    try {
-      await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      createdDirectories = await ensureParent(filePath);
-      await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
-    }
+    const parentExists = await lstat(path.dirname(filePath)).then(
+      () => true,
+      () => false,
+    );
+    createdDirectories = parentExists ? [] : await ensureParent(filePath);
+    const formatted = alreadyFormatted
+      ? content
+      : await formatContent(filePath, content);
+    await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
     if (mode !== undefined) await chmod(next, mode);
     await applyFileChattr(next, chattr);
+    const committedChattr = await resultingFileChattr(next);
+    const committedSha256 = sha256(formatted);
     if (expectedSha256) {
       const current = await readFile(filePath, "utf8");
       const actual = sha256(current);
@@ -124,9 +146,15 @@ async function commit(
         );
     }
     await rename(next, filePath);
-    return createdDirectories;
+    committed = true;
+    return {
+      chattr: committedChattr,
+      createdDirectories,
+      sha256: committedSha256,
+    };
   } finally {
     await removeTemporary(next);
+    if (!committed) await removeCreatedDirectories(createdDirectories);
   }
 }
 function previewDiff(filePath: string, before: string, after: string): string {
@@ -162,22 +190,112 @@ function previewDiff(filePath: string, before: string, after: string): string {
     : lines.join("\n");
 }
 
-interface PatchContext {
+interface PatchContext extends PatchStrategyContext {
   actual: string;
-  aiderBlocks: AiderBlock[];
-  astRules: AstRule[];
-  filePath: string;
-  language: ReturnType<typeof detectAstLanguage>;
-  original: string;
+  capabilities: FileCapabilities;
   request: PatchBatchRequest;
-  rewritable: boolean;
 }
 
-interface PreviewMetadata {
-  matches?: number;
-  matchMethods?: string[];
-  operations: number;
-  strategy: "ast" | "aider_block";
+type PreviewMetadata = PatchStrategyMetadata;
+
+interface PreviewReceipt {
+  candidate: string;
+  candidateSha256: string;
+  chattr?: FileChattr;
+  configurationIdentity: string;
+  expiresAt: number;
+  expiryTimer: ReturnType<typeof setTimeout>;
+  filePath: string;
+  generation: number;
+  metadata: PreviewMetadata;
+  normalizedOperations: Pick<
+    PatchBatchRequest,
+    "aiderBlocks" | "astRules" | "chattr" | "patchStrategy"
+  >;
+  payloadBytes: number;
+  sessionId: string;
+  sourceSha256: string;
+}
+
+const PREVIEW_RECEIPT_TTL_MS = 5 * 60 * 1000;
+const previewConfigurationIdentity = (
+  config: Awaited<ReturnType<typeof currentConfig>>,
+) =>
+  sha256(
+    JSON.stringify({
+      dependencies: config.dependencies,
+      formatting: config.formatting,
+      projectRoot: config.projectRoot,
+      safety: config.safety,
+      sources: config.sources,
+      trustedRoots: config.trustedRoots,
+      version: config.version,
+      workspace: config.workspace,
+    }),
+  );
+const MAX_PREVIEW_CANDIDATE_BYTES = 4 * 1024 * 1024;
+const MAX_PREVIEW_SESSION_BYTES = 16 * 1024 * 1024;
+const MAX_PREVIEW_SESSION_RECEIPTS = 32;
+const previewReceipts = new Map<string, PreviewReceipt>();
+
+function previewPayloadBytes(
+  sessionId: string,
+  candidate: string,
+  operations: PreviewReceipt["normalizedOperations"],
+): number {
+  const candidateBytes = Buffer.byteLength(candidate);
+  const payloadBytes =
+    candidateBytes + Buffer.byteLength(JSON.stringify(operations));
+  const outstanding = [...previewReceipts.values()].filter(
+    (receipt) => receipt.sessionId === sessionId,
+  );
+  const retainedBytes = outstanding.reduce(
+    (total, receipt) => total + receipt.payloadBytes,
+    0,
+  );
+  if (
+    candidateBytes > MAX_PREVIEW_CANDIDATE_BYTES ||
+    outstanding.length >= MAX_PREVIEW_SESSION_RECEIPTS ||
+    retainedBytes + payloadBytes > MAX_PREVIEW_SESSION_BYTES
+  )
+    throw Object.assign(
+      new Error(
+        "Preview receipt storage limit exceeded; narrow the patch or commit/discard outstanding previews",
+      ),
+      { code: "preview_receipt_limit", retryable: true },
+    );
+  return payloadBytes;
+}
+
+async function validatePreviewReceipt(filePath: string, token: string) {
+  const receipt = previewReceipts.get(token);
+  if (!receipt)
+    throw new Error("Preview receipt is unknown or has already been used");
+  if (receipt.expiresAt < Date.now()) {
+    previewReceipts.delete(token);
+    clearTimeout(receipt.expiryTimer);
+    throw new Error("Preview receipt has expired; preview the patch again");
+  }
+  if (receipt.filePath !== filePath)
+    throw new Error("Preview receipt does not belong to this file");
+  if (receipt.sessionId !== approvalSessionId())
+    throw new Error("Preview receipt belongs to a different MCP session");
+  const config = await currentConfig();
+  if (
+    receipt.generation !== config.generation ||
+    receipt.configurationIdentity !== previewConfigurationIdentity(config)
+  )
+    throw new Error("Preview receipt is stale because configuration changed");
+  await resolveWritablePath(filePath);
+  const source = await readFile(filePath, "utf8");
+  const actual = sha256(source);
+  if (actual !== receipt.sourceSha256)
+    throw new Error(
+      `Stale file context: expected ${receipt.sourceSha256}, found ${actual}`,
+    );
+  if (sha256(receipt.candidate) !== receipt.candidateSha256)
+    throw new Error("Preview receipt candidate integrity check failed");
+  return receipt;
 }
 
 async function createPatchContext(
@@ -188,25 +306,60 @@ async function createPatchContext(
   const actual = sha256(original);
   await requireExpectedHash(request.expectedSha256, "file_patch");
   verifyExpectedHash(request.expectedSha256, actual);
-  const language = detectAstLanguage(filePath);
+  const capabilities = await inspectFileCapabilities(filePath);
   return {
     actual,
     aiderBlocks: request.aiderBlocks ?? [],
     astRules: request.astRules ?? [],
+    capabilities,
     filePath,
-    language,
+    language: capabilities.language,
+    mode: (await lstat(filePath)).mode,
     original,
     request,
-    rewritable: await astRewritable(filePath, language),
   };
 }
 
 async function patchPreview(
   context: PatchContext,
-  candidate: string,
+  formatted: string,
   metadata: PreviewMetadata,
 ) {
-  const formatted = await formatContent(context.filePath, candidate);
+  const config = await currentConfig();
+  const receipt = randomUUID();
+  const expiresAt = Date.now() + PREVIEW_RECEIPT_TTL_MS;
+  const sessionId = approvalSessionId();
+  const normalizedOperations = {
+    aiderBlocks: context.request.aiderBlocks,
+    astRules: context.request.astRules,
+    chattr: context.request.chattr,
+    patchStrategy: context.request.patchStrategy,
+  };
+  const payloadBytes = previewPayloadBytes(
+    sessionId,
+    formatted,
+    normalizedOperations,
+  );
+  const expiryTimer = setTimeout(
+    previewReceipts.delete.bind(previewReceipts, receipt),
+    PREVIEW_RECEIPT_TTL_MS,
+  );
+  expiryTimer.unref?.();
+  previewReceipts.set(receipt, {
+    candidate: formatted,
+    candidateSha256: sha256(formatted),
+    chattr: context.request.chattr,
+    configurationIdentity: previewConfigurationIdentity(config),
+    expiresAt,
+    expiryTimer,
+    filePath: context.filePath,
+    generation: config.generation,
+    metadata,
+    normalizedOperations,
+    payloadBytes,
+    sessionId,
+    sourceSha256: context.actual,
+  });
   return {
     changed: formatted !== context.original,
     diff: previewDiff(context.filePath, context.original, formatted),
@@ -215,222 +368,60 @@ async function patchPreview(
     matchMethods: metadata.matchMethods,
     operations: metadata.operations,
     preview: true,
+    previewReceipt: receipt,
+    receiptExpiresAt: new Date(expiresAt).toISOString(),
     sha256: sha256(formatted),
     strategy: metadata.strategy,
   };
 }
 
-function validateAstStrategy(
-  context: PatchContext,
-): asserts context is PatchContext & {
-  language: NonNullable<PatchContext["language"]>;
-} {
-  if (!context.rewritable || !context.language)
-    throw new Error(
-      "REJECTED: non-structurally-rewritable files require patchStrategy 'aider_block' with aiderBlocks",
-    );
-  if (context.astRules.length === 0 || context.aiderBlocks.length > 0)
-    throw new Error(
-      "REJECTED: patchStrategy 'ast' requires astRules and no aiderBlocks",
-    );
-}
-
-type AstPatchContext = PatchContext & {
-  language: NonNullable<PatchContext["language"]>;
-};
-
-async function previewAstRule(
-  context: AstPatchContext,
-  next: string,
-  rule: AstRule,
-) {
-  const preview = parseAstBroJson(
-    await callAstBro(
-      "run",
-      {
-        json: true,
-        lang: context.language,
-        paths: [next],
-        pattern: rule.pattern,
-      },
-      path.dirname(context.filePath),
-    ),
-  );
-  if (preview.error_count)
-    throw new Error(
-      `ast-bro preview failed with ${preview.error_count} errors`,
-    );
-  const matches = Array.isArray(preview.matches) ? preview.matches.length : 0;
-  const expected = rule.expectedMatches ?? 1;
-  if (matches !== expected)
-    throw new Error(`AST rule matched ${matches} nodes; expected ${expected}`);
-  if (expected !== 1)
-    throw new Error(
-      "ast-bro run rewrites only the first match per file; narrow the AST rule to exactly one node",
-    );
-  return matches;
-}
-
-async function rewriteAstRule(
-  context: AstPatchContext,
-  next: string,
-  rule: AstRule,
-) {
-  const rewritten = parseAstBroJson(
-    await callAstBro(
-      "run",
-      {
-        json: true,
-        lang: context.language,
-        paths: [next],
-        pattern: rule.pattern,
-        rewrite: rule.fix,
-        write: true,
-      },
-      path.dirname(context.filePath),
-    ),
-  );
-  if (
-    rewritten.error_count ||
-    rewritten.rewrite_count !== 1 ||
-    rewritten.files?.[0]?.status !== "rewritten"
-  )
-    throw new Error("ast-bro run did not rewrite exactly one file");
-}
-
-async function applyAstRules(context: AstPatchContext, next: string) {
-  let totalMatches = 0;
-  for (const rule of context.astRules) {
-    totalMatches += await previewAstRule(context, next, rule);
-    await rewriteAstRule(context, next, rule);
-  }
-  return totalMatches;
-}
-
-async function astPatchResult(
-  context: AstPatchContext,
-  candidate: string,
-  mode: number,
-  totalMatches: number,
-) {
-  if (context.request.preview)
-    return patchPreview(context, candidate, {
-      matches: totalMatches,
-      operations: context.astRules.length,
-      strategy: "ast",
-    });
-  await commit(
-    context.filePath,
-    candidate,
-    mode,
-    context.actual,
-    context.request.chattr,
-  );
-  const updated = await readFile(context.filePath, "utf8");
-  return {
-    engine: "ast-bro.run",
-    filePath: context.filePath,
-    matches: totalMatches,
-    operations: context.astRules.length,
-    preview: false,
-    sha256: sha256(updated),
-    strategy: "ast",
-  };
-}
-
-async function applyAstPatch(context: PatchContext) {
-  validateAstStrategy(context);
-  const next = temporary(context.filePath);
-  const metadata = await lstat(context.filePath);
-  try {
-    await writeFile(next, context.original, {
-      encoding: "utf8",
-      flag: "wx",
-      mode: metadata.mode,
-    });
-    const totalMatches = await applyAstRules(context, next);
-    const candidate = await readFile(next, "utf8");
-    return await astPatchResult(
-      context,
-      candidate,
-      metadata.mode,
-      totalMatches,
-    );
-  } finally {
-    await removeTemporary(next);
-  }
-}
-
-function validateAiderStrategy(context: PatchContext) {
-  if (context.rewritable)
-    throw new Error(
-      "REJECTED: structurally rewritable files require patchStrategy 'ast' with astRules",
-    );
-  if (context.aiderBlocks.length === 0 || context.astRules.length > 0)
-    throw new Error(
-      "REJECTED: patchStrategy 'aider_block' requires aiderBlocks and no astRules",
-    );
-}
-
-function applyAiderBlocks(content: string, blocks: AiderBlock[]) {
-  const methods: string[] = [];
-  for (const block of blocks) {
-    const result = applyAiderBlock(content, block.search, block.replace);
-    content = result.content;
-    methods.push(result.method);
-  }
-  return { content, methods };
-}
-
-async function applyAiderPatch(context: PatchContext) {
-  validateAiderStrategy(context);
-  const { content, methods } = applyAiderBlocks(
-    context.original,
-    context.aiderBlocks,
-  );
-  if (context.request.preview)
-    return patchPreview(context, content, {
-      matchMethods: methods,
-      operations: context.aiderBlocks.length,
-      strategy: "aider_block",
-    });
-  await commit(
-    context.filePath,
-    content,
-    (await lstat(context.filePath)).mode,
-    context.actual,
-    context.request.chattr,
-  );
-  const updated = await readFile(context.filePath, "utf8");
-  return {
-    filePath: context.filePath,
-    matchMethods: methods,
-    operations: context.aiderBlocks.length,
-    preview: false,
-    sha256: sha256(updated),
-    strategy: "aider_block",
-  };
+async function prepareFormattedStrategyPatch(context: PatchContext) {
+  const prepared = await patchStrategyAdapter(
+    context.request.patchStrategy,
+  ).prepare(context);
+  const candidate = await formatContent(context.filePath, prepared.candidate);
+  await validateStructuredCandidate(context.capabilities, candidate);
+  return { candidate, metadata: prepared.metadata };
 }
 
 async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
+  if (request.previewReceipt)
+    return applyPreparedPatch(
+      filePath,
+      request,
+      await preflightPatchBatch(filePath, request),
+    );
   const context = await createPatchContext(filePath, request);
-  return request.patchStrategy === "ast"
-    ? applyAstPatch(context)
-    : applyAiderPatch(context);
+  const prepared = await prepareFormattedStrategyPatch(context);
+  if (request.preview)
+    return patchPreview(context, prepared.candidate, prepared.metadata);
+  await commit(
+    filePath,
+    prepared.candidate,
+    context.mode,
+    context.actual,
+    request.chattr,
+    true,
+  );
+  return {
+    ...prepared.metadata,
+    filePath,
+    preview: false,
+    sha256: sha256(prepared.candidate),
+  };
 }
 
 async function applyPatchBatch(
-  inputPath: string,
+  filePath: string,
   request: PatchBatchRequest,
 ): Promise<Record<string, unknown>> {
-  const filePath = await resolveWritablePath(inputPath);
   return withFileLock(filePath, () => applyLockedPatch(filePath, request));
 }
 
 export async function patchFile(
   request: PatchRequest,
 ): Promise<Record<string, unknown>> {
-  return applyPatchBatch(request.filePath, {
+  return applyPatchBatch(await resolveWritablePath(request.filePath), {
     aiderBlocks: request.aiderBlock ? [request.aiderBlock] : undefined,
     astRules: request.astRule ? [request.astRule] : undefined,
     expectedSha256: request.expectedSha256,
@@ -439,26 +430,338 @@ export async function patchFile(
   });
 }
 
-async function processFileBatch<T>(
+interface PreparedPatch {
+  candidate?: string;
+  chattr?: FileChattr;
+  mode?: number;
+  previewResult?: Record<string, unknown>;
+  receiptToken?: string;
+  result?: Record<string, unknown>;
+  sourceSha256?: string;
+}
+
+async function preflightPatchBatch(
+  filePath: string,
+  request: PatchBatchRequest,
+): Promise<PreparedPatch> {
+  if (request.preview)
+    return { previewResult: await applyLockedPatch(filePath, request) };
+  if (request.previewReceipt) {
+    const receipt = await validatePreviewReceipt(
+      filePath,
+      request.previewReceipt,
+    );
+    return {
+      candidate: receipt.candidate,
+      chattr: receipt.chattr,
+      mode: (await lstat(filePath)).mode,
+      receiptToken: request.previewReceipt,
+      result: {
+        filePath,
+        matches: receipt.metadata.matches,
+        matchMethods: receipt.metadata.matchMethods,
+        operations: receipt.metadata.operations,
+        preview: false,
+        receiptCommitted: true,
+        sha256: receipt.candidateSha256,
+        strategy: receipt.metadata.strategy,
+      },
+      sourceSha256: receipt.sourceSha256,
+    };
+  }
+
+  const context = await createPatchContext(filePath, request);
+  const prepared = await prepareFormattedStrategyPatch(context);
+  return {
+    candidate: prepared.candidate,
+    chattr: request.chattr,
+    mode: context.mode,
+    result: {
+      ...prepared.metadata,
+      filePath,
+      preview: false,
+      sha256: sha256(prepared.candidate),
+    },
+    sourceSha256: context.actual,
+  };
+}
+
+async function applyPreparedPatch(
+  filePath: string,
+  _request: PatchBatchRequest,
+  prepared: PreparedPatch,
+): Promise<Record<string, unknown>> {
+  if (prepared.previewResult) return prepared.previewResult;
+  if (
+    prepared.candidate === undefined ||
+    prepared.mode === undefined ||
+    !prepared.result ||
+    prepared.sourceSha256 === undefined
+  )
+    throw new Error("Patch batch preflight did not produce a commit candidate");
+  if (prepared.receiptToken) {
+    const receipt = previewReceipts.get(prepared.receiptToken);
+    if (receipt) clearTimeout(receipt.expiryTimer);
+    previewReceipts.delete(prepared.receiptToken);
+  }
+  await commit(
+    filePath,
+    prepared.candidate,
+    prepared.mode,
+    prepared.sourceSha256,
+    prepared.chattr,
+    true,
+  );
+  return prepared.result;
+}
+
+interface PreparedWrite {
+  actual?: string;
+  content: string;
+  existing: boolean;
+  mode?: number;
+}
+
+async function preflightFileWrite(
+  filePath: string,
+  request: FileWriteRequest,
+): Promise<PreparedWrite> {
+  validateFileChattr(request.chattr);
+  const existing = await readFile(filePath, "utf8").catch(() => undefined);
+  let actual: string | undefined;
+  let mode: number | undefined;
+  if (existing !== undefined) {
+    await requireExpectedHash(request.expectedSha256, "file_write overwrite");
+    actual = sha256(existing);
+    verifyExpectedHash(request.expectedSha256, actual);
+    const capabilities = await inspectFileCapabilities(filePath);
+    if (capabilities.effective.patch.includes("ast"))
+      throw new Error(
+        "REJECTED: structurally rewritable existing files require file_patch with patchStrategy 'ast'",
+      );
+    mode = (await lstat(filePath)).mode;
+  }
+  const parentExists = await lstat(path.dirname(filePath)).then(
+    () => true,
+    () => false,
+  );
+  const createdDirectories = parentExists ? [] : await ensureParent(filePath);
+  try {
+    return {
+      actual,
+      content: await formatContent(filePath, request.content),
+      existing: existing !== undefined,
+      mode,
+    };
+  } finally {
+    await removeCreatedDirectories(createdDirectories);
+  }
+}
+
+interface ResolvedBatchEntry<T> {
+  inputPath: string;
+  request: T;
+  resolvedPath: string;
+}
+
+type BatchFileSnapshot =
+  | undefined
+  | {
+      chattr: Awaited<ReturnType<typeof resultingFileChattr>>;
+      content: string;
+      mode: number;
+    };
+
+interface CommittedBatchEntry {
+  resolvedPath: string;
+  result: Record<string, unknown>;
+}
+
+async function optionalContent(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+async function captureBatchSnapshots<T>(
+  entries: ResolvedBatchEntry<T>[],
+): Promise<Map<string, BatchFileSnapshot>> {
+  const snapshots = new Map<string, BatchFileSnapshot>();
+  for (const { resolvedPath } of entries) {
+    const content = await optionalContent(resolvedPath);
+    snapshots.set(
+      resolvedPath,
+      content === undefined
+        ? undefined
+        : {
+            chattr: await resultingFileChattr(resolvedPath),
+            content,
+            mode: (await lstat(resolvedPath)).mode,
+          },
+    );
+  }
+  return snapshots;
+}
+
+function discardPreparedPreviews<Prepared>(prepared: Prepared[]): void {
+  for (const item of prepared) {
+    const token = (item as PreparedPatch).previewResult?.previewReceipt;
+    if (typeof token !== "string") continue;
+    const receipt = previewReceipts.get(token);
+    if (receipt) clearTimeout(receipt.expiryTimer);
+    previewReceipts.delete(token);
+  }
+}
+
+async function prepareFileBatch<T, Prepared>(
+  entries: ResolvedBatchEntry<T>[],
+  preflight: (filePath: string, request: T) => Promise<Prepared>,
+): Promise<Prepared[]> {
+  const prepared: Prepared[] = [];
+  try {
+    for (const { request, resolvedPath } of entries)
+      prepared.push(await preflight(resolvedPath, request));
+    return prepared;
+  } catch (error) {
+    discardPreparedPreviews(prepared);
+    throw error;
+  }
+}
+
+async function rollbackFileBatch(
+  committed: CommittedBatchEntry[],
+  snapshots: Map<string, BatchFileSnapshot>,
+): Promise<void> {
+  for (const { resolvedPath, result } of committed.reverse()) {
+    const snapshot = snapshots.get(resolvedPath);
+    if (snapshot) {
+      await ignoreFailure(
+        commit(
+          resolvedPath,
+          snapshot.content,
+          snapshot.mode,
+          undefined,
+          snapshot.chattr,
+          true,
+        ),
+      );
+      continue;
+    }
+    await ignoreFailure(unlink(resolvedPath));
+    const createdDirectories = result.createdDirectories;
+    if (Array.isArray(createdDirectories))
+      await removeCreatedDirectories(
+        createdDirectories.filter(
+          (value): value is string => typeof value === "string",
+        ),
+      );
+  }
+}
+
+async function executePreparedFileBatch<T, Prepared>(
+  entries: ResolvedBatchEntry<T>[],
+  handler: (
+    filePath: string,
+    request: T,
+    prepared: Prepared,
+  ) => Promise<Record<string, unknown>>,
+  preflight: (filePath: string, request: T) => Promise<Prepared>,
+  mutates: (request: T) => boolean,
+): Promise<Record<string, unknown>> {
+  const snapshots = await captureBatchSnapshots(entries);
+  const prepared = await prepareFileBatch(entries, preflight);
+  const files: Record<string, unknown> = {};
+  const committed: CommittedBatchEntry[] = [];
+  try {
+    for (const [
+      index,
+      { inputPath, request, resolvedPath },
+    ] of entries.entries()) {
+      const result = await handler(
+        resolvedPath,
+        request,
+        prepared[index] as Prepared,
+      );
+      files[inputPath] = result;
+      if (mutates(request)) committed.push({ resolvedPath, result });
+    }
+    return { files };
+  } catch (error) {
+    discardPreparedPreviews(prepared);
+    await rollbackFileBatch(committed, snapshots);
+    throw error;
+  }
+}
+
+async function processFileBatch<T, Prepared>(
   tool: "file_patch" | "file_write",
   requests: Record<string, T>,
-  handler: (filePath: string, request: T) => Promise<Record<string, unknown>>,
+  handler: (
+    filePath: string,
+    request: T,
+    prepared: Prepared,
+  ) => Promise<Record<string, unknown>>,
+  preflight: (filePath: string, request: T) => Promise<Prepared>,
+  mutates: (request: T) => boolean,
 ): Promise<Record<string, unknown>> {
   const entries = Object.entries(requests);
   if (entries.length < 1 || entries.length > FILE_READ_MAX_BATCH)
     throw new Error(
       `${tool} requires between 1 and ${FILE_READ_MAX_BATCH} files`,
     );
-  const files: Record<string, unknown> = {};
-  for (const [filePath, request] of entries)
-    files[filePath] = await handler(filePath, request);
-  return { files };
+  const resolvedEntries = await Promise.all(
+    entries.map(async ([inputPath, request]) => ({
+      inputPath,
+      request,
+      resolvedPath: await resolveWritablePath(inputPath),
+    })),
+  );
+  return withFileLocks(
+    resolvedEntries.map(({ resolvedPath }) => resolvedPath),
+    () =>
+      executePreparedFileBatch(resolvedEntries, handler, preflight, mutates),
+  );
 }
 
 export async function patchFiles(
   requests: PatchBatch,
 ): Promise<Record<string, unknown>> {
-  return processFileBatch("file_patch", requests, applyPatchBatch);
+  return processFileBatch(
+    "file_patch",
+    requests,
+    applyPreparedPatch,
+    preflightPatchBatch,
+    (request) => request.preview !== true,
+  );
+}
+
+async function writeFileResolved(
+  args: {
+    chattr?: FileChattr;
+    filePath: string;
+    content: string;
+    expectedSha256?: string;
+  },
+  prepared?: PreparedWrite,
+): Promise<Record<string, unknown>> {
+  const candidate = prepared ?? (await preflightFileWrite(args.filePath, args));
+  const committed = await commit(
+    args.filePath,
+    candidate.content,
+    candidate.mode,
+    candidate.actual,
+    args.chattr,
+    true,
+  );
+  return {
+    chattr: committed.chattr,
+    created: !candidate.existing,
+    createdDirectories: committed.createdDirectories,
+    filePath: args.filePath,
+    sha256: committed.sha256,
+  };
 }
 
 export async function writeFileSafely(args: {
@@ -468,53 +771,26 @@ export async function writeFileSafely(args: {
   expectedSha256?: string;
 }): Promise<Record<string, unknown>> {
   const filePath = await resolveWritablePath(args.filePath);
-  return withFileLock(filePath, async () => {
-    const existing = await readFile(filePath, "utf8").catch(() => undefined);
-    let createdDirectories: string[];
-    if (existing !== undefined) {
-      await requireExpectedHash(args.expectedSha256, "file_write overwrite");
-      const actual = sha256(existing);
-      verifyExpectedHash(args.expectedSha256, actual);
-      const language = detectAstLanguage(filePath);
-      if (await astRewritable(filePath, language))
-        throw new Error(
-          "REJECTED: structurally rewritable existing files require file_patch with patchStrategy 'ast'",
-        );
-      createdDirectories = await commit(
-        filePath,
-        args.content,
-        (await lstat(filePath)).mode,
-        actual,
-        args.chattr,
-      );
-    } else
-      createdDirectories = await commit(
-        filePath,
-        args.content,
-        undefined,
-        undefined,
-        args.chattr,
-      );
-    const updated = await readFile(filePath, "utf8");
-    return {
-      chattr: await resultingFileChattr(filePath),
-      created: existing === undefined,
-      createdDirectories,
-      filePath,
-      sha256: sha256(updated),
-    };
-  });
+  return withFileLock(filePath, () => writeFileResolved({ ...args, filePath }));
 }
 
 export async function writeFilesSafely(
   requests: FileWriteBatch,
 ): Promise<Record<string, unknown>> {
-  return processFileBatch("file_write", requests, (filePath, request) =>
-    writeFileSafely({
-      chattr: request.chattr,
-      content: request.content,
-      expectedSha256: request.expectedSha256,
-      filePath,
-    }),
+  return processFileBatch(
+    "file_write",
+    requests,
+    (filePath, request, prepared) =>
+      writeFileResolved(
+        {
+          chattr: request.chattr,
+          content: request.content,
+          expectedSha256: request.expectedSha256,
+          filePath,
+        },
+        prepared,
+      ),
+    preflightFileWrite,
+    () => true,
   );
 }

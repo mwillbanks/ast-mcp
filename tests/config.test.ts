@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -158,6 +158,14 @@ test("reports malformed TOML, unknown keys, and invalid environment values", asy
   await expect(
     resolveConfig({ cwd: root, env: { PORT: "70000" } }),
   ).rejects.toThrow("PORT must be an integer from 1 to 65535");
+  clearConfigCache();
+  await writeFile(
+    file,
+    'version = 2\n[safety.hook]\nallow_tools = ["Bash"]\nblock_tools = ["bash"]\n',
+  );
+  await expect(resolveConfig({ cwd: root, env: {} })).rejects.toThrow(
+    "cannot be both allowed and blocked",
+  );
 });
 
 test("reloads changed and deleted files while caching unchanged resolutions", async () => {
@@ -200,7 +208,9 @@ test("uses client roots and rejects a request crossing conflicting policies", as
     requestPaths: [path.join(second, "value.ts")],
   });
   expect(selected.projectRoot).toBe(second);
-  expect(selected.trustedRoots).toEqual([first, second]);
+  expect(selected.trustedRoots).toEqual([
+    ...new Set([first, second, await realpath(first), await realpath(second)]),
+  ]);
 
   await expect(
     resolveConfig({
@@ -213,6 +223,93 @@ test("uses client roots and rejects a request crossing conflicting policies", as
       ],
     }),
   ).rejects.toThrow("conflicting ast-mcp policies");
+
+  clearConfigCache();
+  await writeFile(
+    path.join(first, "ast-mcp.toml"),
+    `version = 2
+
+[[paths]]
+id = "first-source"
+path = "."
+policies = { read = "allow", write = "request" }
+`,
+  );
+  await writeFile(
+    path.join(second, "ast-mcp.toml"),
+    `version = 2
+
+[[paths]]
+id = "second-source"
+path = "."
+policies = { read = "deny", write = "request" }
+`,
+  );
+  await expect(
+    resolveConfig({
+      clientRoots: [first, second],
+      cwd: os.tmpdir(),
+      env: {},
+      requestPaths: [
+        path.join(first, "value.ts"),
+        path.join(second, "value.ts"),
+      ],
+    }),
+  ).rejects.toThrow("conflicting ast-mcp policies");
+
+  clearConfigCache();
+  const sharedPolicy = `version = 2
+
+[[paths]]
+id = "shared-source"
+path = "."
+policies = { read = "allow", write = "allow" }
+`;
+  await Promise.all([
+    writeFile(path.join(first, "ast-mcp.toml"), sharedPolicy),
+    writeFile(path.join(second, "ast-mcp.toml"), sharedPolicy),
+  ]);
+  const compatible = await resolveConfig({
+    clientRoots: [first, second],
+    cwd: os.tmpdir(),
+    env: {},
+    requestPaths: [path.join(first, "value.ts"), path.join(second, "value.ts")],
+  });
+  expect(compatible.projectRoot).toBe(first);
+
+  const orderedRules = [
+    `[[paths]]
+id = "workspace"
+path = "."
+policies = { read = "allow", write = "allow" }
+includes = ["src/**", "tests/**"]
+`,
+    `[[paths]]
+id = "configuration"
+path = "./ast-mcp.toml"
+policies = { read = "allow", write = "request" }
+`,
+  ];
+  await Promise.all([
+    writeFile(
+      path.join(first, "ast-mcp.toml"),
+      `version = 2
+${orderedRules.join("\n")}`,
+    ),
+    writeFile(
+      path.join(second, "ast-mcp.toml"),
+      `version = 2
+${[...orderedRules].reverse().join("\n")}`,
+    ),
+  ]);
+  clearConfigCache();
+  const reordered = await resolveConfig({
+    clientRoots: [first, second],
+    cwd: os.tmpdir(),
+    env: {},
+    requestPaths: [path.join(first, "value.ts"), path.join(second, "value.ts")],
+  });
+  expect(reordered.projectRoot).toBe(first);
 });
 
 test("extracts paths from declared file batches and direct tool shapes", () => {
@@ -234,7 +331,7 @@ test("runs local tool operations inside the active configuration", async () => {
   expect(config.projectRoot).toBe(process.cwd());
 });
 
-test("queries MCP roots only when the client advertises the capability", async () => {
+test("queries MCP roots only when the client advertises the capability and refreshes on notification", async () => {
   let unsupportedListCalled = false;
   const unsupported = {
     server: {
@@ -243,6 +340,7 @@ test("queries MCP roots only when the client advertises the capability", async (
         unsupportedListCalled = true;
         return { roots: [] };
       },
+      setNotificationHandler: () => {},
     },
   } as unknown as McpServer;
   const fallback = await configuredExecution(unsupported)({}, currentConfig);
@@ -250,19 +348,43 @@ test("queries MCP roots only when the client advertises the capability", async (
   expect(unsupportedListCalled).toBeFalse();
 
   const root = await project("ast-mcp-config-client-root-");
+  const second = await project("ast-mcp-config-client-root-next-");
   await writeFile(path.join(root, "ast-mcp.toml"), "[http]\nport = 4321\n");
+  await writeFile(path.join(second, "ast-mcp.toml"), "[http]\nport = 4322\n");
+  let activeRoot = root;
+  let listRootsCalls = 0;
+  let rootsChanged: (() => void) | undefined;
   const supported = {
     server: {
       getClientCapabilities: () => ({ roots: {} }),
-      listRoots: async () => ({
-        roots: [{ uri: `file://${root}` }],
-      }),
+      listRoots: async () => {
+        listRootsCalls += 1;
+        return { roots: [{ uri: `file://${activeRoot}` }] };
+      },
+      setNotificationHandler: (method: string, handler: () => void) => {
+        expect(method).toBe("notifications/roots/list_changed");
+        rootsChanged = handler;
+      },
     },
   } as unknown as McpServer;
-  const selected = await configuredExecution(supported)(
+  const execution = configuredExecution(supported);
+  const selected = await execution(
     { path: path.join(root, "src") },
     currentConfig,
   );
   expect(selected.projectRoot).toBe(root);
   expect(selected.http.port).toBe(4321);
+  expect(listRootsCalls).toBe(1);
+  await execution({ path: path.join(root, "other") }, currentConfig);
+  expect(listRootsCalls).toBe(1);
+
+  activeRoot = second;
+  rootsChanged?.();
+  const refreshed = await execution(
+    { path: path.join(second, "refreshed") },
+    currentConfig,
+  );
+  expect(refreshed.projectRoot).toBe(second);
+  expect(refreshed.http.port).toBe(4322);
+  expect(listRootsCalls).toBe(2);
 });

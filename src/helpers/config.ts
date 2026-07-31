@@ -14,6 +14,8 @@ type ConfigLayer = {
     }>;
     [key: string]: unknown;
   };
+  paths?: Array<{ path: string; [key: string]: unknown }>;
+  safety?: { [key: string]: unknown };
   workspace?: { roots?: string[] };
   [key: string]: unknown;
 };
@@ -73,6 +75,11 @@ export function normalizeConfigLayer<T extends ConfigLayer>(
     ...value,
     dependencies: normalizeDependencies(value.dependencies, base),
     formatting: normalizeFormatting(value.formatting, base),
+    paths: value.paths?.map((rule) => ({
+      ...rule,
+      path: resolvedPath(rule.path, base),
+    })),
+    safety: value.safety,
     workspace: value.workspace?.roots
       ? { roots: value.workspace.roots.map((item) => resolvedPath(item, base)) }
       : value.workspace,

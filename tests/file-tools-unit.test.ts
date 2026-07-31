@@ -2,12 +2,71 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  structuredUpstreamToolResult,
+  toolFailure,
+} from "../src/helpers/mcp-schema";
 import registerFileTools from "../src/tools/files";
 
 type RegisteredTool = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
   isError?: boolean;
 }>;
+
+test("upstream tool results preserve structured success and failure", () => {
+  const success = structuredUpstreamToolResult(
+    { content: [{ text: "ok", type: "text" }] },
+    "map",
+  );
+  expect(success).toMatchObject({ structuredContent: { ok: true } });
+
+  const failure = structuredUpstreamToolResult(
+    {
+      content: [{ type: "image" }, { text: "upstream failed", type: "text" }],
+      isError: true,
+    },
+    "map",
+  );
+  expect(failure).toMatchObject({
+    isError: true,
+    structuredContent: {
+      error: {
+        code: "upstream_tool_error",
+        message: "upstream failed",
+        suggestedNextCall: "map",
+      },
+      ok: false,
+    },
+  });
+  expect(
+    structuredUpstreamToolResult(
+      { content: [{ type: "text" }], isError: true },
+      "show",
+    ),
+  ).toMatchObject({
+    structuredContent: { error: { message: "Upstream tool failed" } },
+  });
+  expect(
+    toolFailure(new Error("Stale file context: expected abc, found def")),
+  ).toMatchObject({
+    structuredContent: {
+      error: {
+        code: "stale_or_missing_hash",
+        retryable: true,
+        suggestedNextCall: "file_hash",
+      },
+    },
+  });
+  expect(
+    toolFailure(
+      new Error(
+        "file_patch requires expectedSha256 while safety.require_hash is enabled",
+      ),
+    ),
+  ).toMatchObject({
+    structuredContent: { error: { code: "stale_or_missing_hash" } },
+  });
+});
 
 test("file tool handlers execute keyed batches without transport indirection", async () => {
   const folder = await mkdtemp(path.join(process.cwd(), ".tmp-file-tools-"));
@@ -35,6 +94,11 @@ test("file tool handlers execute keyed batches without transport indirection", a
         inputSchema: { safeParse: (value: unknown) => { success: boolean } };
       }
     ).inputSchema;
+    const readSchema = (
+      definitions.get("file_read") as {
+        inputSchema: { safeParse: (value: unknown) => { success: boolean } };
+      }
+    ).inputSchema;
     expect(
       writeSchema.safeParse({ files: { [first]: { content: "x" } } }).success,
     ).toBeTrue();
@@ -49,6 +113,38 @@ test("file tool handlers execute keyed batches without transport indirection", a
         },
       }).success,
     ).toBeTrue();
+    expect(
+      readSchema.safeParse({
+        files: [{ filePath: notes, range: { end: 2, start: 0 } }],
+      }).success,
+    ).toBeTrue();
+    expect(
+      readSchema.safeParse({
+        files: [
+          { filePath: notes, lines: [0, 2], range: { end: 2, start: 0 } },
+        ],
+      }).success,
+    ).toBeFalse();
+    expect(
+      patchSchema.safeParse({
+        files: {
+          [notes]: { previewReceipt: "8dcdf7de-8954-4a1b-88c4-aa3085741c50" },
+        },
+      }).success,
+    ).toBeTrue();
+    expect(
+      patchSchema.safeParse({ files: { [notes]: {} } }).success,
+    ).toBeFalse();
+    expect(
+      patchSchema.safeParse({
+        files: {
+          [notes]: {
+            patchStrategy: "aider_block",
+            previewReceipt: "8dcdf7de-8954-4a1b-88c4-aa3085741c50",
+          },
+        },
+      }).success,
+    ).toBeFalse();
     await writeFile(notes, "alpha\nbeta\n");
 
     const written = await (registered.get("file_write") as RegisteredTool)({
@@ -57,11 +153,15 @@ test("file tool handlers execute keyed batches without transport indirection", a
         [second]: { content: "second\n" },
       },
     });
+    if (written.isError)
+      throw new Error(
+        written.content.map((item) => item.text ?? "").join("\n"),
+      );
     expect(written.isError).not.toBeTrue();
 
     const read = await (registered.get("file_read") as RegisteredTool)({
       files: [
-        { filePath: first, lines: [0, 2] },
+        { filePath: first, range: { end: 2, start: 0 } },
         { filePath: second, lines: [0, 2] },
       ],
     });
@@ -70,7 +170,11 @@ test("file tool handlers execute keyed batches without transport indirection", a
     const hashed = await (registered.get("file_hash") as RegisteredTool)({
       filePaths: [first, second],
     });
+    const capabilities = await (
+      registered.get("file_capabilities") as RegisteredTool
+    )({ filePaths: [notes] });
     expect(hashed.isError).not.toBeTrue();
+    expect(capabilities.isError).not.toBeTrue();
 
     const hashFailure = await (registered.get("file_hash") as RegisteredTool)({
       filePaths: ["/etc/hosts"],
@@ -99,13 +203,23 @@ test("file tool handlers execute keyed batches without transport indirection", a
         },
       },
     });
+    if (patched.isError)
+      throw new Error(
+        patched.content.map((item) => item.text ?? "").join("\n"),
+      );
     expect(patched.isError).not.toBeTrue();
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
 
-    const rejected = await (registered.get("file_read") as RegisteredTool)({
+    const astRead = await (registered.get("file_read") as RegisteredTool)({
       files: [{ filePath: path.join(process.cwd(), "src/server.ts") }],
     });
-    expect(rejected.isError).toBeTrue();
+    const textRead = await (registered.get("file_read") as RegisteredTool)({
+      files: [
+        { filePath: path.join(process.cwd(), "src/server.ts"), mode: "text" },
+      ],
+    });
+    expect(astRead.isError).not.toBeTrue();
+    expect(textRead.isError).not.toBeTrue();
   } finally {
     await rm(folder, { force: true, recursive: true });
   }

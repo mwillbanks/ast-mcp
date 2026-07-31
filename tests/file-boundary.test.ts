@@ -21,7 +21,7 @@ test("file_read returns a bounded non-AST slice and whole-file hash", async () =
   const filePath = path.join(folder, "note.xml");
   const content = "zero\none\ntwo\nthree\n";
   await writeFile(filePath, content);
-  expect(await readFileSafely({ filePath, lines: [1, 3] })).toEqual({
+  expect(await readFileSafely({ filePath, lines: [1, 3] })).toMatchObject({
     content: "one\ntwo\n",
     filePath: await realpath(filePath),
     hasMore: true,

@@ -61,7 +61,7 @@ The returned SHA-256 binds the operation to the file state you inspected. If ano
 }
 ```
 
-Unsupported or non-code files use `patchStrategy: "aider_block"` with unique search and replacement blocks.
+When `file_capabilities` reports Aider support, the agent may instead choose `patchStrategy: "aider_block"` with a unique exact search and replacement block. Parseable source may support both strategies.
 
 ## 5. Verify behavior
 

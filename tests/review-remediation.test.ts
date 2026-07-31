@@ -249,6 +249,82 @@ test("transcript scoring rejects failed, duplicate, and mismatched evidence", as
   }
 });
 
+test("transcript efficiency counts selectors, checks, and JSON run mutations", async () => {
+  const directory = await mkdtemp(
+    path.join(process.env.TMPDIR ?? "/tmp", "ast-mcp-score-metrics-"),
+  );
+  const sessionPath = path.join(directory, "session.jsonl");
+  const call = (callId: string, name: string, input: unknown) =>
+    JSON.stringify({
+      payload: {
+        call_id: callId,
+        input,
+        name,
+        type: "custom_tool_call",
+      },
+      type: "response_item",
+    });
+  const output = (callId: string) =>
+    JSON.stringify({
+      payload: {
+        call_id: callId,
+        output: [{ text: "ok" }],
+        type: "custom_tool_call_output",
+      },
+      type: "response_item",
+    });
+  try {
+    await writeFile(
+      sessionPath,
+      [
+        JSON.stringify({
+          payload: { cwd: directory, workspace_roots: [directory] },
+          type: "turn_context",
+        }),
+        call(
+          "parallel",
+          "exec",
+          `await Promise.all([
+                    tools.mcp__ast_mcp__run({"pattern":"x","paths":["a.ts"],"write":true}),
+                    tools.mcp__ast_mcp__file_hash({"filePaths":["a.ts"]}),
+                    tools.mcp__ast_mcp__search({"query":"value"}),
+                  ]);`,
+        ),
+        output("parallel"),
+        call("selectors", "mcp__ast_mcp__document_query", {
+          filePath: "config.json",
+          selectors: ["/name", "/version"],
+        }),
+        output("selectors"),
+        call("checks", "mcp__ast_mcp__policy_check", {
+          checks: [
+            { operation: "read", path: "a.ts" },
+            { operation: "write", path: "b.ts" },
+          ],
+        }),
+        output("checks"),
+      ].join("\n"),
+    );
+    const process = Bun.spawn(
+      ["bun", "run", "templates/skills/ast-mcp/evals/measure.ts", sessionPath],
+      { stderr: "pipe", stdout: "pipe" },
+    );
+    const [stdout, exitCode] = await Promise.all([
+      new Response(process.stdout).text(),
+      process.exited,
+    ]);
+    expect(exitCode).toBe(0);
+    const score = JSON.parse(stdout) as {
+      batchDensity: number;
+      parallelReadOnlyCalls: number;
+    };
+    expect(score.parallelReadOnlyCalls).toBe(1);
+    expect(score.batchDensity).toBe(0.4);
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
+});
+
 test("stdio reports input and protocol-response errors", async () => {
   const stdin = new PassThrough();
   const stdout = new Writable({

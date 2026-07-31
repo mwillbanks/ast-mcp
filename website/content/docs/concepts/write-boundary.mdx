@@ -8,28 +8,31 @@ A requested edit is not enough to authorize a write. ast-mcp requires a route th
 
 ## Route selection
 
-| Target                                            | Required route                                   |
-| ------------------------------------------------- | ------------------------------------------------ |
-| New file                                          | `file_write`                                     |
-| Parseable rewrite-supported source                | `file_patch` with `patchStrategy: "ast"`         |
-| Unsupported, unparseable, or inspection-only file | `file_patch` with `patchStrategy: "aider_block"` |
-| Rename                                            | `file_rename`                                    |
-| Metadata-only change                              | `file_chattr`                                    |
-| Deletion                                          | `file_delete`                                    |
+| Target or intent             | Required route                                                  |
+| ---------------------------- | --------------------------------------------------------------- |
+| Inspect supported methods    | `file_capabilities`                                             |
+| Structural or semantic patch | `file_patch` with `patchStrategy: "ast"` when effective         |
+| Small exact text patch       | `file_patch` with `patchStrategy: "aider_block"` when effective |
+| New file                     | `file_write`                                                    |
+| Rename                       | `file_rename`                                                   |
+| Metadata-only change         | `file_chattr`                                                   |
+| Deletion                     | `file_delete`                                                   |
+
+Parseable source commonly supports both patch strategies. The agent selects one explicitly; configuration can narrow the effective methods but never silently changes the selection.
 
 ## Commit sequence
 
-1. Resolve the path under an allowed root.
-2. Confirm the requested route matches the file's capabilities.
-3. Compare the supplied SHA-256 with current state.
-4. Build candidate content from reviewed operations.
-5. Assert that dprint can format the candidate.
-6. Acquire cooperating locks in deterministic path order.
-7. Recheck the hash inside the lock.
-8. Format and atomically replace the file.
-9. Release locks on success or failure.
+1. Resolve and canonicalize every batch path.
+2. Preflight read, write, delete, symlink, and approval policy for the complete batch.
+3. Confirm the requested route matches each file's capabilities.
+4. Compare every supplied SHA-256 with current state.
+5. Build candidates from reviewed ordered operations and parse structural rewrites.
+6. Format according to the resident configuration snapshot without touching live targets.
+7. Acquire cooperating locks in deterministic path order.
+8. Recheck policy, approval, configuration generation, and source hashes inside the lock.
+9. Atomically replace files and release locks on success or failure.
 
-A stale hash, ambiguous Aider block, unexpected AST match count, capped preview, formatter rejection, or lost MCP connection is a safe stop.
+A preview may return a short-lived, one-use receipt bound to the session, source hash, configuration generation, normalized operations, and formatted candidate. Receipt commit avoids reparsing or rematching but repeats authorization and freshness checks. A stale hash or receipt, ambiguous Aider block, unexpected AST match count, capped preview, formatter rejection, or lost MCP connection is a safe stop.
 
 ## Concurrency
 

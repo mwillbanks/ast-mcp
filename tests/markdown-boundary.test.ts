@@ -20,7 +20,7 @@ afterEach(async () => {
   );
 });
 
-test("Markdown uses AST inspection but the guarded Aider rewrite route", async () => {
+test("Markdown supports agent-selected reads and guarded Aider rewrites", async () => {
   const folder = await mkdtemp(
     path.join(repositoryRoot, ".tmp-markdown-boundary-"),
   );
@@ -29,8 +29,9 @@ test("Markdown uses AST inspection but the guarded Aider rewrite route", async (
   const original = "# Notes\n\nOld paragraph.\n";
   await writeFile(filePath, original);
 
-  await expect(readFileSafely({ filePath })).rejects.toThrow(
-    "AST-capable files must use map, show, search, context, or run",
+  expect((await readFileSafely({ filePath })).resolvedMode).toBe("ast");
+  expect((await readFileSafely({ filePath, mode: "text" })).content).toBe(
+    original,
   );
 
   const result = await patchFile({

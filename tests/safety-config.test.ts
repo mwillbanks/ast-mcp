@@ -49,6 +49,7 @@ test("file access defaults allow temp paths while preserving workspace protectio
     hook: { allowTools: [], blockTools: [], enabled: true },
     requireHash: true,
   });
+  expect(config.paths).toEqual([]);
 
   const filePath = path.join(root, "value.txt");
   await writeFile(filePath, "before");
@@ -119,7 +120,7 @@ test("file access defaults allow temp paths while preserving workspace protectio
       });
       expect(await Bun.file(unrestrictedAstPath).exists()).toBe(false);
       await expect(resolveWorkspacePath(temporaryPath)).rejects.toThrow(
-        /outside AST_MCP_ROOTS/,
+        /outside configured workspace and paths roots/,
       );
     },
   );

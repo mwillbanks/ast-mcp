@@ -4,14 +4,15 @@ The server distinguishes AST inspection from structural rewrite support. AST-cap
 
 ## Route selection
 
-1. Inspect AST-capable content with intelligence tools. Inspect unsupported content with batched, bounded `file_read` slices.
-2. Preview every ordered structural rule with ast-bro `run`; for the full guarded and formatted dry run, use the same keyed `file_patch` entry with `preview: true`, then obtain one fresh `file_hash` per keyed path immediately before mutation.
-3. Use one `file_patch({ files: { ... } })` object for one or more files. The declared `files` property contains path keys; each value has one `patchStrategy`, ordered `astRules` or `aiderBlocks` arrays, optional `preview`, and normally one fresh `expectedSha256`.
-4. Use one `file_write({ files: { ... } })` object for new files or existing non-structurally-rewritable files; existing replacements normally receive their own fresh `expectedSha256`. Use the shared `chattr` object for chmod/chown metadata. Missing parents are created only after a guarded write returns `ENOENT`, followed by path revalidation.
-5. Use `file_rename({ files: { ... } })` with a fresh byte hash for file-operation-root-bounded moves; preflight every source and destination, reject duplicate destinations, lock all endpoints, use no-replace moves, and roll back prior moves when a later move fails. The contract is recoverable on ordinary failures, not crash-atomic. Use `file_chattr` for metadata-only changes. Use `file_delete` with a fresh hash for deletion; it preflights all targets and AST import references before any deletion, rejects referenced source unless `forceReferences` is explicit, then removes empty ancestor directories after releasing locks. `safety.require_hash = false` makes hashes optional for patch, existing write, rename, and delete, but any supplied hash remains enforced.
-6. Operations for one path are serialized under one lock and one atomic commit. A preview returns a bounded diff and leaves that path unchanged; a failed rule also leaves it unchanged.
-7. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; normal agent mutations belong to `file_patch`.
-8. New files use `file_write`.
+1. Call `file_capabilities` when the route is uncertain. It is the authoritative contract shared by `file_read`, `run`, and `file_patch`, and reports intrinsic support separately from configuration-filtered methods.
+2. Choose `file_read.mode` explicitly when intent matters: `ast` returns a source map/requested symbols or RFC 6901-selected structured-document values, `text` returns a bounded slice, and `auto` prefers AST when available. Text remains selectable for AST-capable files.
+3. Choose `file_patch.patchStrategy` per target. `ast` and `aider_block` are both valid for parseable source when reported by `file_capabilities`; prefer AST for semantic or repeated structural changes and Aider for a small, exact, uniquely anchored text replacement. Configuration may narrow either method but never silently changes the agent's selection.
+4. Preview every ordered AST rule with `run`; for the full guarded and formatted dry run, use the same keyed `file_patch` entry with `preview: true`, then obtain one fresh `file_hash` per keyed path immediately before mutation. Aider patches also support the guarded preview receipt workflow.
+5. Use one `file_patch({ files: { ... } })` object for one or more files. Each path value declares exactly one `patchStrategy`, the corresponding ordered `astRules` or `aiderBlocks`, optional `preview`, and normally one fresh `expectedSha256`.
+6. Use one `file_write({ files: { ... } })` object for new files or explicit whole-file replacement where permitted. Use the shared `chattr` object for chmod/chown metadata. The complete batch policy preflight finishes before filesystem preparation.
+7. Use `file_rename`, `file_chattr`, and `file_delete` for their dedicated operations. Rename requires source `delete` and destination `write`; guarded mutations honor `safety.require_hash` and supplied hashes are always enforced.
+8. Operations for one path are serialized under one lock and one atomic commit. A preview returns a bounded diff and leaves that path unchanged; a failed rule also leaves it unchanged.
+9. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; normal agent mutations belong to `file_patch`.
 
 MCP transport requests may contain a JSON-RPC array of requests and notifications. Preserve request IDs and expect one response per request, with notifications omitted.
 
@@ -26,14 +27,14 @@ MCP transport requests may contain a JSON-RPC array of requests and notification
 
 ## Aider block discipline
 
-The native TypeScript matcher attempts exact, whitespace-normalized, relative-indentation, and diff-match-patch matching. Use bounded `file_read` slices to identify the smallest unique surrounding block, expand the slice and block on ambiguity, and never use fallback matching to bypass a structurally rewritable route.
+Version 2 enables exact, whitespace-normalized, relative-indentation, and diff-match-patch matching by default. Repositories may narrow `[files.patch].aider_matchers` when they intentionally want a stricter matching policy. Use `file_read` with `mode: "text"` to identify the smallest unique surrounding block, expand the slice and block on ambiguity, and select Aider only when the capability result permits it. Matcher ambiguity or a disabled fallback is a safe stop, never a reason to broaden the patch silently.
 
 ## Rejections
 
 - `Stale file context`: refresh `file_hash`, re-inspect through the correct AST or bounded non-AST route, and rebuild the patch.
-- AST-capable `file_read` rejection: route to `map`, `show`, `search`, `context`, or `run`.
-- `matched N nodes; expected M`: inspect and narrow the rule.
-- `first match per file`: reduce file_patch to one match or use a bounded direct run across files.
+- `read_mode_unavailable` or `patch_strategy_unavailable`: call `file_capabilities`, then make a supported explicit selection; do not retry a different method blindly.
+- `matched N nodes; expected M`: inspect the returned bounded locations and narrow the rule.
+- `first match per file`: narrow `file_patch` to one structural node or use a bounded direct run only when the lower-level rewrite is intentional.
 - capped preview or read: narrow paths, glob, pattern, line ranges, or byte caps.
 - formatter preflight failure: the selected external formatter or dprint fallback does not support the target; no write occurs. Formatting is skipped only when `[formatting].enabled = false`.
-- path or symlink rejection: use a real path under an effective workspace root or the OS temporary directory. Set `safety.allow_temp_directory = false` to remove the default temporary-directory allowance. `safety.allow_any_path = true` explicitly disables path protection for file tools. Final symlinks are followed only when `safety.follow_symlinks = true`, and their resolved targets must remain inside an allowed file-operation root unless unrestricted mode is enabled.
+- path or symlink rejection: use a real path permitted by the effective host baseline and top-level `[[paths]]` rules. Version 2 grants no implicit OS-temporary access; add a narrow explicit path rule when it is required. Legacy `safety.allow_temp_directory`, `safety.allow_any_path`, and `safety.follow_symlinks` apply only to version 1. In version 2, both a link and its resolved target must be authorized and the winning rule must set `follow_symlinks = true`.

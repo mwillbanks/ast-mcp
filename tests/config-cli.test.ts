@@ -50,7 +50,7 @@ test("validates and shows resolved configuration as stable JSON", async () => {
 
 test("reports configuration command usage errors", async () => {
   await expect(runConfigCli([])).rejects.toThrow(
-    "Expected config validate or config show",
+    "Expected config validate, config show, or config migrate",
   );
   await expect(runConfigCli(["show", "--root"])).rejects.toThrow(
     "Missing value for --root",

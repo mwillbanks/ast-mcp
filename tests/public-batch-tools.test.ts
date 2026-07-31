@@ -75,13 +75,20 @@ test("public file tools execute declared read, hash, write, and patch batches", 
     expect(patched.isError).not.toBeTrue();
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
 
-    const rejected = await client.callTool({
+    const astRead = await client.callTool({
       arguments: {
         files: [{ filePath: path.join(root, "src/server.ts") }],
       },
       name: "file_read",
     });
-    expect(rejected.isError).toBeTrue();
+    const textRead = await client.callTool({
+      arguments: {
+        files: [{ filePath: path.join(root, "src/server.ts"), mode: "text" }],
+      },
+      name: "file_read",
+    });
+    expect(astRead.isError).not.toBeTrue();
+    expect(textRead.isError).not.toBeTrue();
   } finally {
     await client.close();
     await rm(folder, { force: true, recursive: true });

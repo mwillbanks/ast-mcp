@@ -30,9 +30,14 @@ Installer output is JSON containing changed paths, the effective transport, HTTP
 ```bash
 ast-mcp config validate --root "$PWD"
 ast-mcp config show --root "$PWD"
+ast-mcp config migrate --root "$PWD"
+ast-mcp config migrate --root "$PWD" --check
+ast-mcp config migrate --root "$PWD" --write [--no-backup]
+ast-mcp config migrate --file ./ast-mcp.toml [--to 2]
+ast-mcp config migrate --global [--check|--write]
 ```
 
-Both commands resolve environment, project, global, and default layers. `validate` reports the selected project and sources; `show` also prints effective values and field provenance as JSON.
+`validate` and `show` resolve environment, project, global, and default layers. Migration defaults to preview; `--check` exits 0 when current, 2 when migration is required, and 1 for invalid input. `--write` performs atomic replacement and creates a `.v1.bak` unless disabled.
 
 ## Runtime
 

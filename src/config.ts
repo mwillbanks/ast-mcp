@@ -4,64 +4,28 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import {
+  createFormatterSchema,
+  createHookSchema,
+  dependenciesSchema,
+  httpSchema,
+  workspaceSchema,
+} from "./config-schema-common";
+import {
+  fileV2Schema,
+  type PathPolicy,
+  type PathRuleV2,
+} from "./config-v2-schema";
 import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
+import { canonicalizePath } from "./runtime/path-utils";
 
-const positiveInteger = z.number().int().positive();
-const toolNameSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(
-    /^[a-zA-Z0-9_.:-]+$/,
-    "tool names may contain letters, digits, _, ., :, and - only",
-  );
-const hookSchema = z
+const schemaVersion = 1 as const;
+const hookSchema = createHookSchema(64);
+
+const formatterSchema = createFormatterSchema({});
+const fileV1Schema = z
   .object({
-    allow_tools: z.array(toolNameSchema).max(64).optional(),
-    block_tools: z.array(toolNameSchema).max(64).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const allowed = new Set(
-      (value.allow_tools ?? []).map((tool) => tool.toLowerCase()),
-    );
-    for (const tool of value.block_tools ?? [])
-      if (allowed.has(tool.toLowerCase()))
-        context.addIssue({
-          code: "custom",
-          message: `hook tool "${tool}" cannot be both allowed and blocked`,
-          path: ["block_tools"],
-        });
-  });
-const formatterSchema = z
-  .object({
-    args: z.array(z.string().max(4096)).max(64).optional(),
-    command: z.string().min(1).max(4096),
-    extensions: z
-      .array(
-        z.string().regex(/^\.[^./\\]+$/, "extensions must begin with a dot"),
-      )
-      .max(64)
-      .optional(),
-    globs: z.array(z.string().min(1).max(4096)).max(64).optional(),
-    timeout_ms: positiveInteger.max(120_000).optional(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      Boolean(value.extensions?.length) || Boolean(value.globs?.length),
-    "formatter requires at least one extension or glob",
-  );
-const fileSchema = z
-  .object({
-    dependencies: z
-      .object({
-        ast_bro_binary: z.string().min(1).optional(),
-        dprint_binary: z.string().min(1).optional(),
-      })
-      .strict()
-      .optional(),
+    dependencies: dependenciesSchema.optional(),
     formatting: z
       .object({
         dprint_config: z.string().min(1).optional(),
@@ -70,15 +34,7 @@ const fileSchema = z
       })
       .strict()
       .optional(),
-    http: z
-      .object({
-        host: z.string().min(1).optional(),
-        port: z.number().int().min(1).max(65_535).optional(),
-        session_sweep_interval_ms: positiveInteger.optional(),
-        session_timeout_ms: positiveInteger.optional(),
-      })
-      .strict()
-      .optional(),
+    http: httpSchema.optional(),
     safety: z
       .object({
         allow_any_path: z.boolean().optional(),
@@ -90,35 +46,57 @@ const fileSchema = z
       })
       .strict()
       .optional(),
-    version: z.literal(1).optional(),
-    workspace: z
-      .object({ roots: z.array(z.string().min(1)).min(1).optional() })
-      .strict()
-      .optional(),
+    version: z.literal(schemaVersion).optional(),
+    workspace: workspaceSchema.optional(),
   })
   .strict();
 
-type AstMcpFileConfig = z.infer<typeof fileSchema>;
+type AstMcpFileConfig =
+  | z.infer<typeof fileV1Schema>
+  | z.infer<typeof fileV2Schema>;
 
 export interface ResolvedConfig {
   dependencies: { astBroBinary?: string; dprintBinary?: string };
+  files: {
+    patch: {
+      aiderMatchers: Array<
+        "exact" | "whitespace" | "relative-indentation" | "diff-match-patch"
+      >;
+      strategies: Array<"ast" | "aider_block">;
+    };
+    read: { modes: Array<"ast" | "text"> };
+  };
   formatting: {
     dprintConfig: string;
     enabled: boolean;
+    fallback: "preserve" | "dprint" | "reject";
     formatters: Array<{
       args: string[];
       command: string;
+      enabled?: boolean;
       extensions: string[];
       globs: string[];
+      id: string;
+      mode: "stdout" | "in_place";
       timeoutMs: number;
     }>;
   };
+  generation: number;
   http: {
     host: string;
     port: number;
     sessionTimeoutMs: number;
     sessionSweepIntervalMs: number;
   };
+  paths: Array<{
+    excludes: string[];
+    followSymlinks: boolean;
+    id: string;
+    includes: string[];
+    path: string;
+    policies: { delete: PathPolicy; read: PathPolicy; write: PathPolicy };
+    source: "global" | "project";
+  }>;
   projectRoot: string;
   provenance: Record<string, "default" | "global" | "project" | "environment">;
   safety: {
@@ -129,13 +107,9 @@ export interface ResolvedConfig {
     hook: { allowTools: string[]; blockTools: string[]; enabled: boolean };
     requireHash: boolean;
   };
-  sources: {
-    project?: string;
-    global?: string;
-    environment: string[];
-  };
+  sources: { project?: string; global?: string; environment: string[] };
   trustedRoots: string[];
-  version: 1;
+  version: 1 | 2;
   workspace: { roots: string[] };
 }
 
@@ -156,14 +130,27 @@ interface LoadedLayer {
 
 interface InternalConfig {
   dependencies?: { ast_bro_binary?: string; dprint_binary?: string };
+  files?: {
+    patch?: {
+      aider_matchers?: Array<
+        "exact" | "whitespace" | "relative-indentation" | "diff-match-patch"
+      >;
+      strategies?: Array<"ast" | "aider_block">;
+    };
+    read?: { modes?: Array<"ast" | "text"> };
+  };
   formatting?: {
     dprint_config?: string;
     enabled?: boolean;
+    fallback?: "preserve" | "dprint" | "reject";
     formatters?: Array<{
       args?: string[];
       command: string;
+      enabled?: boolean;
       extensions?: string[];
       globs?: string[];
+      id?: string;
+      mode?: "stdout" | "in_place";
       timeout_ms?: number;
     }>;
   };
@@ -173,6 +160,14 @@ interface InternalConfig {
     session_timeout_ms?: number;
     session_sweep_interval_ms?: number;
   };
+  paths?: Array<{
+    excludes?: string[];
+    follow_symlinks?: boolean;
+    id: string;
+    includes?: string[];
+    path: string;
+    policies: { delete?: PathPolicy; read: PathPolicy; write: PathPolicy };
+  }>;
   safety?: {
     allow_any_path?: boolean;
     allow_external_roots?: boolean;
@@ -185,7 +180,7 @@ interface InternalConfig {
     };
     require_hash?: boolean;
   };
-  version?: 1;
+  version?: 1 | 2;
   workspace?: { roots?: string[] };
 }
 
@@ -326,11 +321,51 @@ function _pathValue(value: string, base: string) {
   return path.resolve(base, value);
 }
 
-function normalizeLayer(
+async function canonicalConfigurationPath(value: string): Promise<string> {
+  return canonicalizePath(value);
+}
+
+async function normalizeLayer(
   value: AstMcpFileConfig,
   filePath: string,
-): AstMcpFileConfig {
-  return normalizeConfigLayer(value, filePath);
+): Promise<AstMcpFileConfig> {
+  const normalized = normalizeConfigLayer(value, filePath);
+  if (normalized.version !== 2 || !normalized.paths) return normalized;
+  return {
+    ...normalized,
+    paths: await Promise.all(
+      normalized.paths.map(async (rule) => ({
+        ...rule,
+        path: await canonicalConfigurationPath(rule.path),
+      })),
+    ),
+  };
+}
+
+async function parseLayerValue(filePath: string): Promise<AstMcpFileConfig> {
+  let parsed: unknown;
+  try {
+    parsed = Bun.TOML.parse(await Bun.file(filePath).text());
+  } catch (error) {
+    throw new ConfigurationError(
+      `${filePath}: invalid TOML: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const version =
+    parsed &&
+    typeof parsed === "object" &&
+    "version" in parsed &&
+    parsed.version === 2
+      ? 2
+      : 1;
+  const result = (version === 2 ? fileV2Schema : fileV1Schema).safeParse(
+    parsed,
+  );
+  if (!result.success)
+    throw new ConfigurationError(
+      `${filePath}: invalid configuration: ${diagnostic(result.error)}`,
+    );
+  return { ...result.data, version } as AstMcpFileConfig;
 }
 
 async function loadLayer(filePath: string): Promise<LoadedLayer> {
@@ -346,23 +381,10 @@ async function loadLayer(filePath: string): Promise<LoadedLayer> {
 
   const promise = (async () => {
     if (!metadata) return { fingerprint, path: filePath };
-    let parsed: unknown;
-    try {
-      parsed = Bun.TOML.parse(await Bun.file(filePath).text());
-    } catch (error) {
-      throw new ConfigurationError(
-        `${filePath}: invalid TOML: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const result = fileSchema.safeParse(parsed);
-    if (!result.success)
-      throw new ConfigurationError(
-        `${filePath}: invalid configuration: ${diagnostic(result.error)}`,
-      );
     return {
       fingerprint,
-      path: filePath,
-      value: normalizeLayer(result.data, filePath),
+      path: await canonicalConfigurationPath(filePath),
+      value: await normalizeLayer(await parseLayerValue(filePath), filePath),
     };
   })();
   layerCache.set(filePath, { fingerprint, promise });
@@ -513,6 +535,7 @@ function environmentLayer(
 const leaves = [
   "version",
   "workspace.roots",
+  "paths",
   "safety.allow_any_path",
   "safety.allow_external_roots",
   "safety.allow_temp_directory",
@@ -521,8 +544,12 @@ const leaves = [
   "safety.hook.block_tools",
   "safety.hook.enabled",
   "safety.require_hash",
+  "files.read.modes",
+  "files.patch.strategies",
+  "files.patch.aider_matchers",
   "formatting.dprint_config",
   "formatting.enabled",
+  "formatting.fallback",
   "formatting.formatters",
   "dependencies.ast_bro_binary",
   "dependencies.dprint_binary",
@@ -544,43 +571,78 @@ function leaf(value: InternalConfig, dotted: (typeof leaves)[number]) {
     );
 }
 
+const mergeSections = [
+  "workspace",
+  "safety",
+  "files",
+  "formatting",
+  "dependencies",
+  "http",
+] as const;
+
+type MergeSection = (typeof mergeSections)[number];
+
+function definedProperties(value: object): object {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  );
+}
+
+function mergeSafetyHook(
+  result: InternalConfig,
+  incoming: InternalConfig["safety"],
+  previousHook: NonNullable<InternalConfig["safety"]>["hook"],
+): void {
+  if (!incoming?.hook) return;
+  result.safety = {
+    ...result.safety,
+    hook: {
+      ...previousHook,
+      ...definedProperties(incoming.hook),
+    },
+  };
+}
+
+function mergeFileMethods(
+  result: InternalConfig,
+  incoming: InternalConfig["files"],
+  previous: InternalConfig["files"],
+): void {
+  if (!incoming) return;
+  result.files = {
+    patch: { ...previous?.patch, ...incoming.patch },
+    read: { ...previous?.read, ...incoming.read },
+  };
+}
+
+function mergeSection(
+  result: InternalConfig,
+  layer: InternalConfig,
+  section: MergeSection,
+): void {
+  const incoming = layer[section];
+  if (!incoming) return;
+  const previousHook = result.safety?.hook;
+  const previousFiles = result.files;
+  result[section] = {
+    ...(result[section] as object | undefined),
+    ...definedProperties(incoming),
+  } as never;
+  if (section === "safety")
+    mergeSafetyHook(result, incoming as InternalConfig["safety"], previousHook);
+  if (section === "files")
+    mergeFileMethods(
+      result,
+      incoming as InternalConfig["files"],
+      previousFiles,
+    );
+}
+
 function merge(...layers: InternalConfig[]): InternalConfig {
   const result: InternalConfig = {};
   for (const layer of layers) {
     if (layer.version !== undefined) result.version = layer.version;
-    for (const section of [
-      "workspace",
-      "safety",
-      "formatting",
-      "dependencies",
-      "http",
-    ] as const) {
-      const incoming = layer[section];
-      if (!incoming) continue;
-      const previousHook = result.safety?.hook;
-      const defined = Object.fromEntries(
-        Object.entries(incoming).filter(([, value]) => value !== undefined),
-      );
-      result[section] = {
-        ...(result[section] as object | undefined),
-        ...defined,
-      } as never;
-      if (section === "safety") {
-        const safetyIncoming = incoming as InternalConfig["safety"];
-        if (safetyIncoming?.hook)
-          result.safety = {
-            ...result.safety,
-            hook: {
-              ...previousHook,
-              ...Object.fromEntries(
-                Object.entries(safetyIncoming.hook).filter(
-                  ([, value]) => value !== undefined,
-                ),
-              ),
-            },
-          };
-      }
-    }
+    for (const section of mergeSections) mergeSection(result, layer, section);
   }
   return result;
 }
@@ -588,27 +650,44 @@ function merge(...layers: InternalConfig[]): InternalConfig {
 async function projectRoots(options: ResolveConfigOptions) {
   const env = options.env ?? process.env;
   const cwd = path.resolve(options.cwd ?? process.cwd());
+  const withCanonical = async (roots: string[]) => [
+    ...new Set([
+      ...roots,
+      ...(await Promise.all(roots.map(canonicalConfigurationPath))),
+    ]),
+  ];
   const clientRoots = await Promise.all(
     (options.clientRoots ?? []).map((item) =>
       existingDirectory(resolveFileUri(item)),
     ),
   );
   if (clientRoots.length)
-    return { candidates: clientRoots, trustedRoots: clientRoots };
+    return {
+      candidates: clientRoots,
+      trustedRoots: await withCanonical(clientRoots),
+    };
 
   if (env.AST_MCP_PROJECT_ROOT) {
     const selected = path.resolve(cwd, env.AST_MCP_PROJECT_ROOT);
-    return { candidates: [selected], trustedRoots: [selected] };
+    return {
+      candidates: [selected],
+      trustedRoots: await withCanonical([selected]),
+    };
   }
 
   const legacy = env.AST_MCP_ROOTS?.split(path.delimiter).filter(Boolean);
-  if (legacy?.length)
+  if (legacy?.length) {
+    const candidates = legacy.map((item) => path.resolve(cwd, item));
     return {
-      candidates: legacy.map((item) => path.resolve(cwd, item)),
-      trustedRoots: [cwd],
+      candidates,
+      trustedRoots: await withCanonical([cwd]),
     };
+  }
 
-  return { candidates: [cwd], trustedRoots: [cwd] };
+  return {
+    candidates: [cwd],
+    trustedRoots: await withCanonical([cwd]),
+  };
 }
 
 function matchedProjectRoots(
@@ -639,10 +718,6 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       session_timeout_ms: 30 * 60 * 1000,
     },
     safety: {
-      allow_any_path: false,
-      allow_external_roots: false,
-      allow_temp_directory: true,
-      follow_symlinks: false,
       hook: { allow_tools: [], block_tools: [], enabled: true },
       require_hash: true,
     },
@@ -669,16 +744,39 @@ function resolvedFormatting(
   value: InternalConfig,
   dprintConfig: string,
 ): ResolvedConfig["formatting"] {
+  const version = value.version ?? 1;
   return {
     dprintConfig,
     enabled: value.formatting?.enabled ?? true,
-    formatters: (value.formatting?.formatters ?? []).map((formatter) => ({
-      args: formatter.args ?? [],
-      command: formatter.command,
-      extensions: formatter.extensions ?? [],
-      globs: formatter.globs ?? [],
-      timeoutMs: formatter.timeout_ms ?? 30_000,
-    })),
+    fallback:
+      value.formatting?.fallback ?? (version === 2 ? "preserve" : "dprint"),
+    formatters: (value.formatting?.formatters ?? []).map(
+      (formatter, index) => ({
+        args: formatter.args ?? [],
+        command: formatter.command,
+        enabled: formatter.enabled,
+        extensions: formatter.extensions ?? [],
+        globs: formatter.globs ?? [],
+        id: formatter.id ?? `legacy-${index + 1}`,
+        mode: formatter.mode ?? "stdout",
+        timeoutMs: formatter.timeout_ms ?? 30_000,
+      }),
+    ),
+  };
+}
+
+function resolvedFiles(value: InternalConfig): ResolvedConfig["files"] {
+  return {
+    patch: {
+      aiderMatchers: value.files?.patch?.aider_matchers ?? [
+        "exact",
+        "whitespace",
+        "relative-indentation",
+        "diff-match-patch",
+      ],
+      strategies: value.files?.patch?.strategies ?? ["ast", "aider_block"],
+    },
+    read: { modes: value.files?.read?.modes ?? ["ast", "text"] },
   };
 }
 
@@ -703,15 +801,29 @@ function resolvedHook(value: InternalConfig["safety"]) {
   };
 }
 
+type ConfiguredPathRule = PathRuleV2;
+
 function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
+  const version = value.version ?? 1;
   return {
     allowAnyPath: withDefault(value.safety?.allow_any_path, false),
     allowExternalRoots: withDefault(value.safety?.allow_external_roots, false),
-    allowTempDirectory: withDefault(value.safety?.allow_temp_directory, true),
+    allowTempDirectory: withDefault(
+      value.safety?.allow_temp_directory,
+      version === 1,
+    ),
     followSymlinks: withDefault(value.safety?.follow_symlinks, false),
     hook: resolvedHook(value.safety),
     requireHash: withDefault(value.safety?.require_hash, true),
   };
+}
+
+function layerPathRules(
+  layer: LoadedLayer,
+  source: "global" | "project",
+): Array<{ rule: ConfiguredPathRule; source: "global" | "project" }> {
+  if (layer.value?.version !== 2) return [];
+  return (layer.value.paths ?? []).map((rule) => ({ rule, source }));
 }
 
 function resolvedConfiguration(args: {
@@ -736,13 +848,32 @@ function resolvedConfiguration(args: {
     trustedRoots,
     value,
   } = args;
+  const pathRules = [
+    ...layerPathRules(global, "global"),
+    ...layerPathRules(project, "project"),
+  ];
   return {
     dependencies: {
       astBroBinary: value.dependencies?.ast_bro_binary,
       dprintBinary: value.dependencies?.dprint_binary,
     },
+    files: resolvedFiles(value),
     formatting: resolvedFormatting(value, dprintConfig),
+    generation: 0,
     http: resolvedHttp(value),
+    paths: pathRules.map(({ rule, source }) => ({
+      excludes: rule.excludes ?? [],
+      followSymlinks: rule.follow_symlinks ?? false,
+      id: rule.id,
+      includes: rule.includes ?? ["**/*"],
+      path: rule.path,
+      policies: {
+        delete: rule.policies.delete ?? rule.policies.write,
+        read: rule.policies.read,
+        write: rule.policies.write,
+      },
+      source,
+    })),
     projectRoot,
     provenance,
     safety: resolvedSafety(value),
@@ -752,7 +883,7 @@ function resolvedConfiguration(args: {
       project: project.value ? project.path : undefined,
     },
     trustedRoots,
-    version: 1,
+    version: value.version ?? 1,
     workspace: { roots: value.workspace?.roots ?? candidates },
   };
 }
@@ -834,6 +965,10 @@ async function resolveForProject(
     { name: "environment", value: environment.value },
   ];
   const value = merge(...layers.map((item) => item.value));
+  const sourceVersions = [global.value?.version, project.value?.version].filter(
+    (version): version is 1 | 2 => version !== undefined,
+  );
+  if (sourceVersions.includes(1)) value.version = 1;
   const dprint = await resolvedDprint(value);
   const key = resolutionCacheKey({
     candidates,
@@ -863,12 +998,68 @@ async function resolveForProject(
   return resolved;
 }
 
+function projectRelativePolicyPath(
+  config: ResolvedConfig,
+  rule: ResolvedConfig["paths"][number],
+): string | undefined {
+  if (rule.source !== "project" || !config.sources.project) return undefined;
+  const relative = path.relative(
+    path.dirname(config.sources.project),
+    rule.path,
+  );
+  const outside =
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative);
+  return outside ? undefined : relative || ".";
+}
+
 function policy(config: ResolvedConfig) {
   return JSON.stringify({
     dependencies: config.dependencies,
+    files: config.files,
     formatting: config.formatting,
     safety: config.safety,
   });
+}
+
+function pathRulePolicy(rule: ResolvedConfig["paths"][number]) {
+  const { path: _path, ...policy } = rule;
+  return JSON.stringify({
+    ...policy,
+    excludes: [...policy.excludes].sort(),
+    includes: [...policy.includes].sort(),
+  });
+}
+
+function pathRuleEquivalent(
+  leftConfig: ResolvedConfig,
+  rightConfig: ResolvedConfig,
+  left: ResolvedConfig["paths"][number],
+  right: ResolvedConfig["paths"][number],
+) {
+  if (pathRulePolicy(left) !== pathRulePolicy(right)) return false;
+  if (left.path === right.path) return true;
+  const leftRelative = projectRelativePolicyPath(leftConfig, left);
+  const rightRelative = projectRelativePolicyPath(rightConfig, right);
+  return leftRelative !== undefined && leftRelative === rightRelative;
+}
+
+function pathPoliciesEquivalent(left: ResolvedConfig, right: ResolvedConfig) {
+  if (left.paths.length !== right.paths.length) return false;
+  const unmatched = [...right.paths];
+  for (const rule of left.paths) {
+    const index = unmatched.findIndex((candidate) =>
+      pathRuleEquivalent(left, right, rule, candidate),
+    );
+    if (index < 0) return false;
+    unmatched.splice(index, 1);
+  }
+  return true;
+}
+
+function policiesEquivalent(left: ResolvedConfig, right: ResolvedConfig) {
+  return policy(left) === policy(right) && pathPoliciesEquivalent(left, right);
 }
 
 export async function resolveConfig(
@@ -882,7 +1073,7 @@ export async function resolveConfig(
     ),
   );
   const first = configs[0] as ResolvedConfig;
-  if (configs.some((config) => policy(config) !== policy(first)))
+  if (configs.some((config) => !policiesEquivalent(config, first)))
     throw new ConfigurationError(
       `Request spans workspace roots with conflicting ast-mcp policies: ${matched.join(", ")}`,
     );
@@ -904,6 +1095,13 @@ export async function withConfig<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const config = await resolveConfig(options);
+  return activeConfig.run(config, operation);
+}
+
+export async function withResolvedConfig<T>(
+  config: ResolvedConfig,
+  operation: () => Promise<T>,
+): Promise<T> {
   return activeConfig.run(config, operation);
 }
 

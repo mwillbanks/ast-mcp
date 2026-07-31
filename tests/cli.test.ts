@@ -71,6 +71,8 @@ test("prints help for every subcommand without dispatching it", async () => {
       expect(calls).toEqual([]);
     }
   }
+  expect(getCliHelp("config")).toContain("<validate|show|migrate>");
+  expect(getCliHelp("config")).toContain("--no-backup");
 });
 
 test("reports unknown commands and unsupported positional arguments cleanly", async () => {
