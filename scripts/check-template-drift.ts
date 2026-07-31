@@ -39,8 +39,19 @@ if (write) {
     await cp(mapping.source, mapping.destination, { force: true });
 }
 
+async function isIgnored(relative: string): Promise<boolean> {
+  const result = Bun.spawn(["git", "check-ignore", "--quiet", "--", relative], {
+    cwd: root,
+    stderr: "ignore",
+    stdout: "ignore",
+  });
+  return (await result.exited) === 0;
+}
+
 const drift: string[] = [];
 for (const mapping of mappings) {
+  const relative = path.relative(root, mapping.destination);
+  if (!write && (await isIgnored(relative))) continue;
   const [source, destination] = await Promise.all([
     readFile(mapping.source),
     readFile(mapping.destination).catch(() => undefined),
