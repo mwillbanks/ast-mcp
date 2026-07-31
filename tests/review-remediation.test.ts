@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
@@ -605,12 +606,25 @@ test("live stdio server returns Invalid Request for an empty batch", async () =>
 });
 
 test("live hook denies env wrapper commands", async () => {
-  const child = Bun.spawn(["bun", "run", "src/hook.ts"], {
-    cwd: process.cwd(),
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
-  });
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-live-hook-"));
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    "version = 2\n[safety.hook]\nenabled = true\n",
+  );
+  const child = Bun.spawn(
+    ["bun", "run", path.join(process.cwd(), "src/hook.ts")],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        AST_MCP_PROJECT_ROOT: root,
+        XDG_CONFIG_HOME: path.join(root, ".config"),
+      },
+      stderr: "pipe",
+      stdin: "pipe",
+      stdout: "pipe",
+    },
+  );
 
   try {
     child.stdin.write(
@@ -631,5 +645,6 @@ test("live hook denies env wrapper commands", async () => {
   } finally {
     if (child.exitCode === null) child.kill();
     await child.exited;
+    await rm(root, { force: true, recursive: true });
   }
 });
