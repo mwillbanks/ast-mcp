@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.2...ast-mcp-v0.3.0) (2026-08-01)
+
+
+### Features
+
+* refresh installer and approval flow ([a76c098](https://github.com/mwillbanks/ast-mcp/commit/a76c098fb72912c49125afce713bf344b2a707f3))
+
+
+### Bug Fixes
+
+* **deps:** update unbash to 4.0.4 ([473da1f](https://github.com/mwillbanks/ast-mcp/commit/473da1f28bb33fb55bebcb396ca1f003cd991bce))
+* handle empty ast-bro output ([da1496b](https://github.com/mwillbanks/ast-mcp/commit/da1496b410909f967c87aa71541cae23d8ddce1b))
+* ignore generated template drift ([f2a9856](https://github.com/mwillbanks/ast-mcp/commit/f2a98565a15cd0bbf00eae36e926cb293558d0cc))
+* skip unsupported parse checks ([1a52287](https://github.com/mwillbanks/ast-mcp/commit/1a5228702486664e5684241a9068a7766d382970))
+
 ## [0.2.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.1...ast-mcp-v0.2.2) (2026-07-28)
 
 
