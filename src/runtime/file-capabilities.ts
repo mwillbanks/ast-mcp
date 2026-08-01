@@ -218,6 +218,7 @@ export async function validateStructuredCandidate(
     }
   }
   if (!capabilities.language || capabilities.kind !== "source") return;
+  if (capabilities.parseErrorCount === undefined) return;
   const temporary = candidatePath(capabilities.filePath);
   try {
     await writeFile(temporary, candidate, { encoding: "utf8", flag: "wx" });
