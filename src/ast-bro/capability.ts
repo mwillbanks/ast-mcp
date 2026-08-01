@@ -22,6 +22,7 @@ export async function astErrorCount(
     "ast-bro map",
     await captureProcess(process),
   );
+  if (!output.trim()) return undefined;
   const payload = JSON.parse(output) as AstBroMapPayload;
   const file = (payload.files ?? []).find((entry) => entry.path === filePath);
   return file ? (file.error_count ?? 0) : undefined;
