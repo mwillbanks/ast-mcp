@@ -72,7 +72,7 @@ test("public file tools execute declared read, hash, write, and patch batches", 
       },
       name: "file_patch",
     });
-    expect(patched.isError).not.toBeTrue();
+    if (patched.isError) throw new Error(JSON.stringify(patched));
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
 
     const astRead = await client.callTool({
