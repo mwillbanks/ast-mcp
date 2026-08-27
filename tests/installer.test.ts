@@ -128,6 +128,7 @@ describe("installer", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
     created.push(root, home);
+    await executable(path.join(home, ".bun/bin/ast-mcp"));
     await install({
       home,
       root,
