@@ -1,15 +1,8 @@
-import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  copyFile,
-  lstat,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { copyFile, lstat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileV2Schema } from "./config-v2-schema";
+import { replaceFileAtomically } from "./runtime/atomic";
 
 export interface MigrationPreview {
   changed: boolean;
@@ -208,16 +201,6 @@ export async function writeMigratedConfig(
   const metadata = await lstat(filePath);
   const backupPath = backup ? `${filePath}.v1.bak` : undefined;
   if (backupPath) await copyFile(filePath, backupPath);
-  const temporary = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.migrate-${randomUUID()}`,
-  );
-  try {
-    await writeFile(temporary, source, { flag: "wx", mode: metadata.mode });
-    await chmod(temporary, metadata.mode);
-    await rename(temporary, filePath);
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-  }
+  await replaceFileAtomically(filePath, source, metadata.mode);
   return backupPath;
 }

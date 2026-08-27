@@ -215,7 +215,7 @@ export default function registerFileTools(
         readOnlyHint: false,
       },
       description:
-        "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview runs the complete formatted operation without committing.",
+        "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview applies the strategy without formatting or committing; formatting runs only at commit, including previewReceipt commit.",
       inputSchema: boundedFileBatch(
         z
           .object({

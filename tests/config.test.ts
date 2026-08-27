@@ -277,6 +277,39 @@ policies = { read = "allow", write = "allow" }
   });
   expect(compatible.projectRoot).toBe(first);
 
+  clearConfigCache();
+  await Promise.all([
+    writeFile(
+      path.join(first, "ast-mcp.toml"),
+      `${sharedPolicy}
+[workspace]
+worktrees = "include"
+[mcp.configuration]
+require_approval = true
+`,
+    ),
+    writeFile(
+      path.join(second, "ast-mcp.toml"),
+      `${sharedPolicy}
+[workspace]
+worktrees = "ignore"
+[mcp.configuration]
+require_approval = false
+`,
+    ),
+  ]);
+  await expect(
+    resolveConfig({
+      clientRoots: [first, second],
+      cwd: os.tmpdir(),
+      env: {},
+      requestPaths: [
+        path.join(first, "value.ts"),
+        path.join(second, "value.ts"),
+      ],
+    }),
+  ).rejects.toThrow("conflicting ast-mcp policies");
+
   const orderedRules = [
     `[[paths]]
 id = "workspace"

@@ -698,6 +698,10 @@ function installerConfigSeed(local: boolean) {
     "port = 3768",
     "session_timeout_ms = 1800000",
     "session_sweep_interval_ms = 60000",
+    "",
+    "[mcp.configuration]",
+    "enabled = true",
+    "require_approval = true",
   ];
   if (!local) return `${common.join("\n")}\n`;
   return `${[
@@ -705,6 +709,7 @@ function installerConfigSeed(local: boolean) {
     "",
     "[workspace]",
     'roots = ["."]',
+    'worktrees = "include"',
     "",
     ...common.slice(2),
     "",

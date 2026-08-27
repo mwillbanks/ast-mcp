@@ -80,6 +80,18 @@ export const fileV2Schema = z
       .strict()
       .optional(),
     http: httpSchema.optional(),
+    mcp: z
+      .object({
+        configuration: z
+          .object({
+            enabled: z.boolean().optional(),
+            require_approval: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
     paths: z.array(pathRuleV2Schema).max(256).optional(),
     safety: z
       .object({

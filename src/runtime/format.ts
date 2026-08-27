@@ -4,11 +4,27 @@ import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
 import { configuredDprintBinary } from "./dependencies";
+import { canonicalizePathSync, containingRoot, pathWithin } from "./path-utils";
 import { runCommandInput } from "./process-input";
 
 const dprint = configuredDprintBinary;
+function formatterRoot(config: ResolvedConfig, filePath: string) {
+  const project = config.projectRoot;
+  if (
+    pathWithin(project, filePath) ||
+    pathWithin(canonicalizePathSync(project), canonicalizePathSync(filePath))
+  )
+    return project;
+  return (
+    containingRoot(
+      [...config.workspace.linkedWorktrees, ...config.workspace.roots],
+      filePath,
+    ) ?? project
+  );
+}
 function formatterPath(config: ResolvedConfig, filePath: string) {
-  const relative = path.relative(config.projectRoot, filePath);
+  const root = formatterRoot(config, filePath);
+  const relative = path.relative(root, filePath);
   return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
     ? relative.split(path.sep).join("/")
     : path.basename(filePath);
@@ -33,7 +49,7 @@ function formatterArgs(
     argument
       .replaceAll("{file}", formatterFile)
       .replaceAll("{source_file}", sourceFile)
-      .replaceAll("{project_root}", config.projectRoot),
+      .replaceAll("{project_root}", formatterRoot(config, sourceFile)),
   );
 }
 
@@ -64,7 +80,10 @@ export async function formatContent(
         formatter.command,
         formatterArgs(config, filePath, filePath, formatter.args),
         content,
-        { cwd: config.projectRoot, timeoutMs: formatter.timeoutMs },
+        {
+          cwd: formatterRoot(config, filePath),
+          timeoutMs: formatter.timeoutMs,
+        },
       );
       return result.stdout;
     }
@@ -79,7 +98,10 @@ export async function formatContent(
         formatter.command,
         formatterArgs(config, filePath, staged, formatter.args),
         "",
-        { cwd: config.projectRoot, timeoutMs: formatter.timeoutMs },
+        {
+          cwd: formatterRoot(config, filePath),
+          timeoutMs: formatter.timeoutMs,
+        },
       );
       return await readFile(staged, "utf8");
     } finally {
@@ -100,7 +122,7 @@ export async function formatContent(
       formatterPath(config, filePath),
     ],
     content,
-    { cwd: config.projectRoot },
+    { cwd: formatterRoot(config, filePath) },
   );
   return result.stdout;
 }

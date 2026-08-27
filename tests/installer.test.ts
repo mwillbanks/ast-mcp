@@ -55,6 +55,8 @@ describe("installer", () => {
     const config = await readFile(path.join(root, "ast-mcp.toml"), "utf8");
     expect(config).toContain("version = 2");
     expect(config).toContain('roots = ["."]');
+    expect(config).toContain("[mcp.configuration]");
+    expect(config).toContain("require_approval = true");
     expect(
       JSON.parse(
         await readFile(path.join(root, ".github/hooks/ast-mcp.json"), "utf8"),

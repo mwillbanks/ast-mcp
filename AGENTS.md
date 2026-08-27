@@ -18,6 +18,8 @@ CRITICAL INSTRUCTION: You are operating in an AST-isolated environment.
 
 File boundary: `file_capabilities`, `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chattr`, `file_delete`.
 
+Configuration: `config_status`, `policy_check`, `document_query`, `config_core`, `config_paths`.
+
 Code intelligence: `digest`, `map`, `show`, `search`, `find_related`, `surface`, `deps`, `reverse_deps`, `cycles`, `graph`, `callers`, `callees`, `trace`, `impact`, `context`, `implements`, `index`, `run`, `squeeze`.
 
 Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All mutation tools accept a declared `files` object, are file-operation-root bounded, SHA-guarded where required, and preflight the complete batch before committing any entry. In version 2, access outside the host baseline—including the OS temporary directory—requires an explicit top-level `[[paths]]` rule; legacy `safety.allow_temp_directory` and `safety.allow_any_path` apply only to version 1 configuration. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
@@ -38,12 +40,13 @@ Use ast-mcp intelligence tools as the primary repository search surface: `digest
 - Run independent read-only calls in the same model turn or host executor and return their results together.
 - Keep inspect, preview, hash, and overlapping mutations sequential. Never parallelize dependent or overlapping writes.
 - Call `config_status` before the first mutation when configuration health, formatting, policy, or generation is uncertain; use `policy_check` for side-effect-free authorization preflight and `document_query` for structured manifests.
+- Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Never rewrite the whole file. Host approval is required by default; `[mcp.configuration]` changes always require approval. Successful writes reload the in-process snapshot immediately.
 
 ## Required write workflow
 
 1. Explore with the smallest direct intelligence or `file_read` call; use `impact` before shared API changes and `file_capabilities` when method support is uncertain.
 2. Select `file_read.mode` explicitly when intent matters. Select `file_patch.patchStrategy` per file: AST for structural edits, Aider for small exact text edits, subject to the reported effective capabilities.
-3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded and formatted dry-run contract of either strategy.
+3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded dry-run contract of either strategy. Preview does not format; commit, including `previewReceipt` commit, formats.
 4. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
 5. Call one `file_patch({ files: { ... } })` batch with one fresh hash and matching ordered `astRules` or `aiderBlocks` per path. Each keyed path is locked and atomically committed once.
 6. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement.

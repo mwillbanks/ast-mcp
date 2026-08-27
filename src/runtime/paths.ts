@@ -9,8 +9,11 @@ import {
 } from "./path-policy";
 import {
   canonicalizePath,
+  canonicalizePathSync,
+  containingRoot,
   effectiveWorkspaceRoot,
   pathWithin,
+  relativeRootFromPwd,
 } from "./path-utils";
 
 async function realpathOrSelf(filePath: string): Promise<string> {
@@ -72,9 +75,28 @@ export async function primaryRoot(): Promise<string> {
 async function configuredRootForPath(
   filePath: string,
 ): Promise<string | undefined> {
-  return (await fileOperationRoots()).find((candidate) =>
-    within(candidate, filePath),
+  const canonicalTarget = canonicalizePathSync(filePath);
+  return (await fileOperationRoots()).find(
+    (candidate) =>
+      pathWithin(candidate, filePath) ||
+      pathWithin(canonicalizePathSync(candidate), canonicalTarget),
   );
+}
+
+export async function intelligenceRoot(
+  requestPaths: string[] = [],
+): Promise<string> {
+  const roots = await workspaceRoots();
+  const matched = [
+    ...new Set(
+      requestPaths
+        .filter((item) => path.isAbsolute(item))
+        .map((item) => containingRoot(roots, path.resolve(item)))
+        .filter((item): item is string => Boolean(item)),
+    ),
+  ];
+  if (matched.length === 1) return matched[0] as string;
+  return relativeRootFromPwd(roots) ?? (roots[0] as string);
 }
 
 export async function referenceRootForPath(
@@ -197,7 +219,11 @@ async function resolvePath(
   operation: PathOperation,
 ): Promise<string> {
   const config = await currentConfig();
-  const resolved = await canonicalCandidate(filePath, roots[0] as string);
+  const base =
+    path.isAbsolute(filePath) || !relativeRootFromPwd(roots)
+      ? (roots[0] as string)
+      : (relativeRootFromPwd(roots) as string);
+  const resolved = await canonicalCandidate(filePath, base);
   assertWithinBoundary(
     resolved,
     roots,

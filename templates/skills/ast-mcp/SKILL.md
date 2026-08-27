@@ -31,8 +31,10 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 - Batch paths, symbols, selectors, and keyed files into one call whenever the tool schema supports them. Prefer one bounded multi-target call over repeated single-target calls.
 - Issue independent read-only calls in the same model turn or host executor, and return all parallel results together when the host protocol requires it.
 - Keep each AST intelligence request within one project root. Split cross-root work into root-specific calls; independent read-only calls may run in parallel.
+- Linked git worktrees of the config-bearing repository are authorized according to `workspace.worktrees` (`include` by default). Pass absolute paths into a worktree; if `PWD` is a linked worktree, relative paths resolve there. Do not treat a toml-less worktree as a different project root.
 - Keep dependent and overlapping work sequential: inspect, preview, hash, then mutate. Never parallelize writes that can touch the same path, configuration generation, or dependency chain.
 - Call `config_status` before the first mutation when formatter selection, path policy, configuration health, or generation is uncertain. Use `policy_check` to preflight read, write, and delete decisions without side effects.
+- Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Do not rewrite the whole file with `file_write` or `file_patch`. Host elicitation is required by default (`mcp.configuration.require_approval = true`). Changing `[mcp.configuration]` always requires approval, including disabling the surface. Successful writes invalidate the in-process registry so the new generation applies without restarting the MCP server.
 - Use `document_query` for bounded JSON, JSONC, TOML, and YAML inspection instead of attempting whole-file reads of structured manifests.
 
 ## Mutate through declared file batches
@@ -40,7 +42,7 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 1. Inspect with `map`, `show`, `context`, a bounded `run`, or `file_read`. Call `file_capabilities` before choosing a read or patch method when intrinsic support or effective configuration is uncertain.
 2. Select `file_read.mode` explicitly when intent matters. Use `ast` with `symbols` for source structure or with RFC 6901 `selectors` for structured documents; use `text` for a bounded exact slice. `auto` is suitable when AST-first behavior is desired.
 3. Select `file_patch.patchStrategy` per file. Prefer `ast` for semantic, repeated, or structurally anchored changes; prefer `aider_block` for a small exact text replacement with unique context. Both remain selectable for parseable source whenever `file_capabilities` reports them, and configuration may narrow the effective choices.
-4. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run of either strategy, send the same `file_patch` file entry with `preview: true`.
+4. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run of either strategy, send the same `file_patch` file entry with `preview: true`. Preview returns the unformatted strategy candidate and does not run formatters; formatting occurs only at commit, including `previewReceipt` commit.
 5. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per file. The runtime can make hashes optional through `safety.require_hash = false`, but the normal agent workflow should still supply them whenever current-state protection matters.
 6. Mutation tools accept a declared `files` property whose value is a path-keyed object. Use one `file_patch({ files: { ... } })` call for one or more files with exactly one explicit strategy and its matching ordered operations. Each path runs under one lock; preview never commits and normal mode commits atomically.
 7. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement. Supply the shared `chattr` object when chmod/chown metadata is required. The complete batch policy preflight finishes first; in-place formatter staging may transiently create, revalidate, and remove missing parents before the guarded commit recreates them, without writing the live target.
@@ -96,6 +98,33 @@ file_write({
 MCP transport requests may use a single JSON-RPC array containing requests and notifications. The stdio transport expands the array, preserves request IDs, and emits one line per request response. The live streamable HTTP transport uses SSE by default and emits one event per request response. Neither transport emits a response for notifications; do not assume that live HTTP returns a JSON array unless `enableJsonResponse` was explicitly configured.
 
 Read [patch-state-machine.md](references/patch-state-machine.md) for routing and rejection recovery.
+
+## Update configuration through MCP
+
+Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `http`, `dependencies`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
+
+```json
+config_core({
+  "safety": { "require_hash": false },
+  "workspace": { "worktrees": "request" }
+})
+```
+
+```json
+config_paths({
+  "operations": [
+    {
+      "op": "add",
+      "rule": {
+        "id": "docs",
+        "path": "./docs",
+        "policies": { "read": "allow", "write": "request" }
+      }
+    },
+    { "op": "update", "id": "workspace", "rule": { "excludes": [".git/**"] } }
+  ]
+})
+```
 
 ## Recover safely
 
