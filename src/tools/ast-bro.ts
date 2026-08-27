@@ -68,7 +68,11 @@ const globPattern = /[*?{}[\]]/;
 
 async function existingLiteralPath(root: string, value: string) {
   const resolved = await boundedPath(root, value);
-  return (await lstat(resolved).catch(() => undefined)) !== undefined;
+  const metadata = await lstat(resolved).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  return metadata !== undefined;
 }
 
 async function validateReadableScanPath(
