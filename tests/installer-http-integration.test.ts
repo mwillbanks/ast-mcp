@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install, uninstall } from "../src/installer";
@@ -26,6 +26,10 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
   try {
     const root = await temporary("ast-mcp-http-global-root-");
     const home = await temporary("ast-mcp-http-global-home-");
+    const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+    await mkdir(path.dirname(globalAlias), { recursive: true });
+    await writeFile(globalAlias, "#!/bin/sh\nexit 0\n");
+    await chmod(globalAlias, 0o755);
     await install({
       home,
       host: "127.0.0.1",
