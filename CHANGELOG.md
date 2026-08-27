@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.3.0...ast-mcp-v0.4.0) (2026-08-27)
+
+
+### Features
+
+* **config:** add grouped MCP configuration tools with approval ([548cf51](https://github.com/mwillbanks/ast-mcp/commit/548cf51e531f80336e3233a037b3e1cd5b2fadfb))
+
+
+### Bug Fixes
+
+* address PR review findings for config, worktrees, and preview ([21b7a24](https://github.com/mwillbanks/ast-mcp/commit/21b7a242a7e022cd48af5e09de3f9f8eeea95a04))
+* **config:** use linear-time TOML quoted-string matching ([0a68f76](https://github.com/mwillbanks/ast-mcp/commit/0a68f764950e633b6d2a4ba71e394c81815bc808))
+* format checker aliases ([83686e4](https://github.com/mwillbanks/ast-mcp/commit/83686e49220a6428c1ef1a603d7a89f4057ffbda))
+* **patch:** skip formatter during file_patch preview ([a4decc7](https://github.com/mwillbanks/ast-mcp/commit/a4decc7c67902e181f06486cbd8aa90e15f124c0))
+* preserve canonical ast-bro globs ([c4a3551](https://github.com/mwillbanks/ast-mcp/commit/c4a3551f95e3d7ff26241c4af4482ad973153cd6))
+* preserve checker executable mode ([4c841fd](https://github.com/mwillbanks/ast-mcp/commit/4c841fd838a93ce188a7d768abf15ec38c93a2b0))
+* preserve cross-platform aliases ([51505eb](https://github.com/mwillbanks/ast-mcp/commit/51505ebef21e15dd55966abeb3d5937f796f72e6))
+* preserve literal path errors ([9bd14fa](https://github.com/mwillbanks/ast-mcp/commit/9bd14fa22b1b62361a600ff0aea65090a4e5e3e2))
+* reject escaping ast-bro globs ([15adfbe](https://github.com/mwillbanks/ast-mcp/commit/15adfbefe0776846e221c85b2fe2e889817b2203))
+* resolve CodeRabbit findings ([d6c1c09](https://github.com/mwillbanks/ast-mcp/commit/d6c1c09a389052b74ccc283f49fecab082748d11))
+* use shared executable aliases ([f11399a](https://github.com/mwillbanks/ast-mcp/commit/f11399a527d35a0d03f48a40e054086c3716efa2))
+* **workspace:** require gitdir round-trip before trusting worktrees ([e483d77](https://github.com/mwillbanks/ast-mcp/commit/e483d775d411dae8c607a17a4dc5763ecb573fd2))
+* **workspace:** treat linked git worktrees as first-class roots ([f65c4e8](https://github.com/mwillbanks/ast-mcp/commit/f65c4e8bfea55873885fc54e314439b98ed3465f))
+* worktree roots, unformatted preview, and MCP config writes ([#15](https://github.com/mwillbanks/ast-mcp/issues/15)) ([fcc40bf](https://github.com/mwillbanks/ast-mcp/commit/fcc40bf2288edf5710d768bb3505f87f849b3226))
+
 ## [0.3.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.2.2...ast-mcp-v0.3.0) (2026-08-01)
 
 
