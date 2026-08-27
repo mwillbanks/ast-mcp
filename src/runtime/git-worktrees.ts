@@ -57,8 +57,17 @@ function mainWorkTree(commonDir: string, discoveredWorkTree: string): string {
     : discoveredWorkTree;
 }
 
+async function sameResolvedPath(left: string, right: string): Promise<boolean> {
+  const [canonicalLeft, canonicalRight] = await Promise.all([
+    realpath(left).catch(() => path.resolve(left)),
+    realpath(right).catch(() => path.resolve(right)),
+  ]);
+  return canonicalLeft === canonicalRight;
+}
+
 async function worktreeFromGitdirFile(
   gitdirFile: string,
+  commonDir: string,
 ): Promise<string | undefined> {
   const source = await readFile(gitdirFile, "utf8").catch(() => undefined);
   const pointer = source?.trim();
@@ -66,6 +75,18 @@ async function worktreeFromGitdirFile(
   const gitFile = path.isAbsolute(pointer)
     ? path.resolve(pointer)
     : path.resolve(path.dirname(gitdirFile), pointer);
+  if (path.basename(gitFile) !== ".git") return undefined;
+  const gitMetadata = await lstat(gitFile).catch(() => undefined);
+  if (!gitMetadata?.isFile()) return undefined;
+  const back = gitDirPointer(
+    (await readFile(gitFile, "utf8").catch(() => undefined)) ?? "",
+    gitFile,
+  );
+  const expectedGitDir = path.dirname(gitdirFile);
+  if (!back || !(await sameResolvedPath(back, expectedGitDir)))
+    return undefined;
+  const linkedCommon = await commonGitDir(expectedGitDir);
+  if (!(await sameResolvedPath(linkedCommon, commonDir))) return undefined;
   const workTree = path.dirname(gitFile);
   const metadata = await stat(workTree).catch(() => undefined);
   return metadata?.isDirectory() ? workTree : undefined;
@@ -81,6 +102,7 @@ async function linkedFromGitdirFiles(commonDir: string): Promise<string[]> {
     if (!entry.isDirectory()) continue;
     const workTree = await worktreeFromGitdirFile(
       path.join(worktreesDir, entry.name, "gitdir"),
+      commonDir,
     );
     if (workTree) paths.push(workTree);
   }
@@ -89,10 +111,19 @@ async function linkedFromGitdirFiles(commonDir: string): Promise<string[]> {
 
 async function cacheFingerprint(commonDir: string): Promise<string> {
   const gitStat = await stat(commonDir).catch(() => undefined);
-  const worktreesStat = await stat(path.join(commonDir, "worktrees")).catch(
-    () => undefined,
+  const worktreesDir = path.join(commonDir, "worktrees");
+  const worktreesStat = await stat(worktreesDir).catch(() => undefined);
+  const names = await readdir(worktreesDir).catch(() => []);
+  const gitdirStats = await Promise.all(
+    names.map(async (name) => {
+      const metadata = await stat(
+        path.join(worktreesDir, name, "gitdir"),
+      ).catch(() => undefined);
+      return `${name}:${metadata?.mtimeMs ?? 0}`;
+    }),
   );
-  return `${gitStat?.mtimeMs ?? 0}:${worktreesStat?.mtimeMs ?? 0}`;
+  gitdirStats.sort();
+  return `${gitStat?.mtimeMs ?? 0}:${worktreesStat?.mtimeMs ?? 0}:${gitdirStats.join(",")}`;
 }
 
 async function uniqueCanonical(paths: string[]): Promise<string[]> {

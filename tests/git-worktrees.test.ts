@@ -196,6 +196,28 @@ test("ignores unreadable gitdir files and missing worktree directories", async (
   expect(await linkedWorktrees(main)).toEqual([await realpath(main)]);
 });
 
+test("rejects gitdir pointers that do not round-trip to this repository", async () => {
+  const parent = await temporary("ast-mcp-gitdir-pwn-");
+  const main = path.join(parent, "main");
+  const foreign = path.join(parent, "foreign");
+  await mkdir(path.join(main, ".git", "worktrees", "pwn"), {
+    recursive: true,
+  });
+  await mkdir(foreign);
+  await writeFile(path.join(foreign, "secret.txt"), "nope\n");
+  await writeFile(
+    path.join(main, ".git", "worktrees", "pwn", "gitdir"),
+    `${path.join(foreign, "secret.txt")}\n`,
+  );
+  expect(await linkedWorktrees(main)).toEqual([await realpath(main)]);
+  await writeFile(path.join(foreign, ".git"), "gitdir: /tmp/elsewhere\n");
+  await writeFile(
+    path.join(main, ".git", "worktrees", "pwn", "gitdir"),
+    `${path.join(foreign, ".git")}\n`,
+  );
+  expect(await linkedWorktrees(main)).toEqual([await realpath(main)]);
+});
+
 test("treats a .git file without a gitdir pointer as missing", async () => {
   const root = await temporary("ast-mcp-gitdir-empty-");
   await writeFile(path.join(root, ".git"), "# not a gitdir pointer\n");

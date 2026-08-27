@@ -102,7 +102,7 @@ Version 2 grants no implicit OS-temporary access. Each top-level `[[paths]]` rul
 
 Exact files outrank directories; otherwise the deepest anchor and longest include literal prefix wins. Equal specificity resolves `deny` before `request` before `allow`. Rename needs source `delete` and destination `write`; metadata uses `write`; hashing and intelligence use `read`. Both a symlink and its resolved target must be authorized, and the winning rule must enable `follow_symlinks`.
 
-Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets and always require explicit approval for mutation. Clients without elicitation fail closed with `approval_required` remediation.
+Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets for `file_write` and `file_patch` and always require explicit approval for those mutations. Grouped `config_core` / `config_paths` edits follow `[mcp.configuration]` instead. Clients without elicitation fail closed with `approval_required` remediation.
 
 `require_hash = false` makes `expectedSha256` optional for guarded mutations, but supplied hashes are always checked. Hook allow/block settings affect only the host hook and never weaken server-side path, symlink, approval, or hash enforcement.
 
