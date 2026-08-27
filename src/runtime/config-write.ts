@@ -11,6 +11,7 @@ import {
   writeConfigSource,
 } from "../config-edit";
 import { configRegistry } from "../config-registry";
+import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
 
 export type ConfigTarget = "global" | "project";
@@ -100,7 +101,7 @@ function configurationError(
   });
 }
 
-async function loadTarget(target: ConfigTarget = "project") {
+async function targetFilePath(target: ConfigTarget) {
   const config = await currentConfig();
   const filePath =
     target === "global" ? config.sources.global : config.sources.project;
@@ -110,6 +111,11 @@ async function loadTarget(target: ConfigTarget = "project") {
       `No ${target} ast-mcp.toml exists; create version 2 configuration first`,
       "ast-mcp config migrate",
     );
+  return { config, filePath };
+}
+
+async function loadTarget(target: ConfigTarget = "project") {
+  const { config, filePath } = await targetFilePath(target);
   const source = await readConfigSource(filePath);
   const parsed = Bun.TOML.parse(source) as { version?: unknown };
   if (parsed.version !== 2)
@@ -167,10 +173,7 @@ function applyObjectKeys(
   return next;
 }
 
-export function applyConfigCorePatch(
-  source: string,
-  patch: ConfigCorePatch,
-): string {
+function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   let next = source;
   next = applyObjectKeys(next, "workspace", patch.workspace);
   next = applyObjectKeys(next, "safety", {
@@ -204,7 +207,7 @@ function pathRuleRecord(
   return record;
 }
 
-export function applyConfigPathOperations(
+function applyConfigPathOperations(
   source: string,
   operations: ConfigPathOperation[],
 ): string {
@@ -264,38 +267,44 @@ async function commitConfigEdit(
 
 export async function applyConfigCore(patch: ConfigCorePatch) {
   const target = patch.target ?? "project";
-  const loaded = await loadTarget(target);
-  const changed = [
-    patch.workspace ? "workspace" : undefined,
-    patch.safety ? "safety" : undefined,
-    patch.files ? "files" : undefined,
-    patch.formatting ? "formatting" : undefined,
-    patch.http ? "http" : undefined,
-    patch.dependencies ? "dependencies" : undefined,
-    patch.mcp ? "mcp.configuration" : undefined,
-  ].filter((item): item is string => Boolean(item));
-  if (changed.length === 0)
-    throw configurationError(
-      "configuration_empty_patch",
-      "config_core requires at least one core section",
-    );
-  const touchesMcp =
-    patch.mcp?.configuration?.enabled !== undefined ||
-    patch.mcp?.configuration?.require_approval !== undefined;
-  authorizeConfigWrite(loaded.config, loaded.filePath, touchesMcp);
-  const next = applyConfigCorePatch(loaded.source, patch);
-  return commitConfigEdit(target, loaded.filePath, next, changed);
+  const { filePath } = await targetFilePath(target);
+  return withFileLocks([filePath], async () => {
+    const loaded = await loadTarget(target);
+    const changed = [
+      patch.workspace ? "workspace" : undefined,
+      patch.safety ? "safety" : undefined,
+      patch.files ? "files" : undefined,
+      patch.formatting ? "formatting" : undefined,
+      patch.http ? "http" : undefined,
+      patch.dependencies ? "dependencies" : undefined,
+      patch.mcp ? "mcp.configuration" : undefined,
+    ].filter((item): item is string => Boolean(item));
+    if (changed.length === 0)
+      throw configurationError(
+        "configuration_empty_patch",
+        "config_core requires at least one core section",
+      );
+    const touchesMcp =
+      patch.mcp?.configuration?.enabled !== undefined ||
+      patch.mcp?.configuration?.require_approval !== undefined;
+    authorizeConfigWrite(loaded.config, loaded.filePath, touchesMcp);
+    const next = applyConfigCorePatch(loaded.source, patch);
+    return commitConfigEdit(target, loaded.filePath, next, changed);
+  });
 }
 
 export async function applyConfigPaths(patch: ConfigPathsPatch) {
   const target = patch.target ?? "project";
-  const loaded = await loadTarget(target);
-  authorizeConfigWrite(loaded.config, loaded.filePath, false);
-  const next = applyConfigPathOperations(loaded.source, patch.operations);
-  const changed = patch.operations.map((operation) =>
-    operation.op === "add"
-      ? `paths.add:${operation.rule.id}`
-      : `paths.${operation.op}:${operation.id}`,
-  );
-  return commitConfigEdit(target, loaded.filePath, next, changed);
+  const { filePath } = await targetFilePath(target);
+  return withFileLocks([filePath], async () => {
+    const loaded = await loadTarget(target);
+    authorizeConfigWrite(loaded.config, loaded.filePath, false);
+    const next = applyConfigPathOperations(loaded.source, patch.operations);
+    const changed = patch.operations.map((operation) =>
+      operation.op === "add"
+        ? `paths.add:${operation.rule.id}`
+        : `paths.${operation.op}:${operation.id}`,
+    );
+    return commitConfigEdit(target, loaded.filePath, next, changed);
+  });
 }

@@ -46,13 +46,7 @@ export function containingRoot(
 export function relativeRootFromPwd(roots: string[]): string | undefined {
   const pwd = process.env.PWD;
   if (!pwd) return undefined;
-  const resolved = path.resolve(pwd);
-  return (
-    containingRoot(roots, resolved) ??
-    roots
-      .filter((root) => pathWithin(resolved, root))
-      .sort((left, right) => right.length - left.length)[0]
-  );
+  return containingRoot(roots, path.resolve(pwd));
 }
 
 export function effectiveWorkspaceRoot(

@@ -379,6 +379,7 @@ async function prepareStrategyPatch(context: PatchContext) {
   const prepared = await patchStrategyAdapter(
     context.request.patchStrategy,
   ).prepare(context);
+  await validateStructuredCandidate(context.capabilities, prepared.candidate);
   return { candidate: prepared.candidate, metadata: prepared.metadata };
 }
 

@@ -218,6 +218,21 @@ test("rejects gitdir pointers that do not round-trip to this repository", async 
   expect(await linkedWorktrees(main)).toEqual([await realpath(main)]);
 });
 
+test("rejects a .git file that points at an unrelated repository", async () => {
+  const parent = await temporary("ast-mcp-gitdir-foreign-repo-");
+  const foreign = path.join(parent, "foreign");
+  const decoy = path.join(parent, "decoy");
+  await mkdir(path.join(foreign, ".git", "worktrees", "feature"), {
+    recursive: true,
+  });
+  await mkdir(decoy);
+  await writeFile(
+    path.join(decoy, ".git"),
+    `gitdir: ${path.join(foreign, ".git")}\n`,
+  );
+  expect(await linkedWorktrees(decoy)).toEqual([]);
+});
+
 test("treats a .git file without a gitdir pointer as missing", async () => {
   const root = await temporary("ast-mcp-gitdir-empty-");
   await writeFile(path.join(root, ".git"), "# not a gitdir pointer\n");
@@ -362,6 +377,8 @@ test("path helpers canonicalize macOS tmp aliases", async () => {
   expect(relativeRootFromPwd([root])).toBeUndefined();
   process.env.PWD = root;
   expect(relativeRootFromPwd([root])).toBe(canonicalizePathSync(root));
+  process.env.PWD = path.dirname(root);
+  expect(relativeRootFromPwd([root])).toBeUndefined();
   const blocked = path.join(root, "blocked");
   await mkdir(blocked);
   await writeFile(path.join(blocked, "file.txt"), "secret\n");

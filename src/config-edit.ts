@@ -1,14 +1,6 @@
-import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  readFile,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import path from "node:path";
+import { lstat, readFile } from "node:fs/promises";
 import { fileV2Schema } from "./config-v2-schema";
+import { replaceFileAtomically } from "./runtime/atomic";
 
 export type TomlValue =
   | boolean
@@ -22,7 +14,7 @@ const pathIdPattern =
 const policyPairPattern = () =>
   /([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)/g;
 
-export function encodeTomlValue(value: TomlValue): string {
+function encodeTomlValue(value: TomlValue): string {
   if (typeof value === "boolean" || typeof value === "number")
     return String(value);
   if (typeof value === "string") return JSON.stringify(value);
@@ -144,13 +136,18 @@ export function addPathTable(
   return `${source.trimEnd()}\n\n${encodePathRule(rule)}`;
 }
 
-export function removePathTable(source: string, id: string): string {
+function requirePathBlock(source: string, id: string) {
   const block = pathBlocks(source).find((item) => item.id === id);
   if (!block)
     throw Object.assign(new Error(`No [[paths]] rule with id ${id}`), {
       code: "configuration_path_missing",
       retryable: true,
     });
+  return block;
+}
+
+export function removePathTable(source: string, id: string): string {
+  const block = requirePathBlock(source, id);
   return `${source.slice(0, block.start)}${source.slice(block.end)}`.replace(
     /\n{3,}/g,
     "\n\n",
@@ -162,12 +159,7 @@ export function updatePathTable(
   id: string,
   patch: Record<string, TomlValue>,
 ): string {
-  const block = pathBlocks(source).find((item) => item.id === id);
-  if (!block)
-    throw Object.assign(new Error(`No [[paths]] rule with id ${id}`), {
-      code: "configuration_path_missing",
-      retryable: true,
-    });
+  const block = requirePathBlock(source, id);
   let body = source.slice(block.start, block.end);
   for (const [key, value] of Object.entries(patch)) {
     const keyPattern = new RegExp(`^[\\t ]*${key}[\\t ]*=.*$`, "m");
@@ -236,17 +228,7 @@ export async function writeConfigSource(
 ): Promise<void> {
   validateConfigSource(source, filePath);
   const metadata = await lstat(filePath);
-  const temporary = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.edit-${randomUUID()}`,
-  );
-  try {
-    await writeFile(temporary, source, { flag: "wx", mode: metadata.mode });
-    await chmod(temporary, metadata.mode);
-    await rename(temporary, filePath);
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-  }
+  await replaceFileAtomically(filePath, source, metadata.mode);
 }
 
 export async function readConfigSource(filePath: string): Promise<string> {

@@ -1147,7 +1147,9 @@ function policy(config: ResolvedConfig) {
     dependencies: config.dependencies,
     files: config.files,
     formatting: config.formatting,
+    mcp: config.mcp.configuration,
     safety: config.safety,
+    worktrees: config.workspace.worktrees,
   });
 }
 

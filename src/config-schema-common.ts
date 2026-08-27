@@ -76,7 +76,7 @@ export const httpSchema = z
   })
   .strict();
 
-export const worktreesModeSchema = z.enum(["include", "request", "ignore"]);
+const worktreesModeSchema = z.enum(["include", "request", "ignore"]);
 
 export const workspaceSchema = z
   .object({

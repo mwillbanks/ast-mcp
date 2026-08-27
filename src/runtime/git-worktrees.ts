@@ -57,6 +57,23 @@ function mainWorkTree(commonDir: string, discoveredWorkTree: string): string {
     : discoveredWorkTree;
 }
 
+async function gitDirBelongsTo(
+  gitDir: string,
+  gitPath: string,
+): Promise<boolean> {
+  const metadata = await lstat(gitPath).catch(() => undefined);
+  if (metadata?.isDirectory()) return sameResolvedPath(gitDir, gitPath);
+  if (!metadata?.isFile()) return false;
+  const pointer = await readFile(path.join(gitDir, "gitdir"), "utf8").catch(
+    () => undefined,
+  );
+  if (!pointer?.trim()) return false;
+  const target = path.isAbsolute(pointer.trim())
+    ? path.resolve(pointer.trim())
+    : path.resolve(gitDir, pointer.trim());
+  return sameResolvedPath(target, gitPath);
+}
+
 async function sameResolvedPath(left: string, right: string): Promise<boolean> {
   const [canonicalLeft, canonicalRight] = await Promise.all([
     realpath(left).catch(() => path.resolve(left)),
@@ -142,7 +159,7 @@ export async function linkedWorktrees(root: string): Promise<string[]> {
   const entry = await gitEntry(root);
   if (!entry) return [];
   const gitDir = await resolveGitDir(entry.gitPath);
-  if (!gitDir) return [];
+  if (!gitDir || !(await gitDirBelongsTo(gitDir, entry.gitPath))) return [];
   const commonDir = await commonGitDir(gitDir);
   const common = await stat(commonDir).catch(() => undefined);
   if (!common?.isDirectory()) return uniqueCanonical([entry.workTree]);
