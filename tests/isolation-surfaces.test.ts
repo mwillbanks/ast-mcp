@@ -6,6 +6,7 @@ import {
   rm,
   symlink,
   writeFile,
+  chmod,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -153,6 +154,10 @@ test("installer copies only the unified skill and its checker diagnoses the resu
         ).installed,
       ).toBeTrue();
 
+    const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+    await mkdir(path.dirname(globalAlias), { recursive: true });
+    await writeFile(globalAlias, "#!/bin/sh\n");
+    await chmod(globalAlias, 0o755);
     await install({ home, root, scope: "global", targets });
     for (const target of targets) {
       const result = await installedChecker.checkInstall(
