@@ -3,9 +3,10 @@ import path from "node:path";
 export type HookEvent = "PreToolUse" | "preToolUse";
 
 export function managedAstMcpHookEntry(command: unknown) {
-  if (typeof command !== "string" || !command.endsWith(" hook"))
-    return undefined;
-  let invocation = command.slice(0, -" hook".length).trim();
+  if (typeof command !== "string") return undefined;
+  const normalized = command.trim();
+  if (!normalized.endsWith(" hook")) return undefined;
+  let invocation = normalized.slice(0, -" hook".length).trim();
   if (invocation.startsWith("bun ")) {
     invocation = invocation.slice(4).trim();
     if (invocation.startsWith("run ")) invocation = invocation.slice(4).trim();

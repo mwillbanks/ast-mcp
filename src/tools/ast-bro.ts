@@ -66,6 +66,11 @@ async function boundedPath(
 const pathArguments = ["file", "path", "root"] as const;
 const globPattern = /[*?{}[\]]/;
 
+async function existingLiteralPath(root: string, value: string) {
+  const resolved = await boundedPath(root, value);
+  return (await lstat(resolved).catch(() => undefined)) !== undefined;
+}
+
 async function validateReadableScanPath(
   root: string,
   value: string,
@@ -110,11 +115,12 @@ async function resolveGlobPaths(root: string, value: string) {
   return resolved.length > 0 ? resolved : [base];
 }
 
-function emptyShowResult(args: Record<string, unknown>, root: string) {
+async function emptyShowResult(args: Record<string, unknown>, root: string) {
   const target = args.path;
   if (
     typeof target !== "string" ||
     !globPattern.test(target) ||
+    (await existingLiteralPath(root, target)) ||
     scanGlob(root, target).length > 0
   )
     return undefined;
@@ -160,11 +166,11 @@ async function resolveAstBroPaths(
     );
   if (candidates.length === 0) candidates.push(root);
   const resolved = await Promise.all(
-    candidates.map((value) =>
-      globPattern.test(value)
-        ? resolveGlobPaths(root, value)
-        : validateReadableScanPath(root, value),
-    ),
+    candidates.map(async (value) => {
+      if (globPattern.test(value) && !(await existingLiteralPath(root, value)))
+        return resolveGlobPaths(root, value);
+      return [await validateReadableScanPath(root, value)];
+    }),
   );
   return resolved.flat();
 }
@@ -356,7 +362,7 @@ export default function registerAstBroTools(
               await validateAstBroPaths(args, root, toolName);
               const emptyShow =
                 toolName === "show" && args.json === true
-                  ? emptyShowResult(args, root)
+                  ? await emptyShowResult(args, root)
                   : undefined;
               if (emptyShow) return emptyShow;
               return toolName === "run"
