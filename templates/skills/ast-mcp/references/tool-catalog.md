@@ -18,6 +18,8 @@ All tools are exposed directly by ast-mcp. Do not wrap ast-bro calls in a proxy 
 - Agents working in a git worktree should pass absolute paths. The server still loads configuration from the primary checkout and authorizes linked worktrees of the same repository when `workspace.worktrees` is `include` or `request`.
 - `policy_check({ checks })` explains batched read/write/delete decisions without side effects.
 - `document_query({ filePath, selectors })` returns bounded RFC 6901-selected JSON, JSONC, TOML, or YAML values plus the whole-file hash.
+- `config_core({ target?, workspace?, safety?, files?, formatting?, http?, dependencies?, mcp? })` updates grouped version 2 core sections without rewriting the file or changing `[[paths]]`. Default `target` is `project`. Host approval is required unless `mcp.configuration.require_approval = false`; `[mcp.configuration]` changes always require approval. Disabled when `mcp.configuration.enabled = false`.
+- `config_paths({ target?, operations })` adds, updates, or removes `[[paths]]` rules in one batch by `id`. Does not change core sections. Same approval and enablement contract as `config_core`.
 
 ## Shape and source
 
@@ -52,4 +54,5 @@ For pinned ast-bro 4.2.0, write mode changes the first match per file, caps a ca
 - Exact text edit: batched `file_read` with `mode: "text"` → `file_hash` → unique Aider block → bounded text verification.
 - Structured manifest: `document_query` with multiple selectors → targeted edit workflow; do not request the whole manifest.
 - Uncertain mutation policy: `config_status` → batched `policy_check` → preview → hash → mutation.
+- Configuration: `config_status` → grouped `config_core` and/or batched `config_paths` (never a whole-file rewrite) → `config_status` to confirm the new generation.
 - Refactor module: `surface` → `deps` + `reverse_deps` → `impact` → edits → `cycles`.

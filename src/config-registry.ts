@@ -215,6 +215,14 @@ export class ConfigRegistry {
         this.#queueReload(entryKey, entryValue);
     } else if (entry) this.#schedule(key, entry);
   }
+  async reload(): Promise<Array<Readonly<ConfigSnapshot>>> {
+    this.invalidate();
+    return Promise.all(
+      [...this.#entries.values()].flatMap((entry) =>
+        entry.promise ? [entry.promise] : [],
+      ),
+    );
+  }
   async reconcile(): Promise<void> {
     await Promise.all(
       [...this.#entries.entries()].map(async ([key, entry]) => {

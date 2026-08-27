@@ -34,6 +34,7 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 - Linked git worktrees of the config-bearing repository are authorized according to `workspace.worktrees` (`include` by default). Pass absolute paths into a worktree; if `PWD` is a linked worktree, relative paths resolve there. Do not treat a toml-less worktree as a different project root.
 - Keep dependent and overlapping work sequential: inspect, preview, hash, then mutate. Never parallelize writes that can touch the same path, configuration generation, or dependency chain.
 - Call `config_status` before the first mutation when formatter selection, path policy, configuration health, or generation is uncertain. Use `policy_check` to preflight read, write, and delete decisions without side effects.
+- Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Do not rewrite the whole file with `file_write` or `file_patch`. Host elicitation is required by default (`mcp.configuration.require_approval = true`). Changing `[mcp.configuration]` always requires approval, including disabling the surface. Successful writes invalidate the in-process registry so the new generation applies without restarting the MCP server.
 - Use `document_query` for bounded JSON, JSONC, TOML, and YAML inspection instead of attempting whole-file reads of structured manifests.
 
 ## Mutate through declared file batches
@@ -97,6 +98,33 @@ file_write({
 MCP transport requests may use a single JSON-RPC array containing requests and notifications. The stdio transport expands the array, preserves request IDs, and emits one line per request response. The live streamable HTTP transport uses SSE by default and emits one event per request response. Neither transport emits a response for notifications; do not assume that live HTTP returns a JSON array unless `enableJsonResponse` was explicitly configured.
 
 Read [patch-state-machine.md](references/patch-state-machine.md) for routing and rejection recovery.
+
+## Update configuration through MCP
+
+Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `http`, `dependencies`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
+
+```json
+config_core({
+  "safety": { "require_hash": false },
+  "workspace": { "worktrees": "request" }
+})
+```
+
+```json
+config_paths({
+  "operations": [
+    {
+      "op": "add",
+      "rule": {
+        "id": "docs",
+        "path": "./docs",
+        "policies": { "read": "allow", "write": "request" }
+      }
+    },
+    { "op": "update", "id": "workspace", "rule": { "excludes": [".git/**"] } }
+  ]
+})
+```
 
 ## Recover safely
 

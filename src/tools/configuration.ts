@@ -10,6 +10,7 @@ import {
   toolOutputSchema,
   toolSuccess,
 } from "../helpers/mcp-schema";
+import { applyConfigCore, applyConfigPaths } from "../runtime/config-write";
 import {
   parseStructuredDocument,
   selectDocumentValue,
@@ -295,6 +296,7 @@ function statusPayload(
     ...base,
     diagnostics,
     formatting: formattingStatus(config),
+    mcp: config.mcp.configuration,
     projectRoot: config.projectRoot,
     provenance: config.provenance,
     safety: config.safety,
@@ -440,6 +442,222 @@ export default function registerConfigurationTools(
             },
             context,
             "document_query",
+          ),
+        );
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  const pathPolicy = z.enum(["allow", "deny", "request"]);
+  const configTarget = z.enum(["global", "project"]).optional();
+  const pathRulePatch = z
+    .object({
+      excludes: z.array(z.string().min(1)).max(256).optional(),
+      follow_symlinks: z.boolean().optional(),
+      includes: z.array(z.string().min(1)).max(256).optional(),
+      path: z.string().min(1).optional(),
+      policies: z
+        .object({
+          delete: pathPolicy.optional(),
+          read: pathPolicy.optional(),
+          write: pathPolicy.optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict();
+
+  server.registerTool(
+    "config_core",
+    {
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        readOnlyHint: false,
+      },
+      description:
+        "Updates grouped core ast-mcp.toml sections (workspace, safety, files, formatting, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
+      inputSchema: z
+        .object({
+          dependencies: z
+            .object({
+              ast_bro_binary: z.string().min(1).optional(),
+              dprint_binary: z.string().min(1).optional(),
+            })
+            .strict()
+            .optional(),
+          files: z
+            .object({
+              patch: z
+                .object({
+                  aider_matchers: z
+                    .array(
+                      z.enum([
+                        "exact",
+                        "whitespace",
+                        "relative-indentation",
+                        "diff-match-patch",
+                      ]),
+                    )
+                    .max(4)
+                    .optional(),
+                  strategies: z
+                    .array(z.enum(["ast", "aider_block"]))
+                    .max(2)
+                    .optional(),
+                })
+                .strict()
+                .optional(),
+              read: z
+                .object({
+                  modes: z
+                    .array(z.enum(["ast", "text"]))
+                    .max(2)
+                    .optional(),
+                })
+                .strict()
+                .optional(),
+            })
+            .strict()
+            .optional(),
+          formatting: z
+            .object({
+              dprint_config: z.string().min(1).optional(),
+              enabled: z.boolean().optional(),
+              fallback: z.enum(["preserve", "dprint", "reject"]).optional(),
+            })
+            .strict()
+            .optional(),
+          http: z
+            .object({
+              host: z.string().min(1).optional(),
+              port: z.number().int().min(1).max(65_535).optional(),
+              session_sweep_interval_ms: z.number().int().positive().optional(),
+              session_timeout_ms: z.number().int().positive().optional(),
+            })
+            .strict()
+            .optional(),
+          mcp: z
+            .object({
+              configuration: z
+                .object({
+                  enabled: z.boolean().optional(),
+                  require_approval: z.boolean().optional(),
+                })
+                .strict()
+                .optional(),
+            })
+            .strict()
+            .optional(),
+          safety: z
+            .object({
+              hook: z
+                .object({
+                  allow_tools: z.array(z.string().min(1)).max(128).optional(),
+                  block_tools: z.array(z.string().min(1)).max(128).optional(),
+                  enabled: z.boolean().optional(),
+                })
+                .strict()
+                .optional(),
+              require_hash: z.boolean().optional(),
+            })
+            .strict()
+            .optional(),
+          target: configTarget,
+          workspace: z
+            .object({
+              roots: z.array(z.string().min(1)).min(1).optional(),
+              worktrees: z.enum(["include", "request", "ignore"]).optional(),
+            })
+            .strict()
+            .optional(),
+        })
+        .strict(),
+      outputSchema: toolOutputSchema,
+      title: "Update Core AST MCP Configuration",
+    },
+    async (args, context) => {
+      try {
+        return toolSuccess(
+          await execute(
+            args,
+            () => applyConfigCore(args),
+            context,
+            "config_core",
+          ),
+        );
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "config_paths",
+    {
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        readOnlyHint: false,
+      },
+      description:
+        "Adds, updates, or removes [[paths]] rules in ast-mcp.toml as a batch. Does not change core sections. Configuration changes require user approval by default.",
+      inputSchema: z
+        .object({
+          operations: z
+            .array(
+              z.union([
+                z
+                  .object({
+                    op: z.literal("add"),
+                    rule: pathRulePatch.extend({
+                      id: z.string().min(1).max(128),
+                      path: z.string().min(1),
+                      policies: z
+                        .object({
+                          delete: pathPolicy.optional(),
+                          read: pathPolicy,
+                          write: pathPolicy,
+                        })
+                        .strict(),
+                    }),
+                  })
+                  .strict(),
+                z
+                  .object({
+                    id: z.string().min(1).max(128),
+                    op: z.literal("update"),
+                    rule: pathRulePatch,
+                  })
+                  .strict(),
+                z
+                  .object({
+                    id: z.string().min(1).max(128),
+                    op: z.literal("remove"),
+                  })
+                  .strict(),
+              ]),
+            )
+            .min(1)
+            .max(50),
+          target: configTarget,
+        })
+        .strict(),
+      outputSchema: toolOutputSchema,
+      title: "Update AST MCP Path Rules",
+    },
+    async (args, context) => {
+      try {
+        return toolSuccess(
+          await execute(
+            args,
+            () => applyConfigPaths(args),
+            context,
+            "config_paths",
           ),
         );
       } catch (error) {

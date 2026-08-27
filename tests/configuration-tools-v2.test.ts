@@ -70,6 +70,14 @@ test("configuration tools expose health, policy, and bounded document selectors"
       ].join("\n"),
     );
     registerConfigurationTools(server as never, execute as never);
+    expect(registered.has("config_core")).toBeTrue();
+    expect(registered.has("config_paths")).toBeTrue();
+    const emptyCore = await (registered.get("config_core") as ToolHandler)({});
+    expect(emptyCore.isError).toBeTrue();
+    const missingPath = await (registered.get("config_paths") as ToolHandler)({
+      operations: [{ id: "missing", op: "remove" }],
+    });
+    expect(missingPath.isError).toBeTrue();
 
     const status = await (registered.get("config_status") as ToolHandler)({});
     expect(status.isError).not.toBeTrue();

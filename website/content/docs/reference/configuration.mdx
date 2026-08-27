@@ -74,6 +74,10 @@ host = "127.0.0.1"
 port = 3768
 session_timeout_ms = 1800000
 session_sweep_interval_ms = 60000
+
+[mcp.configuration]
+enabled = true
+require_approval = true
 ```
 
 Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not authorization. Server-side top-level `paths` rules remain authoritative. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
@@ -101,6 +105,18 @@ Exact files outrank directories; otherwise the deepest anchor and longest includ
 Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets and always require explicit approval for mutation. Clients without elicitation fail closed with `approval_required` remediation.
 
 `require_hash = false` makes `expectedSha256` optional for guarded mutations, but supplied hashes are always checked. Hook allow/block settings affect only the host hook and never weaken server-side path, symlink, approval, or hash enforcement.
+
+## MCP configuration tools
+
+`[mcp.configuration]` is enabled by default and requires host approval by default. Set `enabled = false` to fail closed on `config_core` and `config_paths` (the tools stay registered). Set `require_approval = false` to skip elicitation for ordinary grouped edits; changing `[mcp.configuration]` itself always requires approval, including turning the surface off or disabling approval. Direct `file_write` and `file_patch` of active configuration files remain protected targets.
+
+Agents must use the grouped tools rather than rewriting `ast-mcp.toml` as a whole file:
+
+- `config_core` updates `workspace`, `safety`, `files`, `formatting` scalars (`enabled`, `fallback`, `dprint_config`), `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
+- `config_paths` adds, updates, or removes `[[paths]]` rules in one operations batch. A single path rule can be fully specified in one add or update; partial `policies` updates merge with the existing rule. It does not change core sections.
+- `target` is `project` or `global` and defaults to `project`. Version 1 files must be migrated first.
+
+A successful write validates version 2 schema, replaces the file atomically, invalidates the process-wide registry, and returns the new generation so later tool calls use the updated snapshot without restarting the MCP server. Claude, Codex, Grok, and other elicitation-capable hosts receive a standard `request` approval; hosts without elicitation fail closed with `approval_required`.
 
 ## Environment compatibility
 
@@ -130,7 +146,7 @@ ast-mcp config migrate --check  # 0 current, 2 required, 1 invalid
 ast-mcp config migrate --write  # atomic write plus .v1.bak
 ```
 
-The `config_status` tool returns redacted effective configuration, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
+The `config_status` tool returns redacted effective configuration, including `mcp.configuration`, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. `config_core` and `config_paths` invalidate that registry after a successful write so the next snapshot is the new generation. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
 
 Local installer definitions omit environment fields and use project `ast-mcp.toml`. Global definitions remain project-neutral. `AST_MCP_PROJECT_ROOT`, `AST_MCP_ROOTS`, and `--root` remain deprecated for one release.
 

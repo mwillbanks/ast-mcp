@@ -1383,10 +1383,108 @@
       "required_tools": ["file_hash"],
       "surface": "file_read",
       "variant": "hash-only-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses config_core for a grouped core section instead of rewriting ast-mcp.toml.",
+        "Does not call file_write or file_patch on the configuration file.",
+        "Leaves [[paths]] unchanged."
+      ],
+      "category": "positive",
+      "expected_output": "Updates a core ast-mcp.toml section through config_core.",
+      "files": [],
+      "forbidden_tools": ["file_write", "file_patch"],
+      "id": 184,
+      "prompt": "Turn off require_hash in the project ast-mcp.toml without rewriting the whole file.",
+      "required_tools": ["config_core"],
+      "surface": "config_core",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Batches workspace and formatting keys in one config_core call.",
+        "Does not send one call per individual key.",
+        "Does not change [[paths]]."
+      ],
+      "category": "variant",
+      "expected_output": "Updates multiple core sections in one grouped config_core call.",
+      "files": [],
+      "forbidden_tools": ["config_paths"],
+      "id": 185,
+      "prompt": "Set workspace.worktrees to request and formatting.fallback to reject in one configuration change.",
+      "required_tools": ["config_core"],
+      "surface": "config_core",
+      "variant": "grouped-sections"
+    },
+    {
+      "assertions": [
+        "Does not rewrite ast-mcp.toml through file_write.",
+        "Selects config_core for a core section change.",
+        "Avoids direct filesystem or shell mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to file_write; selects config_core.",
+      "files": [],
+      "forbidden_tools": ["file_write"],
+      "id": 186,
+      "prompt": "Replace the entire ast-mcp.toml contents to change only the HTTP port.",
+      "required_tools": ["config_core"],
+      "surface": "config_core",
+      "variant": "whole-file-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses config_paths to add a [[paths]] rule by id.",
+        "Does not call config_core for path rules.",
+        "Does not rewrite the whole configuration file."
+      ],
+      "category": "positive",
+      "expected_output": "Adds a path rule through config_paths.",
+      "files": [],
+      "forbidden_tools": ["config_core", "file_write"],
+      "id": 187,
+      "prompt": "Add a docs path rule that allows read and requests write.",
+      "required_tools": ["config_paths"],
+      "surface": "config_paths",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Batches add, update, and remove path operations in one config_paths call.",
+        "Identifies existing rules by id.",
+        "Does not change core sections."
+      ],
+      "category": "variant",
+      "expected_output": "Applies a batched config_paths operations list.",
+      "files": [],
+      "forbidden_tools": ["config_core"],
+      "id": 188,
+      "prompt": "In one call, add a vendor path rule, update the workspace rule excludes, and remove the unused temp rule.",
+      "required_tools": ["config_paths"],
+      "surface": "config_paths",
+      "variant": "batched-operations"
+    },
+    {
+      "assertions": [
+        "Does not use config_core to change [[paths]].",
+        "Selects config_paths for path rule mutation.",
+        "Avoids a whole-file rewrite."
+      ],
+      "category": "negative",
+      "expected_output": "Does not route this near-miss to config_core; selects config_paths.",
+      "files": [],
+      "forbidden_tools": ["config_core"],
+      "id": 189,
+      "prompt": "Use config_core to add a new [[paths]] rule for ./vendor.",
+      "required_tools": ["config_paths"],
+      "surface": "config_paths",
+      "variant": "core-near-miss"
     }
   ],
   "mcp_tools": [
     "config_status",
+    "config_core",
+    "config_paths",
     "document_query",
     "file_capabilities",
     "policy_check",

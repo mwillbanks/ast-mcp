@@ -23,6 +23,8 @@ test("stdio server exposes only ast-mcp tools", async () => {
     expect(tools.map((tool) => tool.name).sort()).toEqual(
       [
         ...AST_BRO_TOOLS,
+        "config_core",
+        "config_paths",
         "config_status",
         "document_query",
         "file_capabilities",

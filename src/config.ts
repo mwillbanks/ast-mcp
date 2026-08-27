@@ -95,6 +95,9 @@ export interface ResolvedConfig {
     sessionTimeoutMs: number;
     sessionSweepIntervalMs: number;
   };
+  mcp: {
+    configuration: { enabled: boolean; requireApproval: boolean };
+  };
   paths: Array<{
     excludes: string[];
     followSymlinks: boolean;
@@ -170,6 +173,9 @@ interface InternalConfig {
     port?: number;
     session_timeout_ms?: number;
     session_sweep_interval_ms?: number;
+  };
+  mcp?: {
+    configuration?: { enabled?: boolean; require_approval?: boolean };
   };
   paths?: Array<{
     excludes?: string[];
@@ -547,6 +553,8 @@ const leaves = [
   "version",
   "workspace.roots",
   "workspace.worktrees",
+  "mcp.configuration.enabled",
+  "mcp.configuration.require_approval",
   "paths",
   "safety.allow_any_path",
   "safety.allow_external_roots",
@@ -590,6 +598,7 @@ const mergeSections = [
   "formatting",
   "dependencies",
   "http",
+  "mcp",
 ] as const;
 
 type MergeSection = (typeof mergeSections)[number];
@@ -627,6 +636,20 @@ function mergeFileMethods(
   };
 }
 
+function mergeMcpConfiguration(
+  result: InternalConfig,
+  incoming: InternalConfig["mcp"],
+  previous: InternalConfig["mcp"],
+): void {
+  if (!incoming?.configuration) return;
+  result.mcp = {
+    configuration: {
+      ...previous?.configuration,
+      ...definedProperties(incoming.configuration),
+    },
+  };
+}
+
 function mergeSection(
   result: InternalConfig,
   layer: InternalConfig,
@@ -636,6 +659,7 @@ function mergeSection(
   if (!incoming) return;
   const previousHook = result.safety?.hook;
   const previousFiles = result.files;
+  const previousMcp = result.mcp;
   result[section] = {
     ...(result[section] as object | undefined),
     ...definedProperties(incoming),
@@ -647,6 +671,12 @@ function mergeSection(
       result,
       incoming as InternalConfig["files"],
       previousFiles,
+    );
+  if (section === "mcp")
+    mergeMcpConfiguration(
+      result,
+      incoming as InternalConfig["mcp"],
+      previousMcp,
     );
 }
 
@@ -728,6 +758,9 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       port: 3768,
       session_sweep_interval_ms: 60 * 1000,
       session_timeout_ms: 30 * 60 * 1000,
+    },
+    mcp: {
+      configuration: { enabled: true, require_approval: true },
     },
     safety: {
       hook: { allow_tools: [], block_tools: [], enabled: true },
@@ -873,6 +906,12 @@ function resolvedConfiguration(args: {
     formatting: resolvedFormatting(value, dprintConfig),
     generation: 0,
     http: resolvedHttp(value),
+    mcp: {
+      configuration: {
+        enabled: value.mcp?.configuration?.enabled ?? true,
+        requireApproval: value.mcp?.configuration?.require_approval ?? true,
+      },
+    },
     paths: pathRules.map(({ rule, source }) => ({
       excludes: rule.excludes ?? [],
       followSymlinks: rule.follow_symlinks ?? false,

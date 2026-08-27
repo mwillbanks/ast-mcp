@@ -16,6 +16,8 @@ CRITICAL INSTRUCTION: You are operating in an AST-isolated environment.
 
 File boundary: `file_capabilities`, `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chattr`, `file_delete`.
 
+Configuration: `config_status`, `policy_check`, `document_query`, `config_core`, `config_paths`.
+
 Code intelligence: `digest`, `map`, `show`, `search`, `find_related`, `surface`, `deps`, `reverse_deps`, `cycles`, `graph`, `callers`, `callees`, `trace`, `impact`, `context`, `implements`, `index`, `run`, `squeeze`.
 
 Call every intelligence tool directly by name. There is no proxy tool. Use `run` for bounded AST searches and previews. Direct `run` rewrites with `write: true` are a lower-level escape hatch for intentionally bounded cases; they remain first-match-per-file and are not the normal agent patch route. All mutation tools accept a declared `files` object, are file-operation-root bounded, SHA-guarded where required, and preflight the complete batch before committing any entry. In version 2, access outside the host baseline—including the OS temporary directory—requires an explicit top-level `[[paths]]` rule; legacy `safety.allow_temp_directory` and `safety.allow_any_path` apply only to version 1 configuration. `file_write` and `file_patch` share the `file_chattr` contract rather than independent chmod/chown keys; `file_delete` is the only directory cleanup capability and only removes empty ancestors after a successful file deletion.
@@ -29,6 +31,8 @@ Shell commands are limited to read-only inspection that ast-mcp cannot provide a
 ## Repository search routing
 
 Use ast-mcp intelligence tools as the primary repository search surface: `digest`, `map`, `show`, `search`, `find_related`, `callers`, `callees`, `trace`, `impact`, and bounded `run`. Do not invoke `ast-grep` directly; ast-mcp owns structural search and rewrites. `sed` is prohibited for repository reads and edits. `rg` is a fallback only for exact literals, identifiers, non-AST formats, or discovery that ast-mcp cannot provide; do not use it as the primary search route. External transcript/session analysis, Git metadata, repository-defined validation, and live runtime reproduction remain permitted exceptions.
+
+Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Never rewrite the whole file. Host approval is required by default; `[mcp.configuration]` changes always require approval. Successful writes reload the in-process snapshot immediately.
 
 ## Required write workflow
 
