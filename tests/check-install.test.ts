@@ -172,10 +172,18 @@ test("checker flags a stale configured ast-bro binary", async () => {
   await rm(binary);
   await writeFile(binary, "#!/bin/sh\nprintf 'ast-bro 4.1.0\\n'\n");
   await chmod(binary, 0o755);
-  const result = await checkInstall(
-    ["--scope", "local", "--target", "codex", "--root", root],
-    home,
-  );
+  const configuredAstBroBinary = process.env.AST_BRO_BINARY;
+  delete process.env.AST_BRO_BINARY;
+  let result: Awaited<ReturnType<typeof checkInstall>>;
+  try {
+    result = await checkInstall(
+      ["--scope", "local", "--target", "codex", "--root", root],
+      home,
+    );
+  } finally {
+    if (configuredAstBroBinary === undefined) delete process.env.AST_BRO_BINARY;
+    else process.env.AST_BRO_BINARY = configuredAstBroBinary;
+  }
   expect(result.checks.astBro).toBeFalse();
   expect(result.installed).toBeFalse();
   expect(result.needsUpdate).toBeTrue();
