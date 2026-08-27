@@ -12,9 +12,11 @@ ast-mcp exposes ast-bro tools directly. There is no generic proxy and no need to
 | --------- | ---------------------------------------------------------------- |
 | `digest`  | A compact map of an unfamiliar directory                         |
 | `map`     | Signatures, fields, headings, and parse health for exact files   |
-| `show`    | The body of one or more known symbols                            |
+| `show`    | v2 symbol bodies across files, directories, or authorized globs   |
 | `surface` | The public API after re-export resolution                        |
 | `context` | One symbol plus nearby callers and callees within a token budget |
+
+`show` accepts file, directory, and glob targets plus an optional `limit`. Its JSON response is exclusively `ast-bro.show.v2`, with `files[]`, `files_scanned`, `total`, `shown`, `truncated`, coverage details, and Markdown `frontmatter` symbols. ast-mcp validates a glob's fixed prefix and every match before execution. Authorized zero-match globs return an empty v2 response.
 
 ## Find behavior
 

@@ -1,5 +1,13 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install, update } from "../src/installer";
@@ -21,6 +29,13 @@ async function folders() {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-root-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-home-"));
   created.push(root, home);
+  const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+  await mkdir(path.dirname(globalAlias), { recursive: true });
+  await writeFile(globalAlias, "#!/bin/sh\n");
+  await chmod(globalAlias, 0o755);
+  const binary = path.join(root, "node_modules/.bin/ast-bro");
+  await mkdir(path.dirname(binary), { recursive: true });
+  await symlink(path.resolve("node_modules/.bin/ast-bro"), binary);
   return { home, root };
 }
 
@@ -70,10 +85,45 @@ test("checker covers every global host surface", async () => {
 
     expect(result.installed).toBeTrue();
     expect(result.installCommand).not.toContain("--root");
-    expect(result.installCommand).toContain("--trust @ast-bro/cli dprint");
+    expect(result.installCommand).toContain(
+      "--trust @ast-bro/cli@4.2.0 dprint",
+    );
     expect(result.updateCommand).toStartWith("ast-mcp update");
     expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
+  const configFile = path.join(home, ".codex/config.toml");
+  const config = await readFile(configFile, "utf8");
+  const windowsAlias = path.join(home, ".bun/bin/ast-mcp.cmd");
+  await mkdir(path.dirname(windowsAlias), { recursive: true });
+  await writeFile(windowsAlias, "#!/bin/sh\nexit 0\n");
+  await chmod(windowsAlias, 0o755);
+  await writeFile(
+    configFile,
+    config.replace(/command = .+/, `command = ${JSON.stringify(windowsAlias)}`),
+  );
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "global", "--target", "codex", "--root", root],
+        home,
+      )
+    ).checks.mcp,
+  ).toBeTrue();
+  await writeFile(
+    configFile,
+    config.replace(
+      /command = .+/,
+      'command = "/tmp/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js"',
+    ),
+  );
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "global", "--target", "codex", "--root", root],
+        home,
+      )
+    ).checks.mcp,
+  ).toBeFalse();
 });
 
 test("checker rejects invalid arguments and CLI emits JSON", async () => {
@@ -89,6 +139,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
+  expect(missing.installCommand).toContain("@ast-bro/cli@4.2.0");
   expect(missing.installCommand).toContain("bun pm trust @ast-bro/cli dprint");
   expect(missing.installCommand).toContain(
     "./node_modules/.bin/ast-mcp install",
@@ -112,6 +163,31 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   } finally {
     write.mockRestore();
   }
+});
+
+test("checker flags a stale configured ast-bro binary", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  const binary = path.join(root, "node_modules/.bin/ast-bro");
+  await rm(binary);
+  await writeFile(binary, "#!/bin/sh\nprintf 'ast-bro 4.1.0\\n'\n");
+  await chmod(binary, 0o755);
+  const configuredAstBroBinary = process.env.AST_BRO_BINARY;
+  delete process.env.AST_BRO_BINARY;
+  let result: Awaited<ReturnType<typeof checkInstall>>;
+  try {
+    result = await checkInstall(
+      ["--scope", "local", "--target", "codex", "--root", root],
+      home,
+    );
+  } finally {
+    if (configuredAstBroBinary === undefined) delete process.env.AST_BRO_BINARY;
+    else process.env.AST_BRO_BINARY = configuredAstBroBinary;
+  }
+  expect(result.checks.astBro).toBeFalse();
+  expect(result.installed).toBeFalse();
+  expect(result.needsUpdate).toBeTrue();
+  expect(result.recommendedCommand).toContain("@ast-bro/cli@4.2.0");
 });
 
 test("checker detects stale managed guidance and hook payloads", async () => {

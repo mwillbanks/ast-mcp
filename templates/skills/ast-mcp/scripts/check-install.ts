@@ -2,6 +2,15 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  directoryBinaryCandidates,
+  executableCandidate,
+  executableNames,
+  globalBinDirectories,
+  isExecutable,
+  resolveGlobalBinaryAlias,
+} from "./binary-resolution";
+import { managedAstMcpHookEntry } from "./managed-hook";
 
 type Scope = "local" | "global";
 type Target = "codex" | "claude" | "copilot";
@@ -94,10 +103,75 @@ function parse(args: string[]): CheckOptions {
 
 const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
+const astBroVersion = "4.2.0";
 
-async function astMcpEntry(entry: unknown): Promise<boolean> {
+async function astMcpEntry(
+  entry: unknown,
+  root?: string,
+  home = os.homedir(),
+): Promise<boolean> {
   if (typeof entry !== "string") return false;
-  return ["ast-mcp", "ast-mcp.js", "ast-mcp.ts"].includes(path.basename(entry));
+  const normalized = entry.replaceAll("\\", "/");
+  if (root) return normalized === "./node_modules/.bin/ast-mcp";
+  if (
+    ![
+      "ast-mcp",
+      "ast-mcp.bat",
+      "ast-mcp.cmd",
+      "ast-mcp.com",
+      "ast-mcp.exe",
+    ].includes(path.basename(normalized).toLowerCase())
+  )
+    return false;
+  const directory = path.dirname(path.resolve(entry));
+  const recognized = globalBinDirectories(
+    "ast-mcp",
+    process.platform,
+    home,
+  ).some((candidate) => path.resolve(candidate) === directory);
+  return recognized && isExecutable(entry);
+}
+
+async function astBroVersionCurrent(binary: string) {
+  if (!isExecutable(binary)) return false;
+  const result = Bun.spawnSync([binary, "--version"], {
+    stderr: "ignore",
+    stdout: "pipe",
+  });
+  return (
+    result.exitCode === 0 &&
+    result.stdout.toString().trim() === `ast-bro ${astBroVersion}`
+  );
+}
+
+async function astBroCurrent(options: CheckOptions, home: string) {
+  if (process.env.AST_BRO_BINARY)
+    return astBroVersionCurrent(process.env.AST_BRO_BINARY);
+  const localBinDirectory = path.join(options.root, "node_modules/.bin");
+  if (options.scope === "local") {
+    const projectBinary = executableCandidate(
+      directoryBinaryCandidates(
+        [localBinDirectory],
+        executableNames("ast-bro", process.platform),
+      ),
+      process.platform,
+    );
+    return projectBinary ? astBroVersionCurrent(projectBinary) : false;
+  }
+  const bundled = path.resolve(
+    import.meta.dir,
+    "../../../../node_modules/.bin/ast-bro",
+  );
+  if (isExecutable(bundled)) return astBroVersionCurrent(bundled);
+  const globalBinary = resolveGlobalBinaryAlias("ast-bro", {
+    globalBinDirectories: globalBinDirectories(
+      "ast-bro",
+      process.platform,
+      home,
+    ),
+    platform: process.platform,
+  });
+  return globalBinary ? astBroVersionCurrent(globalBinary) : false;
 }
 
 async function expectedReference(
@@ -141,8 +215,8 @@ async function skillCurrent(file: string) {
 async function hookCurrent(
   configFile: string,
   event: "PreToolUse" | "preToolUse",
-  _scriptFile: string,
-  _commandPath?: string,
+  root: string | undefined,
+  home: string,
 ) {
   const config = JSON.parse(
     await readFile(configFile, "utf8").catch(() => "{}"),
@@ -156,15 +230,21 @@ async function hookCurrent(
       : entries.flatMap((item: { hooks?: Array<{ command?: unknown }> }) =>
           (item.hooks ?? []).map((child) => child.command),
         );
-  for (const command of commands) {
-    if (typeof command !== "string") continue;
-    const match = command.match(/^(.+) hook$/);
-    if (!match) continue;
-    try {
-      if (await astMcpEntry(JSON.parse(match[1]))) return true;
-    } catch {}
-  }
-  return false;
+  const managed = commands
+    .map((command) => ({
+      command,
+      entry: managedAstMcpHookEntry(command),
+    }))
+    .filter(
+      (item): item is { command: string; entry: string } =>
+        typeof item.command === "string" && typeof item.entry === "string",
+    );
+  if (managed.length !== 1) return false;
+  const [{ command, entry }] = managed;
+  return (
+    command === `${JSON.stringify(entry)} hook` &&
+    (await astMcpEntry(entry, root, home))
+  );
 }
 
 type McpEntry = {
@@ -186,9 +266,13 @@ function httpJsonMcpCurrent(
     (type !== "local" || Array.isArray(entry.tools))
   );
 }
-async function stdioCommandCurrent(entry: McpEntry | undefined) {
+async function stdioCommandCurrent(
+  entry: McpEntry | undefined,
+  root?: string,
+  home = os.homedir(),
+) {
   return (
-    (await astMcpEntry(entry?.command)) &&
+    (await astMcpEntry(entry?.command, root, home)) &&
     Array.isArray(entry?.args) &&
     entry.args.length === 1 &&
     entry.args[0] === "mcp"
@@ -220,9 +304,10 @@ async function stdioJsonMcpCurrent(
   entry: McpEntry | undefined,
   root: string | undefined,
   type: "local" | "stdio" | undefined,
+  home: string,
 ) {
   return (
-    (await stdioCommandCurrent(entry)) &&
+    (await stdioCommandCurrent(entry, root, home)) &&
     stdioMetadataCurrent(entry as McpEntry, root, type)
   );
 }
@@ -233,12 +318,13 @@ async function jsonMcpCurrent(
   type?: "local" | "stdio",
   transport: Transport = "stdio",
   url?: string,
+  home = os.homedir(),
 ) {
   const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
   const entry: McpEntry | undefined = value[section]?.["ast-mcp"];
   return transport === "http"
     ? httpJsonMcpCurrent(entry, type, url)
-    : stdioJsonMcpCurrent(entry, root, type);
+    : stdioJsonMcpCurrent(entry, root, type, home);
 }
 
 function codexHttpMcpCurrent(block: string, url: string | undefined) {
@@ -248,13 +334,17 @@ function codexHttpMcpCurrent(block: string, url: string | undefined) {
     !block.includes("command =")
   );
 }
-async function codexStdioMcpCurrent(block: string, _root: string | undefined) {
+async function codexStdioMcpCurrent(
+  block: string,
+  root: string | undefined,
+  home: string,
+) {
   const command = block.match(/command = (".*")/);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
     !block.includes('args = ["mcp"]') ||
     !command ||
-    !(await astMcpEntry(JSON.parse(command[1])))
+    !(await astMcpEntry(JSON.parse(command[1]), root, home))
   )
     return false;
   return !block.includes("AST_MCP_PROJECT_ROOT") && !block.includes("env =");
@@ -264,13 +354,19 @@ async function codexMcpCurrent(
   root?: string,
   transport: Transport = "stdio",
   url?: string,
+  home = os.homedir(),
 ) {
   const content = await readFile(file, "utf8").catch(() => "");
+  if (
+    content.match(/# ast-mcp:begin/g)?.length !== 1 ||
+    content.match(/# ast-mcp:end/g)?.length !== 1
+  )
+    return false;
   const block =
     content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
   return transport === "http"
     ? codexHttpMcpCurrent(block, url)
-    : codexStdioMcpCurrent(block, root);
+    : codexStdioMcpCurrent(block, root, home);
 }
 
 type InstallChecks = Record<string, boolean>;
@@ -288,12 +384,13 @@ async function codexChecks(
       global ? undefined : options.root,
       options.transport,
       options.url,
+      home,
     ),
     hookCurrent(
       path.join(base, "hooks.json"),
       "PreToolUse",
-      path.join(base, "hooks/ast-mcp.ts"),
-      global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
+      global ? undefined : options.root,
+      home,
     ),
     skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
@@ -322,14 +419,13 @@ async function claudeChecks(
       undefined,
       options.transport,
       options.url,
+      home,
     ),
     hookCurrent(
       path.join(base, "settings.json"),
       "PreToolUse",
-      path.join(base, "hooks/ast-mcp.ts"),
-      global
-        ? path.join(base, "hooks/ast-mcp.ts")
-        : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
+      global ? undefined : options.root,
+      home,
     ),
     skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
@@ -358,12 +454,13 @@ async function copilotChecks(
       "local",
       options.transport,
       options.url,
+      home,
     ),
     hookCurrent(
       path.join(base, "hooks/ast-mcp.json"),
       "preToolUse",
-      path.join(base, "hooks/ast-mcp.ts"),
-      global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
+      global ? undefined : options.root,
+      home,
     ),
     skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
@@ -381,6 +478,7 @@ async function copilotChecks(
       "stdio",
       options.transport,
       options.url,
+      home,
     );
   return checks;
 }
@@ -405,7 +503,21 @@ async function serviceCurrent(options: CheckOptions, home: string) {
   const content = await readFile(serviceFile(options, home), "utf8").catch(
     () => "",
   );
+  const commandEntries = [
+    ...content.matchAll(
+      /(?:<string>|ExecStart=")([^"<\n]*ast-mcp)(?=<\/string>|")/g,
+    ),
+  ].map((match) => match[1]);
+  const commandCurrent =
+    options.scope === "local"
+      ? commandEntries.includes("./node_modules/.bin/ast-mcp")
+      : (
+          await Promise.all(
+            commandEntries.map((entry) => astMcpEntry(entry, undefined, home)),
+          )
+        ).some(Boolean);
   return (
+    commandCurrent &&
     content.includes("--transport") &&
     content.includes("http") &&
     content.includes(options.host) &&
@@ -415,7 +527,10 @@ async function serviceCurrent(options: CheckOptions, home: string) {
 }
 function installOperation(checks: InstallChecks) {
   if (Object.values(checks).every(Boolean)) return "none" as const;
-  return Object.values(checks).some(Boolean)
+  const managedSurfaces = Object.entries(checks)
+    .filter(([name]) => name !== "astBro")
+    .map(([, current]) => current);
+  return managedSurfaces.some(Boolean)
     ? ("update" as const)
     : ("install" as const);
 }
@@ -424,16 +539,20 @@ function commandSuffix(options: CheckOptions, _global: boolean) {
 }
 function installCommands(options: CheckOptions, global: boolean) {
   const suffix = commandSuffix(options, global);
+  const updateCommand = global
+    ? `ast-mcp update ${suffix}`
+    : `./node_modules/.bin/ast-mcp update ${suffix}`;
   return {
     installCommand: global
-      ? `bun add --global --trust @ast-bro/cli dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
-      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
+      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
+      : `bun add --dev @mwillbanks/ast-mcp @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
+    repairCommand: global
+      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} && ${updateCommand}`
+      : `bun add --dev @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli && ${updateCommand}`,
     uninstallCommand: global
       ? `ast-mcp uninstall ${suffix}`
       : `./node_modules/.bin/ast-mcp uninstall ${suffix}`,
-    updateCommand: global
-      ? `ast-mcp update ${suffix}`
-      : `./node_modules/.bin/ast-mcp update ${suffix}`,
+    updateCommand,
   };
 }
 export async function checkInstall(
@@ -443,6 +562,7 @@ export async function checkInstall(
   const options = parse(args);
   const global = options.scope === "global";
   const checks = await targetChecks(options, home, global);
+  checks.astBro = await astBroCurrent(options, home);
   if (options.service) checks.service = await serviceCurrent(options, home);
   const installed = Object.values(checks).every(Boolean);
   const operation = installOperation(checks);
@@ -454,11 +574,14 @@ export async function checkInstall(
     needsUpdate: operation === "update",
     operation,
     recommendedCommand:
-      operation === "update"
-        ? commands.updateCommand
-        : operation === "install"
-          ? commands.installCommand
-          : undefined,
+      !checks.astBro && operation !== "install"
+        ? commands.repairCommand
+        : operation === "update"
+          ? commands.updateCommand
+          : operation === "install"
+            ? commands.installCommand
+            : undefined,
+    repairCommand: commands.repairCommand,
     uninstallCommand: commands.uninstallCommand,
     updateCommand: commands.updateCommand,
     ...options,

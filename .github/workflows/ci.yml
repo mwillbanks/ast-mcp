@@ -23,10 +23,10 @@ jobs:
       templates: ${{ steps.filter.outputs.templates }}
       website: ${{ steps.filter.outputs.website }}
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v4.0.2
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -68,29 +68,31 @@ jobs:
     if: ${{ needs.changes.outputs.package == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: actions/checkout@v7
         with:
-          bun-version: 1.3.14
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
       - name: Install package dependencies
         run: bun ci
       - name: Restore ast-bro binary
         id: ast-bro-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
-          path: ~/.cache/ast-bro/4.0.0
-          key: ast-bro-v1-4.0.0-${{ runner.os }}-${{ runner.arch }}
+          path: ~/.cache/ast-bro/4.2.0
+          key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
       - name: Install ast-bro for Linux
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
-        run: cargo install ast-bro --version 4.0.0 --locked --root "$HOME/.cache/ast-bro/4.0.0"
+        run: cargo install ast-bro --version 4.2.0 --locked --root "$HOME/.cache/ast-bro/4.2.0"
       - name: Save ast-bro binary
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
-          path: ~/.cache/ast-bro/4.0.0
-          key: ast-bro-v1-4.0.0-${{ runner.os }}-${{ runner.arch }}
+          path: ~/.cache/ast-bro/4.2.0
+          key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
       - name: Configure ast-bro
-        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/4.0.0/bin/ast-bro" >> "$GITHUB_ENV"
+        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/4.2.0/bin/ast-bro" >> "$GITHUB_ENV"
       - name: Verify package
         run: bun run check
       - name: Validate skill
@@ -114,10 +116,12 @@ jobs:
     if: ${{ needs.changes.outputs.website == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: actions/checkout@v7
         with:
-          bun-version: 1.3.14
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
       - name: Install website dependencies
         run: bun ci --cwd website
       - name: Lint website

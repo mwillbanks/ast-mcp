@@ -9,6 +9,7 @@ import {
   astBroMatchFiles,
   astBroRewrittenFiles,
   parseAstBroJson,
+  parseAstBroShowV2,
 } from "../ast-bro/result";
 import metadata from "../ast-bro/tools.json";
 import { currentConfig } from "../config";
@@ -22,6 +23,7 @@ import { inspectFileCapabilities } from "../runtime/file-capabilities";
 import { assertFormattable, formatFileAtomically } from "../runtime/format";
 import { withFileLocks } from "../runtime/locks";
 import { assertReadableTree } from "../runtime/path-policy";
+import { pathWithin } from "../runtime/path-utils";
 import {
   assertSingleProjectRoot,
   primaryRoot,
@@ -63,6 +65,16 @@ async function boundedPath(
 }
 
 const pathArguments = ["file", "path", "root"] as const;
+const globPattern = /[*?{}[\]]/;
+
+async function existingLiteralPath(root: string, value: string) {
+  const resolved = await boundedPath(root, value);
+  const metadata = await lstat(resolved).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  return metadata !== undefined;
+}
 
 async function validateReadableScanPath(
   root: string,
@@ -73,6 +85,75 @@ async function validateReadableScanPath(
   if (metadata?.isDirectory())
     assertReadableTree(await currentConfig(), resolved);
   return resolved;
+}
+
+function globBase(root: string, value: string) {
+  const globIndex = value.search(globPattern);
+  const prefix = value.slice(0, globIndex);
+  const separator = Math.max(prefix.lastIndexOf("/"), prefix.lastIndexOf("\\"));
+  const base = separator < 0 ? "." : prefix.slice(0, separator + 1);
+  return path.isAbsolute(value) ? base : path.resolve(root, base);
+}
+
+function scanGlob(root: string, value: string) {
+  const relativePattern = path.isAbsolute(value)
+    ? path.relative(root, value)
+    : value;
+  const pattern = relativePattern.split(path.sep).join("/");
+  return [
+    ...new Bun.Glob(pattern).scanSync({
+      absolute: true,
+      cwd: root,
+      dot: true,
+      followSymlinks: false,
+      onlyFiles: false,
+    }),
+  ];
+}
+
+async function resolveGlobPaths(root: string, value: string) {
+  const base = await validateReadableScanPath(root, globBase(root, value));
+  if (!pathWithin(root, base))
+    throw new Error(`Glob path is outside configured workspace root: ${value}`);
+  const matches = scanGlob(root, value);
+  const resolved = await Promise.all(
+    matches.map((match) => validateReadableScanPath(root, match)),
+  );
+  return resolved.length > 0 ? resolved : [base];
+}
+
+async function emptyShowResult(args: Record<string, unknown>, root: string) {
+  const target = args.path;
+  if (
+    typeof target !== "string" ||
+    !globPattern.test(target) ||
+    (await existingLiteralPath(root, target)) ||
+    scanGlob(root, target).length > 0
+  )
+    return undefined;
+  const symbols = Array.isArray(args.symbols)
+    ? args.symbols.filter(
+        (symbol): symbol is string => typeof symbol === "string",
+      )
+    : [];
+  return {
+    content: [
+      {
+        text: JSON.stringify({
+          files: [],
+          files_matched: 0,
+          files_scanned: 0,
+          schema: "ast-bro.show.v2",
+          shown: 0,
+          symbols,
+          total: 0,
+          truncated: false,
+          unmatched: symbols,
+        }),
+        type: "text" as const,
+      },
+    ],
+  };
 }
 
 async function resolveAstBroPaths(
@@ -91,9 +172,14 @@ async function resolveAstBroPaths(
       ),
     );
   if (candidates.length === 0) candidates.push(root);
-  return Promise.all(
-    candidates.map((value) => validateReadableScanPath(root, value)),
+  const resolved = await Promise.all(
+    candidates.map(async (value) => {
+      if (globPattern.test(value) && !(await existingLiteralPath(root, value)))
+        return resolveGlobPaths(root, value);
+      return [await validateReadableScanPath(root, value)];
+    }),
   );
+  return resolved.flat();
 }
 
 async function validateRunPath(
@@ -281,6 +367,11 @@ export default function registerAstBroTools(
             async () => {
               const root = await primaryRoot();
               await validateAstBroPaths(args, root, toolName);
+              const emptyShow =
+                toolName === "show" && args.json === true
+                  ? await emptyShowResult(args, root)
+                  : undefined;
+              if (emptyShow) return emptyShow;
               return toolName === "run"
                 ? await callAstBroWithFormatting(args, root)
                 : await callAstBro(toolName, args, root);
@@ -289,6 +380,8 @@ export default function registerAstBroTools(
             toolName,
           );
 
+          if (toolName === "show" && args.json === true)
+            parseAstBroShowV2(result);
           return structuredUpstreamToolResult(result, toolName);
         } catch (error) {
           return toolFailure(error);

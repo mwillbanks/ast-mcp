@@ -6,6 +6,7 @@ import {
   AST_BRO_BINARY,
   assertAstBroAvailable,
   resolveDependencyBinary,
+  resolveGlobalBinaryAlias,
 } from "../src/runtime/dependencies";
 
 const created: string[] = [];
@@ -56,6 +57,20 @@ test("resolves package-manager global bins before PATH", async () => {
       pathValue: path.join(root, "path"),
     }),
   ).toBe(globalBinary);
+});
+
+test("resolves Bun, npm, pnpm, and Yarn global aliases", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-manager-bins-"));
+  created.push(root);
+  for (const manager of ["bun", "npm", "pnpm", "yarn"]) {
+    const directory = path.join(root, manager, "bin");
+    const alias = await executable(path.join(directory, "ast-mcp"));
+    expect(
+      resolveGlobalBinaryAlias("ast-mcp", {
+        globalBinDirectories: [directory],
+      }),
+    ).toBe(alias);
+  }
 });
 
 test("falls back to PATH and returns undefined when no binary exists", async () => {
@@ -147,5 +162,5 @@ test("validates ast-bro versions and reports platform recovery", () => {
   ).toThrow("$HOME\\.cargo\\bin\\ast-bro.exe");
   expect(() =>
     assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-  ).toThrow("No precompiled ast-bro 4.0.0 binary");
+  ).toThrow("No precompiled ast-bro 4.2.0 binary");
 });

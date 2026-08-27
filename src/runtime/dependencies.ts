@@ -1,8 +1,16 @@
-import { accessSync, constants, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
+import {
+  directoryBinaryCandidates,
+  executableCandidate,
+  executableNames,
+  globalBinDirectories,
+  resolveGlobalBinaryAlias,
+} from "../../templates/skills/ast-mcp/scripts/binary-resolution";
 import { currentConfig } from "../config";
+
+export { globalBinDirectories, resolveGlobalBinaryAlias };
 
 const PACKAGE_ROOT = path.resolve(
   import.meta.dir,
@@ -13,30 +21,11 @@ const require = createRequire(import.meta.url);
 
 interface BinaryResolutionOptions {
   globalBinDirectories?: string[];
+  home?: string;
   packageBinary?: string;
   packageRoot?: string;
   pathValue?: string;
   platform?: NodeJS.Platform;
-}
-
-function executableNames(name: string, platform: NodeJS.Platform) {
-  if (platform !== "win32") return [name];
-  const extensions = (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
-    .split(";")
-    .filter(Boolean);
-  return [name, ...extensions.map((extension) => `${name}${extension}`)];
-}
-
-function isExecutable(file: string, platform: NodeJS.Platform) {
-  try {
-    accessSync(
-      file,
-      platform === "win32" ? constants.F_OK : constants.F_OK | constants.X_OK,
-    );
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function packageBinary(packageName: string, binaryName: string) {
@@ -57,51 +46,6 @@ function packageBinary(packageName: string, binaryName: string) {
   }
 }
 
-function commandOutput(command: string, args: string[]) {
-  try {
-    const result = Bun.spawnSync([command, ...args], {
-      stderr: "ignore",
-      stdout: "pipe",
-    });
-    return result.exitCode === 0 ? result.stdout.toString().trim() : "";
-  } catch {
-    return "";
-  }
-}
-
-function globalBinDirectories(binaryName: string, platform: NodeJS.Platform) {
-  const directories = new Set<string>();
-  const add = (value: string | undefined) => {
-    if (value) directories.add(path.resolve(value));
-  };
-  const yarnBinary = commandOutput("yarn", ["bin", binaryName]);
-  if (yarnBinary) add(path.dirname(yarnBinary));
-  add(process.env.BUN_INSTALL && path.join(process.env.BUN_INSTALL, "bin"));
-  add(process.env.PNPM_HOME);
-  add(
-    process.env.npm_config_prefix &&
-      (platform === "win32"
-        ? process.env.npm_config_prefix
-        : path.join(process.env.npm_config_prefix, "bin")),
-  );
-  add(path.join(os.homedir(), ".bun/bin"));
-  add(path.join(os.homedir(), ".bun/install/global/node_modules/.bin"));
-
-  add(commandOutput("bun", ["pm", "bin", "-g"]));
-  add(commandOutput("pnpm", ["bin", "-g"]));
-  add(commandOutput("yarn", ["global", "bin"]));
-  const npmPrefix = commandOutput("npm", ["prefix", "-g"]);
-  add(
-    npmPrefix &&
-      (platform === "win32" ? npmPrefix : path.join(npmPrefix, "bin")),
-  );
-  return [...directories];
-}
-
-function executableCandidate(candidates: string[], platform: NodeJS.Platform) {
-  return candidates.find((candidate) => isExecutable(candidate, platform));
-}
-
 function ancestorBinaryCandidates(packageRoot: string, names: string[]) {
   const candidates: string[] = [];
   for (
@@ -111,15 +55,6 @@ function ancestorBinaryCandidates(packageRoot: string, names: string[]) {
   ) {
     for (const name of names)
       candidates.push(path.join(current, "node_modules/.bin", name));
-  }
-  return candidates;
-}
-
-function directoryBinaryCandidates(directories: string[], names: string[]) {
-  const candidates: string[] = [];
-  for (const directory of directories) {
-    if (!directory) continue;
-    for (const name of names) candidates.push(path.join(directory, name));
   }
   return candidates;
 }
@@ -139,7 +74,8 @@ export function resolveDependencyBinary(
   const local = executableCandidate(localCandidates, platform);
   if (local) return local;
   const globalDirectories =
-    options.globalBinDirectories ?? globalBinDirectories(binaryName, platform);
+    options.globalBinDirectories ??
+    globalBinDirectories(binaryName, platform, options.home);
   const global = executableCandidate(
     directoryBinaryCandidates(globalDirectories, names),
     platform,
@@ -154,7 +90,7 @@ export function resolveDependencyBinary(
   );
 }
 
-export const AST_BRO_VERSION = "4.0.0";
+export const AST_BRO_VERSION = "4.2.0";
 export const AST_BRO_BINARY =
   process.env.AST_BRO_BINARY ??
   resolveDependencyBinary("ast-bro", "@ast-bro/cli") ??

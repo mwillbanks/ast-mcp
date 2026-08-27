@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   access,
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -21,6 +22,13 @@ afterEach(async () => {
       .map((folder) => rm(folder, { force: true, recursive: true })),
   );
 });
+
+async function executable(file: string) {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, "#!/bin/sh\nexit 0\n");
+  await chmod(file, 0o755);
+  return file;
+}
 
 describe("installer", () => {
   test("installs every local host idempotently", async () => {
@@ -73,28 +81,46 @@ describe("installer", () => {
     const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(agents.match(/ast-mcp:begin/g)).toHaveLength(1);
   });
-  test("records the invoked executable, including paths with spaces", async () => {
+  test("ast-bro preflight failure leaves project configuration unchanged", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-preflight-"));
+    created.push(root);
+    await expect(
+      install({
+        astBroBinary: path.join(root, "missing-ast-bro"),
+        root,
+        scope: "local",
+        targets: ["codex"],
+      }),
+    ).rejects.toThrow("ast-bro 4.2.0 is required");
+    await expect(access(path.join(root, "ast-mcp.toml"))).rejects.toThrow();
+    await expect(access(path.join(root, ".codex"))).rejects.toThrow();
+  });
+
+  test("ignores package-internal local executables and writes the stable alias", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
     created.push(root);
-    const entry = path.join(root, "dist with spaces/ast-mcp.js");
+    const entry = path.join(
+      root,
+      "node_modules/@mwillbanks/ast-mcp/dist/bin/ast-mcp.js",
+    );
     await install({
       cliEntry: entry,
       root,
       scope: "local",
       targets: ["codex", "claude", "copilot"],
     });
-    const expected = "./dist with spaces/ast-mcp.js";
+    const expected = "./node_modules/.bin/ast-mcp";
     expect(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
     ).toContain(expected);
     for (const file of [".mcp.json", ".github/mcp.json"]) {
-      const definition = JSON.parse(
+      const document = JSON.parse(
         await readFile(path.join(root, file), "utf8"),
-      ).mcpServers?.["ast-mcp"];
-      if (definition) {
-        expect(definition.command).toBe(expected);
-        expect(definition.env).toBeUndefined();
-      }
+      );
+      const definition =
+        document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
+      expect(definition.command).toBe(expected);
+      expect(definition.env).toBeUndefined();
     }
   });
 
@@ -102,6 +128,7 @@ describe("installer", () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
     created.push(root, home);
+    await executable(path.join(home, ".bun/bin/ast-mcp"));
     await install({
       home,
       root,
@@ -118,14 +145,60 @@ describe("installer", () => {
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];
     expect(globalCopilot.type).toBe("local");
-    expect(globalCopilot).toMatchObject({
-      args: ["mcp"],
-      command: path.join(home, ".bun/bin/ast-mcp"),
-    });
+    expect(globalCopilot.args).toEqual(["mcp"]);
+    expect(globalCopilot.command).toEndWith("/.bun/bin/ast-mcp");
     expect(
       await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-    ).toContain(path.join(home, ".bun/bin/ast-mcp"));
+    ).toContain("/.bun/bin/ast-mcp");
   });
+  test("writes Bun, npm, pnpm, and Yarn global manager aliases", async () => {
+    for (const manager of ["bun", "npm", "pnpm", "yarn"]) {
+      const root = await mkdtemp(
+        path.join(os.tmpdir(), `ast-mcp-${manager}-root-`),
+      );
+      const home = await mkdtemp(
+        path.join(os.tmpdir(), `ast-mcp-${manager}-home-`),
+      );
+      created.push(root, home);
+      const directory = path.join(home, manager, "bin");
+      const alias = await executable(path.join(directory, "ast-mcp"));
+      await install({
+        cliEntry: alias,
+        globalBinDirectories: [directory],
+        home,
+        root,
+        scope: "global",
+        targets: ["codex"],
+      });
+      expect(
+        await readFile(path.join(home, ".codex/config.toml"), "utf8"),
+      ).toContain(JSON.stringify(alias));
+    }
+  });
+
+  test("rejects package-internal or missing global commands", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-global-missing-root-"),
+    );
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-global-missing-home-"),
+    );
+    created.push(root, home);
+    await expect(
+      install({
+        cliEntry: path.join(
+          home,
+          "node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
+        ),
+        globalBinDirectories: [],
+        home,
+        root,
+        scope: "global",
+        targets: ["codex"],
+      }),
+    ).rejects.toThrow("No executable global ast-mcp package-manager alias");
+  });
+
   test("runs the installer CLI parser without leaking routine output", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-cli-"));
     created.push(root);
@@ -193,7 +266,7 @@ describe("installer", () => {
     };
     for (const operation of [install, update])
       await expect(operation(options)).rejects.toThrow(
-        "cargo install ast-bro --version 4.0.0 --locked",
+        "cargo install ast-bro --version 4.2.0 --locked",
       );
     await expect(
       access(path.join(root, ".codex/config.toml")),
@@ -262,6 +335,64 @@ describe("installer", () => {
     await expect(
       access(path.join(root, ".codex/hooks/ast-mcp.ts")),
     ).rejects.toThrow();
+  });
+
+  test("update removes duplicate Bun-wrapped handlers and preserves unrelated hooks", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-hook-upgrade-"));
+    created.push(root);
+    await mkdir(path.join(root, ".codex"), { recursive: true });
+    const hookFile = path.join(root, ".codex/hooks.json");
+    await writeFile(
+      hookFile,
+      `${JSON.stringify({
+        hooks: {
+          PreToolUse: [
+            {
+              hooks: [
+                {
+                  command:
+                    'bun run "/legacy/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js" hook',
+                  type: "command",
+                },
+              ],
+              matcher: "legacy-one",
+            },
+            {
+              hooks: [
+                {
+                  command: '"/legacy/ast-mcp.ts" hook',
+                  type: "command",
+                },
+              ],
+              matcher: "legacy-two",
+            },
+            {
+              hooks: [
+                {
+                  command: '"C:\\\\Users\\\\tester\\\\bin\\\\ast-mcp.cmd" hook',
+                  type: "command",
+                },
+              ],
+              matcher: "legacy-windows",
+            },
+            {
+              hooks: [{ command: "custom hook", type: "command" }],
+              matcher: "custom",
+            },
+          ],
+        },
+      })}\n`,
+    );
+    await update({ root, scope: "local", targets: ["codex"] });
+    const first = await readFile(hookFile, "utf8");
+    const hooks = JSON.parse(first).hooks.PreToolUse;
+    expect(hooks).toHaveLength(2);
+    expect(
+      hooks.some((item: { matcher?: string }) => item.matcher === "custom"),
+    ).toBeTrue();
+    expect(first.match(/node_modules\/.bin\/ast-mcp/g)).toHaveLength(1);
+    await update({ root, scope: "local", targets: ["codex"] });
+    expect(await readFile(hookFile, "utf8")).toBe(first);
   });
 
   test("uninstall removes only ast-mcp managed surfaces", async () => {
