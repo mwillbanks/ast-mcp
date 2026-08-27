@@ -15,7 +15,7 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v5.0.0
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -28,13 +28,13 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.tag_name }}
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -44,7 +44,7 @@ jobs:
       - run: bun ci
       - name: Restore ast-bro binary
         id: ast-bro-cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ast-bro/4.2.0
           key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
@@ -54,7 +54,7 @@ jobs:
           cargo install ast-bro --version 4.2.0 --locked --root "$HOME/.cache/ast-bro/4.2.0"
       - name: Save ast-bro binary
         if: steps.ast-bro-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6.1.0
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/ast-bro/4.2.0
           key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
