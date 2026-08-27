@@ -99,12 +99,6 @@ function scanGlob(root: string, value: string) {
   const relativePattern = path.isAbsolute(value)
     ? path.relative(root, value)
     : value;
-  if (
-    relativePattern === ".." ||
-    relativePattern.startsWith(`..${path.sep}`) ||
-    relativePattern.startsWith("../")
-  )
-    throw new Error(`Glob path is outside configured workspace root: ${value}`);
   const pattern = relativePattern.split(path.sep).join("/");
   return [
     ...new Bun.Glob(pattern).scanSync({
