@@ -32,7 +32,7 @@ Parseable source commonly supports both patch strategies. The agent selects one 
 8. Recheck policy, approval, configuration generation, and source hashes inside the lock.
 9. Atomically replace files and release locks on success or failure.
 
-A preview may return a short-lived, one-use receipt bound to the session, source hash, configuration generation, normalized operations, and formatted candidate. Receipt commit avoids reparsing or rematching but repeats authorization and freshness checks. A stale hash or receipt, ambiguous Aider block, unexpected AST match count, capped preview, formatter rejection, or lost MCP connection is a safe stop.
+A preview may return a short-lived, one-use receipt bound to the session, source hash, configuration generation, normalized operations, and unformatted strategy candidate. Preview does not run formatters or create formatter staging files. Receipt commit formats that candidate, then writes the formatted result after authorization and freshness checks. A stale hash or receipt, ambiguous Aider block, unexpected AST match count, capped preview, formatter rejection, or lost MCP connection is a safe stop.
 
 ## Concurrency
 

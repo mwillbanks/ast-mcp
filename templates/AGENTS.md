@@ -34,7 +34,7 @@ Use ast-mcp intelligence tools as the primary repository search surface: `digest
 
 1. Explore with the smallest direct intelligence or `file_read` call; use `impact` before shared API changes and `file_capabilities` when method support is uncertain.
 2. Select `file_read.mode` explicitly when intent matters. Select `file_patch.patchStrategy` per file: AST for structural edits, Aider for small exact text edits, subject to the reported effective capabilities.
-3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded and formatted dry-run contract of either strategy.
+3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded dry-run contract of either strategy. Preview does not format; commit, including `previewReceipt` commit, formats.
 4. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
 5. Call one `file_patch({ files: { ... } })` batch with one fresh hash and matching ordered `astRules` or `aiderBlocks` per path. Each keyed path is locked and atomically committed once.
 6. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement.

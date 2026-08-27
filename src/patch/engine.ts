@@ -322,7 +322,7 @@ async function createPatchContext(
 
 async function patchPreview(
   context: PatchContext,
-  formatted: string,
+  candidate: string,
   metadata: PreviewMetadata,
 ) {
   const config = await currentConfig();
@@ -337,7 +337,7 @@ async function patchPreview(
   };
   const payloadBytes = previewPayloadBytes(
     sessionId,
-    formatted,
+    candidate,
     normalizedOperations,
   );
   const expiryTimer = setTimeout(
@@ -346,8 +346,8 @@ async function patchPreview(
   );
   expiryTimer.unref?.();
   previewReceipts.set(receipt, {
-    candidate: formatted,
-    candidateSha256: sha256(formatted),
+    candidate,
+    candidateSha256: sha256(candidate),
     chattr: context.request.chattr,
     configurationIdentity: previewConfigurationIdentity(config),
     expiresAt,
@@ -361,8 +361,8 @@ async function patchPreview(
     sourceSha256: context.actual,
   });
   return {
-    changed: formatted !== context.original,
-    diff: previewDiff(context.filePath, context.original, formatted),
+    changed: candidate !== context.original,
+    diff: previewDiff(context.filePath, context.original, candidate),
     filePath: context.filePath,
     matches: metadata.matches,
     matchMethods: metadata.matchMethods,
@@ -370,18 +370,26 @@ async function patchPreview(
     preview: true,
     previewReceipt: receipt,
     receiptExpiresAt: new Date(expiresAt).toISOString(),
-    sha256: sha256(formatted),
+    sha256: sha256(candidate),
     strategy: metadata.strategy,
   };
 }
 
-async function prepareFormattedStrategyPatch(context: PatchContext) {
+async function prepareStrategyPatch(context: PatchContext) {
   const prepared = await patchStrategyAdapter(
     context.request.patchStrategy,
   ).prepare(context);
-  const candidate = await formatContent(context.filePath, prepared.candidate);
-  await validateStructuredCandidate(context.capabilities, candidate);
-  return { candidate, metadata: prepared.metadata };
+  return { candidate: prepared.candidate, metadata: prepared.metadata };
+}
+
+async function formatCandidate(
+  filePath: string,
+  candidate: string,
+  capabilities: FileCapabilities,
+) {
+  const formatted = await formatContent(filePath, candidate);
+  await validateStructuredCandidate(capabilities, formatted);
+  return formatted;
 }
 
 async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
@@ -392,12 +400,17 @@ async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
       await preflightPatchBatch(filePath, request),
     );
   const context = await createPatchContext(filePath, request);
-  const prepared = await prepareFormattedStrategyPatch(context);
+  const prepared = await prepareStrategyPatch(context);
   if (request.preview)
     return patchPreview(context, prepared.candidate, prepared.metadata);
-  await commit(
+  const candidate = await formatCandidate(
     filePath,
     prepared.candidate,
+    context.capabilities,
+  );
+  await commit(
+    filePath,
+    candidate,
     context.mode,
     context.actual,
     request.chattr,
@@ -407,7 +420,7 @@ async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
     ...prepared.metadata,
     filePath,
     preview: false,
-    sha256: sha256(prepared.candidate),
+    sha256: sha256(candidate),
   };
 }
 
@@ -471,7 +484,7 @@ async function preflightPatchBatch(
   }
 
   const context = await createPatchContext(filePath, request);
-  const prepared = await prepareFormattedStrategyPatch(context);
+  const prepared = await prepareStrategyPatch(context);
   return {
     candidate: prepared.candidate,
     chattr: request.chattr,
@@ -499,6 +512,11 @@ async function applyPreparedPatch(
     prepared.sourceSha256 === undefined
   )
     throw new Error("Patch batch preflight did not produce a commit candidate");
+  const candidate = await formatCandidate(
+    filePath,
+    prepared.candidate,
+    await inspectFileCapabilities(filePath),
+  );
   if (prepared.receiptToken) {
     const receipt = previewReceipts.get(prepared.receiptToken);
     if (receipt) clearTimeout(receipt.expiryTimer);
@@ -506,13 +524,13 @@ async function applyPreparedPatch(
   }
   await commit(
     filePath,
-    prepared.candidate,
+    candidate,
     prepared.mode,
     prepared.sourceSha256,
     prepared.chattr,
     true,
   );
-  return prepared.result;
+  return { ...prepared.result, sha256: sha256(candidate) };
 }
 
 interface PreparedWrite {
