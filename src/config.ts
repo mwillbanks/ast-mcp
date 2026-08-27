@@ -871,6 +871,56 @@ function layerPathRules(
   return (layer.value.paths ?? []).map((rule) => ({ rule, source }));
 }
 
+function resolvedMcp(value: InternalConfig): ResolvedConfig["mcp"] {
+  return {
+    configuration: {
+      enabled: value.mcp?.configuration?.enabled ?? true,
+      requireApproval: value.mcp?.configuration?.require_approval ?? true,
+    },
+  };
+}
+
+function resolvedPathEntries(
+  pathRules: ReturnType<typeof layerPathRules>,
+): ResolvedConfig["paths"] {
+  return pathRules.map(({ rule, source }) => ({
+    excludes: rule.excludes ?? [],
+    followSymlinks: rule.follow_symlinks ?? false,
+    id: rule.id,
+    includes: rule.includes ?? ["**/*"],
+    path: rule.path,
+    policies: {
+      delete: rule.policies.delete ?? rule.policies.write,
+      read: rule.policies.read,
+      write: rule.policies.write,
+    },
+    source,
+  }));
+}
+
+function resolvedSources(
+  environment: ReturnType<typeof environmentLayer>,
+  global: LoadedLayer,
+  project: LoadedLayer,
+): ResolvedConfig["sources"] {
+  return {
+    environment: environment.names,
+    global: global.value ? global.path : undefined,
+    project: project.value ? project.path : undefined,
+  };
+}
+
+function resolvedWorkspace(
+  value: InternalConfig,
+  candidates: string[],
+): ResolvedConfig["workspace"] {
+  return {
+    linkedWorktrees: [],
+    roots: value.workspace?.roots ?? candidates,
+    worktrees: value.workspace?.worktrees ?? "include",
+  };
+}
+
 function resolvedConfiguration(args: {
   candidates: string[];
   dprintConfig: string;
@@ -893,10 +943,6 @@ function resolvedConfiguration(args: {
     trustedRoots,
     value,
   } = args;
-  const pathRules = [
-    ...layerPathRules(global, "global"),
-    ...layerPathRules(project, "project"),
-  ];
   return {
     dependencies: {
       astBroBinary: value.dependencies?.ast_bro_binary,
@@ -906,40 +952,18 @@ function resolvedConfiguration(args: {
     formatting: resolvedFormatting(value, dprintConfig),
     generation: 0,
     http: resolvedHttp(value),
-    mcp: {
-      configuration: {
-        enabled: value.mcp?.configuration?.enabled ?? true,
-        requireApproval: value.mcp?.configuration?.require_approval ?? true,
-      },
-    },
-    paths: pathRules.map(({ rule, source }) => ({
-      excludes: rule.excludes ?? [],
-      followSymlinks: rule.follow_symlinks ?? false,
-      id: rule.id,
-      includes: rule.includes ?? ["**/*"],
-      path: rule.path,
-      policies: {
-        delete: rule.policies.delete ?? rule.policies.write,
-        read: rule.policies.read,
-        write: rule.policies.write,
-      },
-      source,
-    })),
+    mcp: resolvedMcp(value),
+    paths: resolvedPathEntries([
+      ...layerPathRules(global, "global"),
+      ...layerPathRules(project, "project"),
+    ]),
     projectRoot,
     provenance,
     safety: resolvedSafety(value),
-    sources: {
-      environment: environment.names,
-      global: global.value ? global.path : undefined,
-      project: project.value ? project.path : undefined,
-    },
+    sources: resolvedSources(environment, global, project),
     trustedRoots,
     version: value.version ?? 1,
-    workspace: {
-      linkedWorktrees: [],
-      roots: value.workspace?.roots ?? candidates,
-      worktrees: value.workspace?.worktrees ?? "include",
-    },
+    workspace: resolvedWorkspace(value, candidates),
   };
 }
 

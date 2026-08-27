@@ -9,7 +9,40 @@ import {
 } from "../src/ast-bro/client";
 import metadata from "../src/ast-bro/tools.json";
 
-test("stdio server exposes only ast-mcp tools", async () => {
+function expectedToolNames() {
+  return [
+    ...AST_BRO_TOOLS,
+    "config_core",
+    "config_paths",
+    "config_status",
+    "document_query",
+    "file_capabilities",
+    "file_chattr",
+    "file_delete",
+    "file_hash",
+    "file_patch",
+    "file_read",
+    "file_rename",
+    "file_write",
+    "policy_check",
+  ].sort();
+}
+
+function toolProperties(
+  tools: Array<{ inputSchema?: unknown; name: string }>,
+  name: string,
+) {
+  const schema = tools.find((tool) => tool.name === name)?.inputSchema as
+    | { properties?: Record<string, unknown> }
+    | undefined;
+  return schema?.properties;
+}
+
+async function withStdioTools(
+  run: (
+    tools: Array<{ description?: string; inputSchema?: unknown; name: string }>,
+  ) => void,
+) {
   const client = new Client({ name: "test-client", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: [path.resolve(import.meta.dir, "../src/index.ts")],
@@ -19,58 +52,33 @@ test("stdio server exposes only ast-mcp tools", async () => {
   });
   try {
     await client.connect(transport);
-    const tools = (await client.listTools()).tools;
-    expect(tools.map((tool) => tool.name).sort()).toEqual(
-      [
-        ...AST_BRO_TOOLS,
-        "config_core",
-        "config_paths",
-        "config_status",
-        "document_query",
-        "file_capabilities",
-        "file_chattr",
-        "file_delete",
-        "file_hash",
-        "file_patch",
-        "file_read",
-        "file_rename",
-        "file_write",
-        "policy_check",
-      ].sort(),
-    );
-    const runSchema = tools.find((tool) => tool.name === "run")?.inputSchema;
-    const runDescription = tools.find(
-      (tool) => tool.name === "run",
-    )?.description;
-    expect(runDescription).toContain(
-      "Normal agent edits belong in file_patch's declared files batch",
-    );
-    expect(
-      (runSchema as { properties?: Record<string, unknown> }).properties
-        ?.pattern,
-    ).toBeTruthy();
-
-    const mapSchema = tools.find((tool) => tool.name === "map")
-      ?.inputSchema as {
-      properties?: Record<string, { enum?: string[] }>;
-    };
-    expect(mapSchema.properties?.detail?.enum).toEqual([
-      "names",
-      "signatures",
-      "full",
-    ]);
-
-    const fileReadSchema = tools.find((tool) => tool.name === "file_read")
-      ?.inputSchema as { properties?: Record<string, unknown> };
-    expect(fileReadSchema.properties?.files).toBeTruthy();
-    expect(fileReadSchema.properties?.filePath).toBeUndefined();
-
-    const fileHashSchema = tools.find((tool) => tool.name === "file_hash")
-      ?.inputSchema as { properties?: Record<string, unknown> };
-    expect(fileHashSchema.properties?.filePaths).toBeTruthy();
+    run((await client.listTools()).tools);
   } finally {
     await client.close();
   }
+}
+
+test("stdio server exposes only ast-mcp tools", async () => {
+  await withStdioTools((tools) => {
+    expect(tools.map((tool) => tool.name).sort()).toEqual(expectedToolNames());
+  });
+});
+
+test("stdio tool schemas expose batched file and map contracts", async () => {
+  await withStdioTools((tools) => {
+    const run = tools.find((tool) => tool.name === "run");
+    expect(run?.description).toContain(
+      "Normal agent edits belong in file_patch's declared files batch",
+    );
+    expect(toolProperties(tools, "run")?.pattern).toBeTruthy();
+    expect(
+      (toolProperties(tools, "map") as { detail?: { enum?: string[] } })?.detail
+        ?.enum,
+    ).toEqual(["names", "signatures", "full"]);
+    expect(toolProperties(tools, "file_read")?.files).toBeTruthy();
+    expect(toolProperties(tools, "file_read")?.filePath).toBeUndefined();
+    expect(toolProperties(tools, "file_hash")?.filePaths).toBeTruthy();
+  });
 });
 
 test("CLI mcp subcommand remains alive for a stdio handshake", async () => {

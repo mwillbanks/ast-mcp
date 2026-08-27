@@ -265,46 +265,63 @@ async function commitConfigEdit(
   };
 }
 
+function coreSectionChanges(patch: ConfigCorePatch): string[] {
+  return [
+    patch.workspace ? "workspace" : undefined,
+    patch.safety ? "safety" : undefined,
+    patch.files ? "files" : undefined,
+    patch.formatting ? "formatting" : undefined,
+    patch.http ? "http" : undefined,
+    patch.dependencies ? "dependencies" : undefined,
+    patch.mcp ? "mcp.configuration" : undefined,
+  ].filter((item): item is string => Boolean(item));
+}
+
+async function editConfigCore(target: ConfigTarget, patch: ConfigCorePatch) {
+  const loaded = await loadTarget(target);
+  const changed = coreSectionChanges(patch);
+  if (changed.length === 0)
+    throw configurationError(
+      "configuration_empty_patch",
+      "config_core requires at least one core section",
+    );
+  authorizeConfigWrite(
+    loaded.config,
+    loaded.filePath,
+    patch.mcp?.configuration?.enabled !== undefined ||
+      patch.mcp?.configuration?.require_approval !== undefined,
+  );
+  return commitConfigEdit(
+    target,
+    loaded.filePath,
+    applyConfigCorePatch(loaded.source, patch),
+    changed,
+  );
+}
+
+async function editConfigPaths(target: ConfigTarget, patch: ConfigPathsPatch) {
+  const loaded = await loadTarget(target);
+  authorizeConfigWrite(loaded.config, loaded.filePath, false);
+  return commitConfigEdit(
+    target,
+    loaded.filePath,
+    applyConfigPathOperations(loaded.source, patch.operations),
+    patch.operations.map((operation) =>
+      operation.op === "add"
+        ? `paths.add:${operation.rule.id}`
+        : `paths.${operation.op}:${operation.id}`,
+    ),
+  );
+}
+
 export async function applyConfigCore(patch: ConfigCorePatch) {
   const target = patch.target ?? "project";
   const { filePath } = await targetFilePath(target);
-  return withFileLocks([filePath], async () => {
-    const loaded = await loadTarget(target);
-    const changed = [
-      patch.workspace ? "workspace" : undefined,
-      patch.safety ? "safety" : undefined,
-      patch.files ? "files" : undefined,
-      patch.formatting ? "formatting" : undefined,
-      patch.http ? "http" : undefined,
-      patch.dependencies ? "dependencies" : undefined,
-      patch.mcp ? "mcp.configuration" : undefined,
-    ].filter((item): item is string => Boolean(item));
-    if (changed.length === 0)
-      throw configurationError(
-        "configuration_empty_patch",
-        "config_core requires at least one core section",
-      );
-    const touchesMcp =
-      patch.mcp?.configuration?.enabled !== undefined ||
-      patch.mcp?.configuration?.require_approval !== undefined;
-    authorizeConfigWrite(loaded.config, loaded.filePath, touchesMcp);
-    const next = applyConfigCorePatch(loaded.source, patch);
-    return commitConfigEdit(target, loaded.filePath, next, changed);
-  });
+  return withFileLocks([filePath], () => editConfigCore(target, patch));
 }
 
 export async function applyConfigPaths(patch: ConfigPathsPatch) {
   const target = patch.target ?? "project";
   const { filePath } = await targetFilePath(target);
-  return withFileLocks([filePath], async () => {
-    const loaded = await loadTarget(target);
-    authorizeConfigWrite(loaded.config, loaded.filePath, false);
-    const next = applyConfigPathOperations(loaded.source, patch.operations);
-    const changed = patch.operations.map((operation) =>
-      operation.op === "add"
-        ? `paths.add:${operation.rule.id}`
-        : `paths.${operation.op}:${operation.id}`,
-    );
-    return commitConfigEdit(target, loaded.filePath, next, changed);
-  });
+  return withFileLocks([filePath], () => editConfigPaths(target, patch));
 }

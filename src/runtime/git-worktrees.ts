@@ -22,13 +22,16 @@ async function gitEntry(
   }
 }
 
+function resolvePointer(baseDir: string, pointer: string): string {
+  return path.isAbsolute(pointer)
+    ? path.resolve(pointer)
+    : path.resolve(baseDir, pointer);
+}
+
 function gitDirPointer(source: string, gitPath: string): string | undefined {
   const match = /^\s*gitdir:\s*(.+?)\s*$/m.exec(source);
   const value = match?.[1]?.trim();
-  if (!value) return undefined;
-  return path.isAbsolute(value)
-    ? path.resolve(value)
-    : path.resolve(path.dirname(gitPath), value);
+  return value ? resolvePointer(path.dirname(gitPath), value) : undefined;
 }
 
 async function resolveGitDir(gitPath: string): Promise<string | undefined> {
@@ -68,10 +71,7 @@ async function gitDirBelongsTo(
     () => undefined,
   );
   if (!pointer?.trim()) return false;
-  const target = path.isAbsolute(pointer.trim())
-    ? path.resolve(pointer.trim())
-    : path.resolve(gitDir, pointer.trim());
-  return sameResolvedPath(target, gitPath);
+  return sameResolvedPath(resolvePointer(gitDir, pointer.trim()), gitPath);
 }
 
 async function sameResolvedPath(left: string, right: string): Promise<boolean> {
@@ -82,31 +82,35 @@ async function sameResolvedPath(left: string, right: string): Promise<boolean> {
   return canonicalLeft === canonicalRight;
 }
 
-async function worktreeFromGitdirFile(
+async function worktreeGitFile(
   gitdirFile: string,
-  commonDir: string,
 ): Promise<string | undefined> {
   const source = await readFile(gitdirFile, "utf8").catch(() => undefined);
   const pointer = source?.trim();
   if (!pointer) return undefined;
-  const gitFile = path.isAbsolute(pointer)
-    ? path.resolve(pointer)
-    : path.resolve(path.dirname(gitdirFile), pointer);
+  const gitFile = resolvePointer(path.dirname(gitdirFile), pointer);
   if (path.basename(gitFile) !== ".git") return undefined;
   const gitMetadata = await lstat(gitFile).catch(() => undefined);
-  if (!gitMetadata?.isFile()) return undefined;
+  return gitMetadata?.isFile() ? gitFile : undefined;
+}
+
+async function worktreeFromGitdirFile(
+  gitdirFile: string,
+  commonDir: string,
+): Promise<string | undefined> {
+  const gitFile = await worktreeGitFile(gitdirFile);
+  if (!gitFile) return undefined;
+  const expectedGitDir = path.dirname(gitdirFile);
   const back = gitDirPointer(
     (await readFile(gitFile, "utf8").catch(() => undefined)) ?? "",
     gitFile,
   );
-  const expectedGitDir = path.dirname(gitdirFile);
   if (!back || !(await sameResolvedPath(back, expectedGitDir)))
     return undefined;
-  const linkedCommon = await commonGitDir(expectedGitDir);
-  if (!(await sameResolvedPath(linkedCommon, commonDir))) return undefined;
-  const workTree = path.dirname(gitFile);
-  const metadata = await stat(workTree).catch(() => undefined);
-  return metadata?.isDirectory() ? workTree : undefined;
+  if (!(await sameResolvedPath(await commonGitDir(expectedGitDir), commonDir)))
+    return undefined;
+  const metadata = await stat(path.dirname(gitFile)).catch(() => undefined);
+  return metadata?.isDirectory() ? path.dirname(gitFile) : undefined;
 }
 
 async function linkedFromGitdirFiles(commonDir: string): Promise<string[]> {
