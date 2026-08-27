@@ -1,12 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
   rm,
   symlink,
   writeFile,
-  chmod,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
