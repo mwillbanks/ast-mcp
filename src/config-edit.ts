@@ -17,6 +17,11 @@ export type TomlValue =
   | TomlValue[]
   | { [key: string]: TomlValue };
 
+const pathIdPattern =
+  /(?:^|\n)[ \t]*id[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|'[^']*')/;
+const policyPairPattern = () =>
+  /([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)/g;
+
 export function encodeTomlValue(value: TomlValue): string {
   if (typeof value === "boolean" || typeof value === "number")
     return String(value);
@@ -105,8 +110,7 @@ function pathBlocks(source: string): Array<{
     const end =
       nextStart === undefined ? following : Math.min(nextStart, following);
     const body = source.slice(start, end);
-    const idMatch =
-      /(?:^|\n)[ \t]*id[ \t]*=[ \t]*("(?:\\.|[^"])*"|'[^']*')/.exec(body);
+    const idMatch = pathIdPattern.exec(body);
     const raw = idMatch?.[1];
     const id = raw
       ? raw.startsWith("'")
@@ -191,9 +195,7 @@ export function existingPathPolicies(
   const match = /(?:^|\n)[ \t]*policies[ \t]*=[ \t]*\{([^}]*)\}/.exec(body);
   if (!match?.[1]) return {};
   const policies: Record<string, string> = {};
-  const pair =
-    /([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*("(?:\\.|[^"])*"|'[^']*'|[A-Za-z0-9_-]+)/g;
-  for (const item of match[1].matchAll(pair))
+  for (const item of match[1].matchAll(policyPairPattern()))
     policies[item[1] ?? ""] = item[2]?.startsWith('"')
       ? (JSON.parse(item[2]) as string)
       : item[2]?.startsWith("'")

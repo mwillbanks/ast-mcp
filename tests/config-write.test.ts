@@ -3,7 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
-import { validateConfigSource, writeConfigSource } from "../src/config-edit";
+import {
+  existingPathPolicies,
+  pathTableIds,
+  validateConfigSource,
+  writeConfigSource,
+} from "../src/config-edit";
 import { configRegistry } from "../src/config-registry";
 import {
   InputRequiredSignal,
@@ -420,4 +425,18 @@ test("config_paths merges partial policy updates", async () => {
   expect(source).toContain('read = "allow"');
   expect(source).toContain('write = "request"');
   expect(source).toContain('delete = "deny"');
+});
+
+test("parses escaped quoted path ids and mixed policy scalars", () => {
+  const source = `[[paths]]
+id = "work\\"tree"
+path = "."
+policies = { read = "al\\"low", write = 'request', delete = deny }
+`;
+  expect(pathTableIds(source)).toEqual(['work"tree']);
+  expect(existingPathPolicies(source, 'work"tree')).toEqual({
+    delete: "deny",
+    read: 'al"low',
+    write: "request",
+  });
 });
