@@ -114,13 +114,9 @@ async function astMcpEntry(
   const normalized = entry.replaceAll("\\", "/");
   if (root) return normalized === "./node_modules/.bin/ast-mcp";
   if (
-    ![
-      "ast-mcp",
-      "ast-mcp.bat",
-      "ast-mcp.cmd",
-      "ast-mcp.com",
-      "ast-mcp.exe",
-    ].includes(path.basename(normalized).toLowerCase())
+    !executableNames("ast-mcp", process.platform)
+      .map((name) => name.toLowerCase())
+      .includes(path.basename(normalized).toLowerCase())
   )
     return false;
   const directory = path.dirname(path.resolve(entry));
