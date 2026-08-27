@@ -23,6 +23,7 @@ import { inspectFileCapabilities } from "../runtime/file-capabilities";
 import { assertFormattable, formatFileAtomically } from "../runtime/format";
 import { withFileLocks } from "../runtime/locks";
 import { assertReadableTree } from "../runtime/path-policy";
+import { pathWithin } from "../runtime/path-utils";
 import {
   assertSingleProjectRoot,
   primaryRoot,
@@ -98,6 +99,12 @@ function scanGlob(root: string, value: string) {
   const relativePattern = path.isAbsolute(value)
     ? path.relative(root, value)
     : value;
+  if (
+    relativePattern === ".." ||
+    relativePattern.startsWith(`..${path.sep}`) ||
+    relativePattern.startsWith("../")
+  )
+    throw new Error(`Glob path is outside configured workspace root: ${value}`);
   const pattern = relativePattern.split(path.sep).join("/");
   return [
     ...new Bun.Glob(pattern).scanSync({
@@ -112,6 +119,8 @@ function scanGlob(root: string, value: string) {
 
 async function resolveGlobPaths(root: string, value: string) {
   const base = await validateReadableScanPath(root, globBase(root, value));
+  if (!pathWithin(root, base))
+    throw new Error(`Glob path is outside configured workspace root: ${value}`);
   const matches = scanGlob(root, value);
   const resolved = await Promise.all(
     matches.map((match) => validateReadableScanPath(root, match)),
