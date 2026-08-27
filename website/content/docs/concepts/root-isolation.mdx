@@ -25,3 +25,15 @@ One canonical policy engine serves file tools, AST intelligence, hooks, previews
 When a client advertises multiple roots, an absolute request path selects the containing root; pathless and relative requests use the first root. Calls spanning roots fail if their effective safety, formatting, or dependency policies conflict. This prevents one project from silently weakening another project's write policy.
 
 Prefer one repository root per server when possible. Multiple roots remain available for deliberate multi-repository work, but they increase the filesystem state exposed to the connected agent.
+
+## Linked git worktrees
+
+Hosts typically start a project-local MCP server against the primary checkout. Linked git worktrees of that repository sit outside a literal `workspace.roots = ["."]` path, so ast-mcp discovers them from `.git` without invoking `git` on the hot path.
+
+`[workspace] worktrees` selects how those trees participate:
+
+- `include` (default): linked worktrees join the filesystem baseline and trusted roots. Relative `[[paths]]` anchors such as `path = "."` remap onto each worktree.
+- `request`: the same remapping applies, but paths inside a sibling worktree require approval unless an explicit rule already denies them.
+- `ignore`: sibling worktrees stay outside the baseline unless an absolute `[[paths]]` rule covers them.
+
+`projectRoot` remains the config-bearing checkout. Intelligence calls that target an absolute worktree path use that worktree as the ast-bro root. Relative paths resolve against `PWD` when it is a linked worktree.

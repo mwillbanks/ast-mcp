@@ -76,6 +76,13 @@ export const httpSchema = z
   })
   .strict();
 
+export const worktreesModeSchema = z.enum(["include", "request", "ignore"]);
+
 export const workspaceSchema = z
-  .object({ roots: z.array(z.string().min(1)).min(1).optional() })
+  .object({
+    roots: z.array(z.string().min(1)).min(1).optional(),
+    worktrees: worktreesModeSchema.optional(),
+  })
   .strict();
+
+export type WorktreesMode = z.infer<typeof worktreesModeSchema>;

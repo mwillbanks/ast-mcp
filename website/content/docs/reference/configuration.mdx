@@ -26,6 +26,7 @@ version = 2
 
 [workspace]
 roots = [".", "../shared"]
+worktrees = "include" # include | request | ignore
 
 [files.read]
 modes = ["ast", "text"]
@@ -76,6 +77,8 @@ session_sweep_interval_ms = 60000
 ```
 
 Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not authorization. Server-side top-level `paths` rules remain authoritative. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
+
+`workspace.worktrees` defaults to `include`. Linked git worktrees of each configured root join the filesystem baseline and inherit relative `[[paths]]` directory anchors. `request` keeps those remapped rules but requires approval for sibling worktree paths. `ignore` restores the previous behavior, denying sibling worktrees unless an explicit absolute rule covers them. The selected `projectRoot` stays on the checkout that bears `ast-mcp.toml`.
 
 ## File methods
 

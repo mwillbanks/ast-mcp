@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import {
   createHookSchema,
   dependenciesSchema,
   httpSchema,
+  type WorktreesMode,
   workspaceSchema,
 } from "./config-schema-common";
 import {
@@ -17,7 +18,13 @@ import {
   type PathRuleV2,
 } from "./config-v2-schema";
 import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
+import {
+  clearGitWorktreeCache,
+  linkedWorktrees,
+} from "./runtime/git-worktrees";
 import { canonicalizePath } from "./runtime/path-utils";
+
+export type { WorktreesMode };
 
 const schemaVersion = 1 as const;
 const hookSchema = createHookSchema(64);
@@ -110,7 +117,11 @@ export interface ResolvedConfig {
   sources: { project?: string; global?: string; environment: string[] };
   trustedRoots: string[];
   version: 1 | 2;
-  workspace: { roots: string[] };
+  workspace: {
+    linkedWorktrees: string[];
+    roots: string[];
+    worktrees: WorktreesMode;
+  };
 }
 
 export interface ResolveConfigOptions {
@@ -181,7 +192,7 @@ interface InternalConfig {
     require_hash?: boolean;
   };
   version?: 1 | 2;
-  workspace?: { roots?: string[] };
+  workspace?: { roots?: string[]; worktrees?: WorktreesMode };
 }
 
 class ConfigurationError extends Error {
@@ -535,6 +546,7 @@ function environmentLayer(
 const leaves = [
   "version",
   "workspace.roots",
+  "workspace.worktrees",
   "paths",
   "safety.allow_any_path",
   "safety.allow_external_roots",
@@ -722,7 +734,7 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       require_hash: true,
     },
     version: 1,
-    workspace: { roots: candidates },
+    workspace: { roots: candidates, worktrees: "include" },
   };
 }
 
@@ -884,7 +896,11 @@ function resolvedConfiguration(args: {
     },
     trustedRoots,
     version: value.version ?? 1,
-    workspace: { roots: value.workspace?.roots ?? candidates },
+    workspace: {
+      linkedWorktrees: [],
+      roots: value.workspace?.roots ?? candidates,
+      worktrees: value.workspace?.worktrees ?? "include",
+    },
   };
 }
 
@@ -943,6 +959,71 @@ function resolutionCacheKey(args: {
   });
 }
 
+async function sameResolvedPath(left: string, right: string): Promise<boolean> {
+  if (path.resolve(left) === path.resolve(right)) return true;
+  try {
+    return (await realpath(left)) === (await realpath(right));
+  } catch {
+    return false;
+  }
+}
+
+async function appendUniqueRoots(
+  existing: string[],
+  candidates: string[],
+): Promise<string[]> {
+  const result = [...existing];
+  for (const candidate of candidates) {
+    let found = false;
+    for (const item of result) {
+      if (await sameResolvedPath(item, candidate)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) result.push(candidate);
+  }
+  return result;
+}
+
+async function discoveredLinkedWorktrees(
+  projectRoot: string,
+  candidates: string[],
+  trustedRoots: string[],
+): Promise<string[]> {
+  const sources = [...new Set([projectRoot, ...candidates, ...trustedRoots])];
+  return [
+    ...new Set(
+      (await Promise.all(sources.map((root) => linkedWorktrees(root)))).flat(),
+    ),
+  ];
+}
+
+async function applyLinkedWorktrees(
+  config: ResolvedConfig,
+  linked: string[],
+): Promise<ResolvedConfig> {
+  const workspace = { ...config.workspace, linkedWorktrees: linked };
+  if (config.workspace.worktrees === "ignore") return { ...config, workspace };
+  const workspaceLinked = [
+    ...new Set(
+      (
+        await Promise.all(
+          config.workspace.roots.map((root) => linkedWorktrees(root)),
+        )
+      ).flat(),
+    ),
+  ];
+  return {
+    ...config,
+    trustedRoots: await appendUniqueRoots(config.trustedRoots, linked),
+    workspace: {
+      ...workspace,
+      roots: await appendUniqueRoots(config.workspace.roots, workspaceLinked),
+    },
+  };
+}
+
 async function resolveForProject(
   projectRoot: string,
   candidates: string[],
@@ -980,20 +1061,28 @@ async function resolveForProject(
     projectRoot,
     trustedRoots,
   });
-  const fingerprint = `${global.fingerprint}|${project.fingerprint}|${dprint.fingerprint}`;
+  const linked = await discoveredLinkedWorktrees(
+    projectRoot,
+    candidates,
+    trustedRoots,
+  );
+  const fingerprint = `${global.fingerprint}|${project.fingerprint}|${dprint.fingerprint}|${linked.join("\0")}`;
   const cached = resolvedCache.get(key);
   if (cached?.fingerprint === fingerprint) return cached.value;
-  const resolved = resolvedConfiguration({
-    candidates,
-    dprintConfig: dprint.config,
-    environment,
-    global,
-    project,
-    projectRoot,
-    provenance: configProvenance(layers),
-    trustedRoots,
-    value,
-  });
+  const resolved = await applyLinkedWorktrees(
+    resolvedConfiguration({
+      candidates,
+      dprintConfig: dprint.config,
+      environment,
+      global,
+      project,
+      projectRoot,
+      provenance: configProvenance(layers),
+      trustedRoots,
+      value,
+    }),
+    linked,
+  );
   resolvedCache.set(key, { fingerprint, value: resolved });
   return resolved;
 }
@@ -1106,6 +1195,7 @@ export async function withResolvedConfig<T>(
 }
 
 export function clearConfigCache() {
+  clearGitWorktreeCache();
   dprintConfigCache.clear();
   layerCache.clear();
   resolvedCache.clear();

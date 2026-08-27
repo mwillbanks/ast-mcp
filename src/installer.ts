@@ -705,6 +705,7 @@ function installerConfigSeed(local: boolean) {
     "",
     "[workspace]",
     'roots = ["."]',
+    'worktrees = "include"',
     "",
     ...common.slice(2),
     "",

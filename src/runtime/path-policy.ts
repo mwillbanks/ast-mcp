@@ -7,8 +7,10 @@ import type { PathPolicy } from "../config-v2-schema";
 import { authorizeRequestedDecision } from "./approval";
 import {
   canonicalizePath,
+  canonicalizePathSync,
   effectiveWorkspaceRoot,
   pathWithin,
+  relativeRootFromPwd,
 } from "./path-utils";
 
 export type PathOperation = "read" | "write" | "delete";
@@ -46,7 +48,10 @@ async function canonicalPolicyPath(targetPath: string): Promise<string> {
 }
 
 function within(root: string, target: string): boolean {
-  return pathWithin(root, target);
+  return (
+    pathWithin(root, target) ||
+    pathWithin(canonicalizePathSync(root), canonicalizePathSync(target))
+  );
 }
 
 function literalPrefix(glob: string): number {
@@ -95,6 +100,82 @@ function protectedConfiguration(
     });
 }
 
+function projectRelativeAnchors(
+  config: ResolvedConfig,
+  anchor: string,
+): string[] {
+  if (config.workspace.worktrees === "ignore") return [anchor];
+  const projectRoot = path.resolve(config.projectRoot);
+  if (!within(projectRoot, anchor)) return [anchor];
+  const relative = path.relative(projectRoot, anchor);
+  const extras = (config.workspace.linkedWorktrees ?? [])
+    .map((item) => path.resolve(item))
+    .filter((item) => item !== projectRoot)
+    .map((item) => (relative ? path.join(item, relative) : item));
+  return [anchor, ...extras];
+}
+
+function linkedWorktreeContaining(
+  config: ResolvedConfig,
+  canonicalPath: string,
+): string | undefined {
+  const projectRoot = path.resolve(config.projectRoot);
+  if (within(projectRoot, canonicalPath)) return undefined;
+  return (config.workspace.linkedWorktrees ?? [])
+    .map((item) => path.resolve(item))
+    .filter((item) => item !== projectRoot && within(item, canonicalPath))
+    .sort((left, right) => right.length - left.length)[0];
+}
+
+function withWorktreeRequest(
+  config: ResolvedConfig,
+  decision: PolicyDecision,
+): PolicyDecision {
+  if (config.workspace.worktrees !== "request" || decision.policy === "deny")
+    return decision;
+  if (!linkedWorktreeContaining(config, decision.canonicalPath))
+    return decision;
+  return {
+    ...decision,
+    policy: "request",
+    reason: `${decision.reason}; linked git worktree requires approval`,
+  };
+}
+
+function matchRule(
+  rule: ResolvedConfig["paths"][number],
+  anchor: string,
+  canonicalPath: string,
+  operation: PathOperation,
+): PolicyDecision | undefined {
+  const lexical = pathWithin(anchor, canonicalPath);
+  const canonicalAnchor = canonicalizePathSync(anchor);
+  const canonicalTarget = canonicalizePathSync(canonicalPath);
+  const canonical = pathWithin(canonicalAnchor, canonicalTarget);
+  if (!lexical && !canonical) return undefined;
+  const matchedAnchor = lexical ? anchor : canonicalAnchor;
+  const matchedTarget = lexical ? canonicalPath : canonicalTarget;
+  const relative = path.relative(matchedAnchor, matchedTarget);
+  if (relative !== "" && !matches(relative, rule.includes, rule.excludes))
+    return undefined;
+  const exact = matchedTarget === matchedAnchor ? 1_000_000 : 0;
+  const depth = matchedAnchor.split(path.sep).length * 10_000;
+  const includeSpecificity = Math.max(
+    ...matchingIncludes(relative, rule.includes).map(literalPrefix),
+    0,
+  );
+  return {
+    canonicalPath,
+    operation,
+    policy: rule.policies[operation],
+    reason: `Matched paths rule ${rule.id}`,
+    ruleId: rule.id,
+    source: rule.source,
+    specificity: exact + depth + includeSpecificity,
+    symlinks: rule.followSymlinks,
+  };
+}
+
 export function evaluatePolicy(
   config: ResolvedConfig,
   targetPath: string,
@@ -116,31 +197,14 @@ export function evaluatePolicy(
       symlinks: false,
     };
 
-  const candidates = (config.paths ?? []).flatMap((rule) => {
-    const anchor = path.resolve(rule.path);
-    if (!within(anchor, canonicalPath)) return [];
-    const relative = path.relative(anchor, canonicalPath);
-    if (relative !== "" && !matches(relative, rule.includes, rule.excludes))
-      return [];
-    const exact = canonicalPath === anchor ? 1_000_000 : 0;
-    const depth = anchor.split(path.sep).length * 10_000;
-    const includeSpecificity = Math.max(
-      ...matchingIncludes(relative, rule.includes).map(literalPrefix),
-      0,
-    );
-    return [
-      {
-        canonicalPath,
-        operation,
-        policy: rule.policies[operation],
-        reason: `Matched paths rule ${rule.id}`,
-        ruleId: rule.id,
-        source: rule.source,
-        specificity: exact + depth + includeSpecificity,
-        symlinks: rule.followSymlinks,
-      } satisfies PolicyDecision,
-    ];
-  });
+  const candidates = (config.paths ?? []).flatMap((rule) =>
+    projectRelativeAnchors(config, path.resolve(rule.path)).flatMap(
+      (anchor) => {
+        const decision = matchRule(rule, anchor, canonicalPath, operation);
+        return decision ? [decision] : [];
+      },
+    ),
+  );
 
   candidates.sort(
     (left, right) =>
@@ -157,12 +221,12 @@ export function evaluatePolicy(
       !withinBaseline &&
       winner.source === "project"
     )
-      return {
+      return withWorktreeRequest(config, {
         ...winner,
         policy: "request",
         reason: `${winner.reason}; project access beyond the host baseline requires approval`,
-      };
-    return winner;
+      });
+    return withWorktreeRequest(config, winner);
   }
 
   if (
@@ -170,7 +234,7 @@ export function evaluatePolicy(
     config.safety.allowTempDirectory &&
     within(temporaryRoot, canonicalPath)
   )
-    return {
+    return withWorktreeRequest(config, {
       canonicalPath,
       operation,
       policy: "allow",
@@ -178,9 +242,9 @@ export function evaluatePolicy(
       source: "baseline",
       specificity: 0,
       symlinks: config.safety.followSymlinks,
-    };
+    });
   if (config.version === 1 && config.safety.allowAnyPath)
-    return {
+    return withWorktreeRequest(config, {
       canonicalPath,
       operation,
       policy: "allow",
@@ -188,11 +252,11 @@ export function evaluatePolicy(
       source: "baseline",
       specificity: 0,
       symlinks: config.safety.followSymlinks,
-    };
+    });
   const inBaseline = config.trustedRoots.some((root) =>
     within(root, canonicalPath),
   );
-  return {
+  return withWorktreeRequest(config, {
     canonicalPath,
     operation,
     policy: inBaseline ? "allow" : "deny",
@@ -202,7 +266,7 @@ export function evaluatePolicy(
     source: "baseline",
     specificity: 0,
     symlinks: config.version === 1 && config.safety.followSymlinks,
-  };
+  });
 }
 
 function symlinkDenied(
@@ -225,10 +289,12 @@ export async function evaluatePolicyForCheck(
   const workspaceRoots = await Promise.all(
     config.workspace.roots.map(canonicalizePath),
   );
-  const base = effectiveWorkspaceRoot(
-    await canonicalizePath(config.projectRoot),
-    workspaceRoots,
-  );
+  const base =
+    relativeRootFromPwd(workspaceRoots) ??
+    effectiveWorkspaceRoot(
+      await canonicalizePath(config.projectRoot),
+      workspaceRoots,
+    );
   const inputPath = path.isAbsolute(targetPath)
     ? targetPath
     : path.resolve(base, targetPath);
@@ -246,11 +312,11 @@ export async function evaluatePolicyForCheck(
     : symlinkDenied(targetDecision, target);
 }
 
-function allowRuleCoversTree(
+function allowRuleCoversAnchor(
   rule: ResolvedConfig["paths"][number],
+  anchor: string,
   root: string,
 ): boolean {
-  const anchor = path.resolve(rule.path);
   if (!within(anchor, root)) return false;
   const relative = path.relative(anchor, root).split(path.sep).join("/");
   const included = rule.includes.some((value) => {
@@ -470,16 +536,36 @@ function selectorIntersectsRuleTree(
   );
 }
 
-function ruleIntersectsTree(
+function allowRuleCoversTree(
+  config: ResolvedConfig,
   rule: ResolvedConfig["paths"][number],
   root: string,
 ): boolean {
-  const anchor = path.resolve(rule.path);
+  return projectRelativeAnchors(config, path.resolve(rule.path)).some(
+    (anchor) => allowRuleCoversAnchor(rule, anchor, root),
+  );
+}
+
+function ruleIntersectsAnchor(
+  rule: ResolvedConfig["paths"][number],
+  anchor: string,
+  root: string,
+): boolean {
   if (within(root, anchor)) return true;
   if (!within(anchor, root)) return false;
   const relativeRoot = path.relative(anchor, root).split(path.sep).join("/");
   return rule.includes.some((selector) =>
     selectorIntersectsRuleTree(selector, rule.excludes, relativeRoot),
+  );
+}
+
+function ruleIntersectsTree(
+  config: ResolvedConfig,
+  rule: ResolvedConfig["paths"][number],
+  root: string,
+): boolean {
+  return projectRelativeAnchors(config, path.resolve(rule.path)).some(
+    (anchor) => ruleIntersectsAnchor(rule, anchor, root),
   );
 }
 
@@ -495,9 +581,9 @@ export function assertReadableTree(
       (config.safety.allowAnyPath ||
         (config.safety.allowTempDirectory && within(temporaryRoot, root))));
   for (const rule of config.paths ?? []) {
-    if (!ruleIntersectsTree(rule, root)) continue;
+    if (!ruleIntersectsTree(config, rule, root)) continue;
     if (rule.policies.read === "allow") {
-      fullTreeAllowed ||= allowRuleCoversTree(rule, root);
+      fullTreeAllowed ||= allowRuleCoversTree(config, rule, root);
       continue;
     }
     assertPolicy(

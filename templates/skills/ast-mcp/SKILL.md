@@ -31,6 +31,7 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 - Batch paths, symbols, selectors, and keyed files into one call whenever the tool schema supports them. Prefer one bounded multi-target call over repeated single-target calls.
 - Issue independent read-only calls in the same model turn or host executor, and return all parallel results together when the host protocol requires it.
 - Keep each AST intelligence request within one project root. Split cross-root work into root-specific calls; independent read-only calls may run in parallel.
+- Linked git worktrees of the config-bearing repository are authorized according to `workspace.worktrees` (`include` by default). Pass absolute paths into a worktree; if `PWD` is a linked worktree, relative paths resolve there. Do not treat a toml-less worktree as a different project root.
 - Keep dependent and overlapping work sequential: inspect, preview, hash, then mutate. Never parallelize writes that can touch the same path, configuration generation, or dependency chain.
 - Call `config_status` before the first mutation when formatter selection, path policy, configuration health, or generation is uncertain. Use `policy_check` to preflight read, write, and delete decisions without side effects.
 - Use `document_query` for bounded JSON, JSONC, TOML, and YAML inspection instead of attempting whole-file reads of structured manifests.

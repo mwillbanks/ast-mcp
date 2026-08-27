@@ -2,7 +2,6 @@ import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 
 import { callAstBro } from "../ast-bro/client";
-import { currentConfig } from "../config";
 import { selectDocumentValues } from "./document-inspection";
 import {
   type FileCapabilities,
@@ -10,7 +9,7 @@ import {
   inspectFileCapabilities,
 } from "./file-capabilities";
 import { sha256File } from "./hash";
-import { resolveWritablePath } from "./paths";
+import { intelligenceRoot, resolveWritablePath } from "./paths";
 
 const FILE_READ_DEFAULT_LINES = [0, 100] as const;
 export const FILE_READ_MAX_BATCH = 50;
@@ -262,18 +261,10 @@ async function readSourceAst(
   resolved: string,
   symbols: string[] | undefined,
 ): Promise<unknown> {
-  const config = await currentConfig();
+  const root = await intelligenceRoot([resolved]);
   if (symbols?.length)
-    return callAstBro(
-      "show",
-      { json: true, path: resolved, symbols },
-      config.projectRoot,
-    );
-  return callAstBro(
-    "map",
-    { json: true, paths: [resolved] },
-    config.projectRoot,
-  );
+    return callAstBro("show", { json: true, path: resolved, symbols }, root);
+  return callAstBro("map", { json: true, paths: [resolved] }, root);
 }
 
 async function readAst(

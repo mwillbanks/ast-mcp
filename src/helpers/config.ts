@@ -16,7 +16,10 @@ type ConfigLayer = {
   };
   paths?: Array<{ path: string; [key: string]: unknown }>;
   safety?: { [key: string]: unknown };
-  workspace?: { roots?: string[] };
+  workspace?: {
+    roots?: string[];
+    worktrees?: "include" | "request" | "ignore";
+  };
   [key: string]: unknown;
 };
 
@@ -80,8 +83,11 @@ export function normalizeConfigLayer<T extends ConfigLayer>(
       path: resolvedPath(rule.path, base),
     })),
     safety: value.safety,
-    workspace: value.workspace?.roots
-      ? { roots: value.workspace.roots.map((item) => resolvedPath(item, base)) }
+    workspace: value.workspace
+      ? {
+          ...value.workspace,
+          roots: value.workspace.roots?.map((item) => resolvedPath(item, base)),
+        }
       : value.workspace,
   } as T;
 }

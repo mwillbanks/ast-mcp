@@ -26,7 +26,7 @@ import { assertReadableTree } from "../runtime/path-policy";
 import { pathWithin } from "../runtime/path-utils";
 import {
   assertSingleProjectRoot,
-  primaryRoot,
+  intelligenceRoot,
   resolveWorkspacePath,
   resolveWritablePath,
 } from "../runtime/paths";
@@ -156,10 +156,7 @@ async function emptyShowResult(args: Record<string, unknown>, root: string) {
   };
 }
 
-async function resolveAstBroPaths(
-  args: Record<string, unknown>,
-  root: string,
-): Promise<string[]> {
+function astBroRequestPaths(args: Record<string, unknown>): string[] {
   const candidates: string[] = [];
   for (const name of pathArguments) {
     const value = args[name];
@@ -171,6 +168,14 @@ async function resolveAstBroPaths(
         (value): value is string => typeof value === "string",
       ),
     );
+  return candidates;
+}
+
+async function resolveAstBroPaths(
+  args: Record<string, unknown>,
+  root: string,
+): Promise<string[]> {
+  const candidates = astBroRequestPaths(args);
   if (candidates.length === 0) candidates.push(root);
   const resolved = await Promise.all(
     candidates.map(async (value) => {
@@ -365,7 +370,7 @@ export default function registerAstBroTools(
           const result = await execute(
             args,
             async () => {
-              const root = await primaryRoot();
+              const root = await intelligenceRoot(astBroRequestPaths(args));
               await validateAstBroPaths(args, root, toolName);
               const emptyShow =
                 toolName === "show" && args.json === true

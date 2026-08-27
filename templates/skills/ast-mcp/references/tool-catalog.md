@@ -14,7 +14,8 @@ All tools are exposed directly by ast-mcp. Do not wrap ast-bro calls in a proxy 
 - `file_delete({ files: { "/repo/a.txt": { expectedSha256?, forceReferences? } } })`: preflights all targets and AST import references before any deletion, rejects referenced source unless explicitly overridden, and removes empty ancestor directories within the allowed operation root.
 - `expectedSha256` is required by the secure default for patch, existing-file write, rename, and delete. `safety.require_hash = false` makes it optional; supplied hashes are always verified.
 - Mutation tools use a declared `files` input object, preflight the complete batch, and return a `files` result map. Version 2 grants no implicit temporary access; use explicit top-level `[[paths]]` rules and approval policies. MCP transport also accepts JSON-RPC request/notification arrays and returns one response per request ID.
-- `config_status({})` returns redacted effective configuration, source provenance, generation, health, and formatter selection.
+- `config_status({})` returns redacted effective configuration, source provenance, generation, health, and formatter selection. `workspace.worktrees` reports `include`, `request`, or `ignore`; discovered linked worktree paths are listed as paths only.
+- Agents working in a git worktree should pass absolute paths. The server still loads configuration from the primary checkout and authorizes linked worktrees of the same repository when `workspace.worktrees` is `include` or `request`.
 - `policy_check({ checks })` explains batched read/write/delete decisions without side effects.
 - `document_query({ filePath, selectors })` returns bounded RFC 6901-selected JSON, JSONC, TOML, or YAML values plus the whole-file hash.
 
