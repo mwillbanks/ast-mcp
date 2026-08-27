@@ -29,6 +29,10 @@ async function folders() {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-root-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-home-"));
   created.push(root, home);
+  const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+  await mkdir(path.dirname(globalAlias), { recursive: true });
+  await writeFile(globalAlias, "#!/bin/sh\n");
+  await chmod(globalAlias, 0o755);
   const binary = path.join(root, "node_modules/.bin/ast-bro");
   await mkdir(path.dirname(binary), { recursive: true });
   await symlink(path.resolve("node_modules/.bin/ast-bro"), binary);
