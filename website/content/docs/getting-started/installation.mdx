@@ -32,16 +32,16 @@ This installs stdio definitions by default. To install Streamable HTTP definitio
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. The installer records the invoked executable and omits MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration.
+Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration.
 
 ## ast-bro platform support
 
-`@ast-bro/cli@4.0.0` currently publishes a precompiled binary only for macOS Apple Silicon. Before changing host configuration, the ast-mcp installer verifies that the pinned ast-bro binary exists and reports the expected version.
+`@ast-bro/cli@4.2.0` currently publishes a precompiled binary only for macOS Apple Silicon. Before changing host configuration, the ast-mcp installer verifies that the pinned ast-bro binary exists and reports the expected version.
 
 On Linux or macOS Intel, install ast-bro through Cargo and expose its absolute location to the host process:
 
 ```bash
-cargo install ast-bro --version 4.0.0 --locked
+cargo install ast-bro --version 4.2.0 --locked
 export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
 printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
 ```
@@ -49,7 +49,7 @@ printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.prof
 For Windows PowerShell:
 
 ```powershell
-cargo install ast-bro --version 4.0.0 --locked
+cargo install ast-bro --version 4.2.0 --locked
 $env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
 [Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
 ```

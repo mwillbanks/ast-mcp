@@ -34,7 +34,7 @@ test("reports every guarded TOML update failure and creates a missing HTTP table
     updateHttpToml('[http]\nport = 4000\n[http]\nhost = "localhost"\n', {
       port: 4001,
     }),
-  ).toThrow("duplicate [http] tables");
+  ).toThrow("Cannot update HTTP configuration");
   expect(updateHttpToml("version = 1\n", { host: "localhost" })).toContain(
     '[http]\nhost = "localhost"',
   );

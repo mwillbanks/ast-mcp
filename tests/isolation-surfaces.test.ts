@@ -1,5 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -46,6 +53,9 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       "copilot",
     ];
     await install({ home, root, scope: "local", targets });
+    const astBroBinary = path.join(root, "node_modules/.bin/ast-bro");
+    await mkdir(path.dirname(astBroBinary), { recursive: true });
+    await symlink(path.resolve("node_modules/.bin/ast-bro"), astBroBinary);
     expect(
       await readFile(path.join(root, ".codex/skills/ast-mcp/SKILL.md"), "utf8"),
     ).toContain("# AST MCP");
@@ -77,7 +87,7 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       await mkdir(path.dirname(serviceFile), { recursive: true });
       await writeFile(
         serviceFile,
-        `ast-mcp --transport http --host 127.0.0.1 --port 3768 ${root}`,
+        `ExecStart="./node_modules/.bin/ast-mcp" --transport http --host 127.0.0.1 --port 3768 ${root}`,
       );
       const serviceResult = await installedChecker.checkInstall(
         [

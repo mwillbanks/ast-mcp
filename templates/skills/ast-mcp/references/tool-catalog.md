@@ -22,7 +22,7 @@ All tools are exposed directly by ast-mcp. Do not wrap ast-bro calls in a proxy 
 
 - `digest({ paths, include_private?, include_fields?, max_members?, json? })`: compact map of unfamiliar directories.
 - `map({ paths, glob?, no_private?, no_fields?, no_docs?, no_attrs?, no_lines?, json? })`: signatures, parse error counts, and line ranges.
-- `show({ path, symbols, json? })`: source for known symbols.
+- `show({ path, symbols, limit?, json? })`: v2 source extraction for files, directories, and glob targets. JSON uses `ast-bro.show.v2` with `files[]`, `files_scanned`, `total`, `shown`, `truncated`, coverage metadata, truncation details, and Markdown frontmatter symbols. Glob fixed prefixes and every match remain workspace-policy checked; authorized zero-match globs are valid.
 - `surface({ path, tree?, include_chain?, include_private?, max_depth?, lang?, json? })`: public API and re-exports.
 
 ## Discovery, dependencies, and calls
@@ -40,7 +40,7 @@ All tools are exposed directly by ast-mcp. Do not wrap ast-bro calls in a proxy 
 - dry-run per-file diffs when `rewrite` is present and `write` is false or omitted;
 - disk rewrite when both `rewrite` and `write: true` are present.
 
-For pinned ast-bro 4.0.0, write mode changes the first match per file, caps a call at 50 files, and reports rewritten files rather than node counts. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, each candidate is checked against dprint, and each rewritten file is atomically formatted. Narrow rules to one intended match per file.
+For pinned ast-bro 4.2.0, write mode changes the first match per file, caps a call at 50 files, and reports rewritten files rather than node counts. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, each candidate is checked against dprint, and each rewritten file is atomically formatted. Narrow rules to one intended match per file.
 
 - `squeeze({ path, start?, end?, raw?, json? })`: compression for repetitive logs/text, not source code.
 

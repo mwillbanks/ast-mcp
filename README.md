@@ -87,14 +87,14 @@ Add `--service` to create and start a macOS LaunchAgent or Linux systemd user un
 
 Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. The installer records the invoked executable, creates version 2 configuration, and omits MCP environment fields. Uninstall preserves configuration.
+Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. The installer creates version 2 configuration and omits MCP environment fields. Uninstall preserves configuration.
 
 ### ast-bro platform support
 
-`@ast-bro/cli@4.0.0` currently publishes a precompiled binary only for macOS Apple Silicon. The ast-mcp installer verifies that the pinned binary can execute before writing host configuration. On Linux, Windows, or macOS Intel, install it through Cargo and set `AST_BRO_BINARY` to the resulting executable before rerunning the installer:
+`@ast-bro/cli@4.2.0` currently publishes a precompiled binary only for macOS Apple Silicon. The ast-mcp installer verifies that the pinned binary can execute before writing host configuration. On Linux, Windows, or macOS Intel, install it through Cargo and set `AST_BRO_BINARY` to the resulting executable before rerunning the installer:
 
 ```bash
-cargo install ast-bro --version 4.0.0 --locked
+cargo install ast-bro --version 4.2.0 --locked
 export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
 printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
 ```
@@ -102,7 +102,7 @@ printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.prof
 For Windows PowerShell:
 
 ```powershell
-cargo install ast-bro --version 4.0.0 --locked
+cargo install ast-bro --version 4.2.0 --locked
 $env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
 [Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
 ```
@@ -163,7 +163,7 @@ Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See
 
 ## MCP configuration
 
-A stdio definition contains the invoked executable and `mcp` subcommand. Generated definitions omit environment fields. Project configuration supplies local roots. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
+A stdio definition contains the stable local or package-manager global executable alias and `mcp` subcommand. Generated definitions omit environment fields. Project configuration supplies local roots. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
 
 Start HTTP manually with `ast-mcp mcp --transport http [--host <address>] [--port <number>]`, or install a user service with `--service`. CLI flags override environment variables, project TOML, global TOML, and built-in defaults. The endpoint is `/mcp`; wildcard bind addresses generate loopback client URLs, while explicit non-loopback addresses deliberately expose the server. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
 

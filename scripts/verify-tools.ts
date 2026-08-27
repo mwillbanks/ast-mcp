@@ -19,7 +19,7 @@ if (astBroVersion !== `ast-bro ${AST_BRO_VERSION}`)
     `Unexpected ast-bro version: ${astBroVersion || "no output"}`,
   );
 const dprintVersion = run([dprintBinary, "--version"]);
-if (dprintVersion !== "dprint 0.55.2")
+if (dprintVersion !== "dprint 0.56.1")
   throw new Error(`Unexpected dprint version: ${dprintVersion || "no output"}`);
 run([dprintBinary, "check", "README.md"]);
 console.log(astBroVersion);

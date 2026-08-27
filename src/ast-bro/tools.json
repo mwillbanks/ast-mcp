@@ -499,14 +499,19 @@
     }
   },
   "show": {
-    "description": "Extract source of one or more symbols from a single file. Suffix matching: `TakeDamage`, or `Player.TakeDamage` when ambiguous. For markdown the symbol is a heading. Returns text by default; set `json: true` for `ast-bro.show.v1`.",
+    "description": "Extract source of one or more symbols from a file, a directory, or a glob — pass a directory when you know the symbol but not the file. Suffix matching: `TakeDamage`, or `Player.TakeDamage` when ambiguous. For markdown the symbol is a heading or `frontmatter`. Returns text by default; set `json: true` for `ast-bro.show.v2`.",
     "inputSchema": {
       "properties": {
         "json": {
           "type": "boolean"
         },
+        "limit": {
+          "description": "Cap on rendered bodies when the target is a directory or glob (default 20). The reported total is always exact.",
+          "minimum": 0,
+          "type": "integer"
+        },
         "path": {
-          "description": "File to search.",
+          "description": "File, directory, or glob to search.",
           "type": "string"
         },
         "symbols": {

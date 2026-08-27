@@ -27,7 +27,12 @@ import {
   transports,
 } from "./installer-transport";
 import { isManagedHook } from "./managed-hook";
-import { AST_BRO_BINARY, assertAstBroAvailable } from "./runtime/dependencies";
+import {
+  AST_BRO_BINARY,
+  assertAstBroAvailable,
+  globalBinDirectories,
+  resolveGlobalBinaryAlias,
+} from "./runtime/dependencies";
 import {
   createServicePlan,
   installService,
@@ -39,16 +44,57 @@ import {
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
 const installerRuntime = new AsyncLocalStorage<{ cliEntry: string }>();
+function stableGlobalCliEntry(
+  value: string | undefined,
+  directories: string[],
+  platform: NodeJS.Platform,
+) {
+  if (!value) return undefined;
+  const resolved = path.resolve(value);
+  const basename = path.basename(resolved).toLowerCase();
+  const astMcpNames =
+    platform === "win32"
+      ? ["ast-mcp", "ast-mcp.cmd", "ast-mcp.exe"]
+      : ["ast-mcp"];
+  if (!astMcpNames.includes(basename)) return undefined;
+  const candidateDirectory = path.dirname(resolved);
+  const normalize = (entry: string) =>
+    platform === "win32"
+      ? path.resolve(entry).toLowerCase()
+      : path.resolve(entry);
+  if (
+    !directories.some(
+      (directory) => normalize(directory) === normalize(candidateDirectory),
+    )
+  )
+    return undefined;
+  return resolveGlobalBinaryAlias("ast-mcp", {
+    globalBinDirectories: [candidateDirectory],
+    platform,
+  });
+}
+
 function configuredCliEntry(
   options: InstallOptions,
   root: string,
   home: string,
 ) {
-  return options.cliEntry
-    ? path.resolve(options.cliEntry)
-    : options.scope === "local"
-      ? path.join(root, "node_modules/.bin/ast-mcp")
-      : path.join(home, ".bun/bin/ast-mcp");
+  if (options.scope === "local")
+    return path.join(root, "node_modules/.bin/ast-mcp");
+  const platform = options.platform ?? process.platform;
+  const directories =
+    options.globalBinDirectories ??
+    globalBinDirectories("ast-mcp", platform, home);
+  const resolved =
+    stableGlobalCliEntry(options.cliEntry, directories, platform) ??
+    resolveGlobalBinaryAlias("ast-mcp", {
+      globalBinDirectories: directories,
+      platform,
+    });
+  if (resolved) return resolved;
+  throw new Error(
+    "No executable global ast-mcp package-manager alias was found. Install @mwillbanks/ast-mcp globally with Bun, npm, pnpm, or Yarn, then rerun the installer.",
+  );
 }
 function cliEntryFor(root: string | undefined, _home: string) {
   const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
@@ -162,10 +208,8 @@ async function hook(
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
   const command = `${JSON.stringify(commandPath)} hook`;
-  const managedCommands = [command, `bun ${JSON.stringify(cliEntry)} hook`];
   const kept = prior.filter(
-    (item: unknown) =>
-      !managedCommands.some((managed) => isManagedHook(item, event, managed)),
+    (item: unknown) => !isManagedHook(item, event, command),
   );
   const item =
     event === "preToolUse"
@@ -313,6 +357,7 @@ export interface InstallOptions {
   astBroBinary?: string;
   cliEntry?: string;
   deprecatedRoot?: boolean;
+  globalBinDirectories?: string[];
   home?: string;
   host?: string;
   platform?: NodeJS.Platform;
@@ -815,8 +860,8 @@ async function reconcile(
         });
         await preflightService(serviceConfiguration(options, endpoint));
       }
-      await ensureInstallerConfig(options, root, home);
       assertAstBroAvailable(await installerAstBroBinary(options));
+      await ensureInstallerConfig(options, root, home);
       const endpoint = await reconcileEndpoint(options, transport, root, home);
       for (const target of options.targets)
         await installTarget(target, global, root, home, transport, endpoint);
@@ -959,10 +1004,7 @@ export async function runInstallerCli(
     args,
     process.cwd(),
   );
-  const options: InstallOptions = {
-    ...parsedOptions,
-    cliEntry: process.argv[1],
-  };
+  const options: InstallOptions = parsedOptions;
   if (options.deprecatedRoot)
     process.stderr.write(
       "ast-mcp: --root is deprecated; run this command from the project root.\n",

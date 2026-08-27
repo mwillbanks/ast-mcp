@@ -2,7 +2,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { indexedAstBroCommand } from "../helpers/ast-bro";
 import { captureProcess, successfulProcessOutput } from "../helpers/process";
-import { configuredAstBroBinary } from "../runtime/dependencies";
+import {
+  assertAstBroAvailable,
+  configuredAstBroBinary,
+} from "../runtime/dependencies";
 
 export { AST_BRO_BINARY } from "../runtime/dependencies";
 export const AST_BRO_TOOLS = [
@@ -31,16 +34,19 @@ export async function callAstBro(
   args: Record<string, unknown>,
   root: string,
 ) {
+  const binary = await configuredAstBroBinary();
+  assertAstBroAvailable(binary);
   if (
     toolName === "search" ||
     toolName === "find_related" ||
     toolName === "index"
   ) {
     const commandArgs = indexedAstBroCommand(toolName, args, root);
-    const processHandle = Bun.spawn(
-      [await configuredAstBroBinary(), ...commandArgs],
-      { cwd: root, stderr: "pipe", stdout: "pipe" },
-    );
+    const processHandle = Bun.spawn([binary, ...commandArgs], {
+      cwd: root,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
     const result = await captureProcess(processHandle);
     const stdout = successfulProcessOutput(`ast-bro ${commandArgs[0]}`, result);
     return { content: [{ text: stdout, type: "text" as const }] };
@@ -48,7 +54,7 @@ export async function callAstBro(
   const client = new Client({ name: "ast-mcp", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: ["mcp"],
-    command: await configuredAstBroBinary(),
+    command: binary,
     cwd: root,
   });
   try {
