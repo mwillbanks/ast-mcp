@@ -334,7 +334,6 @@ test("config_core updates grouped workspace, files, and formatting keys", async 
   await withConfig({ cwd: root, env }, async () => {
     await approveNext(() =>
       applyConfigCore({
-        dependencies: { ast_bro_binary: "/tmp/ast-bro" },
         files: {
           patch: { strategies: ["ast"] },
           read: { modes: ["ast"] },
@@ -350,7 +349,6 @@ test("config_core updates grouped workspace, files, and formatting keys", async 
   expect(source).toContain('strategies = ["ast"]');
   expect(source).toContain('modes = ["ast"]');
   expect(source).toContain('fallback = "reject"');
-  expect(source).toContain('ast_bro_binary = "/tmp/ast-bro"');
 });
 
 test("missing configuration files and invalid writes fail closed", async () => {

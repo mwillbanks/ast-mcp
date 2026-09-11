@@ -1,0 +1,94 @@
+{
+  "default": {
+    "artifactBytes": 30413000,
+    "coirNdcgAt10": 47,
+    "dimensions": 384,
+    "model": "onnx-community/granite-embedding-30m-english-ONNX",
+    "quantizedOnnxSha256": "6f479f3970cfec8d7bea633057a29730f4c6c33c02751e2bb89e40ed1fd34677",
+    "residentVectorBytes": 1536,
+    "revision": "a141ffafe5810d8ee499de14086b5259527ed6ff",
+    "runtime": "onnx-transformer",
+    "source": "https://huggingface.co/onnx-community/granite-embedding-30m-english-ONNX"
+  },
+  "offlineCorpus": {
+    "cases": [
+      {
+        "documents": [
+          {
+            "id": "publish",
+            "text": "Reserve, write, and finalize one immutable publication generation."
+          },
+          {
+            "id": "search",
+            "text": "Fuse exact symbols, lexical evidence, vectors, and graph neighborhoods."
+          },
+          {
+            "id": "parse",
+            "text": "Parse a TypeScript function declaration with tree-sitter."
+          }
+        ],
+        "id": "publish-generation",
+        "query": "reserve and finalize a generation",
+        "relevantDocumentIds": ["publish"]
+      },
+      {
+        "documents": [
+          {
+            "id": "publish",
+            "text": "Reserve, write, and finalize one immutable publication generation."
+          },
+          {
+            "id": "search",
+            "text": "Fuse exact symbols, lexical evidence, vectors, and graph neighborhoods."
+          },
+          {
+            "id": "parse",
+            "text": "Parse a TypeScript function declaration with tree-sitter."
+          }
+        ],
+        "id": "parse-typescript",
+        "query": "parse a TypeScript function declaration",
+        "relevantDocumentIds": ["parse"]
+      },
+      {
+        "documents": [
+          {
+            "id": "publish",
+            "text": "Reserve, write, and finalize one immutable publication generation."
+          },
+          {
+            "id": "search",
+            "text": "Fuse exact symbols, lexical evidence, vectors, and graph neighborhoods."
+          },
+          {
+            "id": "parse",
+            "text": "Parse a TypeScript function declaration with tree-sitter."
+          }
+        ],
+        "id": "semantic-search",
+        "query": "find code with semantic and lexical evidence",
+        "relevantDocumentIds": ["search"]
+      }
+    ],
+    "kind": "executable-embedding-corpus",
+    "metric": "MRR and Recall@3",
+    "provenance": {
+      "granite": "https://huggingface.co/onnx-community/granite-embedding-30m-english-ONNX",
+      "potion": "https://huggingface.co/minishlab/potion-code-16M-v2"
+    },
+    "version": 2
+  },
+  "potionBenchmark": {
+    "artifactBytes": 33500000,
+    "coirHybridNdcgAt10": 43.36,
+    "coirNdcgAt10": 39.08,
+    "dimensions": 256,
+    "model": "minishlab/potion-code-16M-v2",
+    "residentVectorBytes": 1024,
+    "revision": "e9d2a44ca6a05ac6685f3b23709ea57eb7352d5b",
+    "runtime": "static-retrieval",
+    "runtimeEvidence": "Static embeddings avoid transformer inference and are reported as orders of magnitude faster.",
+    "safetensorsSha256": "75cf7a6c2171b230ad19b1e7d8e0b1aee86da5a02af8e7cacedd9921d227623c",
+    "source": "https://huggingface.co/minishlab/potion-code-16M-v2"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "code": [
+    {
+      "path": "packages/a.ts",
+      "source": "export function duplicate(value: string) { return value; }"
+    },
+    {
+      "path": "packages/b.ts",
+      "source": "export function duplicate(value: number) { return value; }"
+    },
+    {
+      "path": "src/use.ts",
+      "source": "duplicate(\"one\");\nduplicate(2);"
+    }
+  ],
+  "document": {
+    "path": "docs/design.md",
+    "source": "# Resolver\n\nSee [[duplicate]] and RFC 42."
+  }
+}

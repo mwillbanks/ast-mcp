@@ -1,0 +1,3 @@
+Café overview references ADR-42 and [[Architecture]].
+
+Install @scope/package and see RFC 9110.

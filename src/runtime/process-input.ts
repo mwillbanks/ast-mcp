@@ -30,6 +30,8 @@ export function runCommandInput(
         } else resolve({ stderr, stdout });
       },
     );
+    // The process callback reports failures. Prevent a second uncaught stdin EPIPE.
+    child.stdin?.on("error", Function.prototype as (error: Error) => void);
     child.stdin?.end(input);
   });
 }

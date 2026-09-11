@@ -10,7 +10,6 @@ async function files(directory: string, prefix = ""): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const found: string[] = [];
   for (const entry of entries) {
-    if (entry.name === ".ast-bro") continue;
     const relative = path.join(prefix, entry.name);
     if (entry.isDirectory())
       found.push(...(await files(path.join(directory, entry.name), relative)));

@@ -1,10 +1,28 @@
-import { lstat, readdir, rm, rmdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  chmod,
+  chown,
+  lstat,
+  readdir,
+  readFile,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
-import { astCapable } from "../ast-bro/capability";
-import { callAstBro } from "../ast-bro/client";
-import { parseAstBroJson } from "../ast-bro/result";
 import { currentConfig } from "../config";
+import {
+  beginMutation,
+  completeMutation,
+  failMutation,
+  mutationOperationId,
+  recordMutationCommit,
+  recordMutationRollback,
+} from "../intelligence/mutation/index.ts";
+import { parseSource } from "../intelligence/parser/index.ts";
+import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { detectAstLanguage } from "../patch/languages";
+import { inspectFileCapabilities } from "./file-capabilities";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
@@ -23,18 +41,41 @@ export interface FileDeleteRequest {
 export type FileDeleteBatch = Record<string, FileDeleteRequest>;
 
 async function importersFor(filePath: string, root: string): Promise<string[]> {
-  const language = detectAstLanguage(filePath);
-  if (!(await astCapable(filePath, language))) return [];
-  const result = parseAstBroJson(
-    await callAstBro(
-      "reverse_deps",
-      { file: path.relative(root, filePath), json: true },
-      root,
-    ),
-  );
-  return (result.importers ?? [])
-    .map((item: { file?: unknown }) => item.file)
-    .filter((file: unknown): file is string => typeof file === "string");
+  const importers: string[] = [];
+  const target = path.resolve(filePath);
+  for await (const candidate of new Bun.Glob("**/*").scan({
+    absolute: true,
+    cwd: root,
+    dot: false,
+    followSymlinks: false,
+    onlyFiles: true,
+  })) {
+    if (
+      candidate === target ||
+      candidate.includes(`${path.sep}node_modules${path.sep}`) ||
+      candidate.includes(`${path.sep}.git${path.sep}`)
+    )
+      continue;
+    const capabilities = await inspectFileCapabilities(candidate);
+    if (!capabilities.language || !capabilities.effective.read.includes("ast"))
+      continue;
+    const source = await readFile(candidate, "utf8");
+    const facts = parseSource({
+      languageId: capabilities.language,
+      source,
+    });
+    const referenced = facts.imports.some((entry) => {
+      if (!entry.source.startsWith(".")) return false;
+      const base = path.resolve(path.dirname(candidate), entry.source);
+      return (
+        base === target ||
+        `${base}${path.extname(target)}` === target ||
+        path.join(base, `index${path.extname(target)}`) === target
+      );
+    });
+    if (referenced) importers.push(path.relative(root, candidate));
+  }
+  return importers.sort();
 }
 
 function ancestorPaths(filePath: string, root: string): string[] {
@@ -64,24 +105,42 @@ async function authorizedAncestors(filePath: string, root: string) {
   );
 }
 
+async function ignoreFailure(operation: Promise<unknown>): Promise<void> {
+  try {
+    await operation;
+  } catch {}
+}
+
 async function emptyParents(
   filePath: string,
   root: string,
   authorized: Set<string>,
+  fence: () => Promise<void>,
 ) {
   const removedDirectories: string[] = [];
   for (const directory of ancestorPaths(filePath, root)) {
     if (!authorized.has(directory))
       throw new Error(`Directory deletion was not preflighted: ${directory}`);
-    const contents = await readdir(directory).catch(
-      (error: NodeJS.ErrnoException) => {
-        if (error.code === "ENOENT") return undefined;
-        throw error;
-      },
-    );
+    let contents: string[] | undefined;
+    try {
+      contents = await readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     if (contents?.length !== 0) break;
-    await rmdir(directory);
-    removedDirectories.push(directory);
+    await fence();
+    try {
+      await rmdir(directory);
+      removedDirectories.push(directory);
+    } catch (error) {
+      if (
+        ["ENOENT", "ENOTEMPTY", "EEXIST"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
+        break;
+      throw error;
+    }
   }
   return removedDirectories;
 }
@@ -126,7 +185,8 @@ async function referenceStatus(
 ) {
   const referenceRoot = await referenceRootForPath(filePath);
   const language = detectAstLanguage(filePath);
-  const capable = await astCapable(filePath, language);
+  const capabilities = await inspectFileCapabilities(filePath, language);
+  const capable = capabilities.effective.read.includes("ast");
   requireVerifiableReferences(
     referenceRoot,
     capable,
@@ -163,40 +223,169 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
       prepareDeleteEntry(inputPath, request),
     ),
   );
-  const files = await withFileLocks(
+  const outcome = await withFileLocks(
     entries.map(({ filePath }) => filePath),
-    async () => {
-      const deleted: Record<string, unknown> = {};
+    async (leases) => {
+      const fence = async () => {
+        for (const lease of leases) await lease.fence();
+      };
+      const snapshots = new Map<
+        string,
+        {
+          content: Buffer;
+          gid: number;
+          mode: number;
+          sha256: string;
+          uid: number;
+        }
+      >();
       for (const { filePath, request } of entries) {
-        const actual = await sha256File(filePath);
+        const [actual, content, metadata] = await Promise.all([
+          sha256File(filePath),
+          readFile(filePath),
+          lstat(filePath),
+        ]);
         await requireExpectedHash(request.expectedSha256, "file_delete");
         verifyExpectedHash(request.expectedSha256, actual);
+        snapshots.set(filePath, {
+          content,
+          gid: metadata.gid,
+          mode: metadata.mode,
+          sha256: actual,
+          uid: metadata.uid,
+        });
       }
-      for (const {
-        filePath,
-        importers,
-        referencesVerified,
-        request,
-      } of entries) {
-        await rm(filePath);
-        deleted[filePath] = {
-          deleted: true,
-          forcedReferences:
-            importers.length > 0 && request.forceReferences === true,
-          referenceVerificationBypassed:
-            !referencesVerified && request.forceReferences === true,
+      const workspace = currentWorkspace() ?? null;
+      const sourcePlan = entries.map(({ filePath }) => {
+        const snapshot = snapshots.get(filePath);
+        return {
+          candidateSha256: null,
+          filePath,
+          sourceContentBase64: snapshot?.content.toString("base64") ?? null,
+          sourceGid:
+            process.platform === "win32" ? null : (snapshot?.gid ?? null),
+          sourceMode: snapshot?.mode ?? null,
+          sourceSha256: snapshot?.sha256 ?? null,
+          sourceUid:
+            process.platform === "win32" ? null : (snapshot?.uid ?? null),
         };
+      });
+      const operationId = workspace
+        ? mutationOperationId({
+            files: sourcePlan,
+            nonce: randomUUID(),
+            storageDomainId: workspace.storageDomain.domainId,
+            workspaceId: workspace.workspaceId,
+          })
+        : randomUUID();
+      const commits: Array<{
+        deleted: true;
+        filePath: string;
+        sha256: string;
+      }> = [];
+      let began = false;
+      try {
+        await beginMutation({
+          files: sourcePlan,
+          operationId,
+          tool: "file_delete",
+          workspace,
+        });
+        began = true;
+        const files: Record<string, unknown> = {};
+        for (const {
+          filePath,
+          importers,
+          referencesVerified,
+          request,
+        } of entries) {
+          await fence();
+          await rm(filePath);
+          const snapshot = snapshots.get(filePath);
+          if (!snapshot) throw new Error("mutation_snapshot_missing");
+          const commit = {
+            deleted: true as const,
+            filePath,
+            sha256: snapshot.sha256,
+          };
+          commits.push(commit);
+          await recordMutationCommit(operationId, commit);
+          files[filePath] = {
+            deleted: true,
+            forcedReferences:
+              importers.length > 0 && request.forceReferences === true,
+            referenceVerificationBypassed:
+              !referencesVerified && request.forceReferences === true,
+          };
+        }
+        const intelligenceRefresh = await completeMutation(
+          operationId,
+          commits,
+        );
+        return {
+          files,
+          ...(intelligenceRefresh ? { intelligenceRefresh } : {}),
+        };
+      } catch (error) {
+        if (began) await ignoreFailure(failMutation(operationId, error));
+        const rollbackErrors: unknown[] = [];
+        for (const commit of [...commits].reverse()) {
+          const snapshot = snapshots.get(commit.filePath);
+          if (!snapshot) continue;
+          try {
+            await fence();
+            await writeFile(commit.filePath, snapshot.content, { flag: "wx" });
+            if (process.platform !== "win32") {
+              await fence();
+              await chown(commit.filePath, snapshot.uid, snapshot.gid);
+            }
+            await fence();
+            await chmod(commit.filePath, snapshot.mode);
+            const [restoredSha256, restoredMetadata] = await Promise.all([
+              sha256File(commit.filePath),
+              lstat(commit.filePath),
+            ]);
+            if (
+              restoredSha256 !== snapshot.sha256 ||
+              (restoredMetadata.mode & 0o7777) !== (snapshot.mode & 0o7777) ||
+              (process.platform !== "win32" &&
+                (restoredMetadata.uid !== snapshot.uid ||
+                  restoredMetadata.gid !== snapshot.gid))
+            )
+              throw new Error("file_delete_rollback_verification_failed");
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+        }
+        if (began && rollbackErrors.length === 0)
+          await ignoreFailure(recordMutationRollback(operationId));
+        if (rollbackErrors.length > 0)
+          throw new AggregateError(
+            [error, ...rollbackErrors],
+            "file_delete failed and rollback requires recovery",
+          );
+        throw error;
       }
-      return deleted;
     },
   );
-  const removedDirectories = new Set<string>();
-  for (const { filePath, removableDirectories, root } of entries)
-    for (const directory of await emptyParents(
-      filePath,
-      root,
-      removableDirectories,
-    ))
-      removedDirectories.add(directory);
-  return { files, removedDirectories: [...removedDirectories].sort() };
+  const roots = [...new Set(entries.map(({ root }) => root))].sort();
+  const removedDirectories = await withFileLocks(
+    roots.map((root) => path.join(root, ".ast-mcp-directory-cleanup")),
+    async (leases) => {
+      const fence = async () => {
+        for (const lease of leases) await lease.fence();
+      };
+      const removed = new Set<string>();
+      for (const { filePath, removableDirectories, root } of entries)
+        for (const directory of await emptyParents(
+          filePath,
+          root,
+          removableDirectories,
+          fence,
+        ))
+          removed.add(directory);
+      return [...removed].sort();
+    },
+  );
+  return { ...outcome, removedDirectories };
 }

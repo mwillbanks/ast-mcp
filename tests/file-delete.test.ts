@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
 import {
   mkdir,
   mkdtemp,
@@ -49,6 +50,26 @@ test("file_delete verifies hashes and cleans empty ancestors", async () => {
   ]);
 });
 
+test("file_delete keeps completed deletion successful when cleanup races", async () => {
+  const folder = await temporaryRoot();
+  const filePath = path.join(folder, "nested", "note.txt");
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, "delete me\n");
+  const cleanupRace = Object.assign(new Error("directory became non-empty"), {
+    code: "ENOTEMPTY",
+  });
+  const rmdir = spyOn(fsPromises, "rmdir").mockRejectedValueOnce(cleanupRace);
+  try {
+    const result = await deleteFilesSafely({
+      [filePath]: { expectedSha256: sha256("delete me\n") },
+    });
+    expect(await Bun.file(filePath).exists()).toBeFalse();
+    expect(result.removedDirectories).toEqual([]);
+  } finally {
+    rmdir.mockRestore();
+  }
+});
+
 test("file_delete rejects stale hashes without deleting the target", async () => {
   const folder = await temporaryRoot();
   const filePath = path.join(folder, "note.txt");
@@ -62,8 +83,13 @@ test("file_delete rejects stale hashes without deleting the target", async () =>
 
 test("file_delete verifies byte-accurate hashes for cache artifacts", async () => {
   const folder = await temporaryRoot();
-  const chunks = path.join(folder, ".ast-bro", "index", "chunks.bin");
-  const embeddings = path.join(folder, ".ast-bro", "index", "embeddings.f32");
+  const chunks = path.join(folder, ".ast-mcp", "intelligence", "chunks.bin");
+  const embeddings = path.join(
+    folder,
+    ".ast-mcp",
+    "intelligence",
+    "embeddings.bin",
+  );
   const chunkContent = new Uint8Array([0, 255, 254, 1, 128]);
   const embeddingContent = new Uint8Array([255, 0, 129, 2]);
   await mkdir(path.dirname(chunks), { recursive: true });

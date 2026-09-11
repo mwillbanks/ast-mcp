@@ -20,7 +20,7 @@ afterEach(async () => {
   );
 });
 
-test("Markdown supports agent-selected reads and guarded Aider rewrites", async () => {
+test("Markdown uses text reads and guarded Aider rewrites", async () => {
   const folder = await mkdtemp(
     path.join(repositoryRoot, ".tmp-markdown-boundary-"),
   );
@@ -29,7 +29,7 @@ test("Markdown supports agent-selected reads and guarded Aider rewrites", async 
   const original = "# Notes\n\nOld paragraph.\n";
   await writeFile(filePath, original);
 
-  expect((await readFileSafely({ filePath })).resolvedMode).toBe("ast");
+  expect((await readFileSafely({ filePath })).resolvedMode).toBe("text");
   expect((await readFileSafely({ filePath, mode: "text" })).content).toBe(
     original,
   );

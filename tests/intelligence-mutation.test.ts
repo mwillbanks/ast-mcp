@@ -1,0 +1,1133 @@
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as fsPromises from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { withConfig } from "../src/config.ts";
+import {
+  createRepositoryId,
+  createRevisionId,
+  createStorageDomainId,
+  createWorkspaceId,
+} from "../src/intelligence/contracts/index.ts";
+import { refreshMutationIntelligence } from "../src/intelligence/mutation/freshness.ts";
+import {
+  activeMutationLifecycle,
+  configureMutationLifecycle,
+  type MutationBatchPlan,
+  type MutationFileCommit,
+  type MutationLifecycle,
+  type MutationRefreshResult,
+  withMutationLifecycle,
+} from "../src/intelligence/mutation/index.ts";
+import { LanceMutationJournal } from "../src/intelligence/mutation/journal.ts";
+import {
+  acquireFileLock,
+  clearMutationLockQueuesForTests,
+  mutationLockPath,
+  withFencedFileLock,
+  withFencedFileLocks,
+} from "../src/intelligence/mutation/locks.ts";
+import {
+  LanceMutationLifecycle,
+  mutationOperationId,
+  withLanceMutationLifecycle,
+} from "../src/intelligence/mutation/service.ts";
+import { LanceIntelligenceStore } from "../src/intelligence/storage/store.ts";
+import {
+  type WorkspaceHandle,
+  WorkspaceRegistry,
+  withWorkspaceContext,
+} from "../src/intelligence/workspace/index.ts";
+import { patchFiles } from "../src/patch/engine.ts";
+import { deleteFilesSafely } from "../src/runtime/file-delete.ts";
+import { renameFilesSafely } from "../src/runtime/file-rename.ts";
+import { sha256 } from "../src/runtime/hash.ts";
+
+const roots: string[] = [];
+
+async function temporary(prefix = "ast-mcp-mutation-"): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  roots.push(root);
+  return root;
+}
+
+afterEach(async () => {
+  delete process.env.AST_MCP_ROOTS;
+  delete process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS;
+  configureMutationLifecycle(null);
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { force: true, recursive: true })),
+  );
+});
+
+function fakeWorkspace(root: string, suffix: string): WorkspaceHandle {
+  const storagePath = path.join(root, "index");
+  const placement = { kind: "explicit" as const, path: storagePath };
+  const storageDomainId = createStorageDomainId({
+    engine: "lancedb",
+    placement,
+    pool: "shared",
+    storagePath,
+  });
+  const commonGitDirectory = path.join(root, `.${suffix}.git`);
+  const repositoryId = createRepositoryId({
+    canonicalGitCommonDirectory: commonGitDirectory,
+  });
+  const revisionId = createRevisionId({
+    repositoryId,
+    resolvedCommitOid: "a".repeat(40),
+    selector: { kind: "working" },
+  });
+  const workspaceId = createWorkspaceId({
+    canonicalCheckoutRoot: root,
+    configurationGeneration: 1,
+    dirtyOverlayId: null,
+    repositoryId,
+    revisionId,
+    storageDomainId,
+  });
+  return {
+    canonicalRootAnchor: root,
+    checkoutRoot: root,
+    configurationGeneration: 1,
+    dirtyOverlayId: null,
+    git: {
+      branch: "main",
+      checkoutRoot: root,
+      commonGitDirectory,
+      gitDirectory: commonGitDirectory,
+      headOid: "a".repeat(40),
+      isGit: true,
+      isLinkedWorktree: false,
+      repositoryRoot: root,
+    },
+    openedAt: "2026-09-10T00:00:00.000Z",
+    repositoryId,
+    repositoryRoot: root,
+    schemaVersion: "ast-mcp.intelligence.v1",
+    selectedRevision: {
+      readOnly: false,
+      resolvedCommitOid: "a".repeat(40),
+      revisionId,
+      selector: { kind: "working" },
+    },
+    storageDomain: {
+      domainId: storageDomainId,
+      engine: "lancedb",
+      placement,
+      pool: "shared",
+      schemaVersion: "ast-mcp.intelligence.v1",
+      storagePath,
+    },
+    workspaceId,
+    writeEligibility: { eligible: true },
+  };
+}
+
+class RecordingLifecycle implements MutationLifecycle {
+  events: string[] = [];
+  failFailureRecord = false;
+  failRefresh = false;
+  plans: MutationBatchPlan[] = [];
+
+  async begin(plan: MutationBatchPlan) {
+    this.plans.push(plan);
+    this.events.push("begin");
+  }
+  async committed(_operationId: string, file: MutationFileCommit) {
+    this.events.push(`commit:${path.basename(file.filePath)}`);
+  }
+  async complete(): Promise<MutationRefreshResult> {
+    this.events.push("complete");
+    if (this.failRefresh) throw new Error("refresh failed");
+    return {
+      dirtyOverlayId: null,
+      generationId: null,
+      indexedAt: "2026-09-10T00:00:00.000Z",
+      parsedFiles: [],
+      skippedFiles: [],
+    };
+  }
+  async failed() {
+    this.events.push("failed");
+    if (this.failFailureRecord) throw new Error("journal failed");
+  }
+  async rolledBack() {
+    this.events.push("rolled-back");
+  }
+}
+
+async function git(root: string, ...args: string[]): Promise<string> {
+  const process = Bun.spawn(["git", "-C", root, ...args], {
+    env: { ...globalThis.process.env, GIT_CONFIG_NOSYSTEM: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const stdout = await new Response(process.stdout).text();
+  const stderr = await new Response(process.stderr).text();
+  if ((await process.exited) !== 0) throw new Error(stderr);
+  return stdout.trim();
+}
+
+describe("mutation locks", () => {
+  test("serializes locks and supports deterministic multi-lock order", async () => {
+    const root = await temporary();
+    const first = path.join(root, "a.ts");
+    const second = path.join(root, "b.ts");
+    const events: string[] = [];
+    const one = withFencedFileLock(first, async (lease) => {
+      events.push("one");
+      await lease.fence();
+      await Bun.sleep(20);
+      events.push("one-done");
+    });
+    const two = withFencedFileLock(first, async () => {
+      events.push("two");
+    });
+    await Promise.all([one, two]);
+    expect(events).toEqual(["one", "one-done", "two"]);
+    expect(
+      await withFencedFileLocks([second, first, second], async (leases) => {
+        await Promise.all(leases.map((lease) => lease.fence()));
+        return leases.map((lease) => lease.lockPath);
+      }),
+    ).toHaveLength(2);
+  });
+
+  test("honors cancellation and deadlines", async () => {
+    const root = await temporary();
+    const file = path.join(root, "value.ts");
+    const held = await acquireFileLock(file);
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      acquireFileLock(file, { signal: abort.signal }),
+    ).rejects.toMatchObject({
+      code: "lock_aborted",
+    });
+    await expect(
+      acquireFileLock(file, { deadline: Date.now() - 1 }),
+    ).rejects.toMatchObject({ code: "lock_deadline" });
+    await expect(
+      acquireFileLock(file, { deadline: new Date(Date.now() - 1) }),
+    ).rejects.toMatchObject({ code: "lock_deadline" });
+    await held.release();
+  });
+
+  test("recovers expired owners and fences their stale leases", async () => {
+    const root = await temporary();
+    const file = path.join(root, "value.ts");
+    let clock = 1_000;
+    const first = await acquireFileLock(file, {
+      leaseMs: 100,
+      now: () => clock,
+      ownerId: "first",
+    });
+    clock = 2_000;
+    const second = await acquireFileLock(file, {
+      leaseMs: 100,
+      now: () => clock,
+      ownerId: "second",
+    });
+    expect(second.epoch).toBeGreaterThan(first.epoch);
+    await expect(first.fence()).rejects.toMatchObject({ code: "lock_fenced" });
+    await first.release();
+    await second.fence();
+    await second.release();
+    expect(await Bun.file(await mutationLockPath(file)).exists()).toBeFalse();
+  });
+
+  test("keeps identical relative paths in separate worktrees independent", async () => {
+    const root = await temporary();
+    const first = path.join(root, "worktree-a", "src", "same.ts");
+    const second = path.join(root, "worktree-b", "src", "same.ts");
+    await Promise.all([
+      mkdir(path.dirname(first), { recursive: true }),
+      mkdir(path.dirname(second), { recursive: true }),
+    ]);
+    let active = 0;
+    let maximum = 0;
+    let firstEntered!: () => void;
+    let releaseFirst!: () => void;
+    let secondEntered!: () => void;
+    const firstEnteredPromise = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    const releaseFirstPromise = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondEnteredPromise = new Promise<void>((resolve) => {
+      secondEntered = resolve;
+    });
+    const firstLock = withFencedFileLock(first, async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      firstEntered();
+      await releaseFirstPromise;
+      active -= 1;
+    });
+    await firstEnteredPromise;
+    const secondLock = withFencedFileLock(second, async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      secondEntered();
+      active -= 1;
+    });
+    try {
+      await Promise.race([
+        secondEnteredPromise,
+        Bun.sleep(5_000).then(() => {
+          throw new Error("independent worktree lock did not start");
+        }),
+      ]);
+    } finally {
+      releaseFirst();
+    }
+    await Promise.all([firstLock, secondLock]);
+    expect(maximum).toBe(2);
+  });
+});
+
+describe("guarded patch integration", () => {
+  test("journals commits and reports refresh before returning", async () => {
+    const root = await temporary();
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const file = path.join(root, "notes.txt");
+    await writeFile(file, "before\n");
+    const lifecycle = new RecordingLifecycle();
+    configureMutationLifecycle(lifecycle);
+    const result = await patchFiles({
+      [file]: {
+        aiderBlocks: [{ replace: "after", search: "before" }],
+        expectedSha256: sha256("before\n"),
+        patchStrategy: "aider_block",
+      },
+    });
+    expect(await readFile(file, "utf8")).toBe("after\n");
+    expect(lifecycle.events).toEqual(["begin", "commit:notes.txt", "complete"]);
+    expect(lifecycle.plans[0]?.files[0]).toMatchObject({
+      candidateSha256: sha256("after\n"),
+      sourceSha256: sha256("before\n"),
+    });
+    expect(result.intelligenceRefresh).toBeDefined();
+  });
+
+  test("rolls back file replacements when refresh fails", async () => {
+    const root = await temporary();
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const file = path.join(root, "notes.txt");
+    await writeFile(file, "before\n");
+    const lifecycle = new RecordingLifecycle();
+    lifecycle.failFailureRecord = true;
+    lifecycle.failRefresh = true;
+    configureMutationLifecycle(lifecycle);
+    await expect(
+      patchFiles({
+        [file]: {
+          aiderBlocks: [{ replace: "after", search: "before" }],
+          expectedSha256: sha256("before\n"),
+          patchStrategy: "aider_block",
+        },
+      }),
+    ).rejects.toThrow("refresh failed");
+    expect(await readFile(file, "utf8")).toBe("before\n");
+    expect(lifecycle.events).toEqual([
+      "begin",
+      "commit:notes.txt",
+      "complete",
+      "failed",
+      "rolled-back",
+    ]);
+  }, 120_000);
+
+  test("binds preview receipts to workspace and revision identity", async () => {
+    const temporaryRoot = await temporary();
+    const root = await realpath(temporaryRoot);
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const file = path.join(root, "notes.txt");
+    await writeFile(file, "before\n");
+    const first = fakeWorkspace(root, "a");
+    const second = fakeWorkspace(root, "b");
+    const config = {
+      cwd: root,
+      env: {
+        AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
+        AST_MCP_ROOTS: root,
+      },
+    };
+    const preview = await withConfig(config, () =>
+      withWorkspaceContext(first, () =>
+        patchFiles({
+          [file]: {
+            aiderBlocks: [{ replace: "after", search: "before" }],
+            expectedSha256: sha256("before\n"),
+            patchStrategy: "aider_block",
+            preview: true,
+          },
+        }),
+      ),
+    );
+    const receipt = (preview.files as Record<string, Record<string, unknown>>)[
+      file
+    ]?.previewReceipt as string;
+    await expect(
+      withConfig(config, () =>
+        withWorkspaceContext(second, () =>
+          patchFiles({
+            [file]: {
+              expectedSha256: sha256("before\n"),
+              previewReceipt: receipt,
+            },
+          }),
+        ),
+      ),
+    ).rejects.toThrow("different workspace or revision");
+    expect(await readFile(file, "utf8")).toBe("before\n");
+  });
+});
+
+describe("destructive mutation lifecycle", () => {
+  test("rolls back deletes when freshness publication fails", async () => {
+    const root = await realpath(await temporary());
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const file = path.join(root, "nested", "value.txt");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "value\n");
+    await chmod(file, 0o640);
+    const originalMetadata = await stat(file);
+    const workspace = fakeWorkspace(root, "delete");
+    const lifecycle = new RecordingLifecycle();
+    lifecycle.failRefresh = true;
+    configureMutationLifecycle(lifecycle);
+    await expect(
+      withConfig(
+        {
+          cwd: root,
+          env: {
+            AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
+            AST_MCP_ROOTS: root,
+          },
+        },
+        () =>
+          withWorkspaceContext(workspace, () =>
+            deleteFilesSafely({
+              [file]: { expectedSha256: sha256("value\n") },
+            }),
+          ),
+      ),
+    ).rejects.toThrow("refresh failed");
+    expect(await readFile(file, "utf8")).toBe("value\n");
+    const restoredMetadata = await stat(file);
+    expect(restoredMetadata.mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32") {
+      expect(restoredMetadata.uid).toBe(originalMetadata.uid);
+      expect(restoredMetadata.gid).toBe(originalMetadata.gid);
+    }
+    expect(lifecycle.events).toContain("rolled-back");
+  });
+
+  test("retains durable recovery when delete ownership rollback fails", async () => {
+    if (process.platform === "win32") return;
+    const root = await realpath(await temporary());
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const file = path.join(root, "ownership.txt");
+    await writeFile(file, "value\n");
+    await chmod(file, 0o640);
+    const workspace = fakeWorkspace(root, "delete-owner-failure");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const lifecycle = new LanceMutationLifecycle(store, workspace, async () => {
+      throw new Error("refresh failed");
+    });
+    configureMutationLifecycle(lifecycle);
+    const chown = spyOn(fsPromises, "chown").mockRejectedValueOnce(
+      new Error("ownership restore denied"),
+    );
+    try {
+      await expect(
+        withConfig(
+          {
+            cwd: root,
+            env: {
+              AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
+              AST_MCP_ROOTS: root,
+            },
+          },
+          () =>
+            withWorkspaceContext(workspace, () =>
+              deleteFilesSafely({
+                [file]: { expectedSha256: sha256("value\n") },
+              }),
+            ),
+        ),
+      ).rejects.toThrow("rollback requires recovery");
+      expect(await readFile(file, "utf8")).toBe("value\n");
+      const unfinished = await lifecycle.journal.unfinished(
+        workspace.workspaceId,
+      );
+      expect(unfinished).toHaveLength(1);
+      expect(unfinished[0]?.tool).toBe("file_delete");
+      expect(unfinished[0]?.state).toBe("failed");
+      if (unfinished[0])
+        await lifecycle.journal.transition(
+          unfinished[0].operationId,
+          "rolled-back",
+        );
+    } finally {
+      chown.mockRestore();
+      await store.shutdownCoordinator();
+    }
+  });
+
+  test("rolls back renames when freshness publication fails", async () => {
+    const root = await realpath(await temporary());
+    process.env.AST_MCP_ROOTS = root;
+    process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+    const source = path.join(root, "source.txt");
+    const destination = path.join(root, "destination.txt");
+    await writeFile(source, "value\n");
+    const workspace = fakeWorkspace(root, "rename");
+    const lifecycle = new RecordingLifecycle();
+    lifecycle.failRefresh = true;
+    configureMutationLifecycle(lifecycle);
+    await expect(
+      withConfig(
+        {
+          cwd: root,
+          env: {
+            AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
+            AST_MCP_ROOTS: root,
+          },
+        },
+        () =>
+          withWorkspaceContext(workspace, () =>
+            renameFilesSafely({
+              [source]: {
+                destination,
+                expectedSha256: sha256("value\n"),
+              },
+            }),
+          ),
+      ),
+    ).rejects.toThrow("refresh failed");
+    expect(await readFile(source, "utf8")).toBe("value\n");
+    expect(await Bun.file(destination).exists()).toBeFalse();
+    expect(lifecycle.events).toContain("rolled-back");
+  });
+});
+
+describe("LanceDB mutation journal and freshness", () => {
+  test("persists journal transitions and recovers unfinished records", async () => {
+    const root = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const workspace = fakeWorkspace(root, "c");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "one",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    const journal = new LanceMutationJournal(
+      store,
+      () => new Date("2026-09-10T00:00:00.000Z"),
+    );
+    const firstFile = path.join(root, "first.ts");
+    const secondFile = path.join(root, "second.ts");
+    await journal.begin({
+      files: [
+        {
+          candidateSha256: "b".repeat(64),
+          filePath: firstFile,
+          sourceSha256: "a".repeat(64),
+        },
+        {
+          candidateSha256: "d".repeat(64),
+          filePath: secondFile,
+          sourceSha256: "c".repeat(64),
+        },
+      ],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await journal.committed(operationId, {
+      filePath: firstFile,
+      sha256: "e".repeat(64),
+    });
+    expect((await journal.get(operationId))?.files).toMatchObject([
+      { committedSha256: "e".repeat(64) },
+      { committedSha256: null },
+    ]);
+    await journal.transition(operationId, "failed", "rollback_failed");
+    expect(await journal.unfinished(workspace.workspaceId)).toHaveLength(1);
+    expect(
+      await journal.recover(workspace.workspaceId, async () => {}),
+    ).toEqual([operationId]);
+    const recovered = await journal.get(operationId);
+    expect(recovered?.state).toBe("recovered");
+    await store.putRows(
+      "jobs",
+      [
+        {
+          attempt: recovered?.attempt ?? 0,
+          created_at: recovered?.createdAt ?? "",
+          error_code: null,
+          idempotency_key: operationId,
+          job_id: operationId,
+          payload_json: JSON.stringify({ ...recovered, unexpected: true }),
+          revision_id: workspace.selectedRevision.revisionId,
+          state: "succeeded",
+          storage_domain_id: workspace.storageDomain.domainId,
+          type: "index-source",
+          updated_at: recovered?.updatedAt ?? "",
+          workspace_id: workspace.workspaceId,
+        },
+      ],
+      { immutable: false },
+    );
+    await expect(journal.get(operationId)).rejects.toThrow(
+      "mutation_journal_malformed",
+    );
+    await store.shutdownCoordinator();
+  });
+
+  test("lifecycle rejects coordinate drift and persists successful refresh", async () => {
+    const root = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const workspace = fakeWorkspace(root, "d");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const refresh: typeof refreshMutationIntelligence = async () => ({
+      dirtyOverlayId: null,
+      generationId: null,
+      indexedAt: "2026-09-10T00:00:00.000Z",
+      parsedFiles: [],
+      skippedFiles: [],
+    });
+    const lifecycle = new LanceMutationLifecycle(store, workspace, refresh);
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "two",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await expect(
+      lifecycle.begin({
+        files: [],
+        operationId,
+        tool: "file_patch",
+        workspace: fakeWorkspace(root, "e"),
+      }),
+    ).rejects.toThrow("mutation_workspace_mismatch");
+    await lifecycle.begin({
+      files: [],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await lifecycle.committed(operationId, {
+      filePath: path.join(root, "value.ts"),
+      sha256: "f".repeat(64),
+    });
+    expect(
+      await lifecycle.complete(operationId, [
+        {
+          filePath: path.join(root, "value.ts"),
+          sha256: "f".repeat(64),
+        },
+      ]),
+    ).toMatchObject({ indexedAt: "2026-09-10T00:00:00.000Z" });
+    expect((await lifecycle.journal.get(operationId))?.state).toBe("succeeded");
+    await store.shutdownCoordinator();
+  });
+
+  test("refreshes overlay, syntax facts, and graph rows immediately", async () => {
+    const root = await temporary();
+    await git(root, "init");
+    await git(root, "config", "user.email", "test@example.com");
+    await git(root, "config", "user.name", "Test");
+    const file = path.join(root, "value.ts");
+    const stableFile = path.join(root, "stable.ts");
+    const documents = new Map([
+      ["notes.md", "# Notes\n\nSee [value](./value.ts).\n"],
+      ["notes.txt", "Plain text notes.\n"],
+      ["notes.rtf", "{\\rtf1\\ansi Rich text notes.}"],
+      ["notes.json", '{"title":"JSON notes"}\n'],
+      ["notes.jsonc", '{\n  // comment\n  "title": "JSONC notes"\n}\n'],
+      ["notes.yaml", "title: YAML notes\n"],
+      ["notes.toml", 'title = "TOML notes"\n'],
+      ["notes.xml", "<notes><title>XML notes</title></notes>\n"],
+      ["notes.html", "<h1>HTML notes</h1>\n"],
+      ["notes.mdx", "# MDX notes\n\n<Component />\n"],
+    ]);
+    await writeFile(file, "export const value = 1;\n");
+    await writeFile(stableFile, "export const stable = true;\n");
+    await Promise.all(
+      [...documents].map(([name, content]) =>
+        writeFile(path.join(root, name), content),
+      ),
+    );
+    await git(root, "add", "value.ts", "stable.ts", ...documents.keys());
+    await git(root, "commit", "-m", "initial");
+    const storagePath = path.join(root, ".index");
+    const registry = new WorkspaceRegistry();
+    const workspace = await registry.open({
+      configurationGeneration: 1,
+      directory: root,
+      storage: { kind: "explicit", path: storagePath },
+    });
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    await writeFile(
+      file,
+      "export const value = helper();\nfunction helper() { return 2; }\n",
+    );
+    const result = await withWorkspaceContext(workspace, () =>
+      refreshMutationIntelligence({
+        now: () => new Date("2026-09-10T00:00:00.000Z"),
+        store,
+        workspace,
+      }),
+    );
+    expect(result.dirtyOverlayId).toStartWith("dirty-overlay:v1:");
+    expect(result.generationId).toStartWith("generation:v1:");
+    const expectedParsedFiles = [
+      ...documents.keys(),
+      "stable.ts",
+      "value.ts",
+    ].sort();
+    expect(result.parsedFiles).toEqual(expectedParsedFiles);
+    expect(await store.count("syntax_facts")).toBe(documents.size + 2);
+    expect(await store.count("chunks")).toBeGreaterThan(0);
+    expect(await store.count("relationships")).toBeGreaterThan(0);
+    expect(await store.count("graph_nodes")).toBeGreaterThan(1);
+    expect(await store.count("dirty_overlays")).toBe(1);
+    const published = (await store.rows("publications"))[0];
+    expect(published?.state).toBe("published");
+    const manifest = (await store.rows("revision_manifests")).find(
+      (row) => row.artifact_id === published?.manifest_artifact_id,
+    );
+    const manifestEntries = (
+      JSON.parse(String(manifest?.payload_json)) as {
+        entries: Array<{ resolvedRelationshipsArtifactId: string | null }>;
+      }
+    ).entries;
+    expect(manifestEntries).toHaveLength(expectedParsedFiles.length);
+    expect(
+      manifestEntries.every(
+        ({ resolvedRelationshipsArtifactId }) =>
+          resolvedRelationshipsArtifactId?.startsWith(
+            "resolved-relationships:v1:",
+          ) === true,
+      ),
+    ).toBeTrue();
+    expect(
+      new Set(
+        (
+          JSON.parse(String(published?.payload_json)) as {
+            requiredTables: string[];
+          }
+        ).requiredTables,
+      ),
+    ).toEqual(
+      new Set([
+        "artifacts",
+        "syntax_facts",
+        "chunks",
+        "relationships",
+        "dirty_overlays",
+        "revision_manifests",
+        "graph_nodes",
+        "graph_occurrences",
+        "graph_edges",
+        "graph_evidence",
+        "revision_membership",
+      ]),
+    );
+
+    await writeFile(
+      file,
+      "export const value = helper();\nfunction helper() { return 3; }\n",
+    );
+    const finalizePublication = store.finalizePublication.bind(store);
+    store.finalizePublication = async () => {
+      throw new Error("finalize failed");
+    };
+    await expect(
+      withWorkspaceContext(workspace, () =>
+        refreshMutationIntelligence({ store, workspace }),
+      ),
+    ).rejects.toThrow("finalize failed");
+    expect(
+      (await store.rows("publications")).map((row) => row.state).sort(),
+    ).toEqual(["abandoned", "published"]);
+    store.finalizePublication = finalizePublication;
+
+    const textFile = path.join(root, "notes.unsupported");
+    await writeFile(textFile, "plain text\n");
+    const skipped = await withWorkspaceContext(workspace, () =>
+      refreshMutationIntelligence({
+        store,
+        workspace,
+      }),
+    );
+    expect(skipped.generationId).toStartWith("generation:v1:");
+    expect(skipped.parsedFiles).toEqual(expectedParsedFiles);
+    expect(skipped.skippedFiles).toContain("notes.unsupported");
+    await store.shutdownCoordinator();
+  });
+});
+
+describe("mutation recovery edges", () => {
+  test("fails closed for malformed locks and handles empty batches", async () => {
+    const root = await temporary();
+    const file = path.join(root, "missing", "value.ts");
+    const lock = await mutationLockPath(file);
+    await writeFile(lock, "not-json");
+    await expect(acquireFileLock(file)).rejects.toMatchObject({
+      code: "lock_record_malformed",
+      retryable: false,
+    });
+    expect(await Bun.file(lock).exists()).toBeTrue();
+    await writeFile(lock, JSON.stringify({ createdAt: 1 }));
+    await expect(acquireFileLock(file)).rejects.toMatchObject({
+      code: "lock_record_malformed",
+    });
+    await rm(lock);
+    await writeFile(lock, "");
+    const releaseInitializing = setTimeout(() => {
+      void rm(lock, { force: true });
+    }, 20);
+    const initialized = await acquireFileLock(file);
+    clearTimeout(releaseInitializing);
+    await initialized.release();
+    expect(await withFencedFileLocks([], async (leases) => leases.length)).toBe(
+      0,
+    );
+    clearMutationLockQueuesForTests();
+  });
+
+  test("renews active leases and fences expired renewal", async () => {
+    const root = await temporary();
+    const file = path.join(root, "value.ts");
+    await withFencedFileLock(
+      file,
+      async (lease) => {
+        const initialExpiry = lease.expiresAt;
+        await Bun.sleep(600);
+        expect(lease.expiresAt).toBeGreaterThan(initialExpiry);
+        await lease.fence();
+      },
+      { leaseMs: 1_500 },
+    );
+
+    let clock = 1_000;
+    const expired = await acquireFileLock(file, {
+      leaseMs: 100,
+      now: () => clock,
+    });
+    clock = 1_101;
+    await expect(expired.renew()).rejects.toMatchObject({
+      code: "lock_fenced",
+    });
+    await expired.release();
+    await expect(expired.renew()).rejects.toMatchObject({
+      code: "lock_fenced",
+    });
+  });
+
+  test("cancels while waiting on an active owner", async () => {
+    const root = await temporary();
+    const file = path.join(root, "value.ts");
+    let clock = 1_000;
+    const held = await acquireFileLock(file, {
+      leaseMs: 100,
+      now: () => clock,
+    });
+    clock = 1_050;
+    expect(held.expiresAt).toBe(1_100);
+    await held.renew();
+    expect(held.expiresAt).toBe(1_150);
+    const abort = new AbortController();
+    const waiting = acquireFileLock(file, {
+      now: () => clock,
+      pollMs: 50,
+      signal: abort.signal,
+    });
+    setTimeout(() => abort.abort(), 5);
+    await expect(waiting).rejects.toMatchObject({ code: "lock_aborted" });
+    await held.release();
+  });
+
+  test("records lifecycle failure paths and unknown operations", async () => {
+    const root = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const workspace = fakeWorkspace(root, "f");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const failure = Object.assign(new Error("index failed"), {
+      code: "index_failed",
+    });
+    const lifecycle = new LanceMutationLifecycle(store, workspace, async () => {
+      throw failure;
+    });
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "failure",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await expect(
+      lifecycle.committed(`job:v1:${"a".repeat(64)}`, {
+        filePath: path.join(root, "none"),
+        sha256: "a".repeat(64),
+      }),
+    ).rejects.toThrow("mutation_operation_unknown");
+    await expect(
+      lifecycle.complete(`job:v1:${"a".repeat(64)}`, []),
+    ).rejects.toThrow("mutation_operation_unknown");
+    await lifecycle.begin({
+      files: [],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await expect(lifecycle.complete(operationId, [])).rejects.toThrow(
+      "index failed",
+    );
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "recovery-required",
+    );
+    await lifecycle.failed(operationId, failure);
+    await lifecycle.rolledBack(operationId);
+    const literalOperationId = mutationOperationId({
+      files: [],
+      nonce: "literal-failure",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await lifecycle.begin({
+      files: [],
+      operationId: literalOperationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await lifecycle.failed(literalOperationId, "literal");
+    await lifecycle.rolledBack(literalOperationId);
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "rolled-back",
+    );
+    await store.shutdownCoordinator();
+  });
+
+  test("restores and verifies durable interrupted mutation material", async () => {
+    const root = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const workspace = fakeWorkspace(root, "durable-recovery");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const lifecycle = new LanceMutationLifecycle(store, workspace);
+    const restoredPath = path.join(root, "restored.bin");
+    const removedPath = path.join(root, "created.bin");
+    const source = Buffer.from([0, 255, 1, 2]);
+    const candidate = Buffer.from([3, 254, 4, 5]);
+    await writeFile(restoredPath, candidate);
+    await writeFile(removedPath, candidate);
+    await chmod(restoredPath, 0o600);
+    const originalOwner = await stat(restoredPath);
+    const ownershipSupported =
+      process.platform !== "win32" &&
+      process.getuid !== undefined &&
+      process.getgid !== undefined;
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "durable-recovery",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256(candidate),
+          filePath: restoredPath,
+          sourceContentBase64: source.toString("base64"),
+          sourceGid: ownershipSupported ? originalOwner.gid : null,
+          sourceMode: 0o640,
+          sourceSha256: sha256(source),
+          sourceUid: ownershipSupported ? originalOwner.uid : null,
+        },
+        {
+          candidateSha256: sha256(candidate),
+          filePath: removedPath,
+          sourceContentBase64: null,
+          sourceGid: null,
+          sourceMode: null,
+          sourceSha256: null,
+          sourceUid: null,
+        },
+      ],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await lifecycle.journal.committed(operationId, {
+      filePath: restoredPath,
+      sha256: sha256(candidate),
+    });
+    await lifecycle.journal.committed(operationId, {
+      filePath: removedPath,
+      sha256: sha256(candidate),
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await lifecycle.recover();
+    expect(await readFile(restoredPath)).toEqual(source);
+    const restoredMetadata = await stat(restoredPath);
+    expect(restoredMetadata.mode & 0o777).toBe(0o640);
+    if (ownershipSupported) {
+      expect(restoredMetadata.uid).toBe(originalOwner.uid);
+      expect(restoredMetadata.gid).toBe(originalOwner.gid);
+    }
+    expect(await Bun.file(removedPath).exists()).toBeFalse();
+    expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
+
+    const partialOperationId = mutationOperationId({
+      files: [],
+      nonce: "durable-attribute-partial",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256(source),
+          filePath: restoredPath,
+          sourceContentBase64: source.toString("base64"),
+          sourceGid: ownershipSupported ? originalOwner.gid : null,
+          sourceMode: 0o640,
+          sourceSha256: sha256(source),
+          sourceUid: ownershipSupported ? originalOwner.uid : null,
+        },
+      ],
+      operationId: partialOperationId,
+      tool: "file_chattr",
+      workspace,
+    });
+    await lifecycle.journal.committed(partialOperationId, {
+      filePath: restoredPath,
+      sha256: sha256(source),
+    });
+    await chmod(restoredPath, 0o600);
+    await lifecycle.journal.transition(partialOperationId, "failed");
+    await lifecycle.recover();
+    const recoveredAttributes = await stat(restoredPath);
+    expect(recoveredAttributes.mode & 0o777).toBe(0o640);
+    if (ownershipSupported) {
+      expect(recoveredAttributes.uid).toBe(originalOwner.uid);
+      expect(recoveredAttributes.gid).toBe(originalOwner.gid);
+    }
+    expect((await lifecycle.journal.get(partialOperationId))?.state).toBe(
+      "recovered",
+    );
+
+    const mismatchOperationId = mutationOperationId({
+      files: [],
+      nonce: "durable-recovery-mismatch",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await writeFile(restoredPath, "unrecognized concurrent bytes");
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256(candidate),
+          filePath: restoredPath,
+          sourceContentBase64: source.toString("base64"),
+          sourceMode: 0o640,
+          sourceSha256: sha256(source),
+        },
+      ],
+      operationId: mismatchOperationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await lifecycle.journal.committed(mismatchOperationId, {
+      filePath: restoredPath,
+      sha256: sha256(candidate),
+    });
+    await expect(lifecycle.recover()).rejects.toThrow(
+      "mutation_recovery_required",
+    );
+    expect((await lifecycle.journal.get(mismatchOperationId))?.state).toBe(
+      "recovery-required",
+    );
+    expect(await readFile(restoredPath, "utf8")).toBe(
+      "unrecognized concurrent bytes",
+    );
+    await lifecycle.journal.transition(mismatchOperationId, "rolled-back");
+    await store.shutdownCoordinator();
+  });
+
+  test("installs a Lance lifecycle for each workspace request", async () => {
+    expect(
+      await withLanceMutationLifecycle(async () => "without-workspace"),
+    ).toBe("without-workspace");
+    const root = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const workspace = fakeWorkspace(root, "request");
+    expect(
+      await withWorkspaceContext(workspace, () =>
+        withLanceMutationLifecycle(
+          async () =>
+            activeMutationLifecycle() instanceof LanceMutationLifecycle,
+        ),
+      ),
+    ).toBeTrue();
+    expect(activeMutationLifecycle()).toBeNull();
+
+    const configured = new RecordingLifecycle();
+    configureMutationLifecycle(configured);
+    expect(
+      await withWorkspaceContext(workspace, () =>
+        withLanceMutationLifecycle(async () => activeMutationLifecycle()),
+      ),
+    ).toBe(configured);
+    configureMutationLifecycle(null);
+  });
+
+  test("isolates concurrent request lifecycles", async () => {
+    const first = new RecordingLifecycle();
+    const second = new RecordingLifecycle();
+    const seen = await Promise.all([
+      withMutationLifecycle(first, async () => {
+        await Bun.sleep(5);
+        return activeMutationLifecycle();
+      }),
+      withMutationLifecycle(second, async () => activeMutationLifecycle()),
+    ]);
+    expect(seen).toEqual([first, second]);
+    expect(activeMutationLifecycle()).toBeNull();
+  });
+
+  test("keeps lifecycle restoration scoped", () => {
+    const first = new RecordingLifecycle();
+    const second = new RecordingLifecycle();
+    const restore = configureMutationLifecycle(first);
+    expect(activeMutationLifecycle()).toBe(first);
+    configureMutationLifecycle(second);
+    restore();
+    expect(activeMutationLifecycle()).toBe(second);
+    configureMutationLifecycle(null);
+    expect(activeMutationLifecycle()).toBeNull();
+  });
+});

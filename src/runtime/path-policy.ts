@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import type { ResolvedConfig } from "../config";
 import type { PathPolicy } from "../config-v2-schema";
+import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { authorizeRequestedDecision } from "./approval";
 import {
   canonicalizePath,
   canonicalizePathSync,
   effectiveWorkspaceRoot,
   pathWithin,
-  relativeRootFromPwd,
 } from "./path-utils";
 
 export type PathOperation = "read" | "write" | "delete";
@@ -289,8 +289,20 @@ export async function evaluatePolicyForCheck(
   const workspaceRoots = await Promise.all(
     config.workspace.roots.map(canonicalizePath),
   );
+  const selected = currentWorkspace();
+  if (!selected && !path.isAbsolute(targetPath) && workspaceRoots.length > 1)
+    throw Object.assign(
+      new Error(
+        "Relative paths require an explicit workspace when multiple roots are configured",
+      ),
+      {
+        code: "workspace_ambiguous",
+        retryable: true,
+        suggestedNextCall: "workspace_open",
+      },
+    );
   const base =
-    relativeRootFromPwd(workspaceRoots) ??
+    selected?.checkoutRoot ??
     effectiveWorkspaceRoot(
       await canonicalizePath(config.projectRoot),
       workspaceRoots,

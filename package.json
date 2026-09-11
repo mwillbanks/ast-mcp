@@ -7,22 +7,28 @@
     "url": "https://github.com/mwillbanks/ast-mcp/issues"
   },
   "dependencies": {
-    "@ast-bro/cli": "4.2.0",
+    "@ast-grep/napi": "0.45.3",
+    "@huggingface/transformers": "4.2.0",
+    "@lancedb/lancedb": "0.38.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
+    "apache-arrow": "18.1.0",
     "diff-match-patch-ts": "^2.0.0",
     "dprint": "0.56.1",
+    "tree-sitter-wasm": "1.1.8",
     "unbash": "^4.0.10",
+    "web-tree-sitter": "0.27.0",
     "zod": "^4.4.3"
   },
-  "description": "Zero-trust MCP file writes, AST edits, ast-bro intelligence, hooks, and agent skills",
+  "description": "Zero-trust MCP file writes, native code intelligence, graph retrieval, hooks, and agent skills",
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@modelcontextprotocol/inspector": "^2.4.0",
     "@types/bun": "^1.4.0",
     "@types/node": "^26.3.0",
     "fallow": "^3.19.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "typescript-strada": "npm:@typescript/typescript6@6.0.2"
   },
   "engines": {
     "bun": ">=1.4.0"
@@ -58,8 +64,6 @@
     "url": "git+https://github.com/mwillbanks/ast-mcp.git"
   },
   "scripts": {
-    "ast-bro:schemas": "bun run scripts/sync-ast-bro-tools.ts --write",
-    "ast-bro:schemas:check": "bun run scripts/sync-ast-bro-tools.ts",
     "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test",
     "dev": "bun run --watch src/index.ts",
@@ -73,6 +77,8 @@
     "format:check": "biome check . --reporter concise --error-on-warnings",
     "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
     "inspect:http": "bunx @modelcontextprotocol/inspector",
+    "intelligence:benchmark": "bun run scripts/benchmark-intelligence-baseline.ts",
+    "intelligence:qualify": "bun run scripts/qualify-intelligence-deps.ts",
     "lint": "biome check . --reporter concise --error-on-warnings",
     "prepack": "bun run build",
     "prose:check": "bun run scripts/check-prose-cli.ts",
@@ -83,12 +89,11 @@
     "templates:check": "bun run scripts/check-template-drift.ts",
     "templates:sync": "bun run scripts/check-template-drift.ts --write",
     "test": "bun test --bail --max-concurrency=1 --timeout=30000",
-    "tools:check": "bun run scripts/verify-tools.ts && bun run ast-bro:schemas:check",
+    "tools:check": "bun run scripts/verify-tools.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "sideEffects": false,
   "trustedDependencies": [
-    "@ast-bro/cli",
     "dprint"
   ],
   "type": "module",

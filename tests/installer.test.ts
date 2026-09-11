@@ -12,7 +12,6 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
-import { assertAstBroAvailable } from "../src/runtime/dependencies";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -83,21 +82,6 @@ describe("installer", () => {
     const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(agents.match(/ast-mcp:begin/g)).toHaveLength(1);
   });
-  test("ast-bro preflight failure leaves project configuration unchanged", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-preflight-"));
-    created.push(root);
-    await expect(
-      install({
-        astBroBinary: path.join(root, "missing-ast-bro"),
-        root,
-        scope: "local",
-        targets: ["codex"],
-      }),
-    ).rejects.toThrow("ast-bro 4.2.0 is required");
-    await expect(access(path.join(root, "ast-mcp.toml"))).rejects.toThrow();
-    await expect(access(path.join(root, ".codex"))).rejects.toThrow();
-  });
-
   test("ignores package-internal local executables and writes the stable alias", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
     created.push(root);
@@ -255,35 +239,6 @@ describe("installer", () => {
     await expect(
       runInstallerCli(["install", "--target=invalid"]),
     ).rejects.toThrow('Invalid target "invalid"');
-  });
-
-  test("fails before configuring a host when ast-bro is unavailable", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-missing-tool-"));
-    created.push(root);
-    const options = {
-      astBroBinary: path.join(root, "missing-ast-bro"),
-      root,
-      scope: "local" as const,
-      targets: ["codex" as const],
-    };
-    for (const operation of [install, update])
-      await expect(operation(options)).rejects.toThrow(
-        "cargo install ast-bro --version 4.2.0 --locked",
-      );
-    await expect(
-      access(path.join(root, ".codex/config.toml")),
-    ).rejects.toThrow();
-  });
-
-  test("provides platform-specific ast-bro environment commands", () => {
-    expect(() =>
-      assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-    ).toThrow('>> "$HOME/.profile"');
-    expect(() =>
-      assertAstBroAvailable("C:\\missing\\ast-bro.exe", "win32", "x64"),
-    ).toThrow(
-      '[Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\\.cargo\\bin\\ast-bro.exe", "User")',
-    );
   });
 
   test("update replaces every managed surface and preserves surrounding guidance", async () => {

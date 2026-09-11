@@ -4,11 +4,11 @@ description: Install the MCP server, best-effort routing hooks, skill, and host 
 icon: Download
 ---
 
-Bun is required. The package pins ast-bro and dprint where binary compatibility matters and trusts their pinned install scripts.
+Bun is required. The package pins its native intelligence dependencies and dprint where binary compatibility matters.
 
 ## From a package registry
 
-Install ast-mcp into a repository so its ast-bro and dprint dependencies remain available, then connect every supported host:
+Install ast-mcp into a repository so its native intelligence and dprint dependencies remain available, then connect every supported host:
 
 ```npm
 npm install --save-dev @mwillbanks/ast-mcp
@@ -17,7 +17,7 @@ npm install --save-dev @mwillbanks/ast-mcp
 When installing with Bun, allow the package's pinned native installers:
 
 ```bash
-bun pm trust @ast-bro/cli dprint
+bun pm trust dprint
 ```
 
 Run the repository-local executable so the configured MCP and hooks retain a stable package path:
@@ -30,31 +30,15 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
 
 This installs stdio definitions by default. To install Streamable HTTP definitions, add `--transport http --host 127.0.0.1 --port 3768`. Add `--service` for a macOS LaunchAgent or Linux systemd user service; otherwise start the manual HTTP command printed by the installer. Windows supports manual HTTP startup only.
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned dprint installer before the MCP starts. If another package manager blocks dependency build scripts, approve `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
 
 Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration.
 
-## ast-bro platform support
+## Platform support
 
-`@ast-bro/cli@4.2.0` currently publishes a precompiled binary only for macOS Apple Silicon. Before changing host configuration, the ast-mcp installer verifies that the pinned ast-bro binary exists and reports the expected version.
+The native Bun implementation supports macOS, Linux, and Windows without a Rust or Cargo prerequisite.
 
-On Linux or macOS Intel, install ast-bro through Cargo and expose its absolute location to the host process:
-
-```bash
-cargo install ast-bro --version 4.2.0 --locked
-export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
-printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
-```
-
-For Windows PowerShell:
-
-```powershell
-cargo install ast-bro --version 4.2.0 --locked
-$env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
-[Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
-```
-
-Install Rust and Cargo from [rustup](https://rustup.rs/) first when needed. The example persists the variable for POSIX login shells; zsh users can write the same line to `~/.zprofile` instead. GUI-launched hosts must be started from that configured environment or receive `AST_BRO_BINARY` through their launcher. Rerun `ast-mcp install`, then restart the host. If the binary is unavailable or the version is wrong, installation stops before any host file is changed and prints the applicable commands.
+Optional native parser or embedding artifacts report explicit capability errors when a platform package is unavailable.
 
 ## From a source checkout
 

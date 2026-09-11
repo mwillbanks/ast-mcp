@@ -12,8 +12,8 @@ ignorePatterns = [
 # Fumadocs generates the collections aliases during documentation builds.
 ignoreUnresolvedImports = ["collections/browser", "collections/server"]
 
-# ast-bro and dprint are runtime CLI dependencies resolved from the stable package installation.
-ignoreDependencies = ["@ast-bro/cli", "collections", "dprint"]
+# Dprint is a runtime CLI dependency resolved from the stable package installation.
+ignoreDependencies = ["collections", "dprint"]
 
 [duplicates]
 # Surface every duplicated pair so architectural consolidation is comprehensive.

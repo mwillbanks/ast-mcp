@@ -66,7 +66,6 @@ allow_tools = []
 block_tools = []
 
 [dependencies]
-ast_bro_binary = "/absolute/path/to/ast-bro"
 dprint_binary = "/absolute/path/to/dprint"
 
 [http]
@@ -78,7 +77,33 @@ session_sweep_interval_ms = 60000
 [mcp.configuration]
 enabled = true
 require_approval = true
+
+[intelligence.storage.placement]
+kind = "global" # global | local | parent | explicit
+
+[intelligence.federation]
+enabled = false
+
+[intelligence.retrieval]
+semantic = false
+
+[intelligence.retrieval.embedding]
+model_id = "onnx-community/granite-embedding-30m-english-ONNX"
+revision = "a141ffafe5810d8ee499de14086b5259527ed6ff"
+dimensions = 384
+dtype = "q8"
+pooling = "mean"
+workers = 1
+
+[intelligence.generation]
+enabled = false
 ```
+
+## Intelligence storage and models
+
+All index state uses LanceDB. Global placement shares content-addressed artifacts across repositories and revisions. Local placement stores data under one repository. Parent placement requires `levels`; explicit placement requires an absolute `path`. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
+
+Semantic retrieval is optional. The default pinned Granite embedding profile is small and CPU-oriented. Override the model, revision, dimensions, dtype, pooling, device, workers, queue, batch size, and local artifact path together. Generation is disabled by default and never blocks structural tools. MCP providers use the active host sampling capability; HTTP providers require an explicit endpoint, model, and optional environment-variable name for the API key.
 
 Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not authorization. Server-side top-level `paths` rules remain authoritative. A request spanning multiple advertised roots is accepted only when their effective safety, formatting, and dependency policies agree.
 
@@ -112,7 +137,7 @@ Project rules that broaden beyond the host baseline are reduced from `allow` to 
 
 Agents must use the grouped tools rather than rewriting `ast-mcp.toml` as a whole file:
 
-- `config_core` updates `workspace`, `safety`, `files`, `formatting` scalars (`enabled`, `fallback`, `dprint_config`), `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
+- `config_core` updates `workspace`, `safety`, `files`, `formatting` scalars (`enabled`, `fallback`, `dprint_config`), `intelligence`, `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
 - `config_paths` adds, updates, or removes `[[paths]]` rules in one operations batch. A single path rule can be fully specified in one add or update; partial `policies` updates merge with the existing rule. It does not change core sections.
 - `target` is `project` or `global` and defaults to `project`. Version 1 files must be migrated first.
 
@@ -127,7 +152,6 @@ A successful write validates version 2 schema, replaces the file atomically, inv
 | `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | v1 deprecated compatibility      |
 | `AST_MCP_ALLOW_TEMP_DIRECTORY`      | v1 deprecated compatibility      |
 | `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`       |
-| `AST_BRO_BINARY`                    | `dependencies.ast_bro_binary`    |
 | `DPRINT_BINARY`                     | `dependencies.dprint_binary`     |
 | `AST_MCP_HTTP_HOST`                 | `http.host`                      |
 | `PORT`                              | `http.port`                      |

@@ -7,13 +7,18 @@ import {
   toolOutputSchema,
   toolSuccess,
 } from "../helpers/mcp-schema";
+import {
+  RevisionSelectorSchema,
+  WorkspaceIdSchema,
+} from "../intelligence/contracts/index.ts";
+import { withLanceMutationLifecycle } from "../intelligence/mutation/index.ts";
 import { patchFiles, writeFilesSafely } from "../patch/engine";
-import { inspectFileCapabilitiesSafely } from "../runtime/file-capabilities";
 import {
   FILE_READ_MAX_BATCH,
   FILE_READ_MAX_BYTES,
   FILE_READ_MAX_LINES,
   hashFilesSafely,
+  inspectWorkspaceFileCapabilitiesSafely,
   readFilesSafely,
 } from "../runtime/file-read";
 import { type ConfiguredExecution, localExecution } from "./configured";
@@ -73,6 +78,10 @@ export default function registerFileTools(
     content: z.string(),
     expectedSha256: z.string().length(64).optional(),
   });
+  const workspaceRequestFields = {
+    revision: RevisionSelectorSchema.optional(),
+    workspaceId: WorkspaceIdSchema.optional(),
+  };
 
   server.registerTool(
     "file_read",
@@ -84,17 +93,20 @@ export default function registerFileTools(
         readOnlyHint: true,
       },
       description: `Reads files using an agent-selected auto, ast, or text mode. AST mode returns a source map/requested symbols or RFC 6901-selected structured-document values; text mode returns a bounded slice. Each result includes capabilities and a streaming whole-file SHA-256. Text slices default to lines [0, 100] and are capped at ${FILE_READ_MAX_LINES} lines and ${FILE_READ_MAX_BYTES} bytes.`,
-      inputSchema: z.object({
-        files: z.array(readTarget).min(1).max(FILE_READ_MAX_BATCH),
-      }),
+      inputSchema: z
+        .object({
+          files: z.array(readTarget).min(1).max(FILE_READ_MAX_BATCH),
+          ...workspaceRequestFields,
+        })
+        .strict(),
       outputSchema: toolOutputSchema,
       title: "Read Files as AST or Text",
     },
-    async ({ files }, context) => {
+    async ({ files, revision, workspaceId }, context) => {
       try {
         return toolSuccess({
           files: await execute(
-            { files },
+            { files, revision, workspaceId },
             () => readFilesSafely(files),
             context,
             "file_read",
@@ -117,18 +129,21 @@ export default function registerFileTools(
       },
       description:
         "Reports the intrinsic and effective AST/text read, AST/Aider patch, and AST search capabilities for each file.",
-      inputSchema: z.object({
-        filePaths: z.array(z.string()).min(1).max(FILE_READ_MAX_BATCH),
-      }),
+      inputSchema: z
+        .object({
+          filePaths: z.array(z.string()).min(1).max(FILE_READ_MAX_BATCH),
+          ...workspaceRequestFields,
+        })
+        .strict(),
       outputSchema: toolOutputSchema,
       title: "Inspect File Capabilities",
     },
-    async ({ filePaths }, context) => {
+    async ({ filePaths, revision, workspaceId }, context) => {
       try {
         return toolSuccess({
           files: await execute(
-            { filePaths },
-            () => inspectFileCapabilitiesSafely(filePaths),
+            { filePaths, revision, workspaceId },
+            () => inspectWorkspaceFileCapabilitiesSafely(filePaths),
             context,
             "file_capabilities",
           ),
@@ -149,17 +164,20 @@ export default function registerFileTools(
         readOnlyHint: true,
       },
       description: `Batches streaming whole-file SHA-256 calculations without loading file contents into memory. Use this for fresh patch hashes, including AST-capable files. Accepts up to ${FILE_READ_MAX_BATCH} paths.`,
-      inputSchema: z.object({
-        filePaths: z.array(z.string()).min(1).max(FILE_READ_MAX_BATCH),
-      }),
+      inputSchema: z
+        .object({
+          filePaths: z.array(z.string()).min(1).max(FILE_READ_MAX_BATCH),
+          ...workspaceRequestFields,
+        })
+        .strict(),
       outputSchema: toolOutputSchema,
       title: "Hash Files Without Reading Content",
     },
-    async ({ filePaths }, context) => {
+    async ({ filePaths, revision, workspaceId }, context) => {
       try {
         return toolSuccess({
           files: await execute(
-            { filePaths },
+            { filePaths, revision, workspaceId },
             () => hashFilesSafely(filePaths),
             context,
             "file_hash",
@@ -185,16 +203,16 @@ export default function registerFileTools(
       inputSchema: boundedFileBatch(
         writeTarget,
         "file_write requires between 1 and 50 files",
-      ),
+      ).extend(workspaceRequestFields),
       outputSchema: toolOutputSchema,
       title: "Write Files Safely",
     },
-    async ({ files }, context) => {
+    async ({ files, revision, workspaceId }, context) => {
       try {
         return toolSuccess(
           await execute(
-            { files },
-            () => writeFilesSafely(files),
+            { files, revision, workspaceId },
+            () => withLanceMutationLifecycle(() => writeFilesSafely(files)),
             context,
             "file_write",
           ),
@@ -252,16 +270,16 @@ export default function registerFileTools(
               });
           }),
         "file_patch requires between 1 and 50 files",
-      ),
+      ).extend(workspaceRequestFields),
       outputSchema: toolOutputSchema,
       title: "Patch Files Through the Enforced State Machine",
     },
-    async ({ files }, context) => {
+    async ({ files, revision, workspaceId }, context) => {
       try {
         return toolSuccess(
           await execute(
-            { files },
-            () => patchFiles(files),
+            { files, revision, workspaceId },
+            () => withLanceMutationLifecycle(() => patchFiles(files)),
             context,
             "file_patch",
           ),

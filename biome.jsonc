@@ -16,6 +16,7 @@
     "includes": [
       "**",
       "!dist",
+      "!.ast-mcp",
       "!website/.output",
       "!website/.source",
       "!website/src/routeTree.gen.ts"

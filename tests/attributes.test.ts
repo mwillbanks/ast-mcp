@@ -46,12 +46,13 @@ test("restores prior attributes after a metadata failure", async () => {
     new Error("chmod denied"),
   );
   try {
-    await expect(
-      applyFileChattr(filePath, {
-        chmod: 0o600,
-        chown: { gid: process.getgid?.() ?? 0, uid: process.getuid?.() ?? 0 },
-      }),
-    ).rejects.toThrow("chown denied");
+    const failure = await applyFileChattr(filePath, {
+      chmod: 0o600,
+      chown: { gid: process.getgid?.() ?? 0, uid: process.getuid?.() ?? 0 },
+    }).catch((error) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toContain("rollback was incomplete");
+    expect(failure.errors).toHaveLength(3);
   } finally {
     chown.mockRestore();
     chmod.mockRestore();

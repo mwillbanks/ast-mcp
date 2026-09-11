@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { readFile, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { callAstBro } from "../../ast-bro/client";
-import { parseAstBroJson } from "../../ast-bro/result";
+import {
+  type ParserLanguageId,
+  rewriteStructuralMatches,
+} from "../../intelligence/parser/index.ts";
 import type {
   AstRule,
   PatchStrategyAdapter,
@@ -33,138 +32,70 @@ function validate(
     );
 }
 
-function temporary(filePath: string): string {
-  const extension = path.extname(filePath);
-  const base = extension ? filePath.slice(0, -extension.length) : filePath;
-  return `${base}.ast-mcp-patch-${randomUUID()}${extension}`;
-}
-
-async function previewRule(
-  context: PatchStrategyContext & { language: string },
-  next: string,
-  rule: AstRule,
-): Promise<number> {
-  const preview = parseAstBroJson(
-    await callAstBro(
-      "run",
-      {
-        json: true,
-        lang: context.language,
-        paths: [next],
-        pattern: rule.pattern,
-      },
-      path.dirname(context.filePath),
-    ),
-  );
-  if (preview.error_count)
-    throw Object.assign(
-      new Error(`ast-bro preview failed with ${preview.error_count} errors`),
-      {
-        code: "ast_preview_error",
-        details: { errors: preview.errors },
-        retryable: true,
-        suggestedNextCall: "run",
-      },
-    );
-  const locations = Array.isArray(preview.matches)
-    ? preview.matches.slice(0, 10).map((match) => {
-        const value = match as Record<string, unknown>;
-        return {
-          endCol: value.end_col,
-          endLine: value.end_line,
-          file: value.file,
-          matchedText:
-            typeof value.matched_text === "string"
-              ? value.matched_text.slice(0, 200)
-              : undefined,
-          startCol: value.start_col,
-          startLine: value.start_line,
-        };
-      })
-    : [];
-  const matches = Array.isArray(preview.matches) ? preview.matches.length : 0;
-  const expected = rule.expectedMatches ?? 1;
-  if (matches !== expected)
-    throw Object.assign(
+function structuralFailure(error: unknown, rule: AstRule): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  const matchCount = message.match(/expected (\d+) matches but found (\d+)/);
+  if (matchCount) {
+    const expected = Number(matchCount[1]);
+    const matches = Number(matchCount[2]);
+    return Object.assign(
       new Error(`AST rule matched ${matches} nodes; expected ${expected}`),
       {
         code: "ast_match_count",
-        details: { expected, locations, matches },
+        details: { expected, matches, pattern: rule.pattern },
         retryable: true,
         suggestedNextCall: "run",
       },
     );
-  if (expected !== 1)
-    throw Object.assign(
-      new Error(
-        "ast-bro run rewrites only the first match per file; narrow the AST rule to exactly one node",
-      ),
-      {
-        code: "ast_rewrite_cardinality",
-        details: { expected, locations, matches },
-        retryable: true,
-        suggestedNextCall: "run",
-      },
-    );
-  return matches;
-}
-
-async function rewriteRule(
-  context: PatchStrategyContext & { language: string },
-  next: string,
-  rule: AstRule,
-): Promise<void> {
-  const rewritten = parseAstBroJson(
-    await callAstBro(
-      "run",
-      {
-        json: true,
-        lang: context.language,
-        paths: [next],
-        pattern: rule.pattern,
-        rewrite: rule.fix,
-        write: true,
-      },
-      path.dirname(context.filePath),
-    ),
-  );
-  if (
-    rewritten.error_count ||
-    rewritten.rewrite_count !== 1 ||
-    rewritten.files?.[0]?.status !== "rewritten"
-  )
-    throw new Error("ast-bro run did not rewrite exactly one file");
+  }
+  if (message.includes("overlap"))
+    return Object.assign(new Error(message), {
+      code: "ast_rewrite_overlap",
+      details: { pattern: rule.pattern },
+      retryable: true,
+      suggestedNextCall: "run",
+    });
+  return Object.assign(new Error(message), {
+    code: "ast_preview_error",
+    details: { pattern: rule.pattern },
+    retryable: true,
+    suggestedNextCall: "run",
+  });
 }
 
 export const astStrategy: PatchStrategyAdapter = {
   name: "ast",
   async prepare(context) {
     validate(context);
-    const next = temporary(context.filePath);
-    try {
-      await writeFile(next, context.original, {
-        encoding: "utf8",
-        flag: "wx",
-        mode: context.mode,
-      });
-      let matches = 0;
-      for (const rule of context.astRules) {
-        matches += await previewRule(context, next, rule);
-        await rewriteRule(context, next, rule);
-      }
-      return {
-        candidate: await readFile(next, "utf8"),
-        metadata: {
-          engine: "ast-bro.run",
-          matches,
-          operations: context.astRules.length,
-          strategy: "ast",
-        },
-      };
-    } finally {
+    let candidate = context.original;
+    let matches = 0;
+    for (const rule of context.astRules) {
       try {
-        await unlink(next);
-      } catch {}
+        const rewritten = rewriteStructuralMatches(
+          candidate,
+          context.language as ParserLanguageId,
+          [
+            {
+              expectedMatches: rule.expectedMatches ?? 1,
+              pattern: rule.pattern,
+              replacement: rule.fix,
+            },
+          ],
+        );
+        candidate = rewritten.source;
+        matches += rewritten.matches.length;
+      } catch (error) {
+        throw structuralFailure(error, rule);
+      }
     }
+    return {
+      candidate,
+      metadata: {
+        engine: "ast-mcp.native",
+        matches,
+        operations: context.astRules.length,
+        strategy: "ast",
+      },
+    };
   },
 };

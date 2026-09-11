@@ -43,19 +43,39 @@ export function validateFileChattr(
 export async function applyFileChattr(
   filePath: string,
   chattr: FileChattr | undefined,
+  beforeChange?: () => Promise<void>,
 ) {
   const validated = validateFileChattr(chattr);
   const before = await resultingFileChattr(filePath);
   if (!validated) return before;
   try {
-    if (validated.chown)
+    if (validated.chown) {
+      await beforeChange?.();
       await chown(filePath, validated.chown.uid, validated.chown.gid);
-    if (validated.chmod !== undefined) await chmod(filePath, validated.chmod);
+    }
+    if (validated.chmod !== undefined) {
+      await beforeChange?.();
+      await chmod(filePath, validated.chmod);
+    }
   } catch (error) {
-    await chown(filePath, before.chown.uid, before.chown.gid).catch(
-      () => undefined,
-    );
-    await chmod(filePath, before.chmod).catch(() => undefined);
+    const restorationErrors: unknown[] = [];
+    try {
+      await beforeChange?.();
+      await chown(filePath, before.chown.uid, before.chown.gid);
+    } catch (restoreError) {
+      restorationErrors.push(restoreError);
+    }
+    try {
+      await beforeChange?.();
+      await chmod(filePath, before.chmod);
+    } catch (restoreError) {
+      restorationErrors.push(restoreError);
+    }
+    if (restorationErrors.length > 0)
+      throw new AggregateError(
+        [error, ...restorationErrors],
+        "File attribute mutation failed and rollback was incomplete",
+      );
     throw error;
   }
   return resultingFileChattr(filePath);

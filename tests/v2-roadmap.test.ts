@@ -28,7 +28,7 @@ import {
 } from "../src/runtime/approval";
 import { renameFilesSafely } from "../src/runtime/file-rename";
 import { formatContent } from "../src/runtime/format";
-import { sha256File } from "../src/runtime/hash";
+import { sha256, sha256File } from "../src/runtime/hash";
 import {
   assertPolicy,
   assertReadableTree,
@@ -388,11 +388,15 @@ test("preview receipts bind session, current mode, and bounded candidates", asyn
     await chmod(file, 0o640);
     await expect(
       withApprovalContext(scope("other-session"), () =>
-        patchFiles({ [file]: { previewReceipt: token } }),
+        patchFiles({
+          [file]: { expectedSha256: sha256("before"), previewReceipt: token },
+        }),
       ),
     ).rejects.toThrow("different MCP session");
     const committed = await withApprovalContext(scope("preview-session"), () =>
-      patchFiles({ [file]: { previewReceipt: token } }),
+      patchFiles({
+        [file]: { expectedSha256: sha256("before"), previewReceipt: token },
+      }),
     );
     expect(
       Object.values(committed.files as Record<string, unknown>),
@@ -406,7 +410,9 @@ test("preview receipts bind session, current mode, and bounded candidates", asyn
     expect((await lstat(file)).mode & 0o777).toBe(0o640);
     await expect(
       withApprovalContext(scope("preview-session"), () =>
-        patchFiles({ [file]: { previewReceipt: token } }),
+        patchFiles({
+          [file]: { expectedSha256: sha256("before"), previewReceipt: token },
+        }),
       ),
     ).rejects.toThrow("unknown or has already been used");
 
@@ -463,7 +469,12 @@ test("preview receipts bind session, current mode, and bounded candidates", asyn
   await expect(
     withConfig(options, () =>
       withApprovalContext(scope("identity-session"), () =>
-        patchFiles({ [identityFile]: { previewReceipt: identityToken } }),
+        patchFiles({
+          [identityFile]: {
+            expectedSha256: sha256("before"),
+            previewReceipt: identityToken,
+          },
+        }),
       ),
     ),
   ).rejects.toThrow("configuration changed");

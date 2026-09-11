@@ -1,3 +1,5 @@
+// biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
+// biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { realpath, stat } from "node:fs/promises";
 import os from "node:os";
@@ -18,6 +20,7 @@ import {
   type PathRuleV2,
 } from "./config-v2-schema";
 import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
+import { DEFAULT_EMBEDDING_MODEL } from "./intelligence/retrieval/types.ts";
 import {
   clearGitWorktreeCache,
   linkedWorktrees,
@@ -63,7 +66,7 @@ type AstMcpFileConfig =
   | z.infer<typeof fileV2Schema>;
 
 export interface ResolvedConfig {
-  dependencies: { astBroBinary?: string; dprintBinary?: string };
+  dependencies: { dprintBinary?: string };
   files: {
     patch: {
       aiderMatchers: Array<
@@ -89,6 +92,39 @@ export interface ResolvedConfig {
     }>;
   };
   generation: number;
+  intelligence: {
+    federation: { enabled: boolean };
+    generation: {
+      enabled: boolean;
+      provider:
+        | { apiKeyEnv?: string; endpoint: string; kind: "http"; model: string }
+        | { kind: "mcp"; model: string; serverId: string }
+        | null;
+    };
+    retrieval: {
+      embedding: {
+        artifacts: Record<string, string>;
+        batchSize: number;
+        device: "auto" | "cpu" | "gpu" | "wasm" | "webgpu";
+        dimensions: number;
+        dtype: "fp32" | "fp16" | "q8" | "q4";
+        localPath: string | null;
+        maxQueue: number;
+        modelId: string;
+        pooling: "mean" | "cls";
+        revision: string;
+        workers: number;
+      };
+      semantic: boolean;
+    };
+    storage: {
+      placement:
+        | { kind: "global" }
+        | { kind: "local" }
+        | { kind: "parent"; levels: number }
+        | { kind: "explicit"; path: string };
+    };
+  };
   http: {
     host: string;
     port: number;
@@ -134,6 +170,9 @@ export interface ResolveConfigOptions {
   home?: string;
   platform?: NodeJS.Platform;
   requestPaths?: string[];
+  revisionId?: string;
+  storageDomainId?: string;
+  workspaceId?: string;
 }
 
 interface LoadedLayer {
@@ -143,7 +182,7 @@ interface LoadedLayer {
 }
 
 interface InternalConfig {
-  dependencies?: { ast_bro_binary?: string; dprint_binary?: string };
+  dependencies?: { dprint_binary?: string };
   files?: {
     patch?: {
       aider_matchers?: Array<
@@ -167,6 +206,43 @@ interface InternalConfig {
       mode?: "stdout" | "in_place";
       timeout_ms?: number;
     }>;
+  };
+  intelligence?: {
+    federation?: { enabled?: boolean };
+    generation?: {
+      enabled?: boolean;
+      provider?:
+        | {
+            api_key_env?: string;
+            endpoint: string;
+            kind: "http";
+            model: string;
+          }
+        | { kind: "mcp"; model: string; server_id?: string }
+        | null;
+    };
+    retrieval?: {
+      embedding?: {
+        batch_size?: number;
+        device?: "auto" | "cpu" | "gpu" | "wasm" | "webgpu";
+        dimensions?: number;
+        dtype?: "fp32" | "fp16" | "q8" | "q4";
+        local_path?: string | null;
+        max_queue?: number;
+        model_id?: string;
+        pooling?: "mean" | "cls";
+        revision?: string;
+        workers?: number;
+      };
+      semantic?: boolean;
+    };
+    storage?: {
+      placement?:
+        | { kind: "global" }
+        | { kind: "local" }
+        | { kind: "parent"; levels: number }
+        | { kind: "explicit"; path: string };
+    };
   };
   http?: {
     host?: string;
@@ -462,10 +538,24 @@ function environmentDependencies(
   env: NodeJS.ProcessEnv,
   usage: EnvironmentUsage,
 ) {
-  const astBroBinary = usage.use("AST_BRO_BINARY", env.AST_BRO_BINARY);
   const dprintBinary = usage.use("DPRINT_BINARY", env.DPRINT_BINARY);
-  return astBroBinary || dprintBinary
-    ? { ast_bro_binary: astBroBinary, dprint_binary: dprintBinary }
+  return dprintBinary ? { dprint_binary: dprintBinary } : undefined;
+}
+
+function environmentIntelligence(
+  env: NodeJS.ProcessEnv,
+  usage: EnvironmentUsage,
+): InternalConfig["intelligence"] {
+  const modelId = usage.use(
+    "AST_MCP_EMBEDDING_MODEL",
+    env.AST_MCP_EMBEDDING_MODEL,
+  );
+  if (modelId !== undefined && !modelId.trim())
+    throw new ConfigurationError(
+      "Environment variable AST_MCP_EMBEDDING_MODEL must not be empty",
+    );
+  return modelId
+    ? { retrieval: { embedding: { model_id: modelId.trim() } } }
     : undefined;
 }
 
@@ -535,6 +625,7 @@ function environmentLayer(
   const roots = environmentRoots(env, cwd, usage);
   const safety = environmentSafety(env, usage);
   const formatting = environmentFormatting(env, cwd, usage);
+  const intelligence = environmentIntelligence(env, usage);
   const dependencies = environmentDependencies(env, usage);
   const http = environmentHttp(env, usage);
   return {
@@ -543,6 +634,7 @@ function environmentLayer(
       dependencies,
       formatting,
       http,
+      intelligence,
       safety,
       workspace: roots ? { roots } : undefined,
     },
@@ -571,8 +663,13 @@ const leaves = [
   "formatting.enabled",
   "formatting.fallback",
   "formatting.formatters",
-  "dependencies.ast_bro_binary",
   "dependencies.dprint_binary",
+  "intelligence.federation.enabled",
+  "intelligence.generation.enabled",
+  "intelligence.generation.provider",
+  "intelligence.retrieval.embedding",
+  "intelligence.retrieval.semantic",
+  "intelligence.storage.placement",
   "http.host",
   "http.port",
   "http.session_timeout_ms",
@@ -597,6 +694,7 @@ const mergeSections = [
   "files",
   "formatting",
   "dependencies",
+  "intelligence",
   "http",
   "mcp",
 ] as const;
@@ -636,6 +734,27 @@ function mergeFileMethods(
   };
 }
 
+function mergeIntelligence(
+  result: InternalConfig,
+  incoming: InternalConfig["intelligence"],
+  previous: InternalConfig["intelligence"],
+): void {
+  if (!incoming) return;
+  result.intelligence = {
+    federation: { ...previous?.federation, ...incoming.federation },
+    generation: { ...previous?.generation, ...incoming.generation },
+    retrieval: {
+      ...previous?.retrieval,
+      ...incoming.retrieval,
+      embedding: {
+        ...previous?.retrieval?.embedding,
+        ...incoming.retrieval?.embedding,
+      },
+    },
+    storage: { ...previous?.storage, ...incoming.storage },
+  };
+}
+
 function mergeMcpConfiguration(
   result: InternalConfig,
   incoming: InternalConfig["mcp"],
@@ -660,6 +779,7 @@ function mergeSection(
   const previousHook = result.safety?.hook;
   const previousFiles = result.files;
   const previousMcp = result.mcp;
+  const previousIntelligence = result.intelligence;
   result[section] = {
     ...(result[section] as object | undefined),
     ...definedProperties(incoming),
@@ -671,6 +791,12 @@ function mergeSection(
       result,
       incoming as InternalConfig["files"],
       previousFiles,
+    );
+  if (section === "intelligence")
+    mergeIntelligence(
+      result,
+      incoming as InternalConfig["intelligence"],
+      previousIntelligence,
     );
   if (section === "mcp")
     mergeMcpConfiguration(
@@ -753,6 +879,26 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       enabled: true,
       formatters: [],
     },
+    intelligence: {
+      federation: { enabled: false },
+      generation: { enabled: false, provider: null },
+      retrieval: {
+        embedding: {
+          batch_size: 8,
+          device: "cpu",
+          dimensions: 384,
+          dtype: "q8",
+          local_path: null,
+          max_queue: 256,
+          model_id: "onnx-community/granite-embedding-30m-english-ONNX",
+          pooling: "mean",
+          revision: "a141ffafe5810d8ee499de14086b5259527ed6ff",
+          workers: 1,
+        },
+        semantic: false,
+      },
+      storage: { placement: { kind: "global" } },
+    },
     http: {
       host: "127.0.0.1",
       port: 3768,
@@ -822,6 +968,68 @@ function resolvedFiles(value: InternalConfig): ResolvedConfig["files"] {
       strategies: value.files?.patch?.strategies ?? ["ast", "aider_block"],
     },
     read: { modes: value.files?.read?.modes ?? ["ast", "text"] },
+  };
+}
+
+function resolvedIntelligence(
+  value: InternalConfig,
+): ResolvedConfig["intelligence"] {
+  const embedding = value.intelligence?.retrieval?.embedding;
+  const provider = value.intelligence?.generation?.provider;
+  return {
+    federation: { enabled: value.intelligence?.federation?.enabled ?? false },
+    generation: {
+      enabled: value.intelligence?.generation?.enabled ?? false,
+      provider:
+        provider?.kind === "http"
+          ? {
+              apiKeyEnv: provider.api_key_env,
+              endpoint: provider.endpoint,
+              kind: "http",
+              model: provider.model,
+            }
+          : provider?.kind === "mcp"
+            ? {
+                kind: "mcp",
+                model: provider.model,
+                serverId: provider.server_id ?? "host",
+              }
+            : null,
+    },
+    retrieval: {
+      embedding: {
+        artifacts:
+          (embedding?.model_id ?? DEFAULT_EMBEDDING_MODEL.modelId) ===
+            DEFAULT_EMBEDDING_MODEL.modelId &&
+          (embedding?.revision ?? DEFAULT_EMBEDDING_MODEL.revision) ===
+            DEFAULT_EMBEDDING_MODEL.revision &&
+          (embedding?.dimensions ?? DEFAULT_EMBEDDING_MODEL.dimensions) ===
+            DEFAULT_EMBEDDING_MODEL.dimensions &&
+          (embedding?.dtype ?? DEFAULT_EMBEDDING_MODEL.dtype) ===
+            DEFAULT_EMBEDDING_MODEL.dtype &&
+          (embedding?.pooling ?? DEFAULT_EMBEDDING_MODEL.pooling) ===
+            DEFAULT_EMBEDDING_MODEL.pooling
+            ? { ...DEFAULT_EMBEDDING_MODEL.artifacts }
+            : {},
+        batchSize: embedding?.batch_size ?? 8,
+        device: embedding?.device ?? "cpu",
+        dimensions: embedding?.dimensions ?? 384,
+        dtype: embedding?.dtype ?? "q8",
+        localPath: embedding?.local_path ?? null,
+        maxQueue: embedding?.max_queue ?? 256,
+        modelId:
+          embedding?.model_id ??
+          "onnx-community/granite-embedding-30m-english-ONNX",
+        pooling: embedding?.pooling ?? "mean",
+        revision:
+          embedding?.revision ?? "a141ffafe5810d8ee499de14086b5259527ed6ff",
+        workers: embedding?.workers ?? 1,
+      },
+      semantic: value.intelligence?.retrieval?.semantic ?? false,
+    },
+    storage: {
+      placement: value.intelligence?.storage?.placement ?? { kind: "global" },
+    },
   };
 }
 
@@ -945,12 +1153,12 @@ function resolvedConfiguration(args: {
   } = args;
   return {
     dependencies: {
-      astBroBinary: value.dependencies?.ast_bro_binary,
       dprintBinary: value.dependencies?.dprint_binary,
     },
     files: resolvedFiles(value),
     formatting: resolvedFormatting(value, dprintConfig),
     generation: 0,
+    intelligence: resolvedIntelligence(value),
     http: resolvedHttp(value),
     mcp: resolvedMcp(value),
     paths: resolvedPathEntries([
@@ -1009,7 +1217,10 @@ function resolutionCacheKey(args: {
   globalPath: string;
   projectPath: string | undefined;
   projectRoot: string;
+  revisionId: string | undefined;
+  storageDomainId: string | undefined;
   trustedRoots: string[];
+  workspaceId: string | undefined;
 }) {
   return JSON.stringify({
     candidates: args.candidates,
@@ -1018,7 +1229,10 @@ function resolutionCacheKey(args: {
     globalPath: args.globalPath,
     projectPath: args.projectPath,
     projectRoot: args.projectRoot,
+    revisionId: args.revisionId,
+    storageDomainId: args.storageDomainId,
     trustedRoots: args.trustedRoots,
+    workspaceId: args.workspaceId,
   });
 }
 
@@ -1122,7 +1336,10 @@ async function resolveForProject(
     globalPath,
     projectPath,
     projectRoot,
+    revisionId: options.revisionId,
+    storageDomainId: options.storageDomainId,
     trustedRoots,
+    workspaceId: options.workspaceId,
   });
   const linked = await discoveredLinkedWorktrees(
     projectRoot,

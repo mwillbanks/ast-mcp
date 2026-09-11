@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import * as z from "zod/v4";
+import { normalizeConfigLayer } from "../src/helpers/config";
 import { parseInstallerArguments } from "../src/helpers/installer";
 import { boundedRecord } from "../src/helpers/mcp-schema";
 import {
@@ -19,6 +21,18 @@ describe("shared helpers", () => {
         "mcp__ast_mcp__show",
       ]),
     ).toBe(true);
+  });
+
+  test("normalizes dependency commands relative to the configuration file", () => {
+    const configPath = path.join("/workspace", "config", "ast-mcp.toml");
+    expect(
+      normalizeConfigLayer(
+        { dependencies: { dprint_binary: "./bin/dprint" } },
+        configPath,
+      ).dependencies,
+    ).toEqual({
+      dprint_binary: path.join("/workspace", "config", "bin/dprint"),
+    });
   });
 
   test("parses installer aliases and rejects unknown options before values", () => {

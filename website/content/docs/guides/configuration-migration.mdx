@@ -36,6 +36,12 @@ A write uses an adjacent temporary file and atomic replacement, preserves file m
 
 Review every generated rule before writing, especially catch-all, temporary, external, or symlink-enabled rules. Prefer `request` for access that is not universally safe. Persistent user approvals belong only in the user-global version 2 configuration.
 
+## Intelligence defaults
+
+Migrated configurations retain deterministic structural behavior. Version 2 adds global LanceDB storage, disabled federation, disabled semantic retrieval, the pinned small Granite embedding profile, and disabled generation as resolved defaults. Migration does not download a model, move old caches, enable cross-repository access, or enable an external provider.
+
+Configure `intelligence.storage.placement` before indexing when global storage is unsuitable. Enable federation only for intended cross-repository queries. Enable generation only after choosing an MCP sampling or HTTP provider.
+
 ## Rollout
 
 After migration, restart or reconnect long-lived MCP hosts once so they discover the new server/tool schemas. Subsequent configuration changes hot reload in place. Run `config_status` to verify the effective generation and formatter order, then use `policy_check` for representative read, write, delete, and external paths before the first mutation.

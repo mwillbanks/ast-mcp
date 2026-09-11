@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import registerLifecycleTools from "../src/tools/lifecycle";
@@ -81,6 +88,14 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     expect(changed.isError).toBeUndefined();
     expect(changed.content[0]?.text).toContain(attributesPath);
 
+    const missingHash = await handler("file_chattr")({
+      files: {
+        [attributesPath]: { chattr: { chmod: 0o600 } },
+      },
+    });
+    expect(missingHash.isError).toBeTrue();
+    expect(missingHash.content[0]?.text).toContain("expectedSha256");
+
     const stale = await handler("file_chattr")({
       files: {
         [attributesPath]: {
@@ -91,6 +106,26 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     });
     expect(stale.isError).toBeTrue();
     expect(stale.content[0]?.text).toContain("Stale file context");
+
+    const rollbackPath = path.join(root, "rollback.txt");
+    const invalidOwnerPath = path.join(root, "invalid-owner.txt");
+    await writeFile(rollbackPath, "rollback");
+    await writeFile(invalidOwnerPath, "invalid-owner");
+    await chmod(rollbackPath, 0o640);
+    const rolledBack = await handler("file_chattr")({
+      files: {
+        [rollbackPath]: {
+          chattr: { chmod: 0o600 },
+          expectedSha256: digest("rollback"),
+        },
+        [invalidOwnerPath]: {
+          chattr: { chown: { gid: 0, uid: 2 ** 32 } },
+          expectedSha256: digest("invalid-owner"),
+        },
+      },
+    });
+    expect(rolledBack.isError).toBeTrue();
+    expect((await stat(rollbackPath)).mode & 0o777).toBe(0o640);
 
     const source = path.join(root, "source.txt");
     const destination = path.join(root, "destination.txt");

@@ -23,15 +23,19 @@
 
 Coding agents need more than a text editor. They need a way to understand code relationships, preserve current state, and prove that an intended change is the change that reaches disk.
 
-| Capability              | What it provides                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Structural intelligence | Directory digests, symbols, semantic search, context, calls, dependencies, cycles, impact, and public API inspection  |
-| Guarded file operations | Batched hashing, bounded text reads, deterministic creation, exact patches, attributes, and reference-aware deletion  |
-| Root isolation          | One shared path policy for every file and ast-bro operation, with symlink rejection and explicit external-root opt-in |
-| Safe commits            | Fresh SHA-256 checks, deterministic cross-process locks, candidate formatting, hash rechecks, and atomic replacement  |
-| Agent routing           | Best-effort hooks, a unified skill, and idempotent installers for Codex, Claude, Copilot, and VS Code                 |
+- **Structural intelligence:** Directory digests, symbols, search, context, calls, dependencies, cycles, impact, and public API inspection.
+- **Guarded file operations:** Batched hashes, bounded reads, deterministic creation, exact patches, attributes, and reference-aware deletion.
+- **Root isolation:** One path policy covers file and intelligence operations, symlink rejection, and explicit external roots.
+- **Safe commits:** Fresh hashes, deterministic locks, candidate formatting, hash rechecks, and atomic replacement.
+- **Agent routing:** Best-effort hooks, one skill, and idempotent installers for Codex, Claude, Copilot, and VS Code.
 
 AST-capable files stay on the intelligence path instead of being retrieved as whole-file text. Unsupported formats use bounded reads and exact Aider search/replace blocks.
+
+## Native code and repository intelligence
+
+Open the exact checkout with `workspace_open`, then build its LanceDB index with `index`. Use `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` for typed relationships. Use `retrieve` for bounded exact, lexical, semantic, and graph-ranked evidence. The optional `generate` tool accepts only explicit, revision-scoped evidence and returns validated citations.
+
+LanceDB stores metadata, graph records, lexical data, jobs, revisions, and vectors. Global storage is the default. Local, parent-folder, and explicit paths are supported. Cross-repository requests require explicit federation.
 
 ## The guarded workflow
 
@@ -46,9 +50,9 @@ A stale hash, ambiguous match, capped preview, unsupported route, formatter reje
 
 ## Distribution
 
-Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. Host configurations reference the stable installed CLI, so its pinned `@ast-bro/cli` and `dprint` dependencies remain available for the lifetime of the installation.
+Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. Host configurations reference the stable installed CLI, so native intelligence and the pinned formatter remain available for the installation lifetime.
 
-Runtime dependencies are pinned where binary compatibility matters. `@ast-bro/cli` powers code intelligence and structural rewrites; dprint and its configured plugins format candidate writes across supported languages.
+Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. Dprint formats candidate writes across supported languages.
 
 ## Install
 
@@ -63,7 +67,7 @@ npm install --save-dev @mwillbanks/ast-mcp
 When installing with Bun, allow the pinned native installers:
 
 ```bash
-bun pm trust @ast-bro/cli dprint
+bun pm trust dprint
 ```
 
 ```bash
@@ -85,29 +89,13 @@ Stdio remains the default. To generate Streamable HTTP entries instead, select H
 
 Add `--service` to create and start a macOS LaunchAgent or Linux systemd user unit. Local services require an explicit port. Without `--service`, the installer prints the manual `ast-mcp mcp --transport http` startup command. Windows supports manual HTTP startup but not managed services.
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned ast-bro and dprint installers before the MCP starts. If another package manager blocks dependency build scripts, approve `@ast-bro/cli` and `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
+Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned dprint installer before the MCP starts. If another package manager blocks dependency build scripts, approve `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
 
 Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. The installer creates version 2 configuration and omits MCP environment fields. Uninstall preserves configuration.
 
-### ast-bro platform support
+### Platform support
 
-`@ast-bro/cli@4.2.0` currently publishes a precompiled binary only for macOS Apple Silicon. The ast-mcp installer verifies that the pinned binary can execute before writing host configuration. On Linux, Windows, or macOS Intel, install it through Cargo and set `AST_BRO_BINARY` to the resulting executable before rerunning the installer:
-
-```bash
-cargo install ast-bro --version 4.2.0 --locked
-export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"
-printf '%s\n' 'export AST_BRO_BINARY="$HOME/.cargo/bin/ast-bro"' >> "$HOME/.profile"
-```
-
-For Windows PowerShell:
-
-```powershell
-cargo install ast-bro --version 4.2.0 --locked
-$env:AST_BRO_BINARY = "$HOME\.cargo\bin\ast-bro.exe"
-[Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\.cargo\bin\ast-bro.exe", "User")
-```
-
-Install Rust and Cargo from [rustup](https://rustup.rs/) first when they are not already available. The example persists the variable for POSIX login shells; zsh users can write the same line to `~/.zprofile` instead. GUI-launched hosts must be started from that configured environment or receive `AST_BRO_BINARY` through their launcher. Restart the host after installation. The installer fails without changing host configuration when the binary is missing or has the wrong version.
+The native Bun implementation supports macOS, Linux, and Windows without a Rust or Cargo prerequisite. Optional parser and embedding providers report explicit capability failures when their platform artifacts are unavailable.
 
 From a source checkout:
 
@@ -160,6 +148,14 @@ Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the 
 Formatting uses dprint by default and supports shell-free external formatters. Mutation tools expose a declared `files` batch. Version 2 requires explicit `[[paths]]` rules outside the host baseline, including temporary paths. Path rules control symlinks, hashes, and hook policy.
 
 Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See the [configuration reference](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/) for the full schema, discovery rules, cache behavior, formatter contract, safety semantics, and migration guidance.
+
+## Intelligence indexes
+
+Open each checkout with `workspace_open` before indexing or querying it. A workspace records its checkout, repository, revision, and storage identities. This prevents a worktree request from reading or updating the repository's root checkout.
+
+The default `global` placement shares content-addressed LanceDB artifacts across workspaces. Select `local`, `parent`, or `explicit` placement through `workspace_open` when isolation or a specific storage location is required. Cross-repository graph comparison requires `federation: true`; ordinary graph requests remain repository-scoped.
+
+Use `index` with `build`, `refresh`, `verify`, `collect`, or `status`. Use `index_status` for a read-only health view. `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` require explicit workspace IDs and return generation, evidence, coverage, freshness, and pagination metadata. LanceDB is the only persistent database.
 
 ## MCP configuration
 

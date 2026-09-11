@@ -3,8 +3,6 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  AST_BRO_BINARY,
-  assertAstBroAvailable,
   resolveDependencyBinary,
   resolveGlobalBinaryAlias,
 } from "../src/runtime/dependencies";
@@ -137,30 +135,10 @@ test("supports Windows executable extensions in global package-manager bins", as
 
 test("resolves executable paths declared by package metadata", () => {
   expect(
-    resolveDependencyBinary("ast-bro", "@ast-bro/cli", {
-      globalBinDirectories: [],
-      packageRoot: path.join(os.tmpdir(), "missing-package-root"),
-      pathValue: "",
-    }),
-  ).toContain(path.join("@ast-bro", "cli", "bin", "ast-bro.js"));
-  expect(
     resolveDependencyBinary("dprint", "dprint", {
       globalBinDirectories: [],
       packageRoot: path.join(os.tmpdir(), "missing-package-root"),
       pathValue: "",
     }),
   ).toContain(path.join("dprint", "bin.cjs"));
-});
-
-test("validates ast-bro versions and reports platform recovery", () => {
-  expect(() => assertAstBroAvailable(AST_BRO_BINARY)).not.toThrow();
-  expect(() =>
-    assertAstBroAvailable(process.execPath, "darwin", "arm64"),
-  ).toThrow("bun pm trust @ast-bro/cli");
-  expect(() =>
-    assertAstBroAvailable("/missing/ast-bro.exe", "win32", "x64"),
-  ).toThrow("$HOME\\.cargo\\bin\\ast-bro.exe");
-  expect(() =>
-    assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-  ).toThrow("No precompiled ast-bro 4.2.0 binary");
 });

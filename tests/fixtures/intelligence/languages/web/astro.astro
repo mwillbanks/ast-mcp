@@ -1,0 +1,12 @@
+---
+import { render } from "./render";
+export class AstroService extends Base implements Runnable {
+  run() {
+    return render("café");
+  }
+}
+---
+<script>
+export const hydrate = () => mount();
+</script>
+<section>{title}</section>

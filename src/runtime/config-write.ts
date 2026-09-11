@@ -1,3 +1,4 @@
+// biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
   addPathTable,
@@ -18,7 +19,6 @@ export type ConfigTarget = "global" | "project";
 
 export interface ConfigCorePatch {
   dependencies?: {
-    ast_bro_binary?: string;
     dprint_binary?: string;
   };
   files?: {
@@ -34,6 +34,15 @@ export interface ConfigCorePatch {
     dprint_config?: string;
     enabled?: boolean;
     fallback?: "dprint" | "preserve" | "reject";
+  };
+  intelligence?: {
+    federation?: { enabled?: boolean };
+    generation?: {
+      enabled?: boolean;
+      provider?: Record<string, TomlValue> | null;
+    };
+    retrieval?: { embedding?: Record<string, TomlValue>; semantic?: boolean };
+    storage?: { placement?: Record<string, TomlValue> };
   };
   http?: {
     host?: string;
@@ -187,6 +196,29 @@ function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
     enabled: patch.formatting?.enabled,
     fallback: patch.formatting?.fallback,
   });
+  next = applyObjectKeys(
+    next,
+    "intelligence.federation",
+    patch.intelligence?.federation,
+  );
+  next = applyObjectKeys(
+    next,
+    "intelligence.generation",
+    patch.intelligence?.generation,
+  );
+  next = applyObjectKeys(next, "intelligence.retrieval", {
+    semantic: patch.intelligence?.retrieval?.semantic,
+  });
+  next = applyObjectKeys(
+    next,
+    "intelligence.retrieval.embedding",
+    patch.intelligence?.retrieval?.embedding,
+  );
+  next = applyObjectKeys(
+    next,
+    "intelligence.storage",
+    patch.intelligence?.storage,
+  );
   next = applyObjectKeys(next, "http", patch.http);
   next = applyObjectKeys(next, "dependencies", patch.dependencies);
   next = applyObjectKeys(next, "mcp.configuration", patch.mcp?.configuration);
@@ -271,6 +303,7 @@ function coreSectionChanges(patch: ConfigCorePatch): string[] {
     patch.safety ? "safety" : undefined,
     patch.files ? "files" : undefined,
     patch.formatting ? "formatting" : undefined,
+    patch.intelligence ? "intelligence" : undefined,
     patch.http ? "http" : undefined,
     patch.dependencies ? "dependencies" : undefined,
     patch.mcp ? "mcp.configuration" : undefined,

@@ -1,0 +1,6 @@
+object MainForm: TMainForm
+  Caption = 'Café'
+  object Button1: TButton
+    Caption = 'Run'
+  end
+end

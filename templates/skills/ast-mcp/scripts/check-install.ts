@@ -1,11 +1,9 @@
 #!/usr/bin/env bun
+// biome-ignore-all assist/source/useSortedKeys: Diagnostic output preserves stable user-facing order.
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  directoryBinaryCandidates,
-  executableCandidate,
-  executableNames,
   globalBinDirectories,
   isExecutable,
   resolveGlobalBinaryAlias,
@@ -103,7 +101,141 @@ function parse(args: string[]): CheckOptions {
 
 const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
-const astBroVersion = "4.2.0";
+const expectedIntelligenceTools = [
+  "graph_diff",
+  "graph_explain",
+  "graph_path",
+  "graph_query",
+  "index",
+  "index_status",
+  "retrieve",
+  "workspace_open",
+  "workspace_status",
+] as const;
+
+export interface McpSmokeResult {
+  exposedTools: string[];
+  initialized: boolean;
+  selectedWorkspace: boolean;
+}
+
+export async function smokeMcpStdio(
+  binary: string,
+  root: string,
+  timeoutMs = 15_000,
+): Promise<McpSmokeResult> {
+  const process = Bun.spawn([binary, "mcp"], {
+    cwd: root,
+    env: {
+      ...Bun.env,
+      AST_MCP_PROJECT_ROOT: root,
+      AST_MCP_ROOTS: root,
+    },
+    stderr: "pipe",
+    stdin: "pipe",
+    stdout: "pipe",
+  });
+  const deadline = Date.now() + timeoutMs;
+  const responses = new Map<number, Record<string, unknown>>();
+  const reader = process.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const send = async (message: Record<string, unknown>) => {
+    process.stdin.write(`${JSON.stringify(message)}\n`);
+    await process.stdin.flush();
+  };
+  await send({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: {
+      capabilities: {},
+      clientInfo: { name: "ast-mcp-check-install", version: "1" },
+      protocolVersion: "2025-06-18",
+    },
+  });
+  const readUntil = async (id: number): Promise<Record<string, unknown>> => {
+    while (!responses.has(id)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("MCP smoke timed out");
+      const chunk = await Promise.race([
+        reader.read(),
+        Bun.sleep(remaining).then(() => {
+          throw new Error("MCP smoke timed out");
+        }),
+      ]);
+      if (chunk.done) throw new Error("MCP smoke ended before responding");
+      buffered += decoder.decode(chunk.value, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const value = JSON.parse(line) as Record<string, unknown>;
+        if (typeof value.id === "number") responses.set(value.id, value);
+      }
+    }
+    return responses.get(id) as Record<string, unknown>;
+  };
+  try {
+    const initialize = await readUntil(1);
+    if (!initialize.result) throw new Error("MCP initialize failed");
+    await send({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {},
+    });
+    await send({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
+    await send({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: { directory: root }, name: "workspace_open" },
+    });
+    const listed = await readUntil(2);
+    const opened = await readUntil(3);
+    const result = listed.result as
+      | { tools?: Array<{ name?: unknown }> }
+      | undefined;
+    const exposedTools = (result?.tools ?? [])
+      .map((tool) => tool.name)
+      .filter((name): name is string => typeof name === "string")
+      .sort();
+    const missing = expectedIntelligenceTools.filter(
+      (name) => !exposedTools.includes(name),
+    );
+    if (missing.length)
+      throw new Error(`MCP smoke is missing tools: ${missing.join(", ")}`);
+    const openedResult = opened.result as
+      | {
+          structuredContent?: {
+            data?: {
+              canonicalRootAnchor?: unknown;
+              checkoutRoot?: unknown;
+              workspaceId?: unknown;
+            };
+            ok?: unknown;
+          };
+        }
+      | undefined;
+    const openedWorkspace = openedResult?.structuredContent?.data;
+    const expectedRoot = path.resolve(root);
+    const selectedWorkspace =
+      !opened.error &&
+      openedResult?.structuredContent?.ok === true &&
+      typeof openedWorkspace?.workspaceId === "string" &&
+      openedWorkspace.workspaceId.startsWith("workspace:v1:") &&
+      typeof openedWorkspace.checkoutRoot === "string" &&
+      path.resolve(openedWorkspace.checkoutRoot) === expectedRoot &&
+      typeof openedWorkspace.canonicalRootAnchor === "string" &&
+      path.resolve(openedWorkspace.canonicalRootAnchor) === expectedRoot;
+    if (!selectedWorkspace)
+      throw new Error("MCP smoke did not select the requested workspace");
+    return { exposedTools, initialized: true, selectedWorkspace };
+  } finally {
+    process.kill();
+    await process.exited;
+  }
+}
 
 async function astMcpEntry(
   entry: unknown,
@@ -130,48 +262,6 @@ async function astMcpEntry(
     home,
   ).some((candidate) => path.resolve(candidate) === directory);
   return recognized && isExecutable(entry);
-}
-
-async function astBroVersionCurrent(binary: string) {
-  if (!isExecutable(binary)) return false;
-  const result = Bun.spawnSync([binary, "--version"], {
-    stderr: "ignore",
-    stdout: "pipe",
-  });
-  return (
-    result.exitCode === 0 &&
-    result.stdout.toString().trim() === `ast-bro ${astBroVersion}`
-  );
-}
-
-async function astBroCurrent(options: CheckOptions, home: string) {
-  if (process.env.AST_BRO_BINARY)
-    return astBroVersionCurrent(process.env.AST_BRO_BINARY);
-  const localBinDirectory = path.join(options.root, "node_modules/.bin");
-  if (options.scope === "local") {
-    const projectBinary = executableCandidate(
-      directoryBinaryCandidates(
-        [localBinDirectory],
-        executableNames("ast-bro", process.platform),
-      ),
-      process.platform,
-    );
-    return projectBinary ? astBroVersionCurrent(projectBinary) : false;
-  }
-  const bundled = path.resolve(
-    import.meta.dir,
-    "../../../../node_modules/.bin/ast-bro",
-  );
-  if (isExecutable(bundled)) return astBroVersionCurrent(bundled);
-  const globalBinary = resolveGlobalBinaryAlias("ast-bro", {
-    globalBinDirectories: globalBinDirectories(
-      "ast-bro",
-      process.platform,
-      home,
-    ),
-    platform: process.platform,
-  });
-  return globalBinary ? astBroVersionCurrent(globalBinary) : false;
 }
 
 async function expectedReference(
@@ -527,9 +617,7 @@ async function serviceCurrent(options: CheckOptions, home: string) {
 }
 function installOperation(checks: InstallChecks) {
   if (Object.values(checks).every(Boolean)) return "none" as const;
-  const managedSurfaces = Object.entries(checks)
-    .filter(([name]) => name !== "astBro")
-    .map(([, current]) => current);
+  const managedSurfaces = Object.values(checks);
   return managedSurfaces.some(Boolean)
     ? ("update" as const)
     : ("install" as const);
@@ -544,11 +632,11 @@ function installCommands(options: CheckOptions, global: boolean) {
     : `./node_modules/.bin/ast-mcp update ${suffix}`;
   return {
     installCommand: global
-      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
-      : `bun add --dev @mwillbanks/ast-mcp @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
+      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
+      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
     repairCommand: global
-      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} && ${updateCommand}`
-      : `bun add --dev @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli && ${updateCommand}`,
+      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ${updateCommand}`
+      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ${updateCommand}`,
     uninstallCommand: global
       ? `ast-mcp uninstall ${suffix}`
       : `./node_modules/.bin/ast-mcp uninstall ${suffix}`,
@@ -562,26 +650,56 @@ export async function checkInstall(
   const options = parse(args);
   const global = options.scope === "global";
   const checks = await targetChecks(options, home, global);
-  checks.astBro = await astBroCurrent(options, home);
+  let smoke: McpSmokeResult | null = null;
+  if (
+    checks.mcp &&
+    options.transport === "stdio" &&
+    process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE !== "1"
+  ) {
+    const binary =
+      options.scope === "local"
+        ? path.join(options.root, "node_modules/.bin/ast-mcp")
+        : resolveGlobalBinaryAlias("ast-mcp", {
+            globalBinDirectories: globalBinDirectories(
+              "ast-mcp",
+              process.platform,
+              home,
+            ),
+            platform: process.platform,
+          });
+    if (binary) {
+      try {
+        smoke = await smokeMcpStdio(binary, options.root);
+      } catch {
+        checks.mcp = false;
+      }
+    } else checks.mcp = false;
+  }
   if (options.service) checks.service = await serviceCurrent(options, home);
   const installed = Object.values(checks).every(Boolean);
   const operation = installOperation(checks);
   const commands = installCommands(options, global);
   return {
     checks,
+    intelligence: {
+      engine: "lancedb",
+      federationDefault: false,
+      generationDefault: false,
+      placementDefault: "global",
+      retrievalSemanticDefault: false,
+    },
     installCommand: commands.installCommand,
     installed,
     needsUpdate: operation === "update",
     operation,
     recommendedCommand:
-      !checks.astBro && operation !== "install"
-        ? commands.repairCommand
-        : operation === "update"
-          ? commands.updateCommand
-          : operation === "install"
-            ? commands.installCommand
-            : undefined,
+      operation === "update"
+        ? commands.updateCommand
+        : operation === "install"
+          ? commands.installCommand
+          : undefined,
     repairCommand: commands.repairCommand,
+    smoke,
     uninstallCommand: commands.uninstallCommand,
     updateCommand: commands.updateCommand,
     ...options,

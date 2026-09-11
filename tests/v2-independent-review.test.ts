@@ -93,7 +93,11 @@ test("explicit workspace roots anchor AST execution and policy checks", async ()
     expect(await primaryRoot()).toBe(await realpath(nested));
   });
   expect(
-    await evaluatePolicyForCheck(config, "src/value.ts", "read"),
+    await evaluatePolicyForCheck(
+      config,
+      path.join(nested, "src/value.ts"),
+      "read",
+    ),
   ).toMatchObject({
     canonicalPath: path.join(await realpath(nested), "src/value.ts"),
     policy: "allow",

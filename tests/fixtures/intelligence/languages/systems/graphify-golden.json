@@ -1,0 +1,628 @@
+{
+  "languages": {
+    "c": {
+      "calls": [
+        {
+          "callee": "printf",
+          "range": [74, 101]
+        },
+        {
+          "callee": "helper",
+          "range": [92, 100]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "helper",
+          "range": [23, 29]
+        },
+        {
+          "exportedName": "main",
+          "range": [54, 58]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "h>",
+          "range": [0, 19],
+          "source": "<stdio.h>"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "helper",
+          "range": [23, 29],
+          "role": "write"
+        },
+        {
+          "name": "main",
+          "range": [54, 58],
+          "role": "write"
+        },
+        {
+          "name": "printf",
+          "range": [74, 80],
+          "role": "read"
+        },
+        {
+          "name": "helper",
+          "range": [92, 98],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [23, 29],
+          "kind": "function",
+          "name": "helper",
+          "range": [19, 49]
+        },
+        {
+          "declarationRange": [54, 58],
+          "kind": "function",
+          "name": "main",
+          "range": [50, 104]
+        }
+      ]
+    },
+    "cpp": {
+      "calls": [
+        {
+          "callee": "helper",
+          "range": [90, 98]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "Base",
+          "range": [24, 28]
+        },
+        {
+          "exportedName": "Service",
+          "range": [39, 46]
+        },
+        {
+          "exportedName": "helper",
+          "range": [90, 96]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "<vector>",
+          "range": [0, 18],
+          "source": "<vector>"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "Base",
+          "range": [24, 28],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [39, 46],
+          "role": "write"
+        },
+        {
+          "name": "Base",
+          "range": [56, 60],
+          "role": "read"
+        },
+        {
+          "name": "helper",
+          "range": [90, 96],
+          "role": "write"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [24, 28],
+          "kind": "class",
+          "name": "Base",
+          "range": [18, 31]
+        },
+        {
+          "declarationRange": [39, 46],
+          "kind": "class",
+          "name": "Service",
+          "range": [33, 126]
+        },
+        {
+          "declarationRange": [90, 96],
+          "kind": "function",
+          "name": "helper",
+          "range": [71, 101]
+        }
+      ]
+    },
+    "dart": {
+      "calls": [],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "Service",
+          "range": [36, 43]
+        },
+        {
+          "exportedName": "run",
+          "range": [51, 54]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "async",
+          "range": [0, 29],
+          "source": "dart:async"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "async",
+          "range": [23, 28],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [36, 43],
+          "role": "write"
+        },
+        {
+          "name": "run",
+          "range": [51, 54],
+          "role": "write"
+        },
+        {
+          "name": "print",
+          "range": [59, 64],
+          "role": "read"
+        },
+        {
+          "name": "_hidden",
+          "range": [81, 88],
+          "role": "write"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [36, 43],
+          "kind": "class",
+          "name": "Service",
+          "range": [30, 95]
+        },
+        {
+          "declarationRange": [51, 54],
+          "kind": "method",
+          "name": "run",
+          "range": [46, 56]
+        },
+        {
+          "declarationRange": [81, 88],
+          "kind": "method",
+          "name": "_hidden",
+          "range": [76, 90]
+        }
+      ]
+    },
+    "go": {
+      "calls": [
+        {
+          "callee": "fmt.Println",
+          "range": [71, 90]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "Service",
+          "range": [31, 38]
+        },
+        {
+          "exportedName": "Run",
+          "range": [63, 66]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "fmt",
+          "range": [13, 25],
+          "source": "fmt"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "Service",
+          "range": [31, 38],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [54, 61],
+          "role": "read"
+        },
+        {
+          "name": "fmt",
+          "range": [71, 74],
+          "role": "read"
+        },
+        {
+          "name": "helper",
+          "range": [98, 104],
+          "role": "write"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [31, 38],
+          "kind": "type",
+          "name": "Service",
+          "range": [26, 47]
+        },
+        {
+          "declarationRange": [63, 66],
+          "kind": "method",
+          "name": "Run",
+          "range": [48, 92]
+        },
+        {
+          "declarationRange": [98, 104],
+          "kind": "function",
+          "name": "helper",
+          "range": [93, 109]
+        }
+      ]
+    },
+    "objc": {
+      "calls": [
+        {
+          "callee": "NSLog",
+          "range": [120, 134]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "Service",
+          "range": [45, 52]
+        },
+        {
+          "exportedName": "run",
+          "range": [72, 75]
+        },
+        {
+          "exportedName": "Service",
+          "range": [98, 105]
+        },
+        {
+          "exportedName": "run",
+          "range": [114, 117]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "h>",
+          "range": [0, 34],
+          "source": "<Foundation/Foundation.h>"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [55, 63],
+          "targetName": "NSObject"
+        }
+      ],
+      "partial": false,
+      "references": [
+        {
+          "name": "Service",
+          "range": [45, 52],
+          "role": "write"
+        },
+        {
+          "name": "NSObject",
+          "range": [55, 63],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [72, 75],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [98, 105],
+          "role": "write"
+        },
+        {
+          "name": "run",
+          "range": [114, 117],
+          "role": "write"
+        },
+        {
+          "name": "NSLog",
+          "range": [120, 125],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [45, 52],
+          "kind": "class",
+          "name": "Service",
+          "range": [34, 81]
+        },
+        {
+          "declarationRange": [72, 75],
+          "kind": "method",
+          "name": "run",
+          "range": [64, 76]
+        },
+        {
+          "declarationRange": [98, 105],
+          "kind": "class",
+          "name": "Service",
+          "range": [82, 142]
+        },
+        {
+          "declarationRange": [114, 117],
+          "kind": "method",
+          "name": "run",
+          "range": [106, 137]
+        }
+      ]
+    },
+    "rust": {
+      "calls": [
+        {
+          "callee": "println",
+          "range": [116, 132]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "std",
+          "range": [0, 13],
+          "source": "std::fmt"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "std",
+          "range": [4, 7],
+          "role": "write"
+        },
+        {
+          "name": "fmt",
+          "range": [9, 12],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [24, 32],
+          "role": "write"
+        },
+        {
+          "name": "run",
+          "range": [38, 41],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [63, 70],
+          "role": "write"
+        },
+        {
+          "name": "Runnable",
+          "range": [77, 85],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [90, 97],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [103, 106],
+          "role": "write"
+        },
+        {
+          "name": "println",
+          "range": [116, 123],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [24, 32],
+          "kind": "function",
+          "name": "Runnable",
+          "range": [14, 51]
+        },
+        {
+          "declarationRange": [38, 41],
+          "kind": "function",
+          "name": "run",
+          "range": [35, 49]
+        },
+        {
+          "declarationRange": [63, 70],
+          "kind": "class",
+          "name": "Service",
+          "range": [52, 71]
+        },
+        {
+          "declarationRange": [77, 85],
+          "kind": "function",
+          "name": "Runnable",
+          "range": [72, 137]
+        },
+        {
+          "declarationRange": [103, 106],
+          "kind": "function",
+          "name": "run",
+          "range": [100, 135]
+        }
+      ]
+    },
+    "swift": {
+      "calls": [
+        {
+          "callee": "print",
+          "range": [73, 86]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "Service",
+          "range": [31, 38]
+        },
+        {
+          "exportedName": "run",
+          "range": [65, 68]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "localName": "Foundation",
+          "range": [0, 17],
+          "source": "Foundation"
+        }
+      ],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "Foundation",
+          "range": [7, 17],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [31, 38],
+          "role": "write"
+        },
+        {
+          "name": "NSObject",
+          "range": [40, 48],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [65, 68],
+          "role": "write"
+        },
+        {
+          "name": "print",
+          "range": [73, 78],
+          "role": "read"
+        },
+        {
+          "name": "hidden",
+          "range": [104, 110],
+          "role": "write"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [31, 38],
+          "kind": "class",
+          "name": "Service",
+          "range": [18, 117]
+        },
+        {
+          "declarationRange": [65, 68],
+          "kind": "function",
+          "name": "run",
+          "range": [53, 88]
+        },
+        {
+          "declarationRange": [104, 110],
+          "kind": "function",
+          "name": "hidden",
+          "range": [91, 115]
+        }
+      ]
+    },
+    "zig": {
+      "calls": [
+        {
+          "callee": "std.debug.print",
+          "range": [77, 105]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [],
+      "implementations": [],
+      "imports": [],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        {
+          "name": "std",
+          "range": [6, 9],
+          "role": "write"
+        },
+        {
+          "name": "Service",
+          "range": [38, 45],
+          "role": "write"
+        },
+        {
+          "name": "run",
+          "range": [64, 67],
+          "role": "write"
+        },
+        {
+          "name": "std",
+          "range": [77, 80],
+          "role": "read"
+        },
+        {
+          "name": "debug",
+          "range": [81, 86],
+          "role": "read"
+        },
+        {
+          "name": "print",
+          "range": [87, 92],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [64, 67],
+          "kind": "function",
+          "name": "run",
+          "range": [57, 108]
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "repository": "https://github.com/Graphify-Labs/graphify",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+  }
+}

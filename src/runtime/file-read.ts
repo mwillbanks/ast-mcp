@@ -1,15 +1,26 @@
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-
-import { callAstBro } from "../ast-bro/client";
-import { selectDocumentValues } from "./document-inspection";
+import path from "node:path";
+import { currentConfig } from "../config";
+import {
+  type ParserLanguageId,
+  parseSource,
+} from "../intelligence/parser/index.ts";
+import {
+  currentWorkspace,
+  readGitRevisionFile,
+} from "../intelligence/workspace/index.ts";
+import {
+  parseStructuredDocument,
+  selectDocumentValues,
+} from "./document-inspection";
 import {
   type FileCapabilities,
   type FileReadMode,
   inspectFileCapabilities,
 } from "./file-capabilities";
-import { sha256File } from "./hash";
-import { intelligenceRoot, resolveWritablePath } from "./paths";
+import { sha256, sha256File } from "./hash";
+import { resolveWritablePath } from "./paths";
 
 const FILE_READ_DEFAULT_LINES = [0, 100] as const;
 export const FILE_READ_MAX_BATCH = 50;
@@ -183,8 +194,28 @@ async function readLineRange(
   return collector.result(fileSize, stream.bytesRead);
 }
 
+export async function readWorkspaceRevisionBytes(
+  resolved: string,
+): Promise<Uint8Array | undefined> {
+  const workspace = currentWorkspace();
+  if (!workspace || workspace.selectedRevision.selector.kind === "working")
+    return undefined;
+  return readGitRevisionFile(
+    workspace.git,
+    workspace.selectedRevision,
+    resolved,
+  );
+}
+
 async function hashFileSafely(filePath: string) {
   const resolved = await resolveWritablePath(filePath, "read");
+  const bytes = await readWorkspaceRevisionBytes(resolved);
+  if (bytes)
+    return {
+      filePath: resolved,
+      sha256: sha256(bytes),
+      size: bytes.byteLength,
+    };
   const metadata = await stat(resolved);
   if (!metadata.isFile()) throw new Error(`Not a regular file: ${filePath}`);
   return {
@@ -192,6 +223,18 @@ async function hashFileSafely(filePath: string) {
     sha256: await sha256File(resolved),
     size: metadata.size,
   };
+}
+
+export async function inspectWorkspaceFileCapabilitiesSafely(
+  filePaths: string[],
+) {
+  return mapConcurrently(filePaths, async (filePath) => {
+    const resolved = await resolveWritablePath(filePath, "read");
+    const historical = await readWorkspaceRevisionBytes(resolved);
+    return historical
+      ? historicalCapabilities(resolved, historical)
+      : inspectFileCapabilities(resolved);
+  });
 }
 
 export async function hashFilesSafely(filePaths: string[]) {
@@ -234,6 +277,7 @@ async function readDocumentAst(
   resolved: string,
   size: number,
   selectors: string[] | undefined,
+  historicalSource?: string,
 ): Promise<unknown> {
   if (size > FILE_READ_MAX_BYTES)
     throw Object.assign(
@@ -246,7 +290,7 @@ async function readDocumentAst(
         suggestedNextCall: "file_read",
       },
     );
-  const source = await readFile(resolved, "utf8");
+  const source = historicalSource ?? (await readFile(resolved, "utf8"));
   return {
     schema: "ast-mcp.document-read.v1",
     values: selectDocumentValues(
@@ -260,11 +304,41 @@ async function readDocumentAst(
 async function readSourceAst(
   resolved: string,
   symbols: string[] | undefined,
+  language: string,
+  historicalSource?: string,
 ): Promise<unknown> {
-  const root = await intelligenceRoot([resolved]);
-  if (symbols?.length)
-    return callAstBro("show", { json: true, path: resolved, symbols }, root);
-  return callAstBro("map", { json: true, paths: [resolved] }, root);
+  const source = historicalSource ?? (await readFile(resolved, "utf8"));
+  const facts = parseSource({
+    languageId: language as ParserLanguageId,
+    source,
+  });
+  const requested = new Set(symbols ?? []);
+  const selected = symbols?.length
+    ? facts.symbols.filter(
+        (symbol) =>
+          requested.has(symbol.name) || requested.has(symbol.qualifiedName),
+      )
+    : facts.symbols;
+  return {
+    diagnostics: facts.diagnostics,
+    imports: facts.imports,
+    language: facts.languageId,
+    partial: facts.partial,
+    schema: "ast-mcp.source-read.v1",
+    symbols: selected.map((symbol) => ({
+      ...symbol,
+      source: source.slice(
+        symbol.range.startCoordinate.utf16Offset,
+        symbol.range.endCoordinate.utf16Offset,
+      ),
+    })),
+    unmatched: [...requested].filter(
+      (name) =>
+        !selected.some(
+          (symbol) => symbol.name === name || symbol.qualifiedName === name,
+        ),
+    ),
+  };
 }
 
 async function readAst(
@@ -272,29 +346,104 @@ async function readAst(
   resolved: string,
   size: number,
   capabilities: FileCapabilities,
+  historicalSource?: string,
 ): Promise<unknown> {
   if (capabilities.kind === "document")
-    return readDocumentAst(resolved, size, request.selectors);
-  return readSourceAst(resolved, request.symbols);
+    return readDocumentAst(resolved, size, request.selectors, historicalSource);
+  if (!capabilities.language)
+    throw Object.assign(new Error("Source AST language is unavailable"), {
+      code: "ast_capability_unavailable",
+      retryable: true,
+      suggestedNextCall: "file_capabilities",
+    });
+  return readSourceAst(
+    resolved,
+    request.symbols,
+    capabilities.language,
+    historicalSource,
+  );
+}
+
+export async function historicalCapabilities(
+  resolved: string,
+  bytes: Uint8Array,
+  languageOverride?: string,
+): Promise<FileCapabilities> {
+  const config = await currentConfig();
+  const source = Buffer.from(bytes);
+  const binary = source.subarray(0, 8192).includes(0);
+  const extension = path.extname(resolved).toLowerCase();
+  const document = [".json", ".jsonc", ".toml", ".yaml", ".yml"].includes(
+    extension,
+  );
+  let parseStatus: FileCapabilities["parseStatus"] = "unsupported";
+  if (document && !binary) {
+    try {
+      parseStructuredDocument(resolved, source.toString("utf8"));
+      parseStatus = "parseable";
+    } catch {
+      parseStatus = "invalid";
+    }
+  }
+  const intrinsicRead: Array<"ast" | "text"> = [];
+  if (document && parseStatus === "parseable") intrinsicRead.push("ast");
+  if (!binary) intrinsicRead.push("text");
+  return {
+    effective: {
+      aiderMatchers: config.files.patch.aiderMatchers,
+      patch: [],
+      read: intrinsicRead.filter((mode) =>
+        config.files.read.modes.includes(mode),
+      ),
+    },
+    filePath: resolved,
+    generation: config.generation,
+    intrinsic: { patch: [], read: intrinsicRead, search: [] },
+    kind: binary
+      ? "binary"
+      : document
+        ? "document"
+        : languageOverride
+          ? "source"
+          : "text",
+    language: languageOverride,
+    parseErrorCount: document
+      ? parseStatus === "parseable"
+        ? 0
+        : 1
+      : undefined,
+    parseStatus,
+    size: bytes.byteLength,
+  };
 }
 
 export async function readFileSafely(
   request: FileReadRequest,
 ): Promise<FileReadResult> {
   const resolved = await resolveWritablePath(request.filePath, "read");
-  const metadata = await stat(resolved);
-  if (!metadata.isFile())
+  const historical = await readWorkspaceRevisionBytes(resolved);
+  const historicalBytes = historical ? Buffer.from(historical) : undefined;
+  const metadata = historicalBytes ? undefined : await stat(resolved);
+  if (metadata && !metadata.isFile())
     throw new Error(`Not a regular file: ${request.filePath}`);
-  const capabilities = await inspectFileCapabilities(
-    resolved,
-    request.language,
-  );
+  const size = historicalBytes?.byteLength ?? Number(metadata?.size ?? 0);
+  const capabilities = historicalBytes
+    ? await historicalCapabilities(resolved, historicalBytes, request.language)
+    : await inspectFileCapabilities(resolved, request.language);
   const requestedMode = request.mode ?? "auto";
   const resolvedMode = resolveReadMode(requestedMode, capabilities);
   assertReadMode(resolved, requestedMode, resolvedMode, capabilities);
-  const sha256 = await sha256File(resolved);
+  const digest = historicalBytes
+    ? sha256(historicalBytes)
+    : await sha256File(resolved);
   if (resolvedMode === "ast") {
-    const ast = await readAst(request, resolved, metadata.size, capabilities);
+    const ast = await readAst(
+      request,
+      resolved,
+      size,
+      capabilities,
+      historicalBytes?.toString("utf8"),
+    );
     return {
       ast,
       capabilities,
@@ -304,21 +453,27 @@ export async function readFileSafely(
       lines: { requested: [0, 0], returned: [0, 0] },
       requestedMode,
       resolvedMode,
-      sha256,
-      size: metadata.size,
+      sha256: digest,
+      size,
       truncated: false,
     };
   }
   const { lines, maxBytes } = validateRequest(request);
-  const slice = await readLineRange(resolved, metadata.size, lines, maxBytes);
+  const slice = historicalBytes
+    ? (() => {
+        const collector = new LineRangeCollector(lines, maxBytes);
+        collector.consume(historicalBytes);
+        return collector.result(size, size);
+      })()
+    : await readLineRange(resolved, size, lines, maxBytes);
   return {
     ...slice,
     capabilities,
     filePath: resolved,
     requestedMode,
     resolvedMode,
-    sha256,
-    size: metadata.size,
+    sha256: digest,
+    size,
   };
 }
 

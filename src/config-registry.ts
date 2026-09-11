@@ -56,7 +56,6 @@ function environmentFingerprint(environment: NodeJS.ProcessEnv) {
     "AST_MCP_ALLOW_EXTERNAL_ROOTS",
     "AST_MCP_ALLOW_TEMP_DIRECTORY",
     "AST_MCP_DPRINT_CONFIG",
-    "AST_BRO_BINARY",
     "DPRINT_BINARY",
     "AST_MCP_HTTP_HOST",
     "PORT",
@@ -108,7 +107,10 @@ function keyFor(options: ResolveConfigOptions): string {
     env: environmentFingerprint(env),
     home: options.home,
     platform: options.platform,
+    revisionId: options.revisionId,
     selectedRoots: selectedRoots(selectionRoots, requestPaths, cwd),
+    storageDomainId: options.storageDomainId,
+    workspaceId: options.workspaceId,
   });
 }
 

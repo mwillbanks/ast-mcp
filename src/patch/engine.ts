@@ -11,6 +11,15 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig } from "../config";
+import {
+  beginMutation,
+  completeMutation,
+  failMutation,
+  mutationOperationId,
+  recordMutationCommit,
+  recordMutationRollback,
+} from "../intelligence/mutation/index.ts";
+import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { approvalSessionId } from "../runtime/approval";
 import {
   applyFileChattr,
@@ -26,7 +35,11 @@ import {
 import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
 import { formatContent } from "../runtime/format";
 import { sha256 } from "../runtime/hash";
-import { withFileLock, withFileLocks } from "../runtime/locks";
+import {
+  type FileLockLease,
+  withFencedFileLock,
+  withFencedFileLocks,
+} from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
 import {
@@ -115,6 +128,7 @@ async function commit(
   expectedSha256?: string,
   chattr?: FileChattr,
   alreadyFormatted = false,
+  beforeReplace?: () => Promise<void>,
 ): Promise<{
   chattr: Awaited<ReturnType<typeof resultingFileChattr>>;
   createdDirectories: string[];
@@ -132,9 +146,13 @@ async function commit(
     const formatted = alreadyFormatted
       ? content
       : await formatContent(filePath, content);
+    await beforeReplace?.();
     await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
-    if (mode !== undefined) await chmod(next, mode);
-    await applyFileChattr(next, chattr);
+    if (mode !== undefined) {
+      await beforeReplace?.();
+      await chmod(next, mode);
+    }
+    await applyFileChattr(next, chattr, beforeReplace);
     const committedChattr = await resultingFileChattr(next);
     const committedSha256 = sha256(formatted);
     if (expectedSha256) {
@@ -145,6 +163,7 @@ async function commit(
           `Stale file context: expected ${expectedSha256}, found ${actual}`,
         );
     }
+    await beforeReplace?.();
     await rename(next, filePath);
     committed = true;
     return {
@@ -215,6 +234,13 @@ interface PreviewReceipt {
   payloadBytes: number;
   sessionId: string;
   sourceSha256: string;
+  workspaceBinding: {
+    dirtyOverlayId: string | null;
+    repositoryId: string;
+    revisionId: string;
+    storageDomainId: string;
+    workspaceId: string;
+  } | null;
 }
 
 const PREVIEW_RECEIPT_TTL_MS = 5 * 60 * 1000;
@@ -280,6 +306,22 @@ async function validatePreviewReceipt(filePath: string, token: string) {
     throw new Error("Preview receipt does not belong to this file");
   if (receipt.sessionId !== approvalSessionId())
     throw new Error("Preview receipt belongs to a different MCP session");
+  const workspace = currentWorkspace();
+  const currentBinding = workspace
+    ? {
+        dirtyOverlayId: workspace.dirtyOverlayId,
+        repositoryId: workspace.repositoryId,
+        revisionId: workspace.selectedRevision.revisionId,
+        storageDomainId: workspace.storageDomain.domainId,
+        workspaceId: workspace.workspaceId,
+      }
+    : null;
+  if (
+    JSON.stringify(receipt.workspaceBinding) !== JSON.stringify(currentBinding)
+  )
+    throw new Error(
+      "Preview receipt belongs to a different workspace or revision",
+    );
   const config = await currentConfig();
   if (
     receipt.generation !== config.generation ||
@@ -359,6 +401,15 @@ async function patchPreview(
     payloadBytes,
     sessionId,
     sourceSha256: context.actual,
+    workspaceBinding: currentWorkspace()
+      ? {
+          dirtyOverlayId: currentWorkspace()?.dirtyOverlayId ?? null,
+          repositoryId: currentWorkspace()?.repositoryId ?? "",
+          revisionId: currentWorkspace()?.selectedRevision.revisionId ?? "",
+          storageDomainId: currentWorkspace()?.storageDomain.domainId ?? "",
+          workspaceId: currentWorkspace()?.workspaceId ?? "",
+        }
+      : null,
   });
   return {
     changed: candidate !== context.original,
@@ -393,7 +444,11 @@ async function formatCandidate(
   return formatted;
 }
 
-async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
+async function applyLockedPatch(
+  filePath: string,
+  request: PatchBatchRequest,
+  beforeReplace?: () => Promise<void>,
+) {
   if (request.previewReceipt)
     return applyPreparedPatch(
       filePath,
@@ -416,6 +471,7 @@ async function applyLockedPatch(filePath: string, request: PatchBatchRequest) {
     context.actual,
     request.chattr,
     true,
+    beforeReplace,
   );
   return {
     ...prepared.metadata,
@@ -429,7 +485,9 @@ async function applyPatchBatch(
   filePath: string,
   request: PatchBatchRequest,
 ): Promise<Record<string, unknown>> {
-  return withFileLock(filePath, () => applyLockedPatch(filePath, request));
+  return withFencedFileLock(filePath, (lease) =>
+    applyLockedPatch(filePath, request, () => lease.fence()),
+  );
 }
 
 export async function patchFile(
@@ -465,6 +523,8 @@ async function preflightPatchBatch(
       filePath,
       request.previewReceipt,
     );
+    await requireExpectedHash(request.expectedSha256, "file_patch");
+    verifyExpectedHash(request.expectedSha256, receipt.sourceSha256);
     return {
       candidate: receipt.candidate,
       chattr: receipt.chattr,
@@ -504,6 +564,7 @@ async function applyPreparedPatch(
   filePath: string,
   _request: PatchBatchRequest,
   prepared: PreparedPatch,
+  beforeReplace?: () => Promise<void>,
 ): Promise<Record<string, unknown>> {
   if (prepared.previewResult) return prepared.previewResult;
   if (
@@ -530,6 +591,7 @@ async function applyPreparedPatch(
     prepared.sourceSha256,
     prepared.chattr,
     true,
+    beforeReplace,
   );
   return { ...prepared.result, sha256: sha256(candidate) };
 }
@@ -539,6 +601,13 @@ interface PreparedWrite {
   content: string;
   existing: boolean;
   mode?: number;
+}
+
+function preparedCandidateSha256(prepared: unknown): string | null {
+  const candidate = (prepared as Partial<PreparedPatch>).candidate;
+  if (typeof candidate === "string") return sha256(candidate);
+  const content = (prepared as Partial<PreparedWrite>).content;
+  return typeof content === "string" ? sha256(content) : null;
 }
 
 async function preflightFileWrite(
@@ -652,64 +721,143 @@ async function prepareFileBatch<T, Prepared>(
 async function rollbackFileBatch(
   committed: CommittedBatchEntry[],
   snapshots: Map<string, BatchFileSnapshot>,
+  fence: () => Promise<void>,
 ): Promise<void> {
+  const failures: unknown[] = [];
   for (const { resolvedPath, result } of committed.reverse()) {
     const snapshot = snapshots.get(resolvedPath);
-    if (snapshot) {
-      await ignoreFailure(
-        commit(
+    try {
+      await fence();
+      if (snapshot) {
+        await commit(
           resolvedPath,
           snapshot.content,
           snapshot.mode,
           undefined,
           snapshot.chattr,
           true,
-        ),
-      );
-      continue;
+          fence,
+        );
+        continue;
+      }
+      await unlink(resolvedPath);
+      const createdDirectories = result.createdDirectories;
+      if (Array.isArray(createdDirectories))
+        await removeCreatedDirectories(
+          createdDirectories.filter(
+            (value): value is string => typeof value === "string",
+          ),
+        );
+    } catch (error) {
+      failures.push(error);
     }
-    await ignoreFailure(unlink(resolvedPath));
-    const createdDirectories = result.createdDirectories;
-    if (Array.isArray(createdDirectories))
-      await removeCreatedDirectories(
-        createdDirectories.filter(
-          (value): value is string => typeof value === "string",
-        ),
-      );
   }
+  if (failures.length > 0)
+    throw new AggregateError(failures, "Mutation rollback requires recovery");
 }
 
 async function executePreparedFileBatch<T, Prepared>(
+  tool: "file_patch" | "file_write",
   entries: ResolvedBatchEntry<T>[],
   handler: (
     filePath: string,
     request: T,
     prepared: Prepared,
+    beforeReplace: () => Promise<void>,
   ) => Promise<Record<string, unknown>>,
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
+  fence: () => Promise<void>,
 ): Promise<Record<string, unknown>> {
   const snapshots = await captureBatchSnapshots(entries);
   const prepared = await prepareFileBatch(entries, preflight);
   const files: Record<string, unknown> = {};
   const committed: CommittedBatchEntry[] = [];
+  const workspace = currentWorkspace() ?? null;
+  const plannedEntries = entries.filter((entry) => mutates(entry.request));
+  const sourcePlan = plannedEntries.map((entry) => {
+    const entryIndex = entries.indexOf(entry);
+    const snapshot = snapshots.get(entry.resolvedPath);
+    return {
+      candidateSha256: preparedCandidateSha256(prepared[entryIndex]),
+      filePath: entry.resolvedPath,
+      sourceContentBase64: snapshot
+        ? Buffer.from(snapshot.content).toString("base64")
+        : null,
+      sourceGid:
+        process.platform === "win32"
+          ? null
+          : (snapshot?.chattr.chown.gid ?? null),
+      sourceMode: snapshot?.mode ?? null,
+      sourceSha256: snapshot ? sha256(snapshot.content) : null,
+      sourceUid:
+        process.platform === "win32"
+          ? null
+          : (snapshot?.chattr.chown.uid ?? null),
+    };
+  });
+  const operationId = workspace
+    ? mutationOperationId({
+        files: sourcePlan,
+        nonce: randomUUID(),
+        storageDomainId: workspace.storageDomain.domainId,
+        workspaceId: workspace.workspaceId,
+      })
+    : randomUUID();
+  let began = false;
   try {
+    if (plannedEntries.length > 0) {
+      await beginMutation({
+        files: sourcePlan,
+        operationId,
+        tool,
+        workspace,
+      });
+      began = true;
+    }
     for (const [
       index,
       { inputPath, request, resolvedPath },
     ] of entries.entries()) {
+      if (mutates(request)) await fence();
       const result = await handler(
         resolvedPath,
         request,
         prepared[index] as Prepared,
+        fence,
       );
       files[inputPath] = result;
-      if (mutates(request)) committed.push({ resolvedPath, result });
+      if (mutates(request)) {
+        committed.push({ resolvedPath, result });
+        if (typeof result.sha256 !== "string")
+          throw new Error("Committed mutation did not report its SHA-256");
+        await recordMutationCommit(operationId, {
+          filePath: resolvedPath,
+          sha256: result.sha256,
+        });
+      }
     }
-    return { files };
+    const commits = committed.map(({ resolvedPath, result }) => ({
+      filePath: resolvedPath,
+      sha256: String(result.sha256),
+    }));
+    const intelligenceRefresh =
+      began && commits.length > 0
+        ? await completeMutation(operationId, commits)
+        : null;
+    return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
   } catch (error) {
     discardPreparedPreviews(prepared);
-    await rollbackFileBatch(committed, snapshots);
+    if (began) await ignoreFailure(failMutation(operationId, error));
+    try {
+      await rollbackFileBatch(committed, snapshots, fence);
+      if (began) await ignoreFailure(recordMutationRollback(operationId));
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Mutation failed and rollback requires recovery",
+      );
+    }
     throw error;
   }
 }
@@ -721,6 +869,7 @@ async function processFileBatch<T, Prepared>(
     filePath: string,
     request: T,
     prepared: Prepared,
+    beforeReplace: () => Promise<void>,
   ) => Promise<Record<string, unknown>>,
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
@@ -737,10 +886,19 @@ async function processFileBatch<T, Prepared>(
       resolvedPath: await resolveWritablePath(inputPath),
     })),
   );
-  return withFileLocks(
+  return withFencedFileLocks(
     resolvedEntries.map(({ resolvedPath }) => resolvedPath),
-    () =>
-      executePreparedFileBatch(resolvedEntries, handler, preflight, mutates),
+    (leases: readonly FileLockLease[]) =>
+      executePreparedFileBatch(
+        tool,
+        resolvedEntries,
+        handler,
+        preflight,
+        mutates,
+        async () => {
+          for (const lease of leases) await lease.fence();
+        },
+      ),
   );
 }
 
@@ -764,6 +922,7 @@ async function writeFileResolved(
     expectedSha256?: string;
   },
   prepared?: PreparedWrite,
+  beforeReplace?: () => Promise<void>,
 ): Promise<Record<string, unknown>> {
   const candidate = prepared ?? (await preflightFileWrite(args.filePath, args));
   const committed = await commit(
@@ -773,6 +932,7 @@ async function writeFileResolved(
     candidate.actual,
     args.chattr,
     true,
+    beforeReplace,
   );
   return {
     chattr: committed.chattr,
@@ -790,7 +950,9 @@ export async function writeFileSafely(args: {
   expectedSha256?: string;
 }): Promise<Record<string, unknown>> {
   const filePath = await resolveWritablePath(args.filePath);
-  return withFileLock(filePath, () => writeFileResolved({ ...args, filePath }));
+  return withFencedFileLock(filePath, (lease) =>
+    writeFileResolved({ ...args, filePath }, undefined, () => lease.fence()),
+  );
 }
 
 export async function writeFilesSafely(
@@ -799,7 +961,7 @@ export async function writeFilesSafely(
   return processFileBatch(
     "file_write",
     requests,
-    (filePath, request, prepared) =>
+    (filePath, request, prepared, beforeReplace) =>
       writeFileResolved(
         {
           chattr: request.chattr,
@@ -808,6 +970,7 @@ export async function writeFilesSafely(
           filePath,
         },
         prepared,
+        beforeReplace,
       ),
     preflightFileWrite,
     () => true,

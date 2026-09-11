@@ -37,6 +37,17 @@ Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combi
 - Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Do not rewrite the whole file with `file_write` or `file_patch`. Host elicitation is required by default (`mcp.configuration.require_approval = true`). Changing `[mcp.configuration]` always requires approval, including disabling the surface. Successful writes invalidate the in-process registry so the new generation applies without restarting the MCP server.
 - Use `document_query` for bounded JSON, JSONC, TOML, and YAML inspection instead of attempting whole-file reads of structured manifests.
 
+## Use workspace intelligence
+
+- Call `workspace_open` for the exact checkout or worktree. Pass its `workspaceId` to every graph and index request.
+- Use `index` to build, refresh, verify, collect, or inspect the LanceDB index. Use `index_status` for read-only status.
+- Use `retrieve` for bounded revision-scoped evidence. Enable semantic retrieval explicitly when a pinned embedding model is available.
+- Use `generate` only when optional generation is configured. Supply explicit indexed evidence and preserve returned citation ranges.
+- Use `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` for evidence-backed graph work. Follow returned pagination and coverage metadata.
+- Select global, local, parent, or explicit storage when opening a workspace. Global is the default and reuses content-addressed artifacts.
+- Set graph-diff federation explicitly for cross-repository comparisons. Keep ordinary requests within one repository.
+- Treat `run` as search and rewrite preview only. Commit reviewed changes through hash-guarded `file_patch`.
+
 ## Mutate through declared file batches
 
 1. Inspect with `map`, `show`, `context`, a bounded `run`, or `file_read`. Call `file_capabilities` before choosing a read or patch method when intrinsic support or effective configuration is uncertain.
@@ -101,7 +112,7 @@ Read [patch-state-machine.md](references/patch-state-machine.md) for routing and
 
 ## Update configuration through MCP
 
-Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `http`, `dependencies`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
+Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
 
 ```json
 config_core({
@@ -129,7 +140,7 @@ config_paths({
 ## Recover safely
 
 - Stale SHA: refresh `file_hash`, re-inspect with the selected AST or text mode, and rebuild the patch.
-- Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because ast-bro rewrites the first match per file, while ordered arrays let one declared `file_patch.files` entry apply multiple reviewed operations.
+- Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because each guarded AST rule has an explicit match count, while ordered arrays let one declared `file_patch.files` entry apply multiple reviewed operations.
 - Capped direct preview: narrow paths, glob, or pattern before writing.
 - Unavailable method: call `file_capabilities` and select a reported read or patch method. Aider ambiguity or a disabled matcher is a safe stop; request a larger `mode: "text"` slice and expand the search block with unique surrounding context.
 - Formatter preflight failure: call `config_status`, inspect the selected formatter and fallback, and do not write until stdout or staged in-place formatting succeeds. A v2 `preserve` fallback deliberately keeps unmatched content unchanged.

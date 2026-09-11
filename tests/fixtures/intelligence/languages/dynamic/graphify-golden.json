@@ -1,0 +1,203 @@
+{
+  "languages": {
+    "elixir": {
+      "calls": [["Worker.call", 81, 99]],
+      "diagnostics": [],
+      "exports": [
+        ["Service", "Service", null, false, 10, 17],
+        ["run", "run", null, false, 63, 66]
+      ],
+      "imports": [["GenServer", "*", "GenServer", false, 23, 36]],
+      "inheritance": [["Worker", 50, 56]],
+      "partial": false,
+      "references": [
+        ["defmodule", "read", 0, 9],
+        ["Service", "write", 10, 17],
+        ["use", "read", 23, 26],
+        ["GenServer", "write", 27, 36],
+        ["behaviour", "read", 40, 49],
+        ["Worker", "read", 50, 56],
+        ["def", "read", 59, 62],
+        ["run", "write", 63, 66],
+        ["value", "write", 67, 72],
+        ["Worker", "read", 81, 87],
+        ["call", "read", 88, 92],
+        ["value", "read", 93, 98],
+        ["defp", "read", 108, 112],
+        ["hidden", "write", 113, 119]
+      ],
+      "symbols": [
+        ["Service", "namespace", true, 10, 17, 0, 134],
+        ["run", "function", true, 63, 66, 59, 105],
+        ["hidden", "function", false, 113, 119, 108, 130]
+      ]
+    },
+    "julia": {
+      "calls": [["JSON.parse", 90, 106]],
+      "diagnostics": [],
+      "exports": [
+        ["Service", "Service", null, false, 18, 25],
+        ["run", "run", null, false, 27, 30]
+      ],
+      "imports": [["JSON", "JSON", "JSON", false, 0, 10]],
+      "inheritance": [["BaseService", 57, 68]],
+      "partial": false,
+      "references": [
+        ["JSON", "write", 6, 10],
+        ["Service", "read", 18, 25],
+        ["run", "read", 27, 30],
+        ["Service", "write", 46, 53],
+        ["BaseService", "read", 57, 68],
+        ["run", "write", 82, 85],
+        ["JSON", "read", 90, 94],
+        ["parse", "read", 95, 100]
+      ],
+      "symbols": [
+        ["Service", "class", false, 46, 53, 31, 72],
+        ["run", "function", false, 82, 85, 73, 110]
+      ]
+    },
+    "lua": {
+      "calls": [["json.decode", 52, 69]],
+      "diagnostics": [],
+      "exports": [["run", "run", null, false, 81, 84]],
+      "imports": [["json", "*", "json", false, 13, 28]],
+      "inheritance": [],
+      "partial": false,
+      "references": [
+        ["json", "write", 6, 10],
+        ["require", "read", 13, 20],
+        ["run", "write", 44, 47],
+        ["json", "read", 52, 56],
+        ["decode", "read", 57, 63],
+        ["run", "read", 81, 84]
+      ],
+      "symbols": [["run", "function", false, 44, 47, 29, 73]]
+    },
+    "luau": {
+      "calls": [["Service.new", 107, 120]],
+      "diagnostics": [["parse-error", "error", 47, 83]],
+      "exports": [["run", "run", null, false, 132, 135]],
+      "imports": [["script.Parent.Service", "*", "Service", false, 16, 46]],
+      "inheritance": [],
+      "partial": true,
+      "references": [
+        ["Service", "write", 6, 13],
+        ["require", "read", 16, 23],
+        ["script", "read", 24, 30],
+        ["Parent", "read", 31, 37],
+        ["Service", "read", 38, 45],
+        ["run", "write", 99, 102],
+        ["Service", "read", 107, 114],
+        ["new", "read", 115, 118],
+        ["run", "read", 132, 135]
+      ],
+      "symbols": [["run", "function", false, 99, 102, 84, 124]]
+    },
+    "php": {
+      "calls": [["helper", 136, 144]],
+      "diagnostics": [],
+      "exports": [
+        ["Service", "Service", null, false, 61, 68],
+        ["execute", "execute", null, false, 122, 129]
+      ],
+      "imports": [
+        ["App\\BaseService", "*", "BaseService", false, 6, 26],
+        ["helpers.php", "*", "php", false, 27, 53]
+      ],
+      "inheritance": [["BaseService", 77, 88], ["Runnable", 100, 108]],
+      "partial": false,
+      "references": [
+        ["App", "read", 10, 13],
+        ["BaseService", "read", 14, 25],
+        ["Service", "write", 61, 68],
+        ["BaseService", "read", 77, 88],
+        ["Runnable", "read", 100, 108],
+        ["execute", "write", 122, 129],
+        ["helper", "read", 136, 142]
+      ],
+      "symbols": [
+        ["Service", "class", true, 61, 68, 55, 112],
+        ["execute", "function", true, 122, 129, 113, 147]
+      ]
+    },
+    "python": {
+      "calls": [["FilePath", 120, 133]],
+      "diagnostics": [],
+      "exports": [],
+      "imports": [
+        ["pathlib", "Path", "FilePath", false, 0, 36],
+        ["json", "*", "json", false, 37, 48]
+      ],
+      "inheritance": [["BaseService", 63, 74], ["Audited", 76, 83]],
+      "partial": false,
+      "references": [
+        ["pathlib", "read", 5, 12],
+        ["Path", "read", 20, 24],
+        ["FilePath", "write", 28, 36],
+        ["json", "write", 44, 48],
+        ["Service", "write", 55, 62],
+        ["BaseService", "read", 63, 74],
+        ["Audited", "read", 76, 83],
+        ["run", "write", 94, 97],
+        ["self", "write", 98, 102],
+        ["FilePath", "read", 120, 128]
+      ],
+      "symbols": [
+        ["Service", "class", false, 55, 62, 49, 133],
+        ["run", "function", false, 94, 97, 90, 133]
+      ]
+    },
+    "r": {
+      "calls": [["print", 45, 56], ["setClass", 59, 95]],
+      "diagnostics": [],
+      "exports": [],
+      "imports": [["methods", "*", "methods", false, 0, 18]],
+      "inheritance": [["Base", 89, 93]],
+      "partial": false,
+      "references": [
+        ["library", "read", 0, 7],
+        ["Service", "write", 19, 26],
+        ["print", "read", 45, 50],
+        ["setClass", "read", 59, 67],
+        ["contains", "read", 77, 85]
+      ],
+      "symbols": [["Service", "function", false, 19, 26, 19, 58]]
+    },
+    "ruby": {
+      "calls": [["parse", 57, 73]],
+      "diagnostics": [],
+      "exports": [],
+      "imports": [["json", "*", "json", false, 0, 14]],
+      "inheritance": [["BaseService", 31, 42]],
+      "partial": false,
+      "references": [
+        ["require", "read", 0, 7],
+        ["Service", "write", 21, 28],
+        ["BaseService", "read", 31, 42],
+        ["run", "write", 49, 52],
+        ["JSON", "read", 57, 61],
+        ["parse", "read", 62, 67]
+      ],
+      "symbols": [
+        ["Service", "class", false, 21, 28, 15, 83],
+        ["run", "method", false, 49, 52, 45, 79]
+      ]
+    }
+  },
+  "provenance": {
+    "fixtureSet": "WP06B dynamic-language syntax comparison",
+    "project": "graphify",
+    "recordFormat": "[semantic fields..., startByte, endByte]",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+  },
+  "unsupported": {
+    "callResolution": true,
+    "exportResolution": true,
+    "importResolution": true,
+    "inheritanceResolution": true,
+    "luauParse": "partial",
+    "match": true,
+    "rewrite": true
+  }
+}

@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -14,6 +13,7 @@ import { install, update } from "../src/installer";
 import {
   checkInstall,
   runCheckInstallCli,
+  smokeMcpStdio,
 } from "../templates/skills/ast-mcp/scripts/check-install";
 
 const created: string[] = [];
@@ -30,12 +30,22 @@ async function folders() {
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-home-"));
   created.push(root, home);
   const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+  const localAlias = path.join(root, "node_modules/.bin/ast-mcp");
+  const smokeServer = `#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
+    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
+    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"data":{"canonicalRootAnchor":"${root}","checkoutRoot":"${root}","workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ok":true}}}' ;;
+  esac
+done
+`;
   await mkdir(path.dirname(globalAlias), { recursive: true });
-  await writeFile(globalAlias, "#!/bin/sh\n");
+  await mkdir(path.dirname(localAlias), { recursive: true });
+  await writeFile(globalAlias, smokeServer);
+  await writeFile(localAlias, smokeServer);
   await chmod(globalAlias, 0o755);
-  const binary = path.join(root, "node_modules/.bin/ast-bro");
-  await mkdir(path.dirname(binary), { recursive: true });
-  await symlink(path.resolve("node_modules/.bin/ast-bro"), binary);
+  await chmod(localAlias, 0o755);
   return { home, root };
 }
 
@@ -85,9 +95,7 @@ test("checker covers every global host surface", async () => {
 
     expect(result.installed).toBeTrue();
     expect(result.installCommand).not.toContain("--root");
-    expect(result.installCommand).toContain(
-      "--trust @ast-bro/cli@4.2.0 dprint",
-    );
+    expect(result.installCommand).toContain("--trust dprint");
     expect(result.updateCommand).toStartWith("ast-mcp update");
     expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
@@ -139,8 +147,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
-  expect(missing.installCommand).toContain("@ast-bro/cli@4.2.0");
-  expect(missing.installCommand).toContain("bun pm trust @ast-bro/cli dprint");
+  expect(missing.installCommand).toContain("bun pm trust dprint");
   expect(missing.installCommand).toContain(
     "./node_modules/.bin/ast-mcp install",
   );
@@ -165,29 +172,68 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   }
 });
 
-test("checker flags a stale configured ast-bro binary", async () => {
-  const { home, root } = await folders();
-  await install({ home, root, scope: "local", targets: ["codex"] });
-  const binary = path.join(root, "node_modules/.bin/ast-bro");
-  await rm(binary);
-  await writeFile(binary, "#!/bin/sh\nprintf 'ast-bro 4.1.0\\n'\n");
-  await chmod(binary, 0o755);
-  const configuredAstBroBinary = process.env.AST_BRO_BINARY;
-  delete process.env.AST_BRO_BINARY;
-  let result: Awaited<ReturnType<typeof checkInstall>>;
-  try {
-    result = await checkInstall(
-      ["--scope", "local", "--target", "codex", "--root", root],
-      home,
-    );
-  } finally {
-    if (configuredAstBroBinary === undefined) delete process.env.AST_BRO_BINARY;
-    else process.env.AST_BRO_BINARY = configuredAstBroBinary;
-  }
-  expect(result.checks.astBro).toBeFalse();
-  expect(result.installed).toBeFalse();
-  expect(result.needsUpdate).toBeTrue();
-  expect(result.recommendedCommand).toContain("@ast-bro/cli@4.2.0");
+test("stdio smoke fails closed for incomplete and unresponsive servers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-smoke-"));
+  created.push(root);
+  const incomplete = path.join(root, "incomplete");
+  await writeFile(
+    incomplete,
+    `#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
+    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}' ;;
+    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{}}' ;;
+  esac
+done
+`,
+  );
+  await chmod(incomplete, 0o755);
+  await expect(smokeMcpStdio(incomplete, root, 500)).rejects.toThrow(
+    "missing tools",
+  );
+
+  const wrongWorkspace = path.join(root, "wrong-workspace");
+  await writeFile(
+    wrongWorkspace,
+    `#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
+    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"generate"},{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
+    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"ok":true,"data":{"workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","checkoutRoot":"/wrong","canonicalRootAnchor":"/wrong"}}}}' ;;
+  esac
+done
+`,
+  );
+  await chmod(wrongWorkspace, 0o755);
+  await expect(smokeMcpStdio(wrongWorkspace, root, 500)).rejects.toThrow(
+    "did not select the requested workspace",
+  );
+
+  const silent = path.join(root, "silent");
+  await writeFile(silent, "#!/bin/sh\nwhile read -r line; do :; done\n");
+  await chmod(silent, 0o755);
+  await expect(smokeMcpStdio(silent, root, 25)).rejects.toThrow("timed out");
+});
+
+test("checker validates HTTP and service option combinations", async () => {
+  await expect(
+    checkInstall(["--transport", "stdio", "--service"]),
+  ).rejects.toThrow("--service requires");
+  await expect(checkInstall(["--port", "0"])).rejects.toThrow("Invalid --port");
+  const result = await checkInstall([
+    "--transport",
+    "http",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "4567",
+    "--target",
+    "copilot",
+  ]);
+  expect(result.url).toBe("http://127.0.0.1:4567/mcp");
+  expect(result.transport).toBe("http");
 });
 
 test("checker detects stale managed guidance and hook payloads", async () => {

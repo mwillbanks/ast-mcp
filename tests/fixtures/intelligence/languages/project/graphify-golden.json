@@ -1,0 +1,2917 @@
+{
+  "cases": {
+    "delphi-form": {
+      "diagnostics": [],
+      "format": "delphi-form",
+      "nodes": [
+        {
+          "attributes": {
+            "type": "TMainForm"
+          },
+          "childIds": [
+            "a685ef4cc0470874f3160c59d2556447ee78a10ca8edf05c9e465d9ed0a1ad3a"
+          ],
+          "id": "d226a8a7f72ea45a9ad86556a825a7c1484e06afad9f79ccff4e458e9aaa8c8f",
+          "kind": "component",
+          "name": "MainForm",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 26,
+              "line": 0
+            },
+            "endByte": 26,
+            "endCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 26,
+              "line": 0,
+              "utf16Column": 26,
+              "utf16Offset": 26
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {
+            "value": "{010203}"
+          },
+          "childIds": [],
+          "id": "a685ef4cc0470874f3160c59d2556447ee78a10ca8edf05c9e465d9ed0a1ad3a",
+          "kind": "property",
+          "name": "Icon.Data",
+          "parentId": "d226a8a7f72ea45a9ad86556a825a7c1484e06afad9f79ccff4e458e9aaa8c8f",
+          "range": {
+            "end": {
+              "column": 22,
+              "line": 1
+            },
+            "endByte": 49,
+            "endCoordinate": {
+              "byteOffset": 49,
+              "characterOffset": 49,
+              "column": 22,
+              "line": 1,
+              "utf16Column": 22,
+              "utf16Offset": 49
+            },
+            "start": {
+              "column": 0,
+              "line": 1
+            },
+            "startByte": 27,
+            "startCoordinate": {
+              "byteOffset": 27,
+              "characterOffset": 27,
+              "column": 0,
+              "line": 1,
+              "utf16Column": 0,
+              "utf16Offset": 27
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "5205545a5c3b638a868d84a0cc164ac5c8dbc213304aedcfc8cce3a721e20b08",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "3e385794ef1de2060d9cb25626d0771edfa5fa0e21bf354cfbbf299289c49883",
+          "kind": "type-reference",
+          "range": {
+            "end": {
+              "column": 26,
+              "line": 0
+            },
+            "endByte": 26,
+            "endCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 26,
+              "line": 0,
+              "utf16Column": 26,
+              "utf16Offset": 26
+            },
+            "start": {
+              "column": 17,
+              "line": 0
+            },
+            "startByte": 17,
+            "startCoordinate": {
+              "byteOffset": 17,
+              "characterOffset": 17,
+              "column": 17,
+              "line": 0,
+              "utf16Column": 17,
+              "utf16Offset": 17
+            }
+          },
+          "sourceNodeId": "d226a8a7f72ea45a9ad86556a825a7c1484e06afad9f79ccff4e458e9aaa8c8f",
+          "target": "TMainForm"
+        },
+        {
+          "id": "9789c352770d989d86c7bb3bdcf2cc317c4a7a0d68799a8a1662ce9c1990d6eb",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 22,
+              "line": 1
+            },
+            "endByte": 49,
+            "endCoordinate": {
+              "byteOffset": 49,
+              "characterOffset": 49,
+              "column": 22,
+              "line": 1,
+              "utf16Column": 22,
+              "utf16Offset": 49
+            },
+            "start": {
+              "column": 0,
+              "line": 1
+            },
+            "startByte": 27,
+            "startCoordinate": {
+              "byteOffset": 27,
+              "characterOffset": 27,
+              "column": 0,
+              "line": 1,
+              "utf16Column": 0,
+              "utf16Offset": 27
+            }
+          },
+          "sourceNodeId": "a685ef4cc0470874f3160c59d2556447ee78a10ca8edf05c9e465d9ed0a1ad3a",
+          "target": "Icon.Data"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "f3fdee6468417ceebd9cf7d6d7bb09952eddc84d75911d21a8f0c128195811c2",
+      "sourceByteLength": 54,
+      "sourceDigest": "2ac9d7d3d707697cfc9672867f863d38d39000a7639c2cc98a596d37dc274ea7",
+      "syntaxFactsArtifactId": "df8d0e3095fe52daa3aae9b28259602c3e2cb63c1e949e9757fca00354c2fd74"
+    },
+    "dotnet-build": {
+      "diagnostics": [],
+      "format": "dotnet-build",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "4b208d179625503b1ec9e059d1ab682a74efa197a5e0e0dc7f3bc814c03bc1bb"
+          ],
+          "id": "f6c413c8dc6b77362e159a611fea96e632f302bb42f97728df0e616d67494225",
+          "kind": "project",
+          "name": "Project",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 105,
+              "line": 0
+            },
+            "endByte": 105,
+            "endCoordinate": {
+              "byteOffset": 105,
+              "characterOffset": 105,
+              "column": 105,
+              "line": 0,
+              "utf16Column": 105,
+              "utf16Offset": 105
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "dc3b66c5ed26e8161531d959cc28799cc2bfbf1544af08a4052f8c08084923f3"
+          ],
+          "id": "4b208d179625503b1ec9e059d1ab682a74efa197a5e0e0dc7f3bc814c03bc1bb",
+          "kind": "element",
+          "name": "ItemGroup",
+          "parentId": "f6c413c8dc6b77362e159a611fea96e632f302bb42f97728df0e616d67494225",
+          "range": {
+            "end": {
+              "column": 95,
+              "line": 0
+            },
+            "endByte": 95,
+            "endCoordinate": {
+              "byteOffset": 95,
+              "characterOffset": 95,
+              "column": 95,
+              "line": 0,
+              "utf16Column": 95,
+              "utf16Offset": 95
+            },
+            "start": {
+              "column": 9,
+              "line": 0
+            },
+            "startByte": 9,
+            "startCoordinate": {
+              "byteOffset": 9,
+              "characterOffset": 9,
+              "column": 9,
+              "line": 0,
+              "utf16Column": 9,
+              "utf16Offset": 9
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "Analyzer.Package",
+            "Version": "1.0.0"
+          },
+          "childIds": [],
+          "id": "dc3b66c5ed26e8161531d959cc28799cc2bfbf1544af08a4052f8c08084923f3",
+          "kind": "package",
+          "name": "Analyzer.Package",
+          "parentId": "4b208d179625503b1ec9e059d1ab682a74efa197a5e0e0dc7f3bc814c03bc1bb",
+          "range": {
+            "end": {
+              "column": 83,
+              "line": 0
+            },
+            "endByte": 83,
+            "endCoordinate": {
+              "byteOffset": 83,
+              "characterOffset": 83,
+              "column": 83,
+              "line": 0,
+              "utf16Column": 83,
+              "utf16Offset": 83
+            },
+            "start": {
+              "column": 20,
+              "line": 0
+            },
+            "startByte": 20,
+            "startCoordinate": {
+              "byteOffset": 20,
+              "characterOffset": 20,
+              "column": 20,
+              "line": 0,
+              "utf16Column": 20,
+              "utf16Offset": 20
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "5ef9d4928236218c9865408047ca83c3af119fc5207653e12bb4b8f31d3ab0e1",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "30450ffbf79c6455c06718661b733e5e42104c2d0b48176a7efd4bb3044be0b5",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 63,
+              "line": 0
+            },
+            "endByte": 63,
+            "endCoordinate": {
+              "byteOffset": 63,
+              "characterOffset": 63,
+              "column": 63,
+              "line": 0,
+              "utf16Column": 63,
+              "utf16Offset": 63
+            },
+            "start": {
+              "column": 47,
+              "line": 0
+            },
+            "startByte": 47,
+            "startCoordinate": {
+              "byteOffset": 47,
+              "characterOffset": 47,
+              "column": 47,
+              "line": 0,
+              "utf16Column": 47,
+              "utf16Offset": 47
+            }
+          },
+          "sourceNodeId": "dc3b66c5ed26e8161531d959cc28799cc2bfbf1544af08a4052f8c08084923f3",
+          "target": "Analyzer.Package"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "f5cb8c72a5425abf066c9878c4021b71ea9abafe13e2a0e0a80ead4126d6d51f",
+      "sourceByteLength": 106,
+      "sourceDigest": "0b75f5cd3d62ff078f7914c9c114d7b1c6737848cee2c9c1f02d2224ef9250c7",
+      "syntaxFactsArtifactId": "da088820bc24153be2b8e969ef83fb07214da0c66af19d13a34993d636eefd2a"
+    },
+    "dotnet-project": {
+      "diagnostics": [],
+      "format": "dotnet-project",
+      "nodes": [
+        {
+          "attributes": {
+            "Sdk": "Microsoft.NET.Sdk"
+          },
+          "childIds": [
+            "663caa261ef5c5dc74cf5aab6644c1146ca4de53cea7a926da5c256c2a3a140c"
+          ],
+          "id": "7ff8067384474634c9f288beb89aa233338ef43a6ddfb7b47157b5daa0523bac",
+          "kind": "project",
+          "name": "Project",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 10,
+              "line": 6
+            },
+            "endByte": 254,
+            "endCoordinate": {
+              "byteOffset": 254,
+              "characterOffset": 254,
+              "column": 10,
+              "line": 6,
+              "utf16Column": 10,
+              "utf16Offset": 254
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "b0770aad4e6fbea5956da03dd1813ec60b7be9f0b25cc07f231a6c161563ec6c",
+            "0c67e55b1d576a96707a46de28012005c1201c3ba2d0522062c74b2b15b8b6aa",
+            "3530da3605a1c542f01d82d43a4365972402fd7713af1d7dd53a903997c4d380"
+          ],
+          "id": "663caa261ef5c5dc74cf5aab6644c1146ca4de53cea7a926da5c256c2a3a140c",
+          "kind": "element",
+          "name": "ItemGroup",
+          "parentId": "7ff8067384474634c9f288beb89aa233338ef43a6ddfb7b47157b5daa0523bac",
+          "range": {
+            "end": {
+              "column": 14,
+              "line": 5
+            },
+            "endByte": 243,
+            "endCoordinate": {
+              "byteOffset": 243,
+              "characterOffset": 243,
+              "column": 14,
+              "line": 5,
+              "utf16Column": 14,
+              "utf16Offset": 243
+            },
+            "start": {
+              "column": 2,
+              "line": 1
+            },
+            "startByte": 36,
+            "startCoordinate": {
+              "byteOffset": 36,
+              "characterOffset": 36,
+              "column": 2,
+              "line": 1,
+              "utf16Column": 2,
+              "utf16Offset": 36
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "Newtonsoft.Json",
+            "Version": "13.0.3"
+          },
+          "childIds": [],
+          "id": "b0770aad4e6fbea5956da03dd1813ec60b7be9f0b25cc07f231a6c161563ec6c",
+          "kind": "package",
+          "name": "Newtonsoft.Json",
+          "parentId": "663caa261ef5c5dc74cf5aab6644c1146ca4de53cea7a926da5c256c2a3a140c",
+          "range": {
+            "end": {
+              "column": 67,
+              "line": 2
+            },
+            "endByte": 115,
+            "endCoordinate": {
+              "byteOffset": 115,
+              "characterOffset": 115,
+              "column": 67,
+              "line": 2,
+              "utf16Column": 67,
+              "utf16Offset": 115
+            },
+            "start": {
+              "column": 4,
+              "line": 2
+            },
+            "startByte": 52,
+            "startCoordinate": {
+              "byteOffset": 52,
+              "characterOffset": 52,
+              "column": 4,
+              "line": 2,
+              "utf16Column": 4,
+              "utf16Offset": 52
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "../Core/Core.csproj"
+          },
+          "childIds": [],
+          "id": "0c67e55b1d576a96707a46de28012005c1201c3ba2d0522062c74b2b15b8b6aa",
+          "kind": "element",
+          "name": "../Core/Core.csproj",
+          "parentId": "663caa261ef5c5dc74cf5aab6644c1146ca4de53cea7a926da5c256c2a3a140c",
+          "range": {
+            "end": {
+              "column": 54,
+              "line": 3
+            },
+            "endByte": 170,
+            "endCoordinate": {
+              "byteOffset": 170,
+              "characterOffset": 170,
+              "column": 54,
+              "line": 3,
+              "utf16Column": 54,
+              "utf16Offset": 170
+            },
+            "start": {
+              "column": 4,
+              "line": 3
+            },
+            "startByte": 120,
+            "startCoordinate": {
+              "byteOffset": 120,
+              "characterOffset": 120,
+              "column": 4,
+              "line": 3,
+              "utf16Column": 4,
+              "utf16Offset": 120
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "Resources/Strings.resx"
+          },
+          "childIds": [],
+          "id": "3530da3605a1c542f01d82d43a4365972402fd7713af1d7dd53a903997c4d380",
+          "kind": "element",
+          "name": "Resources/Strings.resx",
+          "parentId": "663caa261ef5c5dc74cf5aab6644c1146ca4de53cea7a926da5c256c2a3a140c",
+          "range": {
+            "end": {
+              "column": 57,
+              "line": 4
+            },
+            "endByte": 228,
+            "endCoordinate": {
+              "byteOffset": 228,
+              "characterOffset": 228,
+              "column": 57,
+              "line": 4,
+              "utf16Column": 57,
+              "utf16Offset": 228
+            },
+            "start": {
+              "column": 4,
+              "line": 4
+            },
+            "startByte": 175,
+            "startCoordinate": {
+              "byteOffset": 175,
+              "characterOffset": 175,
+              "column": 4,
+              "line": 4,
+              "utf16Column": 4,
+              "utf16Offset": 175
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "469c2dfe6e0f7c8fdce0cb4833130f652cba372177382089a3f92515c510a063",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "57287430f8fab07e4b54b8adf3913ea8ad3a6517f9aa42c0d79a203582c4b0af",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 46,
+              "line": 2
+            },
+            "endByte": 94,
+            "endCoordinate": {
+              "byteOffset": 94,
+              "characterOffset": 94,
+              "column": 46,
+              "line": 2,
+              "utf16Column": 46,
+              "utf16Offset": 94
+            },
+            "start": {
+              "column": 31,
+              "line": 2
+            },
+            "startByte": 79,
+            "startCoordinate": {
+              "byteOffset": 79,
+              "characterOffset": 79,
+              "column": 31,
+              "line": 2,
+              "utf16Column": 31,
+              "utf16Offset": 79
+            }
+          },
+          "sourceNodeId": "b0770aad4e6fbea5956da03dd1813ec60b7be9f0b25cc07f231a6c161563ec6c",
+          "target": "Newtonsoft.Json"
+        },
+        {
+          "id": "f1d7d201db817109a1cecd4c734e2b12ac5b3f9fb9c3c983aca8309ca58bcb79",
+          "kind": "reference",
+          "range": {
+            "end": {
+              "column": 50,
+              "line": 3
+            },
+            "endByte": 166,
+            "endCoordinate": {
+              "byteOffset": 166,
+              "characterOffset": 166,
+              "column": 50,
+              "line": 3,
+              "utf16Column": 50,
+              "utf16Offset": 166
+            },
+            "start": {
+              "column": 31,
+              "line": 3
+            },
+            "startByte": 147,
+            "startCoordinate": {
+              "byteOffset": 147,
+              "characterOffset": 147,
+              "column": 31,
+              "line": 3,
+              "utf16Column": 31,
+              "utf16Offset": 147
+            }
+          },
+          "sourceNodeId": "0c67e55b1d576a96707a46de28012005c1201c3ba2d0522062c74b2b15b8b6aa",
+          "target": "../Core/Core.csproj"
+        },
+        {
+          "id": "7e2ffaf37954521772cbd488b1f4d4c9f4ca0df576a899b2878acdf3d708b36c",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 53,
+              "line": 4
+            },
+            "endByte": 224,
+            "endCoordinate": {
+              "byteOffset": 224,
+              "characterOffset": 224,
+              "column": 53,
+              "line": 4,
+              "utf16Column": 53,
+              "utf16Offset": 224
+            },
+            "start": {
+              "column": 31,
+              "line": 4
+            },
+            "startByte": 202,
+            "startCoordinate": {
+              "byteOffset": 202,
+              "characterOffset": 202,
+              "column": 31,
+              "line": 4,
+              "utf16Column": 31,
+              "utf16Offset": 202
+            }
+          },
+          "sourceNodeId": "3530da3605a1c542f01d82d43a4365972402fd7713af1d7dd53a903997c4d380",
+          "target": "Resources/Strings.resx"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "823a5eb58b24196340d75e9822322379e1547384b5ae573ba7add586f16bcd2b",
+      "sourceByteLength": 255,
+      "sourceDigest": "e36acf5b8443903d3ed0656946739f99b3a3897592c0c9d2c78d8c1a95e30fed",
+      "syntaxFactsArtifactId": "a0df945216bb580b11fa2167c699d16870fd2a33412960b7808e7b1655088806"
+    },
+    "dotnet-resource": {
+      "diagnostics": [],
+      "format": "dotnet-resource",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "d37a392c503370b50a7a2f6b9c0fae947606cdc7882f42e59b0dc23dd6757bdb"
+          ],
+          "id": "643c99cb0ffabbd1a6f2059e1eddfccc099d8789ad0dcb3496ba7051c97ccef8",
+          "kind": "element",
+          "name": "root",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 63,
+              "line": 0
+            },
+            "endByte": 64,
+            "endCoordinate": {
+              "byteOffset": 64,
+              "characterOffset": 63,
+              "column": 63,
+              "line": 0,
+              "utf16Column": 63,
+              "utf16Offset": 63
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {
+            "name": "GreetingΩ"
+          },
+          "childIds": [
+            "1469565753535af0161fb299cbf39b4bd118c0302693268cfc259bf510031d99"
+          ],
+          "id": "d37a392c503370b50a7a2f6b9c0fae947606cdc7882f42e59b0dc23dd6757bdb",
+          "kind": "resource",
+          "name": "GreetingΩ",
+          "parentId": "643c99cb0ffabbd1a6f2059e1eddfccc099d8789ad0dcb3496ba7051c97ccef8",
+          "range": {
+            "end": {
+              "column": 56,
+              "line": 0
+            },
+            "endByte": 57,
+            "endCoordinate": {
+              "byteOffset": 57,
+              "characterOffset": 56,
+              "column": 56,
+              "line": 0,
+              "utf16Column": 56,
+              "utf16Offset": 56
+            },
+            "start": {
+              "column": 6,
+              "line": 0
+            },
+            "startByte": 6,
+            "startCoordinate": {
+              "byteOffset": 6,
+              "characterOffset": 6,
+              "column": 6,
+              "line": 0,
+              "utf16Column": 6,
+              "utf16Offset": 6
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [],
+          "id": "1469565753535af0161fb299cbf39b4bd118c0302693268cfc259bf510031d99",
+          "kind": "element",
+          "name": "value",
+          "parentId": "d37a392c503370b50a7a2f6b9c0fae947606cdc7882f42e59b0dc23dd6757bdb",
+          "range": {
+            "end": {
+              "column": 49,
+              "line": 0
+            },
+            "endByte": 50,
+            "endCoordinate": {
+              "byteOffset": 50,
+              "characterOffset": 49,
+              "column": 49,
+              "line": 0,
+              "utf16Column": 49,
+              "utf16Offset": 49
+            },
+            "start": {
+              "column": 29,
+              "line": 0
+            },
+            "startByte": 30,
+            "startCoordinate": {
+              "byteOffset": 30,
+              "characterOffset": 29,
+              "column": 29,
+              "line": 0,
+              "utf16Column": 29,
+              "utf16Offset": 29
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "84319751edd6b895147410abe0fe38365841ccc1bec46e632ea6fd786b621412",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "70000068d5511613ef1b4ecd2c9deee970967b5a160539519d9f89b424d3863d",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 27,
+              "line": 0
+            },
+            "endByte": 28,
+            "endCoordinate": {
+              "byteOffset": 28,
+              "characterOffset": 27,
+              "column": 27,
+              "line": 0,
+              "utf16Column": 27,
+              "utf16Offset": 27
+            },
+            "start": {
+              "column": 18,
+              "line": 0
+            },
+            "startByte": 18,
+            "startCoordinate": {
+              "byteOffset": 18,
+              "characterOffset": 18,
+              "column": 18,
+              "line": 0,
+              "utf16Column": 18,
+              "utf16Offset": 18
+            }
+          },
+          "sourceNodeId": "d37a392c503370b50a7a2f6b9c0fae947606cdc7882f42e59b0dc23dd6757bdb",
+          "target": "GreetingΩ"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "a3971f46b68759025e1a4cef6646d3f9274c14b70383e8e0b5c7704787fcda4e",
+      "sourceByteLength": 65,
+      "sourceDigest": "4c15c4ba6a35f53c5ad624c54d71349ece75f3c78e499b031066d4decbcb3721",
+      "syntaxFactsArtifactId": "220b3241f147f69feee743bdc3515a53a9c14e86884a90b84b16e25289b24b41"
+    },
+    "dotnet-solution": {
+      "diagnostics": [],
+      "format": "dotnet-solution",
+      "nodes": [
+        {
+          "attributes": {
+            "guid": "{11111111-1111-1111-1111-111111111111}",
+            "path": "src\\Café.App\\Café.App.csproj",
+            "typeGuid": "{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}"
+          },
+          "childIds": [],
+          "id": "93e99b1d0ca828d20b9f6011fee619f779608d56b5d5b747b39df5ca108fd7f6",
+          "kind": "project",
+          "name": "Café.App",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 136,
+              "line": 1
+            },
+            "endByte": 199,
+            "endCoordinate": {
+              "byteOffset": 199,
+              "characterOffset": 196,
+              "column": 136,
+              "line": 1,
+              "utf16Column": 136,
+              "utf16Offset": 196
+            },
+            "start": {
+              "column": 0,
+              "line": 1
+            },
+            "startByte": 60,
+            "startCoordinate": {
+              "byteOffset": 60,
+              "characterOffset": 60,
+              "column": 0,
+              "line": 1,
+              "utf16Column": 0,
+              "utf16Offset": 60
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "a477156d4047bcc7ef17d6122a9ad06312a7b0e2d5439f31e5f6bdf80bb4d6f2",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "8479bb0a5498374dd0d9a2494c6ff6000afe6b6da48463e657a20fc8dcfa954a",
+          "kind": "reference",
+          "range": {
+            "end": {
+              "column": 93,
+              "line": 1
+            },
+            "endByte": 156,
+            "endCoordinate": {
+              "byteOffset": 156,
+              "characterOffset": 153,
+              "column": 93,
+              "line": 1,
+              "utf16Column": 93,
+              "utf16Offset": 153
+            },
+            "start": {
+              "column": 65,
+              "line": 1
+            },
+            "startByte": 126,
+            "startCoordinate": {
+              "byteOffset": 126,
+              "characterOffset": 125,
+              "column": 65,
+              "line": 1,
+              "utf16Column": 65,
+              "utf16Offset": 125
+            }
+          },
+          "sourceNodeId": "93e99b1d0ca828d20b9f6011fee619f779608d56b5d5b747b39df5ca108fd7f6",
+          "target": "src\\Café.App\\Café.App.csproj"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "a2da8eb531950b15d4ef9df3b8a6da2256066a166abd40f209ed09fdbfe5c41e",
+      "sourceByteLength": 211,
+      "sourceDigest": "e25721403ae219b4e4a610df8c274cb7141d7298b9d198c58ca33b6e78c938aa",
+      "syntaxFactsArtifactId": "455c9860af529eb2fb9fb4409ce08ebfc9d4565c0098af3f338b02ad2b19feec"
+    },
+    "dotnet-solution-xml": {
+      "diagnostics": [],
+      "format": "dotnet-solution-xml",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "7206a4f78c4cfc174498ee15d3b8e3434c3b6c9b581fb11b8622368561aa3e8d"
+          ],
+          "id": "b3b09f8472838cc7f5ed6ae93fc7a53f828683800be3873b87c0f25a0a7c01a7",
+          "kind": "project",
+          "name": "Solution",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 11,
+              "line": 3
+            },
+            "endByte": 113,
+            "endCoordinate": {
+              "byteOffset": 113,
+              "characterOffset": 111,
+              "column": 11,
+              "line": 3,
+              "utf16Column": 11,
+              "utf16Offset": 111
+            },
+            "start": {
+              "column": 0,
+              "line": 1
+            },
+            "startByte": 39,
+            "startCoordinate": {
+              "byteOffset": 39,
+              "characterOffset": 39,
+              "column": 0,
+              "line": 1,
+              "utf16Column": 0,
+              "utf16Offset": 39
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Path": "src/Café.App/Café.App.csproj"
+          },
+          "childIds": [],
+          "id": "7206a4f78c4cfc174498ee15d3b8e3434c3b6c9b581fb11b8622368561aa3e8d",
+          "kind": "project",
+          "name": "src/Café.App/Café.App.csproj",
+          "parentId": "b3b09f8472838cc7f5ed6ae93fc7a53f828683800be3873b87c0f25a0a7c01a7",
+          "range": {
+            "end": {
+              "column": 49,
+              "line": 2
+            },
+            "endByte": 101,
+            "endCoordinate": {
+              "byteOffset": 101,
+              "characterOffset": 99,
+              "column": 49,
+              "line": 2,
+              "utf16Column": 49,
+              "utf16Offset": 99
+            },
+            "start": {
+              "column": 2,
+              "line": 2
+            },
+            "startByte": 52,
+            "startCoordinate": {
+              "byteOffset": 52,
+              "characterOffset": 52,
+              "column": 2,
+              "line": 2,
+              "utf16Column": 2,
+              "utf16Offset": 52
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "ffe8bd34d0f88ae6f9fc64d73eed019e8f85d1700794c3f424b5b3fc1f92db02",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "0bdb5b8a1b47a9bd32fcf2cd4e5ec06d338526ee504338fccab87387922a0631",
+          "kind": "reference",
+          "range": {
+            "end": {
+              "column": 45,
+              "line": 2
+            },
+            "endByte": 97,
+            "endCoordinate": {
+              "byteOffset": 97,
+              "characterOffset": 95,
+              "column": 45,
+              "line": 2,
+              "utf16Column": 45,
+              "utf16Offset": 95
+            },
+            "start": {
+              "column": 17,
+              "line": 2
+            },
+            "startByte": 67,
+            "startCoordinate": {
+              "byteOffset": 67,
+              "characterOffset": 67,
+              "column": 17,
+              "line": 2,
+              "utf16Column": 17,
+              "utf16Offset": 67
+            }
+          },
+          "sourceNodeId": "7206a4f78c4cfc174498ee15d3b8e3434c3b6c9b581fb11b8622368561aa3e8d",
+          "target": "src/Café.App/Café.App.csproj"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "42a84d95445e9ce83b33b0a894f8faf7f627ce39cb9bd9c81531fc87f6960440",
+      "sourceByteLength": 114,
+      "sourceDigest": "3b993baf108f7f5bf6435dc812f0049ef2c68d9b9bbcee316c6e7a8ce52bddac",
+      "syntaxFactsArtifactId": "894d68d23717f26c83b227b46872f0f5e477f3cbe8fe4802307fdfeddfbe83ae"
+    },
+    "lazarus-form": {
+      "diagnostics": [],
+      "format": "lazarus-form",
+      "nodes": [
+        {
+          "attributes": {
+            "type": "TMainForm"
+          },
+          "childIds": [
+            "3d69ea4b1e24c5382b74015e2b631a8e6d12b8545f812336cab80052c3fd85f0",
+            "fe6ae4b8523a623582b769120bfb46ba1e3bf4102431238331a90dcf0c42ca39"
+          ],
+          "id": "09b4c3ccfda47bbb8039fd3ecbc183f93933ae5864555a04b799ffde768be913",
+          "kind": "component",
+          "name": "MainForm",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 26,
+              "line": 0
+            },
+            "endByte": 26,
+            "endCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 26,
+              "line": 0,
+              "utf16Column": 26,
+              "utf16Offset": 26
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {
+            "value": "'Café'"
+          },
+          "childIds": [],
+          "id": "3d69ea4b1e24c5382b74015e2b631a8e6d12b8545f812336cab80052c3fd85f0",
+          "kind": "property",
+          "name": "Caption",
+          "parentId": "09b4c3ccfda47bbb8039fd3ecbc183f93933ae5864555a04b799ffde768be913",
+          "range": {
+            "end": {
+              "column": 18,
+              "line": 1
+            },
+            "endByte": 46,
+            "endCoordinate": {
+              "byteOffset": 46,
+              "characterOffset": 45,
+              "column": 18,
+              "line": 1,
+              "utf16Column": 18,
+              "utf16Offset": 45
+            },
+            "start": {
+              "column": 0,
+              "line": 1
+            },
+            "startByte": 27,
+            "startCoordinate": {
+              "byteOffset": 27,
+              "characterOffset": 27,
+              "column": 0,
+              "line": 1,
+              "utf16Column": 0,
+              "utf16Offset": 27
+            }
+          }
+        },
+        {
+          "attributes": {
+            "type": "TButton"
+          },
+          "childIds": [
+            "068c0d1fa43d37c87b4fb169fa62b20ce24aac879d42afccc01d4d311390855e"
+          ],
+          "id": "fe6ae4b8523a623582b769120bfb46ba1e3bf4102431238331a90dcf0c42ca39",
+          "kind": "component",
+          "name": "Button1",
+          "parentId": "09b4c3ccfda47bbb8039fd3ecbc183f93933ae5864555a04b799ffde768be913",
+          "range": {
+            "end": {
+              "column": 25,
+              "line": 2
+            },
+            "endByte": 72,
+            "endCoordinate": {
+              "byteOffset": 72,
+              "characterOffset": 71,
+              "column": 25,
+              "line": 2,
+              "utf16Column": 25,
+              "utf16Offset": 71
+            },
+            "start": {
+              "column": 0,
+              "line": 2
+            },
+            "startByte": 47,
+            "startCoordinate": {
+              "byteOffset": 47,
+              "characterOffset": 46,
+              "column": 0,
+              "line": 2,
+              "utf16Column": 0,
+              "utf16Offset": 46
+            }
+          }
+        },
+        {
+          "attributes": {
+            "value": "'Run'"
+          },
+          "childIds": [],
+          "id": "068c0d1fa43d37c87b4fb169fa62b20ce24aac879d42afccc01d4d311390855e",
+          "kind": "property",
+          "name": "Caption",
+          "parentId": "fe6ae4b8523a623582b769120bfb46ba1e3bf4102431238331a90dcf0c42ca39",
+          "range": {
+            "end": {
+              "column": 19,
+              "line": 3
+            },
+            "endByte": 92,
+            "endCoordinate": {
+              "byteOffset": 92,
+              "characterOffset": 91,
+              "column": 19,
+              "line": 3,
+              "utf16Column": 19,
+              "utf16Offset": 91
+            },
+            "start": {
+              "column": 0,
+              "line": 3
+            },
+            "startByte": 73,
+            "startCoordinate": {
+              "byteOffset": 73,
+              "characterOffset": 72,
+              "column": 0,
+              "line": 3,
+              "utf16Column": 0,
+              "utf16Offset": 72
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "9c2b6fabf835a4cdb1b5fea4194684bdc9cf461d3c23d025d24b92e4c2133e70",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "ea168e90bee986f31b48303d4f679ef648b86807531021f3870cb3dfd3ee57b1",
+          "kind": "type-reference",
+          "range": {
+            "end": {
+              "column": 26,
+              "line": 0
+            },
+            "endByte": 26,
+            "endCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 26,
+              "line": 0,
+              "utf16Column": 26,
+              "utf16Offset": 26
+            },
+            "start": {
+              "column": 17,
+              "line": 0
+            },
+            "startByte": 17,
+            "startCoordinate": {
+              "byteOffset": 17,
+              "characterOffset": 17,
+              "column": 17,
+              "line": 0,
+              "utf16Column": 17,
+              "utf16Offset": 17
+            }
+          },
+          "sourceNodeId": "09b4c3ccfda47bbb8039fd3ecbc183f93933ae5864555a04b799ffde768be913",
+          "target": "TMainForm"
+        },
+        {
+          "id": "00afac097b4ec808e54ac76cedb20eaf656cf709fcdb399a0f69b45f11f86330",
+          "kind": "type-reference",
+          "range": {
+            "end": {
+              "column": 25,
+              "line": 2
+            },
+            "endByte": 72,
+            "endCoordinate": {
+              "byteOffset": 72,
+              "characterOffset": 71,
+              "column": 25,
+              "line": 2,
+              "utf16Column": 25,
+              "utf16Offset": 71
+            },
+            "start": {
+              "column": 18,
+              "line": 2
+            },
+            "startByte": 65,
+            "startCoordinate": {
+              "byteOffset": 65,
+              "characterOffset": 64,
+              "column": 18,
+              "line": 2,
+              "utf16Column": 18,
+              "utf16Offset": 64
+            }
+          },
+          "sourceNodeId": "fe6ae4b8523a623582b769120bfb46ba1e3bf4102431238331a90dcf0c42ca39",
+          "target": "TButton"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "62d90c1cb9c1a65664e52c6a285c80570c806f60ec6d2c418fa968ea41c30e0a",
+      "sourceByteLength": 103,
+      "sourceDigest": "50f3ce30e460c5f91ceeaca95b060d7fbda8082193579ae5898a923e39524b3e",
+      "syntaxFactsArtifactId": "b96a077c5e5c8ff0b5a5190c66286d86fef3e28da7c431f2190916f5b0eb094d"
+    },
+    "lazarus-package": {
+      "diagnostics": [],
+      "format": "lazarus-package",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "7f43bf5e644d150d5e96b06d6c735a92b3465e260d124055cf735a23ed7f138c"
+          ],
+          "id": "0e4ff2508105aabcdc1fcd3a8a9e91e9bdd9f8bf45288dd03acbf4f9ef242ab8",
+          "kind": "element",
+          "name": "CONFIG",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 168,
+              "line": 0
+            },
+            "endByte": 168,
+            "endCoordinate": {
+              "byteOffset": 168,
+              "characterOffset": 168,
+              "column": 168,
+              "line": 0,
+              "utf16Column": 168,
+              "utf16Offset": 168
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "97f337644b85268913a79354152c8a967961273737d21273b295908d0e7d0344",
+            "0af9f1cc69b99189e9b57c789a16f62af6f11ac8c8c8a42f051efdbdf16fc1f4"
+          ],
+          "id": "7f43bf5e644d150d5e96b06d6c735a92b3465e260d124055cf735a23ed7f138c",
+          "kind": "project",
+          "name": "Package",
+          "parentId": "0e4ff2508105aabcdc1fcd3a8a9e91e9bdd9f8bf45288dd03acbf4f9ef242ab8",
+          "range": {
+            "end": {
+              "column": 159,
+              "line": 0
+            },
+            "endByte": 159,
+            "endCoordinate": {
+              "byteOffset": 159,
+              "characterOffset": 159,
+              "column": 159,
+              "line": 0,
+              "utf16Column": 159,
+              "utf16Offset": 159
+            },
+            "start": {
+              "column": 8,
+              "line": 0
+            },
+            "startByte": 8,
+            "startCoordinate": {
+              "byteOffset": 8,
+              "characterOffset": 8,
+              "column": 8,
+              "line": 0,
+              "utf16Column": 8,
+              "utf16Offset": 8
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "1fc1ff14fe98e4ceb17d0e390a6f80a9194faa0168fa1569a279357fa2cadc7e"
+          ],
+          "id": "97f337644b85268913a79354152c8a967961273737d21273b295908d0e7d0344",
+          "kind": "element",
+          "name": "RequiredPkgs",
+          "parentId": "7f43bf5e644d150d5e96b06d6c735a92b3465e260d124055cf735a23ed7f138c",
+          "range": {
+            "end": {
+              "column": 86,
+              "line": 0
+            },
+            "endByte": 86,
+            "endCoordinate": {
+              "byteOffset": 86,
+              "characterOffset": 86,
+              "column": 86,
+              "line": 0,
+              "utf16Column": 86,
+              "utf16Offset": 86
+            },
+            "start": {
+              "column": 17,
+              "line": 0
+            },
+            "startByte": 17,
+            "startCoordinate": {
+              "byteOffset": 17,
+              "characterOffset": 17,
+              "column": 17,
+              "line": 0,
+              "utf16Column": 17,
+              "utf16Offset": 17
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "fb4df0472ac76cdc710b38a24df470bf21b80a12cbf33973834fb44fc0edc754"
+          ],
+          "id": "1fc1ff14fe98e4ceb17d0e390a6f80a9194faa0168fa1569a279357fa2cadc7e",
+          "kind": "element",
+          "name": "Item",
+          "parentId": "97f337644b85268913a79354152c8a967961273737d21273b295908d0e7d0344",
+          "range": {
+            "end": {
+              "column": 71,
+              "line": 0
+            },
+            "endByte": 71,
+            "endCoordinate": {
+              "byteOffset": 71,
+              "characterOffset": 71,
+              "column": 71,
+              "line": 0,
+              "utf16Column": 71,
+              "utf16Offset": 71
+            },
+            "start": {
+              "column": 31,
+              "line": 0
+            },
+            "startByte": 31,
+            "startCoordinate": {
+              "byteOffset": 31,
+              "characterOffset": 31,
+              "column": 31,
+              "line": 0,
+              "utf16Column": 31,
+              "utf16Offset": 31
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Value": "LCL"
+          },
+          "childIds": [],
+          "id": "fb4df0472ac76cdc710b38a24df470bf21b80a12cbf33973834fb44fc0edc754",
+          "kind": "element",
+          "name": "LCL",
+          "parentId": "1fc1ff14fe98e4ceb17d0e390a6f80a9194faa0168fa1569a279357fa2cadc7e",
+          "range": {
+            "end": {
+              "column": 64,
+              "line": 0
+            },
+            "endByte": 64,
+            "endCoordinate": {
+              "byteOffset": 64,
+              "characterOffset": 64,
+              "column": 64,
+              "line": 0,
+              "utf16Column": 64,
+              "utf16Offset": 64
+            },
+            "start": {
+              "column": 37,
+              "line": 0
+            },
+            "startByte": 37,
+            "startCoordinate": {
+              "byteOffset": 37,
+              "characterOffset": 37,
+              "column": 37,
+              "line": 0,
+              "utf16Column": 37,
+              "utf16Offset": 37
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "6a10da356bd215536821260aa50535ddec404268b4bd3def301d04db07704f48"
+          ],
+          "id": "0af9f1cc69b99189e9b57c789a16f62af6f11ac8c8c8a42f051efdbdf16fc1f4",
+          "kind": "element",
+          "name": "Files",
+          "parentId": "7f43bf5e644d150d5e96b06d6c735a92b3465e260d124055cf735a23ed7f138c",
+          "range": {
+            "end": {
+              "column": 149,
+              "line": 0
+            },
+            "endByte": 149,
+            "endCoordinate": {
+              "byteOffset": 149,
+              "characterOffset": 149,
+              "column": 149,
+              "line": 0,
+              "utf16Column": 149,
+              "utf16Offset": 149
+            },
+            "start": {
+              "column": 86,
+              "line": 0
+            },
+            "startByte": 86,
+            "startCoordinate": {
+              "byteOffset": 86,
+              "characterOffset": 86,
+              "column": 86,
+              "line": 0,
+              "utf16Column": 86,
+              "utf16Offset": 86
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "fdf98beb5c8599ee9f7aa95639b9ab4a13a18ce582e0a9a5693a74bfc6910ae5"
+          ],
+          "id": "6a10da356bd215536821260aa50535ddec404268b4bd3def301d04db07704f48",
+          "kind": "element",
+          "name": "Item",
+          "parentId": "0af9f1cc69b99189e9b57c789a16f62af6f11ac8c8c8a42f051efdbdf16fc1f4",
+          "range": {
+            "end": {
+              "column": 141,
+              "line": 0
+            },
+            "endByte": 141,
+            "endCoordinate": {
+              "byteOffset": 141,
+              "characterOffset": 141,
+              "column": 141,
+              "line": 0,
+              "utf16Column": 141,
+              "utf16Offset": 141
+            },
+            "start": {
+              "column": 93,
+              "line": 0
+            },
+            "startByte": 93,
+            "startCoordinate": {
+              "byteOffset": 93,
+              "characterOffset": 93,
+              "column": 93,
+              "line": 0,
+              "utf16Column": 93,
+              "utf16Offset": 93
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Value": "src/widget.pas"
+          },
+          "childIds": [],
+          "id": "fdf98beb5c8599ee9f7aa95639b9ab4a13a18ce582e0a9a5693a74bfc6910ae5",
+          "kind": "element",
+          "name": "src/widget.pas",
+          "parentId": "6a10da356bd215536821260aa50535ddec404268b4bd3def301d04db07704f48",
+          "range": {
+            "end": {
+              "column": 134,
+              "line": 0
+            },
+            "endByte": 134,
+            "endCoordinate": {
+              "byteOffset": 134,
+              "characterOffset": 134,
+              "column": 134,
+              "line": 0,
+              "utf16Column": 134,
+              "utf16Offset": 134
+            },
+            "start": {
+              "column": 99,
+              "line": 0
+            },
+            "startByte": 99,
+            "startCoordinate": {
+              "byteOffset": 99,
+              "characterOffset": 99,
+              "column": 99,
+              "line": 0,
+              "utf16Column": 99,
+              "utf16Offset": 99
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "0858f6ebf74b3798d70095696e20889d265fb50ed449927e1c4f1d8a7c4cd3a3",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "cddd7d02e1e3efe9d99e24de854fa77efcaf30e47c88ba5343dfb063d9776197",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 60,
+              "line": 0
+            },
+            "endByte": 60,
+            "endCoordinate": {
+              "byteOffset": 60,
+              "characterOffset": 60,
+              "column": 60,
+              "line": 0,
+              "utf16Column": 60,
+              "utf16Offset": 60
+            },
+            "start": {
+              "column": 57,
+              "line": 0
+            },
+            "startByte": 57,
+            "startCoordinate": {
+              "byteOffset": 57,
+              "characterOffset": 57,
+              "column": 57,
+              "line": 0,
+              "utf16Column": 57,
+              "utf16Offset": 57
+            }
+          },
+          "sourceNodeId": "fb4df0472ac76cdc710b38a24df470bf21b80a12cbf33973834fb44fc0edc754",
+          "target": "LCL"
+        },
+        {
+          "id": "6567f966217dd9068ba7a711001089d1114d69e7d31ffdd293baa2733d1fbebf",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 130,
+              "line": 0
+            },
+            "endByte": 130,
+            "endCoordinate": {
+              "byteOffset": 130,
+              "characterOffset": 130,
+              "column": 130,
+              "line": 0,
+              "utf16Column": 130,
+              "utf16Offset": 130
+            },
+            "start": {
+              "column": 116,
+              "line": 0
+            },
+            "startByte": 116,
+            "startCoordinate": {
+              "byteOffset": 116,
+              "characterOffset": 116,
+              "column": 116,
+              "line": 0,
+              "utf16Column": 116,
+              "utf16Offset": 116
+            }
+          },
+          "sourceNodeId": "fdf98beb5c8599ee9f7aa95639b9ab4a13a18ce582e0a9a5693a74bfc6910ae5",
+          "target": "src/widget.pas"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "24113293c9cb767111802c18f434f0567894671a0a51d1ce8bc383bba9424790",
+      "sourceByteLength": 169,
+      "sourceDigest": "38cfdc1475b1f2f3d7753dd2cc99c36e4b496872a60096999e275c534715e6bf",
+      "syntaxFactsArtifactId": "b95150d3ed2a16be84209a7e19e2ded8a182a22cae2a835e1abfcd74b722b084"
+    },
+    "lazarus-project": {
+      "diagnostics": [],
+      "format": "lazarus-project",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "55e5527d861d28e04ad93e86cdb955fadf60d7b32f7120147f4db8e26392e73b"
+          ],
+          "id": "e1f2141ce27fab0c91d88b1b06dffb6607679f7c331bfd7af2e035ff4652836c",
+          "kind": "element",
+          "name": "CONFIG",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 111,
+              "line": 0
+            },
+            "endByte": 111,
+            "endCoordinate": {
+              "byteOffset": 111,
+              "characterOffset": 111,
+              "column": 111,
+              "line": 0,
+              "utf16Column": 111,
+              "utf16Offset": 111
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "81ff556f70e1125e94ae566b511bf502f36edd18b177f91fa2eea85a141d078c"
+          ],
+          "id": "55e5527d861d28e04ad93e86cdb955fadf60d7b32f7120147f4db8e26392e73b",
+          "kind": "project",
+          "name": "ProjectOptions",
+          "parentId": "e1f2141ce27fab0c91d88b1b06dffb6607679f7c331bfd7af2e035ff4652836c",
+          "range": {
+            "end": {
+              "column": 102,
+              "line": 0
+            },
+            "endByte": 102,
+            "endCoordinate": {
+              "byteOffset": 102,
+              "characterOffset": 102,
+              "column": 102,
+              "line": 0,
+              "utf16Column": 102,
+              "utf16Offset": 102
+            },
+            "start": {
+              "column": 8,
+              "line": 0
+            },
+            "startByte": 8,
+            "startCoordinate": {
+              "byteOffset": 8,
+              "characterOffset": 8,
+              "column": 8,
+              "line": 0,
+              "utf16Column": 8,
+              "utf16Offset": 8
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "8b1a9d958045555710dc41a0d7d95644512d869e75dbb7253f0d5db429e9d8c0"
+          ],
+          "id": "81ff556f70e1125e94ae566b511bf502f36edd18b177f91fa2eea85a141d078c",
+          "kind": "element",
+          "name": "Units",
+          "parentId": "55e5527d861d28e04ad93e86cdb955fadf60d7b32f7120147f4db8e26392e73b",
+          "range": {
+            "end": {
+              "column": 85,
+              "line": 0
+            },
+            "endByte": 85,
+            "endCoordinate": {
+              "byteOffset": 85,
+              "characterOffset": 85,
+              "column": 85,
+              "line": 0,
+              "utf16Column": 85,
+              "utf16Offset": 85
+            },
+            "start": {
+              "column": 24,
+              "line": 0
+            },
+            "startByte": 24,
+            "startCoordinate": {
+              "byteOffset": 24,
+              "characterOffset": 24,
+              "column": 24,
+              "line": 0,
+              "utf16Column": 24,
+              "utf16Offset": 24
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "74803358b6243158993952ef28ebabb4ab3ff5a6c7c7a4bc220ee913c9004352"
+          ],
+          "id": "8b1a9d958045555710dc41a0d7d95644512d869e75dbb7253f0d5db429e9d8c0",
+          "kind": "element",
+          "name": "Unit",
+          "parentId": "81ff556f70e1125e94ae566b511bf502f36edd18b177f91fa2eea85a141d078c",
+          "range": {
+            "end": {
+              "column": 77,
+              "line": 0
+            },
+            "endByte": 77,
+            "endCoordinate": {
+              "byteOffset": 77,
+              "characterOffset": 77,
+              "column": 77,
+              "line": 0,
+              "utf16Column": 77,
+              "utf16Offset": 77
+            },
+            "start": {
+              "column": 31,
+              "line": 0
+            },
+            "startByte": 31,
+            "startCoordinate": {
+              "byteOffset": 31,
+              "characterOffset": 31,
+              "column": 31,
+              "line": 0,
+              "utf16Column": 31,
+              "utf16Offset": 31
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Value": "src/main.pas"
+          },
+          "childIds": [],
+          "id": "74803358b6243158993952ef28ebabb4ab3ff5a6c7c7a4bc220ee913c9004352",
+          "kind": "element",
+          "name": "src/main.pas",
+          "parentId": "8b1a9d958045555710dc41a0d7d95644512d869e75dbb7253f0d5db429e9d8c0",
+          "range": {
+            "end": {
+              "column": 70,
+              "line": 0
+            },
+            "endByte": 70,
+            "endCoordinate": {
+              "byteOffset": 70,
+              "characterOffset": 70,
+              "column": 70,
+              "line": 0,
+              "utf16Column": 70,
+              "utf16Offset": 70
+            },
+            "start": {
+              "column": 37,
+              "line": 0
+            },
+            "startByte": 37,
+            "startCoordinate": {
+              "byteOffset": 37,
+              "characterOffset": 37,
+              "column": 37,
+              "line": 0,
+              "utf16Column": 37,
+              "utf16Offset": 37
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "b55d7b005303c0f9e20cb54e71456beb35c6a50fd42ecf19ac793bad260e3a72",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "442dcb649bf6fa82d11994dc54f67797f7fbcecc807cbc6c3fce161816aa63ec",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 66,
+              "line": 0
+            },
+            "endByte": 66,
+            "endCoordinate": {
+              "byteOffset": 66,
+              "characterOffset": 66,
+              "column": 66,
+              "line": 0,
+              "utf16Column": 66,
+              "utf16Offset": 66
+            },
+            "start": {
+              "column": 54,
+              "line": 0
+            },
+            "startByte": 54,
+            "startCoordinate": {
+              "byteOffset": 54,
+              "characterOffset": 54,
+              "column": 54,
+              "line": 0,
+              "utf16Column": 54,
+              "utf16Offset": 54
+            }
+          },
+          "sourceNodeId": "74803358b6243158993952ef28ebabb4ab3ff5a6c7c7a4bc220ee913c9004352",
+          "target": "src/main.pas"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "0741d3df721ff17b74089d56ffd50b208e909446d33bbee06988bac5b67cd1fa",
+      "sourceByteLength": 112,
+      "sourceDigest": "1761ebc23875c81cc596f4a9f557691d61438e38ecea2d42948da24c8b275487",
+      "syntaxFactsArtifactId": "d0184a06e487ed887e030f80681c900e313ac95145e77e3af1ab9063fa3128c3"
+    },
+    "nuget-manifest": {
+      "diagnostics": [],
+      "format": "nuget-manifest",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "06d2cf26722b9f5ba1a4245993669129f19adf92aa2f5f7ada8782b0f0fe3d8d"
+          ],
+          "id": "98cbdc647e4dc99a52c8d70fb0400d0531ca17816483f93c5ad33195d052f275",
+          "kind": "package",
+          "name": "package",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 133,
+              "line": 0
+            },
+            "endByte": 134,
+            "endCoordinate": {
+              "byteOffset": 134,
+              "characterOffset": 133,
+              "column": 133,
+              "line": 0,
+              "utf16Column": 133,
+              "utf16Offset": 133
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "031e9f216300dae0700e77f60b6831225ed94400d09b4b8322690c22bc6357a5",
+            "9f25398ffa2a5dcae20bed3f621aaa9c4151fd0379344530274fa3db5512dadb"
+          ],
+          "id": "06d2cf26722b9f5ba1a4245993669129f19adf92aa2f5f7ada8782b0f0fe3d8d",
+          "kind": "element",
+          "name": "metadata",
+          "parentId": "98cbdc647e4dc99a52c8d70fb0400d0531ca17816483f93c5ad33195d052f275",
+          "range": {
+            "end": {
+              "column": 123,
+              "line": 0
+            },
+            "endByte": 124,
+            "endCoordinate": {
+              "byteOffset": 124,
+              "characterOffset": 123,
+              "column": 123,
+              "line": 0,
+              "utf16Column": 123,
+              "utf16Offset": 123
+            },
+            "start": {
+              "column": 9,
+              "line": 0
+            },
+            "startByte": 9,
+            "startCoordinate": {
+              "byteOffset": 9,
+              "characterOffset": 9,
+              "column": 9,
+              "line": 0,
+              "utf16Column": 9,
+              "utf16Offset": 9
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [],
+          "id": "031e9f216300dae0700e77f60b6831225ed94400d09b4b8322690c22bc6357a5",
+          "kind": "element",
+          "name": "id",
+          "parentId": "06d2cf26722b9f5ba1a4245993669129f19adf92aa2f5f7ada8782b0f0fe3d8d",
+          "range": {
+            "end": {
+              "column": 40,
+              "line": 0
+            },
+            "endByte": 41,
+            "endCoordinate": {
+              "byteOffset": 41,
+              "characterOffset": 40,
+              "column": 40,
+              "line": 0,
+              "utf16Column": 40,
+              "utf16Offset": 40
+            },
+            "start": {
+              "column": 19,
+              "line": 0
+            },
+            "startByte": 19,
+            "startCoordinate": {
+              "byteOffset": 19,
+              "characterOffset": 19,
+              "column": 19,
+              "line": 0,
+              "utf16Column": 19,
+              "utf16Offset": 19
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "4f7e15d4d7ac08cd1ebebc9260e248ab1a2b9f23f95f5d4e8ae101b41adb0ed9"
+          ],
+          "id": "9f25398ffa2a5dcae20bed3f621aaa9c4151fd0379344530274fa3db5512dadb",
+          "kind": "element",
+          "name": "dependencies",
+          "parentId": "06d2cf26722b9f5ba1a4245993669129f19adf92aa2f5f7ada8782b0f0fe3d8d",
+          "range": {
+            "end": {
+              "column": 112,
+              "line": 0
+            },
+            "endByte": 113,
+            "endCoordinate": {
+              "byteOffset": 113,
+              "characterOffset": 112,
+              "column": 112,
+              "line": 0,
+              "utf16Column": 112,
+              "utf16Offset": 112
+            },
+            "start": {
+              "column": 40,
+              "line": 0
+            },
+            "startByte": 41,
+            "startCoordinate": {
+              "byteOffset": 41,
+              "characterOffset": 40,
+              "column": 40,
+              "line": 0,
+              "utf16Column": 40,
+              "utf16Offset": 40
+            }
+          }
+        },
+        {
+          "attributes": {
+            "id": "Serilog",
+            "version": "3.0.0"
+          },
+          "childIds": [],
+          "id": "4f7e15d4d7ac08cd1ebebc9260e248ab1a2b9f23f95f5d4e8ae101b41adb0ed9",
+          "kind": "package",
+          "name": "dependency",
+          "parentId": "9f25398ffa2a5dcae20bed3f621aaa9c4151fd0379344530274fa3db5512dadb",
+          "range": {
+            "end": {
+              "column": 97,
+              "line": 0
+            },
+            "endByte": 98,
+            "endCoordinate": {
+              "byteOffset": 98,
+              "characterOffset": 97,
+              "column": 97,
+              "line": 0,
+              "utf16Column": 97,
+              "utf16Offset": 97
+            },
+            "start": {
+              "column": 54,
+              "line": 0
+            },
+            "startByte": 55,
+            "startCoordinate": {
+              "byteOffset": 55,
+              "characterOffset": 54,
+              "column": 54,
+              "line": 0,
+              "utf16Column": 54,
+              "utf16Offset": 54
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "51a9d7493422bed57baef6c4a2729a7278dfd2b746a456379f5519e52e1b73c0",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "dd0664c58e266eea4599e7be43199f55511552d6af1bb40be1da149c989a6542",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 77,
+              "line": 0
+            },
+            "endByte": 78,
+            "endCoordinate": {
+              "byteOffset": 78,
+              "characterOffset": 77,
+              "column": 77,
+              "line": 0,
+              "utf16Column": 77,
+              "utf16Offset": 77
+            },
+            "start": {
+              "column": 70,
+              "line": 0
+            },
+            "startByte": 71,
+            "startCoordinate": {
+              "byteOffset": 71,
+              "characterOffset": 70,
+              "column": 70,
+              "line": 0,
+              "utf16Column": 70,
+              "utf16Offset": 70
+            }
+          },
+          "sourceNodeId": "4f7e15d4d7ac08cd1ebebc9260e248ab1a2b9f23f95f5d4e8ae101b41adb0ed9",
+          "target": "Serilog"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "e30807f8673c63fff80a32fb7cab0d53617a35c665f1ed20e3f2638c02b6c1d8",
+      "sourceByteLength": 135,
+      "sourceDigest": "b9f3ee40db574790e568a4aafe2054b89623e02ee9a24b7c5f3cb9adad89152c",
+      "syntaxFactsArtifactId": "1be774e74231fb23eb901dd52176558383a3cf2fe9f5aaad6691d646e1875b38"
+    },
+    "nuget-packages": {
+      "diagnostics": [],
+      "format": "nuget-packages",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "013c324e2c9a052b7cb0f41d4e05cafe0f986da9e63092fbb665c6f264feca1e"
+          ],
+          "id": "05ed3210bdc3107710a49f528a5d78c4234c8361575f692f1374be310b370ab4",
+          "kind": "element",
+          "name": "packages",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 84,
+              "line": 0
+            },
+            "endByte": 84,
+            "endCoordinate": {
+              "byteOffset": 84,
+              "characterOffset": 84,
+              "column": 84,
+              "line": 0,
+              "utf16Column": 84,
+              "utf16Offset": 84
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {
+            "id": "NUnit",
+            "targetFramework": "net8.0",
+            "version": "4.0.0"
+          },
+          "childIds": [],
+          "id": "013c324e2c9a052b7cb0f41d4e05cafe0f986da9e63092fbb665c6f264feca1e",
+          "kind": "package",
+          "name": "package",
+          "parentId": "05ed3210bdc3107710a49f528a5d78c4234c8361575f692f1374be310b370ab4",
+          "range": {
+            "end": {
+              "column": 73,
+              "line": 0
+            },
+            "endByte": 73,
+            "endCoordinate": {
+              "byteOffset": 73,
+              "characterOffset": 73,
+              "column": 73,
+              "line": 0,
+              "utf16Column": 73,
+              "utf16Offset": 73
+            },
+            "start": {
+              "column": 10,
+              "line": 0
+            },
+            "startByte": 10,
+            "startCoordinate": {
+              "byteOffset": 10,
+              "characterOffset": 10,
+              "column": 10,
+              "line": 0,
+              "utf16Column": 10,
+              "utf16Offset": 10
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "c40e31d870b6700e9310e77cbad3c45e56bdf3757b5bc21fdf412ae1b40f9c8d",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "c4499c7833d33e5c2752732b489d7f7734a5091c9a37633a5b15b506edf4f416",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 28,
+              "line": 0
+            },
+            "endByte": 28,
+            "endCoordinate": {
+              "byteOffset": 28,
+              "characterOffset": 28,
+              "column": 28,
+              "line": 0,
+              "utf16Column": 28,
+              "utf16Offset": 28
+            },
+            "start": {
+              "column": 23,
+              "line": 0
+            },
+            "startByte": 23,
+            "startCoordinate": {
+              "byteOffset": 23,
+              "characterOffset": 23,
+              "column": 23,
+              "line": 0,
+              "utf16Column": 23,
+              "utf16Offset": 23
+            }
+          },
+          "sourceNodeId": "013c324e2c9a052b7cb0f41d4e05cafe0f986da9e63092fbb665c6f264feca1e",
+          "target": "NUnit"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "9bd14134cc82a7eb6d1eed9a925b015bbfd3765a03f3d5bf9d596a3fc7b8d8aa",
+      "sourceByteLength": 85,
+      "sourceDigest": "2bb405a486c8a636eb10018afe9a0652fefe626b6320e1ae1845fc38d8298860",
+      "syntaxFactsArtifactId": "f6d4b8065106acfb26b76fb05d4efab9f6024b2101d23ea8779d8463917d246f"
+    },
+    "xaml": {
+      "diagnostics": [],
+      "format": "xaml",
+      "nodes": [
+        {
+          "attributes": {
+            "x:Class": "Demo.App"
+          },
+          "childIds": [
+            "b7f73115907e239e37ce464b2fa2e7e780d60696365565f2e6ed878f10c0669c"
+          ],
+          "id": "792079b2a2cc77f9f6ccbe62de97104ed256987fa229b7ca59ffb79b5a02a86a",
+          "kind": "component",
+          "name": "Application",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 96,
+              "line": 0
+            },
+            "endByte": 96,
+            "endCoordinate": {
+              "byteOffset": 96,
+              "characterOffset": 96,
+              "column": 96,
+              "line": 0,
+              "utf16Column": 96,
+              "utf16Offset": 96
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Source": "Themes/Colors.xaml"
+          },
+          "childIds": [],
+          "id": "b7f73115907e239e37ce464b2fa2e7e780d60696365565f2e6ed878f10c0669c",
+          "kind": "resource",
+          "name": "ResourceDictionary",
+          "parentId": "792079b2a2cc77f9f6ccbe62de97104ed256987fa229b7ca59ffb79b5a02a86a",
+          "range": {
+            "end": {
+              "column": 82,
+              "line": 0
+            },
+            "endByte": 82,
+            "endCoordinate": {
+              "byteOffset": 82,
+              "characterOffset": 82,
+              "column": 82,
+              "line": 0,
+              "utf16Column": 82,
+              "utf16Offset": 82
+            },
+            "start": {
+              "column": 32,
+              "line": 0
+            },
+            "startByte": 32,
+            "startCoordinate": {
+              "byteOffset": 32,
+              "characterOffset": 32,
+              "column": 32,
+              "line": 0,
+              "utf16Column": 32,
+              "utf16Offset": 32
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "544645bc36ba65ca821af110db94b2056f598b47ce0d2f947b567795d803850a",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "95eea7fc97801918b3dd7469240ed230a3309310adc3121c0f60553c22e8c7b9",
+          "kind": "resource",
+          "range": {
+            "end": {
+              "column": 78,
+              "line": 0
+            },
+            "endByte": 78,
+            "endCoordinate": {
+              "byteOffset": 78,
+              "characterOffset": 78,
+              "column": 78,
+              "line": 0,
+              "utf16Column": 78,
+              "utf16Offset": 78
+            },
+            "start": {
+              "column": 60,
+              "line": 0
+            },
+            "startByte": 60,
+            "startCoordinate": {
+              "byteOffset": 60,
+              "characterOffset": 60,
+              "column": 60,
+              "line": 0,
+              "utf16Column": 60,
+              "utf16Offset": 60
+            }
+          },
+          "sourceNodeId": "b7f73115907e239e37ce464b2fa2e7e780d60696365565f2e6ed878f10c0669c",
+          "target": "Themes/Colors.xaml"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "a33d02d9fbbcd5be2d76b7eefca2de8481778c96914e692246e0838d25a40145",
+      "sourceByteLength": 97,
+      "sourceDigest": "c9dbcf5e04bd52248d92d018d921330a2bb4723397cbde07c7c370444e1cbf43",
+      "syntaxFactsArtifactId": "8c43cf2263852e30c5ad25dd5546552e731747755f323dcc15de3d2ed81fe3b0"
+    }
+  },
+  "project": {
+    "name": "graphify",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+  },
+  "provenance": {
+    "fixtures": {
+      "app.csproj": "e36acf5b8443903d3ed0656946739f99b3a3897592c0c9d2c78d8c1a95e30fed",
+      "app.fsproj": "dca2c057139beaeddb469e9b903a85350944e3319fc805c98cf78310f0d645b1",
+      "app.vbproj": "90d68b3b13ccf10a14743978a1d41352da1461f7c3210805b3d219bbe6cc42b1",
+      "build.props": "0b75f5cd3d62ff078f7914c9c114d7b1c6737848cee2c9c1f02d2224ef9250c7",
+      "build.targets": "ccff215b4ae56ebb0174a471f4cecedefce3be629cf6bf8ef2dc368ec181719e",
+      "demo.dfm": "2ac9d7d3d707697cfc9672867f863d38d39000a7639c2cc98a596d37dc274ea7",
+      "demo.lfm": "50f3ce30e460c5f91ceeaca95b060d7fbda8082193579ae5898a923e39524b3e",
+      "demo.lpi": "1761ebc23875c81cc596f4a9f557691d61438e38ecea2d42948da24c8b275487",
+      "demo.lpk": "38cfdc1475b1f2f3d7753dd2cc99c36e4b496872a60096999e275c534715e6bf",
+      "demo.sln": "e25721403ae219b4e4a610df8c274cb7141d7298b9d198c58ca33b6e78c938aa",
+      "demo.slnx": "3b993baf108f7f5bf6435dc812f0049ef2c68d9b9bbcee316c6e7a8ce52bddac",
+      "main.xaml": "c9dbcf5e04bd52248d92d018d921330a2bb4723397cbde07c7c370444e1cbf43",
+      "package.nuspec": "b9f3ee40db574790e568a4aafe2054b89623e02ee9a24b7c5f3cb9adad89152c",
+      "packages.config": "2bb405a486c8a636eb10018afe9a0652fefe626b6320e1ae1845fc38d8298860",
+      "strings.resx": "4c15c4ba6a35f53c5ad624c54d71349ece75f3c78e499b031066d4decbcb3721"
+    },
+    "source": {
+      "inventoryPath": "graphify/detect.py",
+      "inventorySha256": "f6d71107e2c5092f73f5c1ba1d21898a44b6f06ada6ab7161aaae0cdaa7beece",
+      "repository": "https://github.com/Graphify-Labs/graphify",
+      "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+    }
+  },
+  "variants": {
+    "app.fsproj": {
+      "diagnostics": [],
+      "format": "dotnet-project",
+      "nodes": [
+        {
+          "attributes": {
+            "Sdk": "Microsoft.NET.Sdk"
+          },
+          "childIds": [
+            "7e009dfe571a0d370bb29ac0ac1920ec1b55bd7a75a443bb78356c91311f1fa7"
+          ],
+          "id": "280b79769fe3445a5ac7e57aae6157c91f96fc47f1d85d60e8f26968bf73f462",
+          "kind": "project",
+          "name": "Project",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 107,
+              "line": 0
+            },
+            "endByte": 107,
+            "endCoordinate": {
+              "byteOffset": 107,
+              "characterOffset": 107,
+              "column": 107,
+              "line": 0,
+              "utf16Column": 107,
+              "utf16Offset": 107
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "8818a264ff8cc634ac7ce5c15188d36634b528a5570bc87a7f5149ba175870ed"
+          ],
+          "id": "7e009dfe571a0d370bb29ac0ac1920ec1b55bd7a75a443bb78356c91311f1fa7",
+          "kind": "element",
+          "name": "ItemGroup",
+          "parentId": "280b79769fe3445a5ac7e57aae6157c91f96fc47f1d85d60e8f26968bf73f462",
+          "range": {
+            "end": {
+              "column": 97,
+              "line": 0
+            },
+            "endByte": 97,
+            "endCoordinate": {
+              "byteOffset": 97,
+              "characterOffset": 97,
+              "column": 97,
+              "line": 0,
+              "utf16Column": 97,
+              "utf16Offset": 97
+            },
+            "start": {
+              "column": 33,
+              "line": 0
+            },
+            "startByte": 33,
+            "startCoordinate": {
+              "byteOffset": 33,
+              "characterOffset": 33,
+              "column": 33,
+              "line": 0,
+              "utf16Column": 33,
+              "utf16Offset": 33
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "FSharp.Core"
+          },
+          "childIds": [],
+          "id": "8818a264ff8cc634ac7ce5c15188d36634b528a5570bc87a7f5149ba175870ed",
+          "kind": "package",
+          "name": "FSharp.Core",
+          "parentId": "7e009dfe571a0d370bb29ac0ac1920ec1b55bd7a75a443bb78356c91311f1fa7",
+          "range": {
+            "end": {
+              "column": 85,
+              "line": 0
+            },
+            "endByte": 85,
+            "endCoordinate": {
+              "byteOffset": 85,
+              "characterOffset": 85,
+              "column": 85,
+              "line": 0,
+              "utf16Column": 85,
+              "utf16Offset": 85
+            },
+            "start": {
+              "column": 44,
+              "line": 0
+            },
+            "startByte": 44,
+            "startCoordinate": {
+              "byteOffset": 44,
+              "characterOffset": 44,
+              "column": 44,
+              "line": 0,
+              "utf16Column": 44,
+              "utf16Offset": 44
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "469c2dfe6e0f7c8fdce0cb4833130f652cba372177382089a3f92515c510a063",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "41fb6fd916798290001a564c2d8cec4bfcd44133627461025cbbd1616eca1556",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 82,
+              "line": 0
+            },
+            "endByte": 82,
+            "endCoordinate": {
+              "byteOffset": 82,
+              "characterOffset": 82,
+              "column": 82,
+              "line": 0,
+              "utf16Column": 82,
+              "utf16Offset": 82
+            },
+            "start": {
+              "column": 71,
+              "line": 0
+            },
+            "startByte": 71,
+            "startCoordinate": {
+              "byteOffset": 71,
+              "characterOffset": 71,
+              "column": 71,
+              "line": 0,
+              "utf16Column": 71,
+              "utf16Offset": 71
+            }
+          },
+          "sourceNodeId": "8818a264ff8cc634ac7ce5c15188d36634b528a5570bc87a7f5149ba175870ed",
+          "target": "FSharp.Core"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "3b67a59531227fe1ec85a866e7830631b5f88396fb7c78c2b803f333d713bc8b",
+      "sourceByteLength": 108,
+      "sourceDigest": "dca2c057139beaeddb469e9b903a85350944e3319fc805c98cf78310f0d645b1",
+      "syntaxFactsArtifactId": "beea1f8de205d5921e121ef2f4ce8401abec35436788b45071a726322436e033"
+    },
+    "app.vbproj": {
+      "diagnostics": [],
+      "format": "dotnet-project",
+      "nodes": [
+        {
+          "attributes": {
+            "Sdk": "Microsoft.NET.Sdk"
+          },
+          "childIds": [
+            "8c4f60c134a100a5f6fb65a5c1f71ec62fab7f4094c47cdada381cab8bea81ef"
+          ],
+          "id": "da2d79d047eefc189f4ef57862007ae7eb0523801ba91dc5d600dabb1d55167a",
+          "kind": "project",
+          "name": "Project",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 115,
+              "line": 0
+            },
+            "endByte": 115,
+            "endCoordinate": {
+              "byteOffset": 115,
+              "characterOffset": 115,
+              "column": 115,
+              "line": 0,
+              "utf16Column": 115,
+              "utf16Offset": 115
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "054233d7c34b667ed7fe3213b43bc6fcf3e37cad0d1670afe18269ef3d75e4ed"
+          ],
+          "id": "8c4f60c134a100a5f6fb65a5c1f71ec62fab7f4094c47cdada381cab8bea81ef",
+          "kind": "element",
+          "name": "ItemGroup",
+          "parentId": "da2d79d047eefc189f4ef57862007ae7eb0523801ba91dc5d600dabb1d55167a",
+          "range": {
+            "end": {
+              "column": 105,
+              "line": 0
+            },
+            "endByte": 105,
+            "endCoordinate": {
+              "byteOffset": 105,
+              "characterOffset": 105,
+              "column": 105,
+              "line": 0,
+              "utf16Column": 105,
+              "utf16Offset": 105
+            },
+            "start": {
+              "column": 33,
+              "line": 0
+            },
+            "startByte": 33,
+            "startCoordinate": {
+              "byteOffset": 33,
+              "characterOffset": 33,
+              "column": 33,
+              "line": 0,
+              "utf16Column": 33,
+              "utf16Offset": 33
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "../Core/Core.vbproj"
+          },
+          "childIds": [],
+          "id": "054233d7c34b667ed7fe3213b43bc6fcf3e37cad0d1670afe18269ef3d75e4ed",
+          "kind": "element",
+          "name": "../Core/Core.vbproj",
+          "parentId": "8c4f60c134a100a5f6fb65a5c1f71ec62fab7f4094c47cdada381cab8bea81ef",
+          "range": {
+            "end": {
+              "column": 93,
+              "line": 0
+            },
+            "endByte": 93,
+            "endCoordinate": {
+              "byteOffset": 93,
+              "characterOffset": 93,
+              "column": 93,
+              "line": 0,
+              "utf16Column": 93,
+              "utf16Offset": 93
+            },
+            "start": {
+              "column": 44,
+              "line": 0
+            },
+            "startByte": 44,
+            "startCoordinate": {
+              "byteOffset": 44,
+              "characterOffset": 44,
+              "column": 44,
+              "line": 0,
+              "utf16Column": 44,
+              "utf16Offset": 44
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "469c2dfe6e0f7c8fdce0cb4833130f652cba372177382089a3f92515c510a063",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "99ba90d351d01842e350180e5b492c28b4baca07abdcc054bf2e6618d543bd23",
+          "kind": "reference",
+          "range": {
+            "end": {
+              "column": 90,
+              "line": 0
+            },
+            "endByte": 90,
+            "endCoordinate": {
+              "byteOffset": 90,
+              "characterOffset": 90,
+              "column": 90,
+              "line": 0,
+              "utf16Column": 90,
+              "utf16Offset": 90
+            },
+            "start": {
+              "column": 71,
+              "line": 0
+            },
+            "startByte": 71,
+            "startCoordinate": {
+              "byteOffset": 71,
+              "characterOffset": 71,
+              "column": 71,
+              "line": 0,
+              "utf16Column": 71,
+              "utf16Offset": 71
+            }
+          },
+          "sourceNodeId": "054233d7c34b667ed7fe3213b43bc6fcf3e37cad0d1670afe18269ef3d75e4ed",
+          "target": "../Core/Core.vbproj"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "e1c7fee1fbfcd47b0ceb4b98201edd0c77dbe845b297c571dcd53408debbdb68",
+      "sourceByteLength": 116,
+      "sourceDigest": "90d68b3b13ccf10a14743978a1d41352da1461f7c3210805b3d219bbe6cc42b1",
+      "syntaxFactsArtifactId": "55cb5325d01606d9f4be3b66233657d22cfbdd48e2cfd3889c3b96a908bdcfee"
+    },
+    "build.targets": {
+      "diagnostics": [],
+      "format": "dotnet-build",
+      "nodes": [
+        {
+          "attributes": {},
+          "childIds": [
+            "f24930f7988c6bd2525459aedaa113a7f1829efa3618a5696480c1839984ef3e"
+          ],
+          "id": "378bf8bb9e1703716119b67d1e0a0f277871e913b2e3b0f7cad0efa6948265e7",
+          "kind": "project",
+          "name": "Project",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 87,
+              "line": 0
+            },
+            "endByte": 87,
+            "endCoordinate": {
+              "byteOffset": 87,
+              "characterOffset": 87,
+              "column": 87,
+              "line": 0,
+              "utf16Column": 87,
+              "utf16Offset": 87
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          }
+        },
+        {
+          "attributes": {},
+          "childIds": [
+            "fc21b623e859cef77c0ef7d68294fd061296090a86a6c02e86e301dbd09d35bd"
+          ],
+          "id": "f24930f7988c6bd2525459aedaa113a7f1829efa3618a5696480c1839984ef3e",
+          "kind": "element",
+          "name": "ItemGroup",
+          "parentId": "378bf8bb9e1703716119b67d1e0a0f277871e913b2e3b0f7cad0efa6948265e7",
+          "range": {
+            "end": {
+              "column": 77,
+              "line": 0
+            },
+            "endByte": 77,
+            "endCoordinate": {
+              "byteOffset": 77,
+              "characterOffset": 77,
+              "column": 77,
+              "line": 0,
+              "utf16Column": 77,
+              "utf16Offset": 77
+            },
+            "start": {
+              "column": 9,
+              "line": 0
+            },
+            "startByte": 9,
+            "startCoordinate": {
+              "byteOffset": 9,
+              "characterOffset": 9,
+              "column": 9,
+              "line": 0,
+              "utf16Column": 9,
+              "utf16Offset": 9
+            }
+          }
+        },
+        {
+          "attributes": {
+            "Include": "Targets.Package"
+          },
+          "childIds": [],
+          "id": "fc21b623e859cef77c0ef7d68294fd061296090a86a6c02e86e301dbd09d35bd",
+          "kind": "package",
+          "name": "Targets.Package",
+          "parentId": "f24930f7988c6bd2525459aedaa113a7f1829efa3618a5696480c1839984ef3e",
+          "range": {
+            "end": {
+              "column": 65,
+              "line": 0
+            },
+            "endByte": 65,
+            "endCoordinate": {
+              "byteOffset": 65,
+              "characterOffset": 65,
+              "column": 65,
+              "line": 0,
+              "utf16Column": 65,
+              "utf16Offset": 65
+            },
+            "start": {
+              "column": 20,
+              "line": 0
+            },
+            "startByte": 20,
+            "startCoordinate": {
+              "byteOffset": 20,
+              "characterOffset": 20,
+              "column": 20,
+              "line": 0,
+              "utf16Column": 20,
+              "utf16Offset": 20
+            }
+          }
+        }
+      ],
+      "parserFingerprint": "5ef9d4928236218c9865408047ca83c3af119fc5207653e12bb4b8f31d3ab0e1",
+      "partial": false,
+      "relationships": [
+        {
+          "id": "0c113153760485ff736ed8b9b92bb9a5b16923f2d6a67f3c0be73ea2d54db4c7",
+          "kind": "dependency",
+          "range": {
+            "end": {
+              "column": 62,
+              "line": 0
+            },
+            "endByte": 62,
+            "endCoordinate": {
+              "byteOffset": 62,
+              "characterOffset": 62,
+              "column": 62,
+              "line": 0,
+              "utf16Column": 62,
+              "utf16Offset": 62
+            },
+            "start": {
+              "column": 47,
+              "line": 0
+            },
+            "startByte": 47,
+            "startCoordinate": {
+              "byteOffset": 47,
+              "characterOffset": 47,
+              "column": 47,
+              "line": 0,
+              "utf16Column": 47,
+              "utf16Offset": 47
+            }
+          },
+          "sourceNodeId": "fc21b623e859cef77c0ef7d68294fd061296090a86a6c02e86e301dbd09d35bd",
+          "target": "Targets.Package"
+        }
+      ],
+      "rewriteSupported": false,
+      "schemaVersion": "ast-mcp.project-facts.v1",
+      "sourceArtifactId": "ae9a7e0882bc64512e9f9b9a90a9ba6a5b3153daf44338e9989ce02a4fc5f6e8",
+      "sourceByteLength": 88,
+      "sourceDigest": "ccff215b4ae56ebb0174a471f4cecedefce3be629cf6bf8ef2dc368ec181719e",
+      "syntaxFactsArtifactId": "ede450d2c0d5a85de0eb195f4592f0a05ce89327fc565de1770178de9dc47023"
+    }
+  }
+}

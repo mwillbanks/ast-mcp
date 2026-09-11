@@ -28,8 +28,6 @@ import {
 } from "./installer-transport";
 import { isManagedHook } from "./managed-hook";
 import {
-  AST_BRO_BINARY,
-  assertAstBroAvailable,
   globalBinDirectories,
   resolveGlobalBinaryAlias,
 } from "./runtime/dependencies";
@@ -121,18 +119,6 @@ async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
-async function installerAstBroBinary(options: InstallOptions) {
-  const root = path.resolve(options.root);
-  const config = await resolveConfig({
-    cwd: root,
-    env: installerConfigEnvironment(options),
-    home: options.home,
-  });
-  return (
-    options.astBroBinary ?? config.dependencies.astBroBinary ?? AST_BRO_BINARY
-  );
-}
-
 function definition(
   root: string | undefined,
   home: string,
@@ -238,7 +224,6 @@ async function skills(folder: string) {
   await rm(destination, { force: true, recursive: true });
   await mkdir(folder, { recursive: true });
   await cp(path.join(packageRoot, "templates/skills", "ast-mcp"), destination, {
-    filter: (source) => path.basename(source) !== ".ast-bro",
     force: true,
     recursive: true,
   });
@@ -354,7 +339,6 @@ async function hasLocalInstallation(root: string) {
 }
 
 export interface InstallOptions {
-  astBroBinary?: string;
   cliEntry?: string;
   deprecatedRoot?: boolean;
   globalBinDirectories?: string[];
@@ -457,7 +441,6 @@ function targetPaths(
 async function snapshot(paths: string[]) {
   const files = new Map<string, string>();
   const visit = async (file: string): Promise<void> => {
-    if (path.basename(file) === ".ast-bro") return;
     const metadata = await lstat(file).catch(() => undefined);
     if (!metadata) return;
     if (metadata.isDirectory()) {
@@ -865,7 +848,6 @@ async function reconcile(
         });
         await preflightService(serviceConfiguration(options, endpoint));
       }
-      assertAstBroAvailable(await installerAstBroBinary(options));
       await ensureInstallerConfig(options, root, home);
       const endpoint = await reconcileEndpoint(options, transport, root, home);
       for (const target of options.targets)

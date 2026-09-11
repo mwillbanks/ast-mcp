@@ -1,12 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install } from "../src/installer";
@@ -31,9 +24,6 @@ test("diagnoses the platform-native managed HTTP service", async () => {
   if (process.platform !== "darwin" && process.platform !== "linux") return;
   const root = await temporary("ast-mcp-check-service-root-");
   const home = await temporary("ast-mcp-check-service-home-");
-  const astBroBinary = path.join(root, "node_modules/.bin/ast-bro");
-  await mkdir(path.dirname(astBroBinary), { recursive: true });
-  await symlink(path.resolve("node_modules/.bin/ast-bro"), astBroBinary);
   await install({
     home,
     host: "127.0.0.1",

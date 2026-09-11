@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install, uninstall } from "../src/installer";
-import { AST_BRO_BINARY } from "../src/runtime/dependencies";
 
 test("installer validates configuration before mutation and uninstall stays available", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-install-config-"));
@@ -17,7 +16,6 @@ test("installer validates configuration before mutation and uninstall stays avai
   try {
     await expect(
       install({
-        astBroBinary: AST_BRO_BINARY,
         home,
         root,
         scope: "local",

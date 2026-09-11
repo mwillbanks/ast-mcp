@@ -1,6 +1,6 @@
 # Patch state machine
 
-The server distinguishes AST inspection from structural rewrite support. AST-capable files use `map`, `show`, `search`, `context`, or `run` for content discovery; a rewrite target is structurally capable only when its language supports `run` and ast-bro reports `error_count: 0`.
+The server distinguishes AST inspection from structural rewrite support. AST-capable files use `map`, `show`, `search`, `context`, or `run` for content discovery; a rewrite target is structurally capable only when its language supports `run` and the native parser reports no error diagnostics.
 
 ## Route selection
 
@@ -22,7 +22,7 @@ MCP transport requests may contain a JSON-RPC array of requests and notification
 - Use `$NODE` for one node and `$$NODES` for zero or more nodes.
 - Preview with the same language, explicit paths, and optional glob.
 - Inspect search matches, then use `file_patch` with `preview: true` for the full guarded diff; keep direct `run.write` for exceptional lower-level rewrites only.
-- ast-bro 4.2.0 changes only the first match in each file; narrow ambiguous patterns rather than assuming replace-all behavior.
+- Every native AST rule declares its expected match count; reject ambiguous patterns before mutation.
 - Split declarations, calls, and type references into separate rules.
 
 ## Aider block discipline

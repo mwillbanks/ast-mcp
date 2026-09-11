@@ -1,0 +1,4924 @@
+{
+  "capabilities": [
+    {
+      "format": "markdown",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "mdx",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "json",
+      "limitations": [],
+      "parse": "supported",
+      "provider": "structured",
+      "rewrite": "supported",
+      "structuralRead": "supported"
+    },
+    {
+      "format": "jsonc",
+      "limitations": [],
+      "parse": "supported",
+      "provider": "structured",
+      "rewrite": "supported",
+      "structuralRead": "supported"
+    },
+    {
+      "format": "toml",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "yaml",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "xml",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "html",
+      "limitations": [
+        "The bundled parser covers documented structural syntax but not every format extension"
+      ],
+      "parse": "partial",
+      "provider": "structured",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "txt",
+      "limitations": [
+        "TXT exposes paragraphs and explicit references without claiming an AST"
+      ],
+      "parse": "partial",
+      "provider": "tokenizer",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    },
+    {
+      "format": "rtf",
+      "limitations": [
+        "RTF extracted-text offsets are mapped evidence and cannot drive raw-file edits"
+      ],
+      "parse": "partial",
+      "provider": "tokenizer",
+      "rewrite": "unsupported",
+      "structuralRead": "partial"
+    }
+  ],
+  "provenance": {
+    "graphifyRevision": "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+    "schemaVersion": "ast-mcp.document-goldens.v1"
+  },
+  "records": [
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "html",
+        "nodes": [
+          {
+            "childIds": [
+              "83a6b84fb3fd8f52cf8835a077d0dc8cb460e70fa45a1c2c7ddb5c493992cae4"
+            ],
+            "id": "38f8a4af088c82246502ec4defaa250636052324d287c490421e928811b63989",
+            "kind": "element",
+            "name": "html",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 79,
+                "line": 1
+              },
+              "endByte": 96,
+              "endCoordinate": {
+                "byteOffset": 96,
+                "characterOffset": 95,
+                "column": 79,
+                "line": 1,
+                "utf16Column": 79,
+                "utf16Offset": 95
+              },
+              "start": {
+                "column": 0,
+                "line": 1
+              },
+              "startByte": 16,
+              "startCoordinate": {
+                "byteOffset": 16,
+                "characterOffset": 16,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 16
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [
+              "b0f3665494061a94312707a503af5a9183f2b88df6ed2fc2b0544e701e211347",
+              "9c68a79f5a4b04d7578642b5d285129d6e93b2ef3854dddb0cf58c7ce07ca5d6"
+            ],
+            "id": "83a6b84fb3fd8f52cf8835a077d0dc8cb460e70fa45a1c2c7ddb5c493992cae4",
+            "kind": "element",
+            "name": "body",
+            "parentId": "38f8a4af088c82246502ec4defaa250636052324d287c490421e928811b63989",
+            "range": {
+              "end": {
+                "column": 72,
+                "line": 1
+              },
+              "endByte": 89,
+              "endCoordinate": {
+                "byteOffset": 89,
+                "characterOffset": 88,
+                "column": 72,
+                "line": 1,
+                "utf16Column": 72,
+                "utf16Offset": 88
+              },
+              "start": {
+                "column": 16,
+                "line": 1
+              },
+              "startByte": 32,
+              "startCoordinate": {
+                "byteOffset": 32,
+                "characterOffset": 32,
+                "column": 16,
+                "line": 1,
+                "utf16Column": 16,
+                "utf16Offset": 32
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "b0f3665494061a94312707a503af5a9183f2b88df6ed2fc2b0544e701e211347",
+            "kind": "element",
+            "name": "a",
+            "parentId": "83a6b84fb3fd8f52cf8835a077d0dc8cb460e70fa45a1c2c7ddb5c493992cae4",
+            "range": {
+              "end": {
+                "column": 61,
+                "line": 1
+              },
+              "endByte": 78,
+              "endCoordinate": {
+                "byteOffset": 78,
+                "characterOffset": 77,
+                "column": 61,
+                "line": 1,
+                "utf16Column": 61,
+                "utf16Offset": 77
+              },
+              "start": {
+                "column": 22,
+                "line": 1
+              },
+              "startByte": 38,
+              "startCoordinate": {
+                "byteOffset": 38,
+                "characterOffset": 38,
+                "column": 22,
+                "line": 1,
+                "utf16Column": 22,
+                "utf16Offset": 38
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "9c68a79f5a4b04d7578642b5d285129d6e93b2ef3854dddb0cf58c7ce07ca5d6",
+            "kind": "element",
+            "name": "br",
+            "parentId": "83a6b84fb3fd8f52cf8835a077d0dc8cb460e70fa45a1c2c7ddb5c493992cae4",
+            "range": {
+              "end": {
+                "column": 65,
+                "line": 1
+              },
+              "endByte": 82,
+              "endCoordinate": {
+                "byteOffset": 82,
+                "characterOffset": 81,
+                "column": 65,
+                "line": 1,
+                "utf16Column": 65,
+                "utf16Offset": 81
+              },
+              "start": {
+                "column": 61,
+                "line": 1
+              },
+              "startByte": 78,
+              "startCoordinate": {
+                "byteOffset": 78,
+                "characterOffset": 77,
+                "column": 61,
+                "line": 1,
+                "utf16Column": 61,
+                "utf16Offset": 77
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [
+          {
+            "id": "afb168e5f3792042600294b8270defe9e41272d6613c0df4c580baafb127a3e2",
+            "kind": "link",
+            "range": {
+              "end": {
+                "column": 51,
+                "line": 1
+              },
+              "endByte": 67,
+              "endCoordinate": {
+                "byteOffset": 67,
+                "characterOffset": 67,
+                "column": 51,
+                "line": 1,
+                "utf16Column": 51,
+                "utf16Offset": 67
+              },
+              "start": {
+                "column": 31,
+                "line": 1
+              },
+              "startByte": 47,
+              "startCoordinate": {
+                "byteOffset": 47,
+                "characterOffset": 47,
+                "column": 31,
+                "line": 1,
+                "utf16Column": 31,
+                "utf16Offset": 47
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "https://example.test"
+          }
+        ],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 97,
+        "sourceDigest": "5a40101aeeff712af6b86ca1e5b61a039d644006aa14f57a154eec54ede660a9",
+        "syntaxFactsArtifactId": "bb228c29c3c4ffe62f73a4f1f094dd86406c7ad10dd8d08775cb91ff05e1042e"
+      },
+      "fixture": "document.html",
+      "fixtureSha256": "5a40101aeeff712af6b86ca1e5b61a039d644006aa14f57a154eec54ede660a9",
+      "format": "html"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "json",
+        "nodes": [
+          {
+            "childIds": [
+              "f6a302b45095adc6e28e1d5caa5b41cc50028e027fbf944ef1a0f8499e8689af",
+              "2b52a9f5530203c8fe64018f515e7ec6c9d8b9b7cdb0e1d3f4cbe34879ffa4ad"
+            ],
+            "id": "850e100a346c54c87ff0700ff4448714a0b162c52200710cf04db24c5ff35ed7",
+            "kind": "object",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 38,
+                "line": 0
+              },
+              "endByte": 39,
+              "endCoordinate": {
+                "byteOffset": 39,
+                "characterOffset": 38,
+                "column": 38,
+                "line": 0,
+                "utf16Column": 38,
+                "utf16Offset": 38
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [
+              "0a3ab414aecca1522a016391d954e33a5326affacf6244f93a80800225d0d934",
+              "3232ce386ccba3dff83d9a7f662a5410c2c778e83714b4406fc81ee4b41ef1f6"
+            ],
+            "id": "f6a302b45095adc6e28e1d5caa5b41cc50028e027fbf944ef1a0f8499e8689af",
+            "kind": "array",
+            "name": "items",
+            "parentId": "850e100a346c54c87ff0700ff4448714a0b162c52200710cf04db24c5ff35ed7",
+            "range": {
+              "end": {
+                "column": 20,
+                "line": 0
+              },
+              "endByte": 20,
+              "endCoordinate": {
+                "byteOffset": 20,
+                "characterOffset": 20,
+                "column": 20,
+                "line": 0,
+                "utf16Column": 20,
+                "utf16Offset": 20
+              },
+              "start": {
+                "column": 11,
+                "line": 0
+              },
+              "startByte": 11,
+              "startCoordinate": {
+                "byteOffset": 11,
+                "characterOffset": 11,
+                "column": 11,
+                "line": 0,
+                "utf16Column": 11,
+                "utf16Offset": 11
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "0a3ab414aecca1522a016391d954e33a5326affacf6244f93a80800225d0d934",
+            "kind": "value",
+            "name": null,
+            "parentId": "f6a302b45095adc6e28e1d5caa5b41cc50028e027fbf944ef1a0f8499e8689af",
+            "range": {
+              "end": {
+                "column": 13,
+                "line": 0
+              },
+              "endByte": 13,
+              "endCoordinate": {
+                "byteOffset": 13,
+                "characterOffset": 13,
+                "column": 13,
+                "line": 0,
+                "utf16Column": 13,
+                "utf16Offset": 13
+              },
+              "start": {
+                "column": 12,
+                "line": 0
+              },
+              "startByte": 12,
+              "startCoordinate": {
+                "byteOffset": 12,
+                "characterOffset": 12,
+                "column": 12,
+                "line": 0,
+                "utf16Column": 12,
+                "utf16Offset": 12
+              }
+            },
+            "value": "1"
+          },
+          {
+            "childIds": [],
+            "id": "3232ce386ccba3dff83d9a7f662a5410c2c778e83714b4406fc81ee4b41ef1f6",
+            "kind": "value",
+            "name": null,
+            "parentId": "f6a302b45095adc6e28e1d5caa5b41cc50028e027fbf944ef1a0f8499e8689af",
+            "range": {
+              "end": {
+                "column": 19,
+                "line": 0
+              },
+              "endByte": 19,
+              "endCoordinate": {
+                "byteOffset": 19,
+                "characterOffset": 19,
+                "column": 19,
+                "line": 0,
+                "utf16Column": 19,
+                "utf16Offset": 19
+              },
+              "start": {
+                "column": 15,
+                "line": 0
+              },
+              "startByte": 15,
+              "startCoordinate": {
+                "byteOffset": 15,
+                "characterOffset": 15,
+                "column": 15,
+                "line": 0,
+                "utf16Column": 15,
+                "utf16Offset": 15
+              }
+            },
+            "value": "true"
+          },
+          {
+            "childIds": [],
+            "id": "2b52a9f5530203c8fe64018f515e7ec6c9d8b9b7cdb0e1d3f4cbe34879ffa4ad",
+            "kind": "value",
+            "name": "name",
+            "parentId": "850e100a346c54c87ff0700ff4448714a0b162c52200710cf04db24c5ff35ed7",
+            "range": {
+              "end": {
+                "column": 36,
+                "line": 0
+              },
+              "endByte": 37,
+              "endCoordinate": {
+                "byteOffset": 37,
+                "characterOffset": 36,
+                "column": 36,
+                "line": 0,
+                "utf16Column": 36,
+                "utf16Offset": 36
+              },
+              "start": {
+                "column": 30,
+                "line": 0
+              },
+              "startByte": 30,
+              "startCoordinate": {
+                "byteOffset": 30,
+                "characterOffset": 30,
+                "column": 30,
+                "line": 0,
+                "utf16Column": 30,
+                "utf16Offset": 30
+              }
+            },
+            "value": "café"
+          }
+        ],
+        "references": [],
+        "rewriteSupported": true,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 40,
+        "sourceDigest": "4d1d8bd93ff9ad43ff513811cbdea45e682fe7bd12f19a5f6181d8dc8f206000",
+        "syntaxFactsArtifactId": "00c990e7e2be5b3284ba27989d0df7a0a6c469b5c1aa100d10d3f4946b1d728c"
+      },
+      "fixture": "document.json",
+      "fixtureSha256": "4d1d8bd93ff9ad43ff513811cbdea45e682fe7bd12f19a5f6181d8dc8f206000",
+      "format": "json"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "jsonc",
+        "nodes": [
+          {
+            "childIds": [
+              "9f576794a6b1d70aa6cfc40b90dad3bc8596a51e239d3cce5b5cdb29513c5f50",
+              "a5ee60fe0d13d632c973f4c7ac20b3ca510a11686d6e8d67fc0b0e3ad1b5295d"
+            ],
+            "id": "ac57ca9643b33bfac5d156ac4473a0184ef3f857416c4ee16fa6d99422bda3ef",
+            "kind": "object",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 1,
+                "line": 7
+              },
+              "endByte": 98,
+              "endCoordinate": {
+                "byteOffset": 98,
+                "characterOffset": 97,
+                "column": 1,
+                "line": 7,
+                "utf16Column": 1,
+                "utf16Offset": 97
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "9f576794a6b1d70aa6cfc40b90dad3bc8596a51e239d3cce5b5cdb29513c5f50",
+            "kind": "value",
+            "name": "name",
+            "parentId": "ac57ca9643b33bfac5d156ac4473a0184ef3f857416c4ee16fa6d99422bda3ef",
+            "range": {
+              "end": {
+                "column": 16,
+                "line": 2
+              },
+              "endByte": 41,
+              "endCoordinate": {
+                "byteOffset": 41,
+                "characterOffset": 40,
+                "column": 16,
+                "line": 2,
+                "utf16Column": 16,
+                "utf16Offset": 40
+              },
+              "start": {
+                "column": 10,
+                "line": 2
+              },
+              "startByte": 34,
+              "startCoordinate": {
+                "byteOffset": 34,
+                "characterOffset": 34,
+                "column": 10,
+                "line": 2,
+                "utf16Column": 10,
+                "utf16Offset": 34
+              }
+            },
+            "value": "café"
+          },
+          {
+            "childIds": [
+              "68b6655aab970d2543b42e2273c71d8f22db98ea03c192159a0eb3763faadce8",
+              "db19d58de365ae387da55143e2ca5e0211b11e6579fdbfe999e65c82a5c9dd8d"
+            ],
+            "id": "a5ee60fe0d13d632c973f4c7ac20b3ca510a11686d6e8d67fc0b0e3ad1b5295d",
+            "kind": "object",
+            "name": "nested",
+            "parentId": "ac57ca9643b33bfac5d156ac4473a0184ef3f857416c4ee16fa6d99422bda3ef",
+            "range": {
+              "end": {
+                "column": 3,
+                "line": 6
+              },
+              "endByte": 96,
+              "endCoordinate": {
+                "byteOffset": 96,
+                "characterOffset": 95,
+                "column": 3,
+                "line": 6,
+                "utf16Column": 3,
+                "utf16Offset": 95
+              },
+              "start": {
+                "column": 12,
+                "line": 3
+              },
+              "startByte": 55,
+              "startCoordinate": {
+                "byteOffset": 55,
+                "characterOffset": 54,
+                "column": 12,
+                "line": 3,
+                "utf16Column": 12,
+                "utf16Offset": 54
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "68b6655aab970d2543b42e2273c71d8f22db98ea03c192159a0eb3763faadce8",
+            "kind": "value",
+            "name": "count",
+            "parentId": "a5ee60fe0d13d632c973f4c7ac20b3ca510a11686d6e8d67fc0b0e3ad1b5295d",
+            "range": {
+              "end": {
+                "column": 14,
+                "line": 4
+              },
+              "endByte": 71,
+              "endCoordinate": {
+                "byteOffset": 71,
+                "characterOffset": 70,
+                "column": 14,
+                "line": 4,
+                "utf16Column": 14,
+                "utf16Offset": 70
+              },
+              "start": {
+                "column": 13,
+                "line": 4
+              },
+              "startByte": 70,
+              "startCoordinate": {
+                "byteOffset": 70,
+                "characterOffset": 69,
+                "column": 13,
+                "line": 4,
+                "utf16Column": 13,
+                "utf16Offset": 69
+              }
+            },
+            "value": "2"
+          },
+          {
+            "childIds": [],
+            "id": "db19d58de365ae387da55143e2ca5e0211b11e6579fdbfe999e65c82a5c9dd8d",
+            "kind": "value",
+            "name": "enabled",
+            "parentId": "a5ee60fe0d13d632c973f4c7ac20b3ca510a11686d6e8d67fc0b0e3ad1b5295d",
+            "range": {
+              "end": {
+                "column": 19,
+                "line": 5
+              },
+              "endByte": 92,
+              "endCoordinate": {
+                "byteOffset": 92,
+                "characterOffset": 91,
+                "column": 19,
+                "line": 5,
+                "utf16Column": 19,
+                "utf16Offset": 91
+              },
+              "start": {
+                "column": 15,
+                "line": 5
+              },
+              "startByte": 88,
+              "startCoordinate": {
+                "byteOffset": 88,
+                "characterOffset": 87,
+                "column": 15,
+                "line": 5,
+                "utf16Column": 15,
+                "utf16Offset": 87
+              }
+            },
+            "value": "true"
+          }
+        ],
+        "references": [],
+        "rewriteSupported": true,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 99,
+        "sourceDigest": "65f4e1a1edd9e6eeecbad3cf80048d68a4ac90f748dc8645cb6bc366ee43c452",
+        "syntaxFactsArtifactId": "2ec1183a94b4a41b48403d89854873b896116c02cd70a4e9e79a31bfd40339c8"
+      },
+      "fixture": "document.jsonc",
+      "fixtureSha256": "65f4e1a1edd9e6eeecbad3cf80048d68a4ac90f748dc8645cb6bc366ee43c452",
+      "format": "jsonc"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [
+          {
+            "facts": {
+              "calls": [
+                {
+                  "callee": "build",
+                  "enclosingSymbolId": "59644fb4486db3fffc6eaa54c26821de3b05a3f24ed630c51be13ced25b62d47",
+                  "id": "a12b3be6070a345592554c2bdb6bebfe2436b744a3b62c920b3317024431203a",
+                  "range": {
+                    "end": {
+                      "column": 27,
+                      "line": 18
+                    },
+                    "endByte": 377,
+                    "endCoordinate": {
+                      "byteOffset": 377,
+                      "characterOffset": 373,
+                      "column": 27,
+                      "line": 18,
+                      "utf16Column": 28,
+                      "utf16Offset": 374
+                    },
+                    "start": {
+                      "column": 17,
+                      "line": 18
+                    },
+                    "startByte": 364,
+                    "startCoordinate": {
+                      "byteOffset": 364,
+                      "characterOffset": 363,
+                      "column": 17,
+                      "line": 18,
+                      "utf16Column": 17,
+                      "utf16Offset": 363
+                    }
+                  }
+                }
+              ],
+              "diagnostics": [],
+              "exports": [
+                {
+                  "exportedName": "Widget",
+                  "id": "3277102062265a73f8ce886feef30a4d93aa01586e3206edfb1a5d2bcb6ff497",
+                  "localName": "Widget",
+                  "range": {
+                    "end": {
+                      "column": 1,
+                      "line": 19
+                    },
+                    "endByte": 382,
+                    "endCoordinate": {
+                      "byteOffset": 382,
+                      "characterOffset": 378,
+                      "column": 1,
+                      "line": 19,
+                      "utf16Column": 1,
+                      "utf16Offset": 379
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 17
+                    },
+                    "startByte": 292,
+                    "startCoordinate": {
+                      "byteOffset": 292,
+                      "characterOffset": 291,
+                      "column": 0,
+                      "line": 17,
+                      "utf16Column": 0,
+                      "utf16Offset": 291
+                    }
+                  },
+                  "source": null,
+                  "typeOnly": false
+                }
+              ],
+              "extractorFingerprint": "31ea3f499763e01e9e2e3448d26fb74a6442fa4b819dbbbf27782ef00ce515f6",
+              "grammarFingerprint": "227afef0ff38d7928bafcc471d4e332a6db42cb772453d670c7f937755cbc583",
+              "implementations": [
+                {
+                  "id": "2f5782c38c1ba0ca7fa4751f62347eaf5e57f781c07a8b78d3a8780741798775",
+                  "range": {
+                    "end": {
+                      "column": 52,
+                      "line": 17
+                    },
+                    "endByte": 344,
+                    "endCoordinate": {
+                      "byteOffset": 344,
+                      "characterOffset": 343,
+                      "column": 52,
+                      "line": 17,
+                      "utf16Column": 52,
+                      "utf16Offset": 343
+                    },
+                    "start": {
+                      "column": 44,
+                      "line": 17
+                    },
+                    "startByte": 336,
+                    "startCoordinate": {
+                      "byteOffset": 336,
+                      "characterOffset": 335,
+                      "column": 44,
+                      "line": 17,
+                      "utf16Column": 44,
+                      "utf16Offset": 335
+                    }
+                  },
+                  "sourceSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "targetName": "Runnable"
+                }
+              ],
+              "imports": [],
+              "inheritance": [
+                {
+                  "id": "5ac66dc8af6f953f04b353954f1047b51c2e33a16dc9262552c539b072c18b64",
+                  "range": {
+                    "end": {
+                      "column": 32,
+                      "line": 17
+                    },
+                    "endByte": 324,
+                    "endCoordinate": {
+                      "byteOffset": 324,
+                      "characterOffset": 323,
+                      "column": 32,
+                      "line": 17,
+                      "utf16Column": 32,
+                      "utf16Offset": 323
+                    },
+                    "start": {
+                      "column": 28,
+                      "line": 17
+                    },
+                    "startByte": 320,
+                    "startCoordinate": {
+                      "byteOffset": 320,
+                      "characterOffset": 319,
+                      "column": 28,
+                      "line": 17,
+                      "utf16Column": 28,
+                      "utf16Offset": 319
+                    }
+                  },
+                  "sourceSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "targetName": "Base"
+                }
+              ],
+              "languageId": "typescript",
+              "nodes": [
+                {
+                  "childIds": [
+                    "cc9ad6cd3721ef0ff205172640343c96a39655d44782eb2c4837af2c3da4ca4d",
+                    "13892fd939d3bbbc65372b346d16f148a6dccbcf4820fda72beec8dfaeeeacb8",
+                    "1ccccb2e8686acddb2e6dc3ba5e43c5ddc73d309db3b419deb94ce804f3c376b"
+                  ],
+                  "id": "6194adb1937caacc150872b5580fd43107ddd3ea215e8661fdb175a7242de445",
+                  "kind": "program",
+                  "named": true,
+                  "parentId": null,
+                  "range": {
+                    "end": {
+                      "column": 0,
+                      "line": 20
+                    },
+                    "endByte": 383,
+                    "endCoordinate": {
+                      "byteOffset": 383,
+                      "characterOffset": 379,
+                      "column": 0,
+                      "line": 20,
+                      "utf16Column": 0,
+                      "utf16Offset": 380
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 15
+                    },
+                    "startByte": 233,
+                    "startCoordinate": {
+                      "byteOffset": 233,
+                      "characterOffset": 232,
+                      "column": 0,
+                      "line": 15,
+                      "utf16Column": 0,
+                      "utf16Offset": 232
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "6f02aa5b06197f0bab12f38d6036aca3aa3e0af263f6ced059e7b3f6d57927e9",
+                    "fb26930967f8e0173f701b33856a04dfa60cdb1b034f2d6075421bcf93f8b210"
+                  ],
+                  "id": "cc9ad6cd3721ef0ff205172640343c96a39655d44782eb2c4837af2c3da4ca4d",
+                  "kind": "interface_declaration",
+                  "named": true,
+                  "parentId": "6194adb1937caacc150872b5580fd43107ddd3ea215e8661fdb175a7242de445",
+                  "range": {
+                    "end": {
+                      "column": 36,
+                      "line": 15
+                    },
+                    "endByte": 269,
+                    "endCoordinate": {
+                      "byteOffset": 269,
+                      "characterOffset": 268,
+                      "column": 36,
+                      "line": 15,
+                      "utf16Column": 36,
+                      "utf16Offset": 268
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 15
+                    },
+                    "startByte": 233,
+                    "startCoordinate": {
+                      "byteOffset": 233,
+                      "characterOffset": 232,
+                      "column": 0,
+                      "line": 15,
+                      "utf16Column": 0,
+                      "utf16Offset": 232
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "6f02aa5b06197f0bab12f38d6036aca3aa3e0af263f6ced059e7b3f6d57927e9",
+                  "kind": "type_identifier",
+                  "named": true,
+                  "parentId": "cc9ad6cd3721ef0ff205172640343c96a39655d44782eb2c4837af2c3da4ca4d",
+                  "range": {
+                    "end": {
+                      "column": 18,
+                      "line": 15
+                    },
+                    "endByte": 251,
+                    "endCoordinate": {
+                      "byteOffset": 251,
+                      "characterOffset": 250,
+                      "column": 18,
+                      "line": 15,
+                      "utf16Column": 18,
+                      "utf16Offset": 250
+                    },
+                    "start": {
+                      "column": 10,
+                      "line": 15
+                    },
+                    "startByte": 243,
+                    "startCoordinate": {
+                      "byteOffset": 243,
+                      "characterOffset": 242,
+                      "column": 10,
+                      "line": 15,
+                      "utf16Column": 10,
+                      "utf16Offset": 242
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "77666ebe9a8a7352819973761c7fe9960712776b113b1fa0e13ef3173be1e080"
+                  ],
+                  "id": "fb26930967f8e0173f701b33856a04dfa60cdb1b034f2d6075421bcf93f8b210",
+                  "kind": "interface_body",
+                  "named": true,
+                  "parentId": "cc9ad6cd3721ef0ff205172640343c96a39655d44782eb2c4837af2c3da4ca4d",
+                  "range": {
+                    "end": {
+                      "column": 36,
+                      "line": 15
+                    },
+                    "endByte": 269,
+                    "endCoordinate": {
+                      "byteOffset": 269,
+                      "characterOffset": 268,
+                      "column": 36,
+                      "line": 15,
+                      "utf16Column": 36,
+                      "utf16Offset": 268
+                    },
+                    "start": {
+                      "column": 19,
+                      "line": 15
+                    },
+                    "startByte": 252,
+                    "startCoordinate": {
+                      "byteOffset": 252,
+                      "characterOffset": 251,
+                      "column": 19,
+                      "line": 15,
+                      "utf16Column": 19,
+                      "utf16Offset": 251
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "09532fbf65c4a13603852eba8df5e3696a54afffc4efc603c0ab3941e4718357",
+                    "03bd39e88fcaf9f1fe05067b3cf336c0167fc9b74bd4e122313c1da7579012b0",
+                    "4ef7a072246f5001b77414bbf7ff9df3b680752dd543c7dad647931e9438e228"
+                  ],
+                  "id": "77666ebe9a8a7352819973761c7fe9960712776b113b1fa0e13ef3173be1e080",
+                  "kind": "method_signature",
+                  "named": true,
+                  "parentId": "fb26930967f8e0173f701b33856a04dfa60cdb1b034f2d6075421bcf93f8b210",
+                  "range": {
+                    "end": {
+                      "column": 34,
+                      "line": 15
+                    },
+                    "endByte": 267,
+                    "endCoordinate": {
+                      "byteOffset": 267,
+                      "characterOffset": 266,
+                      "column": 34,
+                      "line": 15,
+                      "utf16Column": 34,
+                      "utf16Offset": 266
+                    },
+                    "start": {
+                      "column": 21,
+                      "line": 15
+                    },
+                    "startByte": 254,
+                    "startCoordinate": {
+                      "byteOffset": 254,
+                      "characterOffset": 253,
+                      "column": 21,
+                      "line": 15,
+                      "utf16Column": 21,
+                      "utf16Offset": 253
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "09532fbf65c4a13603852eba8df5e3696a54afffc4efc603c0ab3941e4718357",
+                  "kind": "property_identifier",
+                  "named": true,
+                  "parentId": "77666ebe9a8a7352819973761c7fe9960712776b113b1fa0e13ef3173be1e080",
+                  "range": {
+                    "end": {
+                      "column": 24,
+                      "line": 15
+                    },
+                    "endByte": 257,
+                    "endCoordinate": {
+                      "byteOffset": 257,
+                      "characterOffset": 256,
+                      "column": 24,
+                      "line": 15,
+                      "utf16Column": 24,
+                      "utf16Offset": 256
+                    },
+                    "start": {
+                      "column": 21,
+                      "line": 15
+                    },
+                    "startByte": 254,
+                    "startCoordinate": {
+                      "byteOffset": 254,
+                      "characterOffset": 253,
+                      "column": 21,
+                      "line": 15,
+                      "utf16Column": 21,
+                      "utf16Offset": 253
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "03bd39e88fcaf9f1fe05067b3cf336c0167fc9b74bd4e122313c1da7579012b0",
+                  "kind": "formal_parameters",
+                  "named": true,
+                  "parentId": "77666ebe9a8a7352819973761c7fe9960712776b113b1fa0e13ef3173be1e080",
+                  "range": {
+                    "end": {
+                      "column": 26,
+                      "line": 15
+                    },
+                    "endByte": 259,
+                    "endCoordinate": {
+                      "byteOffset": 259,
+                      "characterOffset": 258,
+                      "column": 26,
+                      "line": 15,
+                      "utf16Column": 26,
+                      "utf16Offset": 258
+                    },
+                    "start": {
+                      "column": 24,
+                      "line": 15
+                    },
+                    "startByte": 257,
+                    "startCoordinate": {
+                      "byteOffset": 257,
+                      "characterOffset": 256,
+                      "column": 24,
+                      "line": 15,
+                      "utf16Column": 24,
+                      "utf16Offset": 256
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "8aa62da1d3a2b11d9769a7315941946222b535d55712dc7a2891e24cbd9272e8"
+                  ],
+                  "id": "4ef7a072246f5001b77414bbf7ff9df3b680752dd543c7dad647931e9438e228",
+                  "kind": "type_annotation",
+                  "named": true,
+                  "parentId": "77666ebe9a8a7352819973761c7fe9960712776b113b1fa0e13ef3173be1e080",
+                  "range": {
+                    "end": {
+                      "column": 34,
+                      "line": 15
+                    },
+                    "endByte": 267,
+                    "endCoordinate": {
+                      "byteOffset": 267,
+                      "characterOffset": 266,
+                      "column": 34,
+                      "line": 15,
+                      "utf16Column": 34,
+                      "utf16Offset": 266
+                    },
+                    "start": {
+                      "column": 26,
+                      "line": 15
+                    },
+                    "startByte": 259,
+                    "startCoordinate": {
+                      "byteOffset": 259,
+                      "characterOffset": 258,
+                      "column": 26,
+                      "line": 15,
+                      "utf16Column": 26,
+                      "utf16Offset": 258
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "8aa62da1d3a2b11d9769a7315941946222b535d55712dc7a2891e24cbd9272e8",
+                  "kind": "predefined_type",
+                  "named": true,
+                  "parentId": "4ef7a072246f5001b77414bbf7ff9df3b680752dd543c7dad647931e9438e228",
+                  "range": {
+                    "end": {
+                      "column": 34,
+                      "line": 15
+                    },
+                    "endByte": 267,
+                    "endCoordinate": {
+                      "byteOffset": 267,
+                      "characterOffset": 266,
+                      "column": 34,
+                      "line": 15,
+                      "utf16Column": 34,
+                      "utf16Offset": 266
+                    },
+                    "start": {
+                      "column": 28,
+                      "line": 15
+                    },
+                    "startByte": 261,
+                    "startCoordinate": {
+                      "byteOffset": 261,
+                      "characterOffset": 260,
+                      "column": 28,
+                      "line": 15,
+                      "utf16Column": 28,
+                      "utf16Offset": 260
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "c5fc6d6625494996f2e1da643964bd4c4506ea0579356b91226647cb1c1debf8"
+                  ],
+                  "id": "13892fd939d3bbbc65372b346d16f148a6dccbcf4820fda72beec8dfaeeeacb8",
+                  "kind": "ambient_declaration",
+                  "named": true,
+                  "parentId": "6194adb1937caacc150872b5580fd43107ddd3ea215e8661fdb175a7242de445",
+                  "range": {
+                    "end": {
+                      "column": 21,
+                      "line": 16
+                    },
+                    "endByte": 291,
+                    "endCoordinate": {
+                      "byteOffset": 291,
+                      "characterOffset": 290,
+                      "column": 21,
+                      "line": 16,
+                      "utf16Column": 21,
+                      "utf16Offset": 290
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 16
+                    },
+                    "startByte": 270,
+                    "startCoordinate": {
+                      "byteOffset": 270,
+                      "characterOffset": 269,
+                      "column": 0,
+                      "line": 16,
+                      "utf16Column": 0,
+                      "utf16Offset": 269
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "b149be21f0edad551f888e5613cd94f121dcc6112ef5d79a1c1d765add11a8e6",
+                    "a7005350ad88043a5ad4a176b65358d9b3dc8aaabea058d35cc41f32463d6b42"
+                  ],
+                  "id": "c5fc6d6625494996f2e1da643964bd4c4506ea0579356b91226647cb1c1debf8",
+                  "kind": "class_declaration",
+                  "named": true,
+                  "parentId": "13892fd939d3bbbc65372b346d16f148a6dccbcf4820fda72beec8dfaeeeacb8",
+                  "range": {
+                    "end": {
+                      "column": 21,
+                      "line": 16
+                    },
+                    "endByte": 291,
+                    "endCoordinate": {
+                      "byteOffset": 291,
+                      "characterOffset": 290,
+                      "column": 21,
+                      "line": 16,
+                      "utf16Column": 21,
+                      "utf16Offset": 290
+                    },
+                    "start": {
+                      "column": 8,
+                      "line": 16
+                    },
+                    "startByte": 278,
+                    "startCoordinate": {
+                      "byteOffset": 278,
+                      "characterOffset": 277,
+                      "column": 8,
+                      "line": 16,
+                      "utf16Column": 8,
+                      "utf16Offset": 277
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "b149be21f0edad551f888e5613cd94f121dcc6112ef5d79a1c1d765add11a8e6",
+                  "kind": "type_identifier",
+                  "named": true,
+                  "parentId": "c5fc6d6625494996f2e1da643964bd4c4506ea0579356b91226647cb1c1debf8",
+                  "range": {
+                    "end": {
+                      "column": 18,
+                      "line": 16
+                    },
+                    "endByte": 288,
+                    "endCoordinate": {
+                      "byteOffset": 288,
+                      "characterOffset": 287,
+                      "column": 18,
+                      "line": 16,
+                      "utf16Column": 18,
+                      "utf16Offset": 287
+                    },
+                    "start": {
+                      "column": 14,
+                      "line": 16
+                    },
+                    "startByte": 284,
+                    "startCoordinate": {
+                      "byteOffset": 284,
+                      "characterOffset": 283,
+                      "column": 14,
+                      "line": 16,
+                      "utf16Column": 14,
+                      "utf16Offset": 283
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "a7005350ad88043a5ad4a176b65358d9b3dc8aaabea058d35cc41f32463d6b42",
+                  "kind": "class_body",
+                  "named": true,
+                  "parentId": "c5fc6d6625494996f2e1da643964bd4c4506ea0579356b91226647cb1c1debf8",
+                  "range": {
+                    "end": {
+                      "column": 21,
+                      "line": 16
+                    },
+                    "endByte": 291,
+                    "endCoordinate": {
+                      "byteOffset": 291,
+                      "characterOffset": 290,
+                      "column": 21,
+                      "line": 16,
+                      "utf16Column": 21,
+                      "utf16Offset": 290
+                    },
+                    "start": {
+                      "column": 19,
+                      "line": 16
+                    },
+                    "startByte": 289,
+                    "startCoordinate": {
+                      "byteOffset": 289,
+                      "characterOffset": 288,
+                      "column": 19,
+                      "line": 16,
+                      "utf16Column": 19,
+                      "utf16Offset": 288
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "d5c25913b5d9b58893b19be5bcceb12e230f9fc24c71ab7753398eeb568887ef"
+                  ],
+                  "id": "1ccccb2e8686acddb2e6dc3ba5e43c5ddc73d309db3b419deb94ce804f3c376b",
+                  "kind": "export_statement",
+                  "named": true,
+                  "parentId": "6194adb1937caacc150872b5580fd43107ddd3ea215e8661fdb175a7242de445",
+                  "range": {
+                    "end": {
+                      "column": 1,
+                      "line": 19
+                    },
+                    "endByte": 382,
+                    "endCoordinate": {
+                      "byteOffset": 382,
+                      "characterOffset": 378,
+                      "column": 1,
+                      "line": 19,
+                      "utf16Column": 1,
+                      "utf16Offset": 379
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 17
+                    },
+                    "startByte": 292,
+                    "startCoordinate": {
+                      "byteOffset": 292,
+                      "characterOffset": 291,
+                      "column": 0,
+                      "line": 17,
+                      "utf16Column": 0,
+                      "utf16Offset": 291
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "580ecfe2c373d4da4ffe7ff4b8082b47306e65f5fcf793f3b118537e74a8a458",
+                    "08a8bfea9f5d9210ba0f49ce829ad0641612fd88392153951f4c7a6bb0e0dd84",
+                    "7792a3f70e898409f965159e92d1a37aec3144a8190ff39dd310bde94536e97a"
+                  ],
+                  "id": "d5c25913b5d9b58893b19be5bcceb12e230f9fc24c71ab7753398eeb568887ef",
+                  "kind": "class_declaration",
+                  "named": true,
+                  "parentId": "1ccccb2e8686acddb2e6dc3ba5e43c5ddc73d309db3b419deb94ce804f3c376b",
+                  "range": {
+                    "end": {
+                      "column": 1,
+                      "line": 19
+                    },
+                    "endByte": 382,
+                    "endCoordinate": {
+                      "byteOffset": 382,
+                      "characterOffset": 378,
+                      "column": 1,
+                      "line": 19,
+                      "utf16Column": 1,
+                      "utf16Offset": 379
+                    },
+                    "start": {
+                      "column": 7,
+                      "line": 17
+                    },
+                    "startByte": 299,
+                    "startCoordinate": {
+                      "byteOffset": 299,
+                      "characterOffset": 298,
+                      "column": 7,
+                      "line": 17,
+                      "utf16Column": 7,
+                      "utf16Offset": 298
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "580ecfe2c373d4da4ffe7ff4b8082b47306e65f5fcf793f3b118537e74a8a458",
+                  "kind": "type_identifier",
+                  "named": true,
+                  "parentId": "d5c25913b5d9b58893b19be5bcceb12e230f9fc24c71ab7753398eeb568887ef",
+                  "range": {
+                    "end": {
+                      "column": 19,
+                      "line": 17
+                    },
+                    "endByte": 311,
+                    "endCoordinate": {
+                      "byteOffset": 311,
+                      "characterOffset": 310,
+                      "column": 19,
+                      "line": 17,
+                      "utf16Column": 19,
+                      "utf16Offset": 310
+                    },
+                    "start": {
+                      "column": 13,
+                      "line": 17
+                    },
+                    "startByte": 305,
+                    "startCoordinate": {
+                      "byteOffset": 305,
+                      "characterOffset": 304,
+                      "column": 13,
+                      "line": 17,
+                      "utf16Column": 13,
+                      "utf16Offset": 304
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "7a16fdf22becd39c1810719a54e063a6f66566a08ba5a15b33c21b88afd81c80",
+                    "000526799407d1c8726013a046e087da5128c8f52143d5c3088efc09518f8c39"
+                  ],
+                  "id": "08a8bfea9f5d9210ba0f49ce829ad0641612fd88392153951f4c7a6bb0e0dd84",
+                  "kind": "class_heritage",
+                  "named": true,
+                  "parentId": "d5c25913b5d9b58893b19be5bcceb12e230f9fc24c71ab7753398eeb568887ef",
+                  "range": {
+                    "end": {
+                      "column": 52,
+                      "line": 17
+                    },
+                    "endByte": 344,
+                    "endCoordinate": {
+                      "byteOffset": 344,
+                      "characterOffset": 343,
+                      "column": 52,
+                      "line": 17,
+                      "utf16Column": 52,
+                      "utf16Offset": 343
+                    },
+                    "start": {
+                      "column": 20,
+                      "line": 17
+                    },
+                    "startByte": 312,
+                    "startCoordinate": {
+                      "byteOffset": 312,
+                      "characterOffset": 311,
+                      "column": 20,
+                      "line": 17,
+                      "utf16Column": 20,
+                      "utf16Offset": 311
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "15ec5517daba117a2555325e443800d97cae234f0a6fb5a3c7c2cf4084462a4a"
+                  ],
+                  "id": "7a16fdf22becd39c1810719a54e063a6f66566a08ba5a15b33c21b88afd81c80",
+                  "kind": "extends_clause",
+                  "named": true,
+                  "parentId": "08a8bfea9f5d9210ba0f49ce829ad0641612fd88392153951f4c7a6bb0e0dd84",
+                  "range": {
+                    "end": {
+                      "column": 32,
+                      "line": 17
+                    },
+                    "endByte": 324,
+                    "endCoordinate": {
+                      "byteOffset": 324,
+                      "characterOffset": 323,
+                      "column": 32,
+                      "line": 17,
+                      "utf16Column": 32,
+                      "utf16Offset": 323
+                    },
+                    "start": {
+                      "column": 20,
+                      "line": 17
+                    },
+                    "startByte": 312,
+                    "startCoordinate": {
+                      "byteOffset": 312,
+                      "characterOffset": 311,
+                      "column": 20,
+                      "line": 17,
+                      "utf16Column": 20,
+                      "utf16Offset": 311
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "15ec5517daba117a2555325e443800d97cae234f0a6fb5a3c7c2cf4084462a4a",
+                  "kind": "identifier",
+                  "named": true,
+                  "parentId": "7a16fdf22becd39c1810719a54e063a6f66566a08ba5a15b33c21b88afd81c80",
+                  "range": {
+                    "end": {
+                      "column": 32,
+                      "line": 17
+                    },
+                    "endByte": 324,
+                    "endCoordinate": {
+                      "byteOffset": 324,
+                      "characterOffset": 323,
+                      "column": 32,
+                      "line": 17,
+                      "utf16Column": 32,
+                      "utf16Offset": 323
+                    },
+                    "start": {
+                      "column": 28,
+                      "line": 17
+                    },
+                    "startByte": 320,
+                    "startCoordinate": {
+                      "byteOffset": 320,
+                      "characterOffset": 319,
+                      "column": 28,
+                      "line": 17,
+                      "utf16Column": 28,
+                      "utf16Offset": 319
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "688b618be1f2391c0b809cdb851f9d5048de7249bfaef9d8eeae9295f5847bd2"
+                  ],
+                  "id": "000526799407d1c8726013a046e087da5128c8f52143d5c3088efc09518f8c39",
+                  "kind": "implements_clause",
+                  "named": true,
+                  "parentId": "08a8bfea9f5d9210ba0f49ce829ad0641612fd88392153951f4c7a6bb0e0dd84",
+                  "range": {
+                    "end": {
+                      "column": 52,
+                      "line": 17
+                    },
+                    "endByte": 344,
+                    "endCoordinate": {
+                      "byteOffset": 344,
+                      "characterOffset": 343,
+                      "column": 52,
+                      "line": 17,
+                      "utf16Column": 52,
+                      "utf16Offset": 343
+                    },
+                    "start": {
+                      "column": 33,
+                      "line": 17
+                    },
+                    "startByte": 325,
+                    "startCoordinate": {
+                      "byteOffset": 325,
+                      "characterOffset": 324,
+                      "column": 33,
+                      "line": 17,
+                      "utf16Column": 33,
+                      "utf16Offset": 324
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "688b618be1f2391c0b809cdb851f9d5048de7249bfaef9d8eeae9295f5847bd2",
+                  "kind": "type_identifier",
+                  "named": true,
+                  "parentId": "000526799407d1c8726013a046e087da5128c8f52143d5c3088efc09518f8c39",
+                  "range": {
+                    "end": {
+                      "column": 52,
+                      "line": 17
+                    },
+                    "endByte": 344,
+                    "endCoordinate": {
+                      "byteOffset": 344,
+                      "characterOffset": 343,
+                      "column": 52,
+                      "line": 17,
+                      "utf16Column": 52,
+                      "utf16Offset": 343
+                    },
+                    "start": {
+                      "column": 44,
+                      "line": 17
+                    },
+                    "startByte": 336,
+                    "startCoordinate": {
+                      "byteOffset": 336,
+                      "characterOffset": 335,
+                      "column": 44,
+                      "line": 17,
+                      "utf16Column": 44,
+                      "utf16Offset": 335
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "cf8a00256d38edede9de66b6dae8cd0d73b5bcaa32126554f738f68d070d6118"
+                  ],
+                  "id": "7792a3f70e898409f965159e92d1a37aec3144a8190ff39dd310bde94536e97a",
+                  "kind": "class_body",
+                  "named": true,
+                  "parentId": "d5c25913b5d9b58893b19be5bcceb12e230f9fc24c71ab7753398eeb568887ef",
+                  "range": {
+                    "end": {
+                      "column": 1,
+                      "line": 19
+                    },
+                    "endByte": 382,
+                    "endCoordinate": {
+                      "byteOffset": 382,
+                      "characterOffset": 378,
+                      "column": 1,
+                      "line": 19,
+                      "utf16Column": 1,
+                      "utf16Offset": 379
+                    },
+                    "start": {
+                      "column": 53,
+                      "line": 17
+                    },
+                    "startByte": 345,
+                    "startCoordinate": {
+                      "byteOffset": 345,
+                      "characterOffset": 344,
+                      "column": 53,
+                      "line": 17,
+                      "utf16Column": 53,
+                      "utf16Offset": 344
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "05269fc1fc537310db10e5df9793b02fac8c237372fde4bed218c12a9662a77f",
+                    "5b83708935495f249a8924e7ce11ef45eecebf3fc070916da153b55f49a257df",
+                    "4e43bf858cb944aabf0110179387f468a551e0cfbac73ce1e12340e956a00a10"
+                  ],
+                  "id": "cf8a00256d38edede9de66b6dae8cd0d73b5bcaa32126554f738f68d070d6118",
+                  "kind": "method_definition",
+                  "named": true,
+                  "parentId": "7792a3f70e898409f965159e92d1a37aec3144a8190ff39dd310bde94536e97a",
+                  "range": {
+                    "end": {
+                      "column": 30,
+                      "line": 18
+                    },
+                    "endByte": 380,
+                    "endCoordinate": {
+                      "byteOffset": 380,
+                      "characterOffset": 376,
+                      "column": 30,
+                      "line": 18,
+                      "utf16Column": 31,
+                      "utf16Offset": 377
+                    },
+                    "start": {
+                      "column": 2,
+                      "line": 18
+                    },
+                    "startByte": 349,
+                    "startCoordinate": {
+                      "byteOffset": 349,
+                      "characterOffset": 348,
+                      "column": 2,
+                      "line": 18,
+                      "utf16Column": 2,
+                      "utf16Offset": 348
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "05269fc1fc537310db10e5df9793b02fac8c237372fde4bed218c12a9662a77f",
+                  "kind": "property_identifier",
+                  "named": true,
+                  "parentId": "cf8a00256d38edede9de66b6dae8cd0d73b5bcaa32126554f738f68d070d6118",
+                  "range": {
+                    "end": {
+                      "column": 5,
+                      "line": 18
+                    },
+                    "endByte": 352,
+                    "endCoordinate": {
+                      "byteOffset": 352,
+                      "characterOffset": 351,
+                      "column": 5,
+                      "line": 18,
+                      "utf16Column": 5,
+                      "utf16Offset": 351
+                    },
+                    "start": {
+                      "column": 2,
+                      "line": 18
+                    },
+                    "startByte": 349,
+                    "startCoordinate": {
+                      "byteOffset": 349,
+                      "characterOffset": 348,
+                      "column": 2,
+                      "line": 18,
+                      "utf16Column": 2,
+                      "utf16Offset": 348
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "5b83708935495f249a8924e7ce11ef45eecebf3fc070916da153b55f49a257df",
+                  "kind": "formal_parameters",
+                  "named": true,
+                  "parentId": "cf8a00256d38edede9de66b6dae8cd0d73b5bcaa32126554f738f68d070d6118",
+                  "range": {
+                    "end": {
+                      "column": 7,
+                      "line": 18
+                    },
+                    "endByte": 354,
+                    "endCoordinate": {
+                      "byteOffset": 354,
+                      "characterOffset": 353,
+                      "column": 7,
+                      "line": 18,
+                      "utf16Column": 7,
+                      "utf16Offset": 353
+                    },
+                    "start": {
+                      "column": 5,
+                      "line": 18
+                    },
+                    "startByte": 352,
+                    "startCoordinate": {
+                      "byteOffset": 352,
+                      "characterOffset": 351,
+                      "column": 5,
+                      "line": 18,
+                      "utf16Column": 5,
+                      "utf16Offset": 351
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "349ef9cae7d612e9bfb20af64bd6f54bcf28d74a8c271ca76384035e17fc19d9"
+                  ],
+                  "id": "4e43bf858cb944aabf0110179387f468a551e0cfbac73ce1e12340e956a00a10",
+                  "kind": "statement_block",
+                  "named": true,
+                  "parentId": "cf8a00256d38edede9de66b6dae8cd0d73b5bcaa32126554f738f68d070d6118",
+                  "range": {
+                    "end": {
+                      "column": 30,
+                      "line": 18
+                    },
+                    "endByte": 380,
+                    "endCoordinate": {
+                      "byteOffset": 380,
+                      "characterOffset": 376,
+                      "column": 30,
+                      "line": 18,
+                      "utf16Column": 31,
+                      "utf16Offset": 377
+                    },
+                    "start": {
+                      "column": 8,
+                      "line": 18
+                    },
+                    "startByte": 355,
+                    "startCoordinate": {
+                      "byteOffset": 355,
+                      "characterOffset": 354,
+                      "column": 8,
+                      "line": 18,
+                      "utf16Column": 8,
+                      "utf16Offset": 354
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "849f5dfbbc090e396a5798e7183292caa7bdc2829f697c05aaac6cfdad17638e"
+                  ],
+                  "id": "349ef9cae7d612e9bfb20af64bd6f54bcf28d74a8c271ca76384035e17fc19d9",
+                  "kind": "return_statement",
+                  "named": true,
+                  "parentId": "4e43bf858cb944aabf0110179387f468a551e0cfbac73ce1e12340e956a00a10",
+                  "range": {
+                    "end": {
+                      "column": 28,
+                      "line": 18
+                    },
+                    "endByte": 378,
+                    "endCoordinate": {
+                      "byteOffset": 378,
+                      "characterOffset": 374,
+                      "column": 28,
+                      "line": 18,
+                      "utf16Column": 29,
+                      "utf16Offset": 375
+                    },
+                    "start": {
+                      "column": 10,
+                      "line": 18
+                    },
+                    "startByte": 357,
+                    "startCoordinate": {
+                      "byteOffset": 357,
+                      "characterOffset": 356,
+                      "column": 10,
+                      "line": 18,
+                      "utf16Column": 10,
+                      "utf16Offset": 356
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "23988e39f66b32b272813d37d4797d3f48022c03302107589b2e20f728d72476",
+                    "5d37a5c71c539e0fcd28f0bb123c03d59323b157b04cd802c56716f6f6a2b519"
+                  ],
+                  "id": "849f5dfbbc090e396a5798e7183292caa7bdc2829f697c05aaac6cfdad17638e",
+                  "kind": "call_expression",
+                  "named": true,
+                  "parentId": "349ef9cae7d612e9bfb20af64bd6f54bcf28d74a8c271ca76384035e17fc19d9",
+                  "range": {
+                    "end": {
+                      "column": 27,
+                      "line": 18
+                    },
+                    "endByte": 377,
+                    "endCoordinate": {
+                      "byteOffset": 377,
+                      "characterOffset": 373,
+                      "column": 27,
+                      "line": 18,
+                      "utf16Column": 28,
+                      "utf16Offset": 374
+                    },
+                    "start": {
+                      "column": 17,
+                      "line": 18
+                    },
+                    "startByte": 364,
+                    "startCoordinate": {
+                      "byteOffset": 364,
+                      "characterOffset": 363,
+                      "column": 17,
+                      "line": 18,
+                      "utf16Column": 17,
+                      "utf16Offset": 363
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "23988e39f66b32b272813d37d4797d3f48022c03302107589b2e20f728d72476",
+                  "kind": "identifier",
+                  "named": true,
+                  "parentId": "849f5dfbbc090e396a5798e7183292caa7bdc2829f697c05aaac6cfdad17638e",
+                  "range": {
+                    "end": {
+                      "column": 22,
+                      "line": 18
+                    },
+                    "endByte": 369,
+                    "endCoordinate": {
+                      "byteOffset": 369,
+                      "characterOffset": 368,
+                      "column": 22,
+                      "line": 18,
+                      "utf16Column": 22,
+                      "utf16Offset": 368
+                    },
+                    "start": {
+                      "column": 17,
+                      "line": 18
+                    },
+                    "startByte": 364,
+                    "startCoordinate": {
+                      "byteOffset": 364,
+                      "characterOffset": 363,
+                      "column": 17,
+                      "line": 18,
+                      "utf16Column": 17,
+                      "utf16Offset": 363
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "0b7371192c9ea52b891e0ab34df2ef875a3ff8defe08ccbf20de10ba6517e4ea"
+                  ],
+                  "id": "5d37a5c71c539e0fcd28f0bb123c03d59323b157b04cd802c56716f6f6a2b519",
+                  "kind": "arguments",
+                  "named": true,
+                  "parentId": "849f5dfbbc090e396a5798e7183292caa7bdc2829f697c05aaac6cfdad17638e",
+                  "range": {
+                    "end": {
+                      "column": 27,
+                      "line": 18
+                    },
+                    "endByte": 377,
+                    "endCoordinate": {
+                      "byteOffset": 377,
+                      "characterOffset": 373,
+                      "column": 27,
+                      "line": 18,
+                      "utf16Column": 28,
+                      "utf16Offset": 374
+                    },
+                    "start": {
+                      "column": 22,
+                      "line": 18
+                    },
+                    "startByte": 369,
+                    "startCoordinate": {
+                      "byteOffset": 369,
+                      "characterOffset": 368,
+                      "column": 22,
+                      "line": 18,
+                      "utf16Column": 22,
+                      "utf16Offset": 368
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "ae7355f9009172d2ff5052d97cf49d0e005f3a6b7663f3233651dcc42d9a144b"
+                  ],
+                  "id": "0b7371192c9ea52b891e0ab34df2ef875a3ff8defe08ccbf20de10ba6517e4ea",
+                  "kind": "string",
+                  "named": true,
+                  "parentId": "5d37a5c71c539e0fcd28f0bb123c03d59323b157b04cd802c56716f6f6a2b519",
+                  "range": {
+                    "end": {
+                      "column": 26,
+                      "line": 18
+                    },
+                    "endByte": 376,
+                    "endCoordinate": {
+                      "byteOffset": 376,
+                      "characterOffset": 372,
+                      "column": 26,
+                      "line": 18,
+                      "utf16Column": 27,
+                      "utf16Offset": 373
+                    },
+                    "start": {
+                      "column": 23,
+                      "line": 18
+                    },
+                    "startByte": 370,
+                    "startCoordinate": {
+                      "byteOffset": 370,
+                      "characterOffset": 369,
+                      "column": 23,
+                      "line": 18,
+                      "utf16Column": 23,
+                      "utf16Offset": 369
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "ae7355f9009172d2ff5052d97cf49d0e005f3a6b7663f3233651dcc42d9a144b",
+                  "kind": "string_fragment",
+                  "named": true,
+                  "parentId": "0b7371192c9ea52b891e0ab34df2ef875a3ff8defe08ccbf20de10ba6517e4ea",
+                  "range": {
+                    "end": {
+                      "column": 25,
+                      "line": 18
+                    },
+                    "endByte": 375,
+                    "endCoordinate": {
+                      "byteOffset": 375,
+                      "characterOffset": 371,
+                      "column": 25,
+                      "line": 18,
+                      "utf16Column": 26,
+                      "utf16Offset": 372
+                    },
+                    "start": {
+                      "column": 24,
+                      "line": 18
+                    },
+                    "startByte": 371,
+                    "startCoordinate": {
+                      "byteOffset": 371,
+                      "characterOffset": 370,
+                      "column": 24,
+                      "line": 18,
+                      "utf16Column": 24,
+                      "utf16Offset": 370
+                    }
+                  }
+                }
+              ],
+              "parserFingerprint": "4b0c888e3e63dfb065ec20d729d50ae0af20f3475b68c173e4bf4583e8a8b097",
+              "partial": false,
+              "references": [
+                {
+                  "enclosingSymbolId": "af6728ded06e85e938ec987e40656ba3bf318c2653ff46e4e38d996fec7b6831",
+                  "id": "3cfb8279e4f682e63233b4e96ce273e44f2dceb19d3c80387ebdcf49d55fa2e4",
+                  "name": "Runnable",
+                  "range": {
+                    "end": {
+                      "column": 18,
+                      "line": 15
+                    },
+                    "endByte": 251,
+                    "endCoordinate": {
+                      "byteOffset": 251,
+                      "characterOffset": 250,
+                      "column": 18,
+                      "line": 15,
+                      "utf16Column": 18,
+                      "utf16Offset": 250
+                    },
+                    "start": {
+                      "column": 10,
+                      "line": 15
+                    },
+                    "startByte": 243,
+                    "startCoordinate": {
+                      "byteOffset": 243,
+                      "characterOffset": 242,
+                      "column": 10,
+                      "line": 15,
+                      "utf16Column": 10,
+                      "utf16Offset": 242
+                    }
+                  },
+                  "role": "type"
+                },
+                {
+                  "enclosingSymbolId": "db4766522aa9b0d146029dbba2c1cdc49c1f8d37eb4052adcc46a1acebe8f7bd",
+                  "id": "453a681d3cf700da8fa82a659542f8698b8aff27fb3a6efa4212831124a54cbb",
+                  "name": "run",
+                  "range": {
+                    "end": {
+                      "column": 24,
+                      "line": 15
+                    },
+                    "endByte": 257,
+                    "endCoordinate": {
+                      "byteOffset": 257,
+                      "characterOffset": 256,
+                      "column": 24,
+                      "line": 15,
+                      "utf16Column": 24,
+                      "utf16Offset": 256
+                    },
+                    "start": {
+                      "column": 21,
+                      "line": 15
+                    },
+                    "startByte": 254,
+                    "startCoordinate": {
+                      "byteOffset": 254,
+                      "characterOffset": 253,
+                      "column": 21,
+                      "line": 15,
+                      "utf16Column": 21,
+                      "utf16Offset": 253
+                    }
+                  },
+                  "role": "read"
+                },
+                {
+                  "enclosingSymbolId": "74e7546c6ff27df55d294fa47bf674eae659eae3a4d00dd1caa826b8568feb5d",
+                  "id": "2e3c494ac937bf7a1b0b8ad965ac11b33bc8b120b44c2dac5b65e5e27edb4ead",
+                  "name": "Base",
+                  "range": {
+                    "end": {
+                      "column": 18,
+                      "line": 16
+                    },
+                    "endByte": 288,
+                    "endCoordinate": {
+                      "byteOffset": 288,
+                      "characterOffset": 287,
+                      "column": 18,
+                      "line": 16,
+                      "utf16Column": 18,
+                      "utf16Offset": 287
+                    },
+                    "start": {
+                      "column": 14,
+                      "line": 16
+                    },
+                    "startByte": 284,
+                    "startCoordinate": {
+                      "byteOffset": 284,
+                      "characterOffset": 283,
+                      "column": 14,
+                      "line": 16,
+                      "utf16Column": 14,
+                      "utf16Offset": 283
+                    }
+                  },
+                  "role": "type"
+                },
+                {
+                  "enclosingSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "id": "c85146148fc92f8f7c02bf3bd7a4e75272d14fb0ca17bd47e701eec7de09bb3e",
+                  "name": "Widget",
+                  "range": {
+                    "end": {
+                      "column": 19,
+                      "line": 17
+                    },
+                    "endByte": 311,
+                    "endCoordinate": {
+                      "byteOffset": 311,
+                      "characterOffset": 310,
+                      "column": 19,
+                      "line": 17,
+                      "utf16Column": 19,
+                      "utf16Offset": 310
+                    },
+                    "start": {
+                      "column": 13,
+                      "line": 17
+                    },
+                    "startByte": 305,
+                    "startCoordinate": {
+                      "byteOffset": 305,
+                      "characterOffset": 304,
+                      "column": 13,
+                      "line": 17,
+                      "utf16Column": 13,
+                      "utf16Offset": 304
+                    }
+                  },
+                  "role": "type"
+                },
+                {
+                  "enclosingSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "id": "a5d887a8568e19e6876247e0715892a62a73a90d44185eae40f3c954e90f699e",
+                  "name": "Base",
+                  "range": {
+                    "end": {
+                      "column": 32,
+                      "line": 17
+                    },
+                    "endByte": 324,
+                    "endCoordinate": {
+                      "byteOffset": 324,
+                      "characterOffset": 323,
+                      "column": 32,
+                      "line": 17,
+                      "utf16Column": 32,
+                      "utf16Offset": 323
+                    },
+                    "start": {
+                      "column": 28,
+                      "line": 17
+                    },
+                    "startByte": 320,
+                    "startCoordinate": {
+                      "byteOffset": 320,
+                      "characterOffset": 319,
+                      "column": 28,
+                      "line": 17,
+                      "utf16Column": 28,
+                      "utf16Offset": 319
+                    }
+                  },
+                  "role": "read"
+                },
+                {
+                  "enclosingSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "id": "5ed01395a108f83d14e34c4927fb157b0dcc8568d3150eadce44c4301de53320",
+                  "name": "Runnable",
+                  "range": {
+                    "end": {
+                      "column": 52,
+                      "line": 17
+                    },
+                    "endByte": 344,
+                    "endCoordinate": {
+                      "byteOffset": 344,
+                      "characterOffset": 343,
+                      "column": 52,
+                      "line": 17,
+                      "utf16Column": 52,
+                      "utf16Offset": 343
+                    },
+                    "start": {
+                      "column": 44,
+                      "line": 17
+                    },
+                    "startByte": 336,
+                    "startCoordinate": {
+                      "byteOffset": 336,
+                      "characterOffset": 335,
+                      "column": 44,
+                      "line": 17,
+                      "utf16Column": 44,
+                      "utf16Offset": 335
+                    }
+                  },
+                  "role": "type"
+                },
+                {
+                  "enclosingSymbolId": "59644fb4486db3fffc6eaa54c26821de3b05a3f24ed630c51be13ced25b62d47",
+                  "id": "53fefbefb20b8e9157b4c655baff320650ccf9f68e2ba5438d1b6d89596e4f6d",
+                  "name": "run",
+                  "range": {
+                    "end": {
+                      "column": 5,
+                      "line": 18
+                    },
+                    "endByte": 352,
+                    "endCoordinate": {
+                      "byteOffset": 352,
+                      "characterOffset": 351,
+                      "column": 5,
+                      "line": 18,
+                      "utf16Column": 5,
+                      "utf16Offset": 351
+                    },
+                    "start": {
+                      "column": 2,
+                      "line": 18
+                    },
+                    "startByte": 349,
+                    "startCoordinate": {
+                      "byteOffset": 349,
+                      "characterOffset": 348,
+                      "column": 2,
+                      "line": 18,
+                      "utf16Column": 2,
+                      "utf16Offset": 348
+                    }
+                  },
+                  "role": "read"
+                },
+                {
+                  "enclosingSymbolId": "59644fb4486db3fffc6eaa54c26821de3b05a3f24ed630c51be13ced25b62d47",
+                  "id": "5b3f5456a196c7c881336cba6900c21aab4374e5b0c0ff46ddde9cf8ee1c79b8",
+                  "name": "build",
+                  "range": {
+                    "end": {
+                      "column": 22,
+                      "line": 18
+                    },
+                    "endByte": 369,
+                    "endCoordinate": {
+                      "byteOffset": 369,
+                      "characterOffset": 368,
+                      "column": 22,
+                      "line": 18,
+                      "utf16Column": 22,
+                      "utf16Offset": 368
+                    },
+                    "start": {
+                      "column": 17,
+                      "line": 18
+                    },
+                    "startByte": 364,
+                    "startCoordinate": {
+                      "byteOffset": 364,
+                      "characterOffset": 363,
+                      "column": 17,
+                      "line": 18,
+                      "utf16Column": 17,
+                      "utf16Offset": 363
+                    }
+                  },
+                  "role": "read"
+                }
+              ],
+              "rootNodeId": "6194adb1937caacc150872b5580fd43107ddd3ea215e8661fdb175a7242de445",
+              "schemaVersion": "ast-mcp.syntax-facts.v1",
+              "sourceArtifactId": "source:v1:7f68316b01f583fd069a5d185cc2043d2b0908dfaab97e25d22740f912744a69",
+              "sourceDigest": "b48f9f9ff1b9021e1501a05840e83807829c991058bf3b3eff1164bda8bb72a1",
+              "symbols": [
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 18,
+                      "line": 15
+                    },
+                    "endByte": 251,
+                    "endCoordinate": {
+                      "byteOffset": 251,
+                      "characterOffset": 250,
+                      "column": 18,
+                      "line": 15,
+                      "utf16Column": 18,
+                      "utf16Offset": 250
+                    },
+                    "start": {
+                      "column": 10,
+                      "line": 15
+                    },
+                    "startByte": 243,
+                    "startCoordinate": {
+                      "byteOffset": 243,
+                      "characterOffset": 242,
+                      "column": 10,
+                      "line": 15,
+                      "utf16Column": 10,
+                      "utf16Offset": 242
+                    }
+                  },
+                  "exported": false,
+                  "id": "af6728ded06e85e938ec987e40656ba3bf318c2653ff46e4e38d996fec7b6831",
+                  "kind": "interface",
+                  "name": "Runnable",
+                  "qualifiedName": "Runnable",
+                  "range": {
+                    "end": {
+                      "column": 36,
+                      "line": 15
+                    },
+                    "endByte": 269,
+                    "endCoordinate": {
+                      "byteOffset": 269,
+                      "characterOffset": 268,
+                      "column": 36,
+                      "line": 15,
+                      "utf16Column": 36,
+                      "utf16Offset": 268
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 15
+                    },
+                    "startByte": 233,
+                    "startCoordinate": {
+                      "byteOffset": 233,
+                      "characterOffset": 232,
+                      "column": 0,
+                      "line": 15,
+                      "utf16Column": 0,
+                      "utf16Offset": 232
+                    }
+                  }
+                },
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 24,
+                      "line": 15
+                    },
+                    "endByte": 257,
+                    "endCoordinate": {
+                      "byteOffset": 257,
+                      "characterOffset": 256,
+                      "column": 24,
+                      "line": 15,
+                      "utf16Column": 24,
+                      "utf16Offset": 256
+                    },
+                    "start": {
+                      "column": 21,
+                      "line": 15
+                    },
+                    "startByte": 254,
+                    "startCoordinate": {
+                      "byteOffset": 254,
+                      "characterOffset": 253,
+                      "column": 21,
+                      "line": 15,
+                      "utf16Column": 21,
+                      "utf16Offset": 253
+                    }
+                  },
+                  "exported": false,
+                  "id": "db4766522aa9b0d146029dbba2c1cdc49c1f8d37eb4052adcc46a1acebe8f7bd",
+                  "kind": "method",
+                  "name": "run",
+                  "qualifiedName": "Runnable.run",
+                  "range": {
+                    "end": {
+                      "column": 34,
+                      "line": 15
+                    },
+                    "endByte": 267,
+                    "endCoordinate": {
+                      "byteOffset": 267,
+                      "characterOffset": 266,
+                      "column": 34,
+                      "line": 15,
+                      "utf16Column": 34,
+                      "utf16Offset": 266
+                    },
+                    "start": {
+                      "column": 21,
+                      "line": 15
+                    },
+                    "startByte": 254,
+                    "startCoordinate": {
+                      "byteOffset": 254,
+                      "characterOffset": 253,
+                      "column": 21,
+                      "line": 15,
+                      "utf16Column": 21,
+                      "utf16Offset": 253
+                    }
+                  }
+                },
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 18,
+                      "line": 16
+                    },
+                    "endByte": 288,
+                    "endCoordinate": {
+                      "byteOffset": 288,
+                      "characterOffset": 287,
+                      "column": 18,
+                      "line": 16,
+                      "utf16Column": 18,
+                      "utf16Offset": 287
+                    },
+                    "start": {
+                      "column": 14,
+                      "line": 16
+                    },
+                    "startByte": 284,
+                    "startCoordinate": {
+                      "byteOffset": 284,
+                      "characterOffset": 283,
+                      "column": 14,
+                      "line": 16,
+                      "utf16Column": 14,
+                      "utf16Offset": 283
+                    }
+                  },
+                  "exported": false,
+                  "id": "74e7546c6ff27df55d294fa47bf674eae659eae3a4d00dd1caa826b8568feb5d",
+                  "kind": "class",
+                  "name": "Base",
+                  "qualifiedName": "Base",
+                  "range": {
+                    "end": {
+                      "column": 21,
+                      "line": 16
+                    },
+                    "endByte": 291,
+                    "endCoordinate": {
+                      "byteOffset": 291,
+                      "characterOffset": 290,
+                      "column": 21,
+                      "line": 16,
+                      "utf16Column": 21,
+                      "utf16Offset": 290
+                    },
+                    "start": {
+                      "column": 8,
+                      "line": 16
+                    },
+                    "startByte": 278,
+                    "startCoordinate": {
+                      "byteOffset": 278,
+                      "characterOffset": 277,
+                      "column": 8,
+                      "line": 16,
+                      "utf16Column": 8,
+                      "utf16Offset": 277
+                    }
+                  }
+                },
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 19,
+                      "line": 17
+                    },
+                    "endByte": 311,
+                    "endCoordinate": {
+                      "byteOffset": 311,
+                      "characterOffset": 310,
+                      "column": 19,
+                      "line": 17,
+                      "utf16Column": 19,
+                      "utf16Offset": 310
+                    },
+                    "start": {
+                      "column": 13,
+                      "line": 17
+                    },
+                    "startByte": 305,
+                    "startCoordinate": {
+                      "byteOffset": 305,
+                      "characterOffset": 304,
+                      "column": 13,
+                      "line": 17,
+                      "utf16Column": 13,
+                      "utf16Offset": 304
+                    }
+                  },
+                  "exported": true,
+                  "id": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+                  "kind": "class",
+                  "name": "Widget",
+                  "qualifiedName": "Widget",
+                  "range": {
+                    "end": {
+                      "column": 1,
+                      "line": 19
+                    },
+                    "endByte": 382,
+                    "endCoordinate": {
+                      "byteOffset": 382,
+                      "characterOffset": 378,
+                      "column": 1,
+                      "line": 19,
+                      "utf16Column": 1,
+                      "utf16Offset": 379
+                    },
+                    "start": {
+                      "column": 7,
+                      "line": 17
+                    },
+                    "startByte": 299,
+                    "startCoordinate": {
+                      "byteOffset": 299,
+                      "characterOffset": 298,
+                      "column": 7,
+                      "line": 17,
+                      "utf16Column": 7,
+                      "utf16Offset": 298
+                    }
+                  }
+                },
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 5,
+                      "line": 18
+                    },
+                    "endByte": 352,
+                    "endCoordinate": {
+                      "byteOffset": 352,
+                      "characterOffset": 351,
+                      "column": 5,
+                      "line": 18,
+                      "utf16Column": 5,
+                      "utf16Offset": 351
+                    },
+                    "start": {
+                      "column": 2,
+                      "line": 18
+                    },
+                    "startByte": 349,
+                    "startCoordinate": {
+                      "byteOffset": 349,
+                      "characterOffset": 348,
+                      "column": 2,
+                      "line": 18,
+                      "utf16Column": 2,
+                      "utf16Offset": 348
+                    }
+                  },
+                  "exported": false,
+                  "id": "59644fb4486db3fffc6eaa54c26821de3b05a3f24ed630c51be13ced25b62d47",
+                  "kind": "method",
+                  "name": "run",
+                  "qualifiedName": "Widget.run",
+                  "range": {
+                    "end": {
+                      "column": 30,
+                      "line": 18
+                    },
+                    "endByte": 380,
+                    "endCoordinate": {
+                      "byteOffset": 380,
+                      "characterOffset": 376,
+                      "column": 30,
+                      "line": 18,
+                      "utf16Column": 31,
+                      "utf16Offset": 377
+                    },
+                    "start": {
+                      "column": 2,
+                      "line": 18
+                    },
+                    "startByte": 349,
+                    "startCoordinate": {
+                      "byteOffset": 349,
+                      "characterOffset": 348,
+                      "column": 2,
+                      "line": 18,
+                      "utf16Column": 2,
+                      "utf16Offset": 348
+                    }
+                  }
+                }
+              ],
+              "syntaxFactsArtifactId": "syntax-facts:v1:787bbc32ef87c6a33afeacaad81b08038bf9dc890391867813ff27ebab9cf679"
+            },
+            "hostRange": {
+              "end": {
+                "column": 0,
+                "line": 20
+              },
+              "endByte": 383,
+              "endCoordinate": {
+                "byteOffset": 383,
+                "characterOffset": 379,
+                "column": 0,
+                "line": 20,
+                "utf16Column": 0,
+                "utf16Offset": 380
+              },
+              "start": {
+                "column": 0,
+                "line": 15
+              },
+              "startByte": 233,
+              "startCoordinate": {
+                "byteOffset": 233,
+                "characterOffset": 232,
+                "column": 0,
+                "line": 15,
+                "utf16Column": 0,
+                "utf16Offset": 232
+              }
+            },
+            "languageId": "ts",
+            "ordinal": 0,
+            "source": "interface Runnable { run(): string }\ndeclare class Base {}\nexport class Widget extends Base implements Runnable {\n  run() { return build(\"🙂\"); }\n}\n"
+          }
+        ],
+        "encoding": "utf-8",
+        "format": "markdown",
+        "nodes": [
+          {
+            "childIds": [
+              "0df62db7d58e95c3ca96189226c5f422b69439c48257f0af8285f94c6a17fd62",
+              "b0fc86de14457e17b22f16fa1d7b1c58fb16306dd95e0d42c735dbb542400928"
+            ],
+            "id": "3b95f3da7c9c696bb5e557b1276b49e5eb42ee0f902489e3b0239a9ff04e879e",
+            "kind": "frontmatter",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 3,
+                "line": 3
+              },
+              "endByte": 44,
+              "endCoordinate": {
+                "byteOffset": 44,
+                "characterOffset": 43,
+                "column": 3,
+                "line": 3,
+                "utf16Column": 3,
+                "utf16Offset": 43
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "0df62db7d58e95c3ca96189226c5f422b69439c48257f0af8285f94c6a17fd62",
+            "kind": "frontmatter-entry",
+            "name": "title",
+            "parentId": "3b95f3da7c9c696bb5e557b1276b49e5eb42ee0f902489e3b0239a9ff04e879e",
+            "range": {
+              "end": {
+                "column": 18,
+                "line": 1
+              },
+              "endByte": 23,
+              "endCoordinate": {
+                "byteOffset": 23,
+                "characterOffset": 22,
+                "column": 18,
+                "line": 1,
+                "utf16Column": 18,
+                "utf16Offset": 22
+              },
+              "start": {
+                "column": 0,
+                "line": 1
+              },
+              "startByte": 4,
+              "startCoordinate": {
+                "byteOffset": 4,
+                "characterOffset": 4,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 4
+              }
+            },
+            "value": "Café design"
+          },
+          {
+            "childIds": [],
+            "id": "b0fc86de14457e17b22f16fa1d7b1c58fb16306dd95e0d42c735dbb542400928",
+            "kind": "frontmatter-entry",
+            "name": "status",
+            "parentId": "3b95f3da7c9c696bb5e557b1276b49e5eb42ee0f902489e3b0239a9ff04e879e",
+            "range": {
+              "end": {
+                "column": 16,
+                "line": 2
+              },
+              "endByte": 40,
+              "endCoordinate": {
+                "byteOffset": 40,
+                "characterOffset": 39,
+                "column": 16,
+                "line": 2,
+                "utf16Column": 16,
+                "utf16Offset": 39
+              },
+              "start": {
+                "column": 0,
+                "line": 2
+              },
+              "startByte": 24,
+              "startCoordinate": {
+                "byteOffset": 24,
+                "characterOffset": 23,
+                "column": 0,
+                "line": 2,
+                "utf16Column": 0,
+                "utf16Offset": 23
+              }
+            },
+            "value": "accepted"
+          },
+          {
+            "childIds": [],
+            "id": "8e63d5183b4f1e714456441829b91a854e2306db9dd6cf28516004821b614088",
+            "kind": "fenced-code",
+            "name": "ts",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 3,
+                "line": 20
+              },
+              "endByte": 386,
+              "endCoordinate": {
+                "byteOffset": 386,
+                "characterOffset": 382,
+                "column": 3,
+                "line": 20,
+                "utf16Column": 3,
+                "utf16Offset": 383
+              },
+              "start": {
+                "column": 0,
+                "line": 15
+              },
+              "startByte": 233,
+              "startCoordinate": {
+                "byteOffset": 233,
+                "characterOffset": 232,
+                "column": 0,
+                "line": 15,
+                "utf16Column": 0,
+                "utf16Offset": 232
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "fa6e38ec79c900a731b023ce23022ee0eda426e6b736dc6c0fe8eb7af01f12d6",
+            "kind": "section",
+            "name": "Overview",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 0,
+                "line": 21
+              },
+              "endByte": 387,
+              "endCoordinate": {
+                "byteOffset": 387,
+                "characterOffset": 383,
+                "column": 0,
+                "line": 21,
+                "utf16Column": 0,
+                "utf16Offset": 384
+              },
+              "start": {
+                "column": 0,
+                "line": 4
+              },
+              "startByte": 45,
+              "startCoordinate": {
+                "byteOffset": 45,
+                "characterOffset": 44,
+                "column": 0,
+                "line": 4,
+                "utf16Column": 0,
+                "utf16Offset": 44
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "c0055ea0fd18fc07a18d2bc88fec2cd616154462959e17c1cd78ddbcd2bdb05d",
+            "kind": "section",
+            "name": "Code",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 0,
+                "line": 21
+              },
+              "endByte": 387,
+              "endCoordinate": {
+                "byteOffset": 387,
+                "characterOffset": 383,
+                "column": 0,
+                "line": 21,
+                "utf16Column": 0,
+                "utf16Offset": 384
+              },
+              "start": {
+                "column": 0,
+                "line": 12
+              },
+              "startByte": 218,
+              "startCoordinate": {
+                "byteOffset": 218,
+                "characterOffset": 217,
+                "column": 0,
+                "line": 12,
+                "utf16Column": 0,
+                "utf16Offset": 217
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "6601aced4a02735da5027c2441ba6f8c8af47e005eb1e809223aabdfe48c9a55",
+            "kind": "table",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 18,
+                "line": 10
+              },
+              "endByte": 216,
+              "endCoordinate": {
+                "byteOffset": 216,
+                "characterOffset": 215,
+                "column": 18,
+                "line": 10,
+                "utf16Column": 18,
+                "utf16Offset": 215
+              },
+              "start": {
+                "column": 0,
+                "line": 8
+              },
+              "startByte": 167,
+              "startCoordinate": {
+                "byteOffset": 167,
+                "characterOffset": 166,
+                "column": 0,
+                "line": 8,
+                "utf16Column": 0,
+                "utf16Offset": 166
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [
+          {
+            "id": "9ffc30666889740feacccd0a1e73cfb4d8a06770a20773ecfd0df673ef328504",
+            "kind": "link",
+            "range": {
+              "end": {
+                "column": 38,
+                "line": 6
+              },
+              "endByte": 95,
+              "endCoordinate": {
+                "byteOffset": 95,
+                "characterOffset": 94,
+                "column": 38,
+                "line": 6,
+                "utf16Column": 38,
+                "utf16Offset": 94
+              },
+              "start": {
+                "column": 12,
+                "line": 6
+              },
+              "startByte": 69,
+              "startCoordinate": {
+                "byteOffset": 69,
+                "characterOffset": 68,
+                "column": 12,
+                "line": 6,
+                "utf16Column": 12,
+                "utf16Offset": 68
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "https://example.test/guide"
+          },
+          {
+            "id": "c9745cbe09bdb1a9edc31afd3f42a46936cd9d270f1dfa7207ebee067b34c5fb",
+            "kind": "wikilink",
+            "range": {
+              "end": {
+                "column": 57,
+                "line": 6
+              },
+              "endByte": 114,
+              "endCoordinate": {
+                "byteOffset": 114,
+                "characterOffset": 113,
+                "column": 57,
+                "line": 6,
+                "utf16Column": 57,
+                "utf16Offset": 113
+              },
+              "start": {
+                "column": 41,
+                "line": 6
+              },
+              "startByte": 98,
+              "startCoordinate": {
+                "byteOffset": 98,
+                "characterOffset": 97,
+                "column": 41,
+                "line": 6,
+                "utf16Column": 41,
+                "utf16Offset": 97
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "Architecture"
+          },
+          {
+            "id": "40d4b598afed375fbda346330034e6eec4ec1b7d0c1d921b1ff7de8f5de9d21f",
+            "kind": "adr",
+            "range": {
+              "end": {
+                "column": 67,
+                "line": 6
+              },
+              "endByte": 124,
+              "endCoordinate": {
+                "byteOffset": 124,
+                "characterOffset": 123,
+                "column": 67,
+                "line": 6,
+                "utf16Column": 67,
+                "utf16Offset": 123
+              },
+              "start": {
+                "column": 59,
+                "line": 6
+              },
+              "startByte": 116,
+              "startCoordinate": {
+                "byteOffset": 116,
+                "characterOffset": 115,
+                "column": 59,
+                "line": 6,
+                "utf16Column": 59,
+                "utf16Offset": 115
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "0042"
+          },
+          {
+            "id": "d095d220ebfa8e48a2e8fb0ae08e57780dfa2620e6015f60fa268122dee66170",
+            "kind": "rfc",
+            "range": {
+              "end": {
+                "column": 77,
+                "line": 6
+              },
+              "endByte": 134,
+              "endCoordinate": {
+                "byteOffset": 134,
+                "characterOffset": 133,
+                "column": 77,
+                "line": 6,
+                "utf16Column": 77,
+                "utf16Offset": 133
+              },
+              "start": {
+                "column": 69,
+                "line": 6
+              },
+              "startByte": 126,
+              "startCoordinate": {
+                "byteOffset": 126,
+                "characterOffset": 125,
+                "column": 69,
+                "line": 6,
+                "utf16Column": 69,
+                "utf16Offset": 125
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "9110"
+          },
+          {
+            "id": "93ec2609de028c1a353349e2dcd5a606e982eb3ad0e67ac4706380892252928c",
+            "kind": "package",
+            "range": {
+              "end": {
+                "column": 93,
+                "line": 6
+              },
+              "endByte": 150,
+              "endCoordinate": {
+                "byteOffset": 150,
+                "characterOffset": 149,
+                "column": 93,
+                "line": 6,
+                "utf16Column": 93,
+                "utf16Offset": 149
+              },
+              "start": {
+                "column": 79,
+                "line": 6
+              },
+              "startByte": 136,
+              "startCoordinate": {
+                "byteOffset": 136,
+                "characterOffset": 135,
+                "column": 79,
+                "line": 6,
+                "utf16Column": 79,
+                "utf16Offset": 135
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "@scope/package"
+          },
+          {
+            "id": "8c02c50e03470e51b20a5d9b81c5173e905776d1defc698e667022595e31e484",
+            "kind": "code",
+            "range": {
+              "end": {
+                "column": 106,
+                "line": 6
+              },
+              "endByte": 163,
+              "endCoordinate": {
+                "byteOffset": 163,
+                "characterOffset": 162,
+                "column": 106,
+                "line": 6,
+                "utf16Column": 106,
+                "utf16Offset": 162
+              },
+              "start": {
+                "column": 100,
+                "line": 6
+              },
+              "startByte": 157,
+              "startCoordinate": {
+                "byteOffset": 157,
+                "characterOffset": 156,
+                "column": 100,
+                "line": 6,
+                "utf16Column": 100,
+                "utf16Offset": 156
+              }
+            },
+            "resolvedSymbolId": "8fd969a8625310f414103402884fe8ca853ae261232a7b6621784aa89af6a6cf",
+            "target": "Widget"
+          }
+        ],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 387,
+        "sourceDigest": "eeabed1c79da704f8be265b892e97a64f5cbbf74837d56501550aae6b5efce3b",
+        "syntaxFactsArtifactId": "ee90286731fa87c1ea3d7839c71319de176de1765198c43c0b8ae59a564e5ebc"
+      },
+      "fixture": "document.md",
+      "fixtureSha256": "eeabed1c79da704f8be265b892e97a64f5cbbf74837d56501550aae6b5efce3b",
+      "format": "markdown"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [
+          {
+            "facts": {
+              "calls": [],
+              "diagnostics": [],
+              "exports": [
+                {
+                  "exportedName": "Card",
+                  "id": "66963f0e704a4b42386f948d37c9d3821425db60b2f6c3deaf0112a734feb8cd",
+                  "localName": "Card",
+                  "range": {
+                    "end": {
+                      "column": 42,
+                      "line": 7
+                    },
+                    "endByte": 95,
+                    "endCoordinate": {
+                      "byteOffset": 95,
+                      "characterOffset": 94,
+                      "column": 42,
+                      "line": 7,
+                      "utf16Column": 42,
+                      "utf16Offset": 94
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 7
+                    },
+                    "startByte": 53,
+                    "startCoordinate": {
+                      "byteOffset": 53,
+                      "characterOffset": 52,
+                      "column": 0,
+                      "line": 7,
+                      "utf16Column": 0,
+                      "utf16Offset": 52
+                    }
+                  },
+                  "source": null,
+                  "typeOnly": false
+                }
+              ],
+              "extractorFingerprint": "6a5a59f4f4b40ba5977b3e50e919de5cc93e0657ca3133bfd1e062ae1308ed53",
+              "grammarFingerprint": "3483573111f69cbd58600381af8da9437c7a3aa7ed004f7d09c29b49aa6ecaff",
+              "implementations": [],
+              "imports": [],
+              "inheritance": [],
+              "languageId": "tsx",
+              "nodes": [
+                {
+                  "childIds": [
+                    "6eb0d97d6deee41b9dd22a618b6b977b74bfcec775382642565f05228a6f86b0"
+                  ],
+                  "id": "6b83ed8758e88ef76adb57109eca251408fe119f6ab1498a59890e54171d1543",
+                  "kind": "program",
+                  "named": true,
+                  "parentId": null,
+                  "range": {
+                    "end": {
+                      "column": 0,
+                      "line": 8
+                    },
+                    "endByte": 96,
+                    "endCoordinate": {
+                      "byteOffset": 96,
+                      "characterOffset": 95,
+                      "column": 0,
+                      "line": 8,
+                      "utf16Column": 0,
+                      "utf16Offset": 95
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 7
+                    },
+                    "startByte": 53,
+                    "startCoordinate": {
+                      "byteOffset": 53,
+                      "characterOffset": 52,
+                      "column": 0,
+                      "line": 7,
+                      "utf16Column": 0,
+                      "utf16Offset": 52
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "87930987570bdd5f11b36d5962012c8e77a2c30fc45c9ab9759f3f5fab047000"
+                  ],
+                  "id": "6eb0d97d6deee41b9dd22a618b6b977b74bfcec775382642565f05228a6f86b0",
+                  "kind": "export_statement",
+                  "named": true,
+                  "parentId": "6b83ed8758e88ef76adb57109eca251408fe119f6ab1498a59890e54171d1543",
+                  "range": {
+                    "end": {
+                      "column": 42,
+                      "line": 7
+                    },
+                    "endByte": 95,
+                    "endCoordinate": {
+                      "byteOffset": 95,
+                      "characterOffset": 94,
+                      "column": 42,
+                      "line": 7,
+                      "utf16Column": 42,
+                      "utf16Offset": 94
+                    },
+                    "start": {
+                      "column": 0,
+                      "line": 7
+                    },
+                    "startByte": 53,
+                    "startCoordinate": {
+                      "byteOffset": 53,
+                      "characterOffset": 52,
+                      "column": 0,
+                      "line": 7,
+                      "utf16Column": 0,
+                      "utf16Offset": 52
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "594675250203059839d9f1ea4f41ea5380bed1f6fe59e57348ec42e56bc41e45",
+                    "ef3ad8a7af7c98ebe4983bb4100e14c1f094fc1080ac2806e5ca61e27cb02672",
+                    "15966cd0fefc802d33c0227e32ce6d9f5466858e86f0c9d096227061746fec66"
+                  ],
+                  "id": "87930987570bdd5f11b36d5962012c8e77a2c30fc45c9ab9759f3f5fab047000",
+                  "kind": "function_declaration",
+                  "named": true,
+                  "parentId": "6eb0d97d6deee41b9dd22a618b6b977b74bfcec775382642565f05228a6f86b0",
+                  "range": {
+                    "end": {
+                      "column": 42,
+                      "line": 7
+                    },
+                    "endByte": 95,
+                    "endCoordinate": {
+                      "byteOffset": 95,
+                      "characterOffset": 94,
+                      "column": 42,
+                      "line": 7,
+                      "utf16Column": 42,
+                      "utf16Offset": 94
+                    },
+                    "start": {
+                      "column": 7,
+                      "line": 7
+                    },
+                    "startByte": 60,
+                    "startCoordinate": {
+                      "byteOffset": 60,
+                      "characterOffset": 59,
+                      "column": 7,
+                      "line": 7,
+                      "utf16Column": 7,
+                      "utf16Offset": 59
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "594675250203059839d9f1ea4f41ea5380bed1f6fe59e57348ec42e56bc41e45",
+                  "kind": "identifier",
+                  "named": true,
+                  "parentId": "87930987570bdd5f11b36d5962012c8e77a2c30fc45c9ab9759f3f5fab047000",
+                  "range": {
+                    "end": {
+                      "column": 20,
+                      "line": 7
+                    },
+                    "endByte": 73,
+                    "endCoordinate": {
+                      "byteOffset": 73,
+                      "characterOffset": 72,
+                      "column": 20,
+                      "line": 7,
+                      "utf16Column": 20,
+                      "utf16Offset": 72
+                    },
+                    "start": {
+                      "column": 16,
+                      "line": 7
+                    },
+                    "startByte": 69,
+                    "startCoordinate": {
+                      "byteOffset": 69,
+                      "characterOffset": 68,
+                      "column": 16,
+                      "line": 7,
+                      "utf16Column": 16,
+                      "utf16Offset": 68
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "ef3ad8a7af7c98ebe4983bb4100e14c1f094fc1080ac2806e5ca61e27cb02672",
+                  "kind": "formal_parameters",
+                  "named": true,
+                  "parentId": "87930987570bdd5f11b36d5962012c8e77a2c30fc45c9ab9759f3f5fab047000",
+                  "range": {
+                    "end": {
+                      "column": 22,
+                      "line": 7
+                    },
+                    "endByte": 75,
+                    "endCoordinate": {
+                      "byteOffset": 75,
+                      "characterOffset": 74,
+                      "column": 22,
+                      "line": 7,
+                      "utf16Column": 22,
+                      "utf16Offset": 74
+                    },
+                    "start": {
+                      "column": 20,
+                      "line": 7
+                    },
+                    "startByte": 73,
+                    "startCoordinate": {
+                      "byteOffset": 73,
+                      "characterOffset": 72,
+                      "column": 20,
+                      "line": 7,
+                      "utf16Column": 20,
+                      "utf16Offset": 72
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "8ac086c3b181d159bc6d88f3c0868f8c28262362e1e757688cc03b45a01954ff"
+                  ],
+                  "id": "15966cd0fefc802d33c0227e32ce6d9f5466858e86f0c9d096227061746fec66",
+                  "kind": "statement_block",
+                  "named": true,
+                  "parentId": "87930987570bdd5f11b36d5962012c8e77a2c30fc45c9ab9759f3f5fab047000",
+                  "range": {
+                    "end": {
+                      "column": 42,
+                      "line": 7
+                    },
+                    "endByte": 95,
+                    "endCoordinate": {
+                      "byteOffset": 95,
+                      "characterOffset": 94,
+                      "column": 42,
+                      "line": 7,
+                      "utf16Column": 42,
+                      "utf16Offset": 94
+                    },
+                    "start": {
+                      "column": 23,
+                      "line": 7
+                    },
+                    "startByte": 76,
+                    "startCoordinate": {
+                      "byteOffset": 76,
+                      "characterOffset": 75,
+                      "column": 23,
+                      "line": 7,
+                      "utf16Column": 23,
+                      "utf16Offset": 75
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "fdc88ec0a1bc35fcc55c78f84bd15a415e863f2bd516e1b62fac808662e26561"
+                  ],
+                  "id": "8ac086c3b181d159bc6d88f3c0868f8c28262362e1e757688cc03b45a01954ff",
+                  "kind": "return_statement",
+                  "named": true,
+                  "parentId": "15966cd0fefc802d33c0227e32ce6d9f5466858e86f0c9d096227061746fec66",
+                  "range": {
+                    "end": {
+                      "column": 40,
+                      "line": 7
+                    },
+                    "endByte": 93,
+                    "endCoordinate": {
+                      "byteOffset": 93,
+                      "characterOffset": 92,
+                      "column": 40,
+                      "line": 7,
+                      "utf16Column": 40,
+                      "utf16Offset": 92
+                    },
+                    "start": {
+                      "column": 25,
+                      "line": 7
+                    },
+                    "startByte": 78,
+                    "startCoordinate": {
+                      "byteOffset": 78,
+                      "characterOffset": 77,
+                      "column": 25,
+                      "line": 7,
+                      "utf16Column": 25,
+                      "utf16Offset": 77
+                    }
+                  }
+                },
+                {
+                  "childIds": [
+                    "e71e76bd32de35c59ddf46c944475367dfc228a081b2a447857c37b1d5047d0c"
+                  ],
+                  "id": "fdc88ec0a1bc35fcc55c78f84bd15a415e863f2bd516e1b62fac808662e26561",
+                  "kind": "jsx_self_closing_element",
+                  "named": true,
+                  "parentId": "8ac086c3b181d159bc6d88f3c0868f8c28262362e1e757688cc03b45a01954ff",
+                  "range": {
+                    "end": {
+                      "column": 39,
+                      "line": 7
+                    },
+                    "endByte": 92,
+                    "endCoordinate": {
+                      "byteOffset": 92,
+                      "characterOffset": 91,
+                      "column": 39,
+                      "line": 7,
+                      "utf16Column": 39,
+                      "utf16Offset": 91
+                    },
+                    "start": {
+                      "column": 32,
+                      "line": 7
+                    },
+                    "startByte": 85,
+                    "startCoordinate": {
+                      "byteOffset": 85,
+                      "characterOffset": 84,
+                      "column": 32,
+                      "line": 7,
+                      "utf16Column": 32,
+                      "utf16Offset": 84
+                    }
+                  }
+                },
+                {
+                  "childIds": [],
+                  "id": "e71e76bd32de35c59ddf46c944475367dfc228a081b2a447857c37b1d5047d0c",
+                  "kind": "identifier",
+                  "named": true,
+                  "parentId": "fdc88ec0a1bc35fcc55c78f84bd15a415e863f2bd516e1b62fac808662e26561",
+                  "range": {
+                    "end": {
+                      "column": 36,
+                      "line": 7
+                    },
+                    "endByte": 89,
+                    "endCoordinate": {
+                      "byteOffset": 89,
+                      "characterOffset": 88,
+                      "column": 36,
+                      "line": 7,
+                      "utf16Column": 36,
+                      "utf16Offset": 88
+                    },
+                    "start": {
+                      "column": 33,
+                      "line": 7
+                    },
+                    "startByte": 86,
+                    "startCoordinate": {
+                      "byteOffset": 86,
+                      "characterOffset": 85,
+                      "column": 33,
+                      "line": 7,
+                      "utf16Column": 33,
+                      "utf16Offset": 85
+                    }
+                  }
+                }
+              ],
+              "parserFingerprint": "95fd7c75ddf4be948eaf73bb67446b4dc86fb1dc6ffdfe5682cbffbacfca8a24",
+              "partial": false,
+              "references": [
+                {
+                  "enclosingSymbolId": "f4b583de14e5faa0bed207ff8d446d18ef3aba86938c732193ea5cc93829b72b",
+                  "id": "b72836ac86ebb54d7aa0a7b3156909c703d97e8059b108d73c816c97a4afb95a",
+                  "name": "Card",
+                  "range": {
+                    "end": {
+                      "column": 20,
+                      "line": 7
+                    },
+                    "endByte": 73,
+                    "endCoordinate": {
+                      "byteOffset": 73,
+                      "characterOffset": 72,
+                      "column": 20,
+                      "line": 7,
+                      "utf16Column": 20,
+                      "utf16Offset": 72
+                    },
+                    "start": {
+                      "column": 16,
+                      "line": 7
+                    },
+                    "startByte": 69,
+                    "startCoordinate": {
+                      "byteOffset": 69,
+                      "characterOffset": 68,
+                      "column": 16,
+                      "line": 7,
+                      "utf16Column": 16,
+                      "utf16Offset": 68
+                    }
+                  },
+                  "role": "read"
+                },
+                {
+                  "enclosingSymbolId": "f4b583de14e5faa0bed207ff8d446d18ef3aba86938c732193ea5cc93829b72b",
+                  "id": "453930467e0c90bf4affeca58b1d73f58e0824032673d8361c9a92c80a048923",
+                  "name": "div",
+                  "range": {
+                    "end": {
+                      "column": 36,
+                      "line": 7
+                    },
+                    "endByte": 89,
+                    "endCoordinate": {
+                      "byteOffset": 89,
+                      "characterOffset": 88,
+                      "column": 36,
+                      "line": 7,
+                      "utf16Column": 36,
+                      "utf16Offset": 88
+                    },
+                    "start": {
+                      "column": 33,
+                      "line": 7
+                    },
+                    "startByte": 86,
+                    "startCoordinate": {
+                      "byteOffset": 86,
+                      "characterOffset": 85,
+                      "column": 33,
+                      "line": 7,
+                      "utf16Column": 33,
+                      "utf16Offset": 85
+                    }
+                  },
+                  "role": "read"
+                }
+              ],
+              "rootNodeId": "6b83ed8758e88ef76adb57109eca251408fe119f6ab1498a59890e54171d1543",
+              "schemaVersion": "ast-mcp.syntax-facts.v1",
+              "sourceArtifactId": "source:v1:9d11874c5c5c6dcbc716dec3b06aa0e67fa2e2ddedd96f96717610b9a8eb0341",
+              "sourceDigest": "437ac322d9a34bc6524604e140c659cd2f17ed69e0df163e87d32d24a772b802",
+              "symbols": [
+                {
+                  "declarationRange": {
+                    "end": {
+                      "column": 20,
+                      "line": 7
+                    },
+                    "endByte": 73,
+                    "endCoordinate": {
+                      "byteOffset": 73,
+                      "characterOffset": 72,
+                      "column": 20,
+                      "line": 7,
+                      "utf16Column": 20,
+                      "utf16Offset": 72
+                    },
+                    "start": {
+                      "column": 16,
+                      "line": 7
+                    },
+                    "startByte": 69,
+                    "startCoordinate": {
+                      "byteOffset": 69,
+                      "characterOffset": 68,
+                      "column": 16,
+                      "line": 7,
+                      "utf16Column": 16,
+                      "utf16Offset": 68
+                    }
+                  },
+                  "exported": true,
+                  "id": "f4b583de14e5faa0bed207ff8d446d18ef3aba86938c732193ea5cc93829b72b",
+                  "kind": "function",
+                  "name": "Card",
+                  "qualifiedName": "Card",
+                  "range": {
+                    "end": {
+                      "column": 42,
+                      "line": 7
+                    },
+                    "endByte": 95,
+                    "endCoordinate": {
+                      "byteOffset": 95,
+                      "characterOffset": 94,
+                      "column": 42,
+                      "line": 7,
+                      "utf16Column": 42,
+                      "utf16Offset": 94
+                    },
+                    "start": {
+                      "column": 7,
+                      "line": 7
+                    },
+                    "startByte": 60,
+                    "startCoordinate": {
+                      "byteOffset": 60,
+                      "characterOffset": 59,
+                      "column": 7,
+                      "line": 7,
+                      "utf16Column": 7,
+                      "utf16Offset": 59
+                    }
+                  }
+                }
+              ],
+              "syntaxFactsArtifactId": "syntax-facts:v1:aeb2932ce128cf560fd8ab20cf424146aa288b5ecd87fccc300ccc0dc76c3592"
+            },
+            "hostRange": {
+              "end": {
+                "column": 0,
+                "line": 8
+              },
+              "endByte": 96,
+              "endCoordinate": {
+                "byteOffset": 96,
+                "characterOffset": 95,
+                "column": 0,
+                "line": 8,
+                "utf16Column": 0,
+                "utf16Offset": 95
+              },
+              "start": {
+                "column": 0,
+                "line": 7
+              },
+              "startByte": 53,
+              "startCoordinate": {
+                "byteOffset": 53,
+                "characterOffset": 52,
+                "column": 0,
+                "line": 7,
+                "utf16Column": 0,
+                "utf16Offset": 52
+              }
+            },
+            "languageId": "tsx",
+            "ordinal": 0,
+            "source": "export function Card() { return <div />; }\n"
+          }
+        ],
+        "encoding": "utf-8",
+        "format": "mdx",
+        "nodes": [
+          {
+            "childIds": [],
+            "id": "72a4e02d79d58bb1c4177090ce20e162df98c9fda5aa594a628a5ccd06fd002d",
+            "kind": "fenced-code",
+            "name": "tsx",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 3,
+                "line": 8
+              },
+              "endByte": 99,
+              "endCoordinate": {
+                "byteOffset": 99,
+                "characterOffset": 98,
+                "column": 3,
+                "line": 8,
+                "utf16Column": 3,
+                "utf16Offset": 98
+              },
+              "start": {
+                "column": 0,
+                "line": 7
+              },
+              "startByte": 53,
+              "startCoordinate": {
+                "byteOffset": 53,
+                "characterOffset": 52,
+                "column": 0,
+                "line": 7,
+                "utf16Column": 0,
+                "utf16Offset": 52
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "bdfeea1bbf6933e7a2d32c7be06b5e85498c6f1e754ca9126ec455f5a552f468",
+            "kind": "section",
+            "name": "View",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 0,
+                "line": 9
+              },
+              "endByte": 100,
+              "endCoordinate": {
+                "byteOffset": 100,
+                "characterOffset": 99,
+                "column": 0,
+                "line": 9,
+                "utf16Column": 0,
+                "utf16Offset": 99
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 100,
+        "sourceDigest": "8e5b646bf98edf870f380a19aec0a7e17f2286011bc5c0c8ecdef8d4bada8332",
+        "syntaxFactsArtifactId": "659eccf8bf66da57d58205598d23e3b42c20c5b32a455a1df832887a198e0385"
+      },
+      "fixture": "document.mdx",
+      "fixtureSha256": "8e5b646bf98edf870f380a19aec0a7e17f2286011bc5c0c8ecdef8d4bada8332",
+      "format": "mdx"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "rtf",
+        "nodes": [
+          {
+            "childIds": [
+              "ac23629d9082d91671369ff9de49dfbcf12a769903d313f7ad044d36b1443aee"
+            ],
+            "id": "691f8442619679ac564c203f9e7acf0cca3fb76e56f3ee6303c440f6dbd43f5b",
+            "kind": "control-group",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 43,
+                "line": 0
+              },
+              "endByte": 44,
+              "endCoordinate": {
+                "byteOffset": 44,
+                "characterOffset": 43,
+                "column": 43,
+                "line": 0,
+                "utf16Column": 43,
+                "utf16Offset": 43
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "ac23629d9082d91671369ff9de49dfbcf12a769903d313f7ad044d36b1443aee",
+            "kind": "control-group",
+            "name": null,
+            "parentId": "691f8442619679ac564c203f9e7acf0cca3fb76e56f3ee6303c440f6dbd43f5b",
+            "range": {
+              "end": {
+                "column": 41,
+                "line": 0
+              },
+              "endByte": 42,
+              "endCoordinate": {
+                "byteOffset": 42,
+                "characterOffset": 41,
+                "column": 41,
+                "line": 0,
+                "utf16Column": 41,
+                "utf16Offset": 41
+              },
+              "start": {
+                "column": 28,
+                "line": 0
+              },
+              "startByte": 29,
+              "startCoordinate": {
+                "byteOffset": 29,
+                "characterOffset": 28,
+                "column": 28,
+                "line": 0,
+                "utf16Column": 28,
+                "utf16Offset": 28
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [
+          {
+            "id": "da30d24f1871cc635d65897fc648b76da64e24931361c3b8b10e455b0cb5773e",
+            "kind": "adr",
+            "range": {
+              "end": {
+                "column": 23,
+                "line": 0
+              },
+              "endByte": 24,
+              "endCoordinate": {
+                "byteOffset": 24,
+                "characterOffset": 23,
+                "column": 23,
+                "line": 0,
+                "utf16Column": 23,
+                "utf16Offset": 23
+              },
+              "start": {
+                "column": 17,
+                "line": 0
+              },
+              "startByte": 18,
+              "startCoordinate": {
+                "byteOffset": 18,
+                "characterOffset": 17,
+                "column": 17,
+                "line": 0,
+                "utf16Column": 17,
+                "utf16Offset": 17
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "42"
+          },
+          {
+            "id": "f8b592de5350a76c52e866b9c0d91daa6a799225bc78cad6abb92800f4a93f43",
+            "kind": "rfc",
+            "range": {
+              "end": {
+                "column": 40,
+                "line": 0
+              },
+              "endByte": 41,
+              "endCoordinate": {
+                "byteOffset": 41,
+                "characterOffset": 40,
+                "column": 40,
+                "line": 0,
+                "utf16Column": 40,
+                "utf16Offset": 40
+              },
+              "start": {
+                "column": 32,
+                "line": 0
+              },
+              "startByte": 33,
+              "startCoordinate": {
+                "byteOffset": 33,
+                "characterOffset": 32,
+                "column": 32,
+                "line": 0,
+                "utf16Column": 32,
+                "utf16Offset": 32
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "9110"
+          }
+        ],
+        "rewriteSupported": false,
+        "rtfText": "Café ADR-42 and RFC 9110.",
+        "rtfTextSegments": [
+          {
+            "extractedEnd": 16,
+            "extractedStart": 0,
+            "sourceRange": {
+              "end": {
+                "column": 28,
+                "line": 0
+              },
+              "endByte": 29,
+              "endCoordinate": {
+                "byteOffset": 29,
+                "characterOffset": 28,
+                "column": 28,
+                "line": 0,
+                "utf16Column": 28,
+                "utf16Offset": 28
+              },
+              "start": {
+                "column": 12,
+                "line": 0
+              },
+              "startByte": 12,
+              "startCoordinate": {
+                "byteOffset": 12,
+                "characterOffset": 12,
+                "column": 12,
+                "line": 0,
+                "utf16Column": 12,
+                "utf16Offset": 12
+              }
+            },
+            "text": "Café ADR-42 and "
+          },
+          {
+            "extractedEnd": 24,
+            "extractedStart": 16,
+            "sourceRange": {
+              "end": {
+                "column": 40,
+                "line": 0
+              },
+              "endByte": 41,
+              "endCoordinate": {
+                "byteOffset": 41,
+                "characterOffset": 40,
+                "column": 40,
+                "line": 0,
+                "utf16Column": 40,
+                "utf16Offset": 40
+              },
+              "start": {
+                "column": 32,
+                "line": 0
+              },
+              "startByte": 33,
+              "startCoordinate": {
+                "byteOffset": 33,
+                "characterOffset": 32,
+                "column": 32,
+                "line": 0,
+                "utf16Column": 32,
+                "utf16Offset": 32
+              }
+            },
+            "text": "RFC 9110"
+          },
+          {
+            "extractedEnd": 25,
+            "extractedStart": 24,
+            "sourceRange": {
+              "end": {
+                "column": 42,
+                "line": 0
+              },
+              "endByte": 43,
+              "endCoordinate": {
+                "byteOffset": 43,
+                "characterOffset": 42,
+                "column": 42,
+                "line": 0,
+                "utf16Column": 42,
+                "utf16Offset": 42
+              },
+              "start": {
+                "column": 41,
+                "line": 0
+              },
+              "startByte": 42,
+              "startCoordinate": {
+                "byteOffset": 42,
+                "characterOffset": 41,
+                "column": 41,
+                "line": 0,
+                "utf16Column": 41,
+                "utf16Offset": 41
+              }
+            },
+            "text": "."
+          }
+        ],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 44,
+        "sourceDigest": "1767d36317847c8b922a94d78f5f2bcef90cb638f61db99323f7522e92d23851",
+        "syntaxFactsArtifactId": "6f47ab36130d4dfe081e2b14d31a524470442616f7ee22a6bc12ec74bc98b503"
+      },
+      "fixture": "document.rtf",
+      "fixtureSha256": "1767d36317847c8b922a94d78f5f2bcef90cb638f61db99323f7522e92d23851",
+      "format": "rtf"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "toml",
+        "nodes": [
+          {
+            "childIds": [],
+            "id": "8d6a9d9eeff856df41c07e18cf0de141c937d8258efbb37443edd1c5e52e6417",
+            "kind": "property",
+            "name": "title",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 14,
+                "line": 0
+              },
+              "endByte": 15,
+              "endCoordinate": {
+                "byteOffset": 15,
+                "characterOffset": 14,
+                "column": 14,
+                "line": 0,
+                "utf16Column": 14,
+                "utf16Offset": 14
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": "\"Café\""
+          },
+          {
+            "childIds": [],
+            "id": "4d0e6efd8ff9c02d04c7777cf927981fe1ca95ac8a06336efe145441d12e4154",
+            "kind": "section",
+            "name": "package",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 9,
+                "line": 1
+              },
+              "endByte": 25,
+              "endCoordinate": {
+                "byteOffset": 25,
+                "characterOffset": 24,
+                "column": 9,
+                "line": 1,
+                "utf16Column": 9,
+                "utf16Offset": 24
+              },
+              "start": {
+                "column": 0,
+                "line": 1
+              },
+              "startByte": 16,
+              "startCoordinate": {
+                "byteOffset": 16,
+                "characterOffset": 15,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 15
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "1f63443725f0c054aa653c0f48ebb11d87b70bf7157f05c7581495c27c24fce3",
+            "kind": "property",
+            "name": "name",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 23,
+                "line": 2
+              },
+              "endByte": 49,
+              "endCoordinate": {
+                "byteOffset": 49,
+                "characterOffset": 48,
+                "column": 23,
+                "line": 2,
+                "utf16Column": 23,
+                "utf16Offset": 48
+              },
+              "start": {
+                "column": 0,
+                "line": 2
+              },
+              "startByte": 26,
+              "startCoordinate": {
+                "byteOffset": 26,
+                "characterOffset": 25,
+                "column": 0,
+                "line": 2,
+                "utf16Column": 0,
+                "utf16Offset": 25
+              }
+            },
+            "value": "\"@scope/package\""
+          }
+        ],
+        "references": [],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 50,
+        "sourceDigest": "be55ca7dabc83f22af164805af97bf751ea930293c5338677fd259690ad67d85",
+        "syntaxFactsArtifactId": "44c92cb33c461a57047bece007216abfdfc3a2ccd11d57ed80e523ea75b0353a"
+      },
+      "fixture": "document.toml",
+      "fixtureSha256": "be55ca7dabc83f22af164805af97bf751ea930293c5338677fd259690ad67d85",
+      "format": "toml"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "txt",
+        "nodes": [
+          {
+            "childIds": [],
+            "id": "21ecf7ca07b64a4ae53e76d994d46dad5185c6706d02d0e453c23630760aa452",
+            "kind": "paragraph",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 0,
+                "line": 1
+              },
+              "endByte": 55,
+              "endCoordinate": {
+                "byteOffset": 55,
+                "characterOffset": 54,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 54
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "6058615c7a48d442620af9f72d9aa8510c6cc22c0e62f2e5f24506cb919a6909",
+            "kind": "paragraph",
+            "name": null,
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 0,
+                "line": 3
+              },
+              "endByte": 97,
+              "endCoordinate": {
+                "byteOffset": 97,
+                "characterOffset": 96,
+                "column": 0,
+                "line": 3,
+                "utf16Column": 0,
+                "utf16Offset": 96
+              },
+              "start": {
+                "column": 0,
+                "line": 2
+              },
+              "startByte": 56,
+              "startCoordinate": {
+                "byteOffset": 56,
+                "characterOffset": 55,
+                "column": 0,
+                "line": 2,
+                "utf16Column": 0,
+                "utf16Offset": 55
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [
+          {
+            "id": "7cd818b6c238391b000d5c699c4993282187785dc6789784108e0c8a1fdd54fd",
+            "kind": "adr",
+            "range": {
+              "end": {
+                "column": 31,
+                "line": 0
+              },
+              "endByte": 32,
+              "endCoordinate": {
+                "byteOffset": 32,
+                "characterOffset": 31,
+                "column": 31,
+                "line": 0,
+                "utf16Column": 31,
+                "utf16Offset": 31
+              },
+              "start": {
+                "column": 25,
+                "line": 0
+              },
+              "startByte": 26,
+              "startCoordinate": {
+                "byteOffset": 26,
+                "characterOffset": 25,
+                "column": 25,
+                "line": 0,
+                "utf16Column": 25,
+                "utf16Offset": 25
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "42"
+          },
+          {
+            "id": "46a778549b876f250ab14222dc62881c77ae906824a4d68a5ff0b4dce7bb07b8",
+            "kind": "wikilink",
+            "range": {
+              "end": {
+                "column": 52,
+                "line": 0
+              },
+              "endByte": 53,
+              "endCoordinate": {
+                "byteOffset": 53,
+                "characterOffset": 52,
+                "column": 52,
+                "line": 0,
+                "utf16Column": 52,
+                "utf16Offset": 52
+              },
+              "start": {
+                "column": 36,
+                "line": 0
+              },
+              "startByte": 37,
+              "startCoordinate": {
+                "byteOffset": 37,
+                "characterOffset": 36,
+                "column": 36,
+                "line": 0,
+                "utf16Column": 36,
+                "utf16Offset": 36
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "Architecture"
+          },
+          {
+            "id": "47e337eeaa747da9423a17893c5dddc7280efc117e70eaed747e84fa96a8bf68",
+            "kind": "package",
+            "range": {
+              "end": {
+                "column": 22,
+                "line": 2
+              },
+              "endByte": 78,
+              "endCoordinate": {
+                "byteOffset": 78,
+                "characterOffset": 77,
+                "column": 22,
+                "line": 2,
+                "utf16Column": 22,
+                "utf16Offset": 77
+              },
+              "start": {
+                "column": 8,
+                "line": 2
+              },
+              "startByte": 64,
+              "startCoordinate": {
+                "byteOffset": 64,
+                "characterOffset": 63,
+                "column": 8,
+                "line": 2,
+                "utf16Column": 8,
+                "utf16Offset": 63
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "@scope/package"
+          },
+          {
+            "id": "e8572dc0108c2e3514e9228bf4793490440866a9b3ea3d180d62e1df43421494",
+            "kind": "rfc",
+            "range": {
+              "end": {
+                "column": 39,
+                "line": 2
+              },
+              "endByte": 95,
+              "endCoordinate": {
+                "byteOffset": 95,
+                "characterOffset": 94,
+                "column": 39,
+                "line": 2,
+                "utf16Column": 39,
+                "utf16Offset": 94
+              },
+              "start": {
+                "column": 31,
+                "line": 2
+              },
+              "startByte": 87,
+              "startCoordinate": {
+                "byteOffset": 87,
+                "characterOffset": 86,
+                "column": 31,
+                "line": 2,
+                "utf16Column": 31,
+                "utf16Offset": 86
+              }
+            },
+            "resolvedSymbolId": null,
+            "target": "9110"
+          }
+        ],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 97,
+        "sourceDigest": "2cdfd283d32b1dc43f143580e3b4d18bbeda60dd6664eb5ab873f5b4092b0fef",
+        "syntaxFactsArtifactId": "e2b4558726803233260f15afbb9f0e40ca375a9a294489999810f687905aa97d"
+      },
+      "fixture": "document.txt",
+      "fixtureSha256": "2cdfd283d32b1dc43f143580e3b4d18bbeda60dd6664eb5ab873f5b4092b0fef",
+      "format": "txt"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "xml",
+        "nodes": [
+          {
+            "childIds": [
+              "fb2e031a4a7c6230e23b2052a26641e82b6effc11deb7d27c19dbf22b3de16d4",
+              "a6fef7423949182caf6bf88754ed3520b3859b21680ef47f7595f450e294800d"
+            ],
+            "id": "c76a79f5a70bfe3af396e96702446a2b3d0089752b07115329d9ceea557c3ef8",
+            "kind": "element",
+            "name": "root",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 52,
+                "line": 1
+              },
+              "endByte": 75,
+              "endCoordinate": {
+                "byteOffset": 75,
+                "characterOffset": 74,
+                "column": 52,
+                "line": 1,
+                "utf16Column": 52,
+                "utf16Offset": 74
+              },
+              "start": {
+                "column": 0,
+                "line": 1
+              },
+              "startByte": 22,
+              "startCoordinate": {
+                "byteOffset": 22,
+                "characterOffset": 22,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 22
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "fb2e031a4a7c6230e23b2052a26641e82b6effc11deb7d27c19dbf22b3de16d4",
+            "kind": "element",
+            "name": "item",
+            "parentId": "c76a79f5a70bfe3af396e96702446a2b3d0089752b07115329d9ceea557c3ef8",
+            "range": {
+              "end": {
+                "column": 32,
+                "line": 1
+              },
+              "endByte": 55,
+              "endCoordinate": {
+                "byteOffset": 55,
+                "characterOffset": 54,
+                "column": 32,
+                "line": 1,
+                "utf16Column": 32,
+                "utf16Offset": 54
+              },
+              "start": {
+                "column": 6,
+                "line": 1
+              },
+              "startByte": 28,
+              "startCoordinate": {
+                "byteOffset": 28,
+                "characterOffset": 28,
+                "column": 6,
+                "line": 1,
+                "utf16Column": 6,
+                "utf16Offset": 28
+              }
+            },
+            "value": null
+          },
+          {
+            "childIds": [],
+            "id": "a6fef7423949182caf6bf88754ed3520b3859b21680ef47f7595f450e294800d",
+            "kind": "comment",
+            "name": null,
+            "parentId": "c76a79f5a70bfe3af396e96702446a2b3d0089752b07115329d9ceea557c3ef8",
+            "range": {
+              "end": {
+                "column": 45,
+                "line": 1
+              },
+              "endByte": 68,
+              "endCoordinate": {
+                "byteOffset": 68,
+                "characterOffset": 67,
+                "column": 45,
+                "line": 1,
+                "utf16Column": 45,
+                "utf16Offset": 67
+              },
+              "start": {
+                "column": 32,
+                "line": 1
+              },
+              "startByte": 55,
+              "startCoordinate": {
+                "byteOffset": 55,
+                "characterOffset": 54,
+                "column": 32,
+                "line": 1,
+                "utf16Column": 32,
+                "utf16Offset": 54
+              }
+            },
+            "value": null
+          }
+        ],
+        "references": [],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 76,
+        "sourceDigest": "f901b982f92be90e2aebd8f887ef7ac0eded1f52df1e5972b24ee2dcf75ea8d0",
+        "syntaxFactsArtifactId": "f9aa8951c0335c478fa8ace9477c9db3065e5f43d484691df883831c60425bd1"
+      },
+      "fixture": "document.xml",
+      "fixtureSha256": "f901b982f92be90e2aebd8f887ef7ac0eded1f52df1e5972b24ee2dcf75ea8d0",
+      "format": "xml"
+    },
+    {
+      "facts": {
+        "diagnostics": [],
+        "embeddedCode": [],
+        "encoding": "utf-8",
+        "format": "yaml",
+        "nodes": [
+          {
+            "childIds": [],
+            "id": "6c14c13ab4bb25f321ef626c8d7865bf000131467d36dab71757b476e07367a2",
+            "kind": "property",
+            "name": "title",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 11,
+                "line": 0
+              },
+              "endByte": 12,
+              "endCoordinate": {
+                "byteOffset": 12,
+                "characterOffset": 11,
+                "column": 11,
+                "line": 0,
+                "utf16Column": 11,
+                "utf16Offset": 11
+              },
+              "start": {
+                "column": 0,
+                "line": 0
+              },
+              "startByte": 0,
+              "startCoordinate": {
+                "byteOffset": 0,
+                "characterOffset": 0,
+                "column": 0,
+                "line": 0,
+                "utf16Column": 0,
+                "utf16Offset": 0
+              }
+            },
+            "value": "Café"
+          },
+          {
+            "childIds": [],
+            "id": "1903e5cd27556e3fb1accecad65daf8b0ff325b7c10bd293eb743e16bfa2a68b",
+            "kind": "property",
+            "name": "package",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 8,
+                "line": 1
+              },
+              "endByte": 21,
+              "endCoordinate": {
+                "byteOffset": 21,
+                "characterOffset": 20,
+                "column": 8,
+                "line": 1,
+                "utf16Column": 8,
+                "utf16Offset": 20
+              },
+              "start": {
+                "column": 0,
+                "line": 1
+              },
+              "startByte": 13,
+              "startCoordinate": {
+                "byteOffset": 13,
+                "characterOffset": 12,
+                "column": 0,
+                "line": 1,
+                "utf16Column": 0,
+                "utf16Offset": 12
+              }
+            },
+            "value": ""
+          },
+          {
+            "childIds": [],
+            "id": "f30b47f2378d70454644346aeec891e6cd93db20554eb11298969d82f232081b",
+            "kind": "property",
+            "name": "name",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 24,
+                "line": 2
+              },
+              "endByte": 46,
+              "endCoordinate": {
+                "byteOffset": 46,
+                "characterOffset": 45,
+                "column": 24,
+                "line": 2,
+                "utf16Column": 24,
+                "utf16Offset": 45
+              },
+              "start": {
+                "column": 0,
+                "line": 2
+              },
+              "startByte": 22,
+              "startCoordinate": {
+                "byteOffset": 22,
+                "characterOffset": 21,
+                "column": 0,
+                "line": 2,
+                "utf16Column": 0,
+                "utf16Offset": 21
+              }
+            },
+            "value": "\"@scope/package\""
+          },
+          {
+            "childIds": [],
+            "id": "f640078dc98a5758e01744a34afeb41fd837568541ef8b88e410f8128785be11",
+            "kind": "property",
+            "name": "items",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 6,
+                "line": 3
+              },
+              "endByte": 53,
+              "endCoordinate": {
+                "byteOffset": 53,
+                "characterOffset": 52,
+                "column": 6,
+                "line": 3,
+                "utf16Column": 6,
+                "utf16Offset": 52
+              },
+              "start": {
+                "column": 0,
+                "line": 3
+              },
+              "startByte": 47,
+              "startCoordinate": {
+                "byteOffset": 47,
+                "characterOffset": 46,
+                "column": 0,
+                "line": 3,
+                "utf16Column": 0,
+                "utf16Offset": 46
+              }
+            },
+            "value": ""
+          },
+          {
+            "childIds": [],
+            "id": "9a93532e643d97bf73b88554a8ce1f1f7b1b475d089f6a9a91b69539f420c3ca",
+            "kind": "sequence-entry",
+            "name": "name",
+            "parentId": null,
+            "range": {
+              "end": {
+                "column": 15,
+                "line": 4
+              },
+              "endByte": 69,
+              "endCoordinate": {
+                "byteOffset": 69,
+                "characterOffset": 68,
+                "column": 15,
+                "line": 4,
+                "utf16Column": 15,
+                "utf16Offset": 68
+              },
+              "start": {
+                "column": 0,
+                "line": 4
+              },
+              "startByte": 54,
+              "startCoordinate": {
+                "byteOffset": 54,
+                "characterOffset": 53,
+                "column": 0,
+                "line": 4,
+                "utf16Column": 0,
+                "utf16Offset": 53
+              }
+            },
+            "value": "first"
+          }
+        ],
+        "references": [],
+        "rewriteSupported": false,
+        "rtfText": null,
+        "rtfTextSegments": [],
+        "schemaVersion": "ast-mcp.document-facts.v1",
+        "sourceByteLength": 70,
+        "sourceDigest": "a22e5dc73baedf9d02cb8d06f3cedb62628dd81b431d0ec7f9c46918923d2dcc",
+        "syntaxFactsArtifactId": "1cdbc3ef82a600a7f506b13bb4b19460e3fed48f2c870571b5ba0c069cd19110"
+      },
+      "fixture": "document.yaml",
+      "fixtureSha256": "a22e5dc73baedf9d02cb8d06f3cedb62628dd81b431d0ec7f9c46918923d2dcc",
+      "format": "yaml"
+    }
+  ],
+  "unsupported": {
+    "facts": {
+      "diagnostics": [
+        {
+          "code": "unsupported-embedded-language",
+          "message": "No embedded parser for unknown",
+          "range": {
+            "end": {
+              "column": 0,
+              "line": 4
+            },
+            "endByte": 32,
+            "endCoordinate": {
+              "byteOffset": 32,
+              "characterOffset": 32,
+              "column": 0,
+              "line": 4,
+              "utf16Column": 0,
+              "utf16Offset": 32
+            },
+            "start": {
+              "column": 0,
+              "line": 3
+            },
+            "startByte": 26,
+            "startCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 0,
+              "line": 3,
+              "utf16Column": 0,
+              "utf16Offset": 26
+            }
+          },
+          "severity": "warning"
+        }
+      ],
+      "embeddedCode": [
+        {
+          "facts": null,
+          "hostRange": {
+            "end": {
+              "column": 0,
+              "line": 4
+            },
+            "endByte": 32,
+            "endCoordinate": {
+              "byteOffset": 32,
+              "characterOffset": 32,
+              "column": 0,
+              "line": 4,
+              "utf16Column": 0,
+              "utf16Offset": 32
+            },
+            "start": {
+              "column": 0,
+              "line": 3
+            },
+            "startByte": 26,
+            "startCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 0,
+              "line": 3,
+              "utf16Column": 0,
+              "utf16Offset": 26
+            }
+          },
+          "languageId": "unknown",
+          "ordinal": 0,
+          "source": "value\n"
+        }
+      ],
+      "encoding": "utf-8",
+      "format": "markdown",
+      "nodes": [
+        {
+          "childIds": [],
+          "id": "960ab60f2a1692811a7ed705bf95f0774661c7e3f56117666cc6596faf8585ea",
+          "kind": "fenced-code",
+          "name": "unknown",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 3,
+              "line": 4
+            },
+            "endByte": 35,
+            "endCoordinate": {
+              "byteOffset": 35,
+              "characterOffset": 35,
+              "column": 3,
+              "line": 4,
+              "utf16Column": 3,
+              "utf16Offset": 35
+            },
+            "start": {
+              "column": 0,
+              "line": 3
+            },
+            "startByte": 26,
+            "startCoordinate": {
+              "byteOffset": 26,
+              "characterOffset": 26,
+              "column": 0,
+              "line": 3,
+              "utf16Column": 0,
+              "utf16Offset": 26
+            }
+          },
+          "value": null
+        },
+        {
+          "childIds": [],
+          "id": "713eb261d92933a495d295dff07dabbfa24493757139345567033fecea9a7728",
+          "kind": "section",
+          "name": "Unsupported",
+          "parentId": null,
+          "range": {
+            "end": {
+              "column": 0,
+              "line": 5
+            },
+            "endByte": 36,
+            "endCoordinate": {
+              "byteOffset": 36,
+              "characterOffset": 36,
+              "column": 0,
+              "line": 5,
+              "utf16Column": 0,
+              "utf16Offset": 36
+            },
+            "start": {
+              "column": 0,
+              "line": 0
+            },
+            "startByte": 0,
+            "startCoordinate": {
+              "byteOffset": 0,
+              "characterOffset": 0,
+              "column": 0,
+              "line": 0,
+              "utf16Column": 0,
+              "utf16Offset": 0
+            }
+          },
+          "value": null
+        }
+      ],
+      "references": [],
+      "rewriteSupported": false,
+      "rtfText": null,
+      "rtfTextSegments": [],
+      "schemaVersion": "ast-mcp.document-facts.v1",
+      "sourceByteLength": 36,
+      "sourceDigest": "876b80e87d293f131c9a9801878075b4eb56d7fbde8873ba4895a06baae0d7be",
+      "syntaxFactsArtifactId": "d2febbec82ea868a46235209a795f96c1b46b18ab94deb6a149c23fcc0a08196"
+    },
+    "fixture": "document.unsupported.md",
+    "fixtureSha256": "876b80e87d293f131c9a9801878075b4eb56d7fbde8873ba4895a06baae0d7be",
+    "format": "markdown"
+  }
+}

@@ -27,6 +27,7 @@ import {
   resolveWorkspacePath,
   resolveWritablePath,
 } from "../src/runtime/paths";
+import { hermeticConfig } from "./support/hermetic-config";
 
 const created: string[] = [];
 let previousPwd: string | undefined;
@@ -270,7 +271,7 @@ test("returns no worktrees when git metadata is missing", async () => {
 test("defaults workspace.worktrees to include without switching projectRoot", async () => {
   const root = await temporary("ast-mcp-worktrees-default-");
   await mkdir(path.join(root, ".git"));
-  const config = await resolveConfig({ cwd: root, env: {} });
+  const config = await resolveConfig(hermeticConfig(root));
   expect(config.projectRoot).toBe(root);
   expect(config.workspace.worktrees).toBe("include");
   expect(config.workspace.roots).toEqual([root]);
@@ -282,14 +283,14 @@ test("include authorizes absolute worktree paths under a relative paths rule", a
   await writeFile(path.join(main, "ast-mcp.toml"), v2Config("include"));
   const worktreeFile = path.join(worktree, "notes.txt");
   await writeFile(worktreeFile, "from-worktree\n");
-  const config = await resolveConfig({ cwd: main, env: {} });
+  const config = await resolveConfig(hermeticConfig(main));
   expect(config.projectRoot).toBe(main);
   expect(config.workspace.worktrees).toBe("include");
   expect(config.workspace.linkedWorktrees).toEqual(
     expect.arrayContaining([await realpath(main), await realpath(worktree)]),
   );
   expect(evaluatePolicy(config, worktreeFile, "write").policy).toBe("allow");
-  await withConfig({ cwd: main, env: {} }, async () => {
+  await withConfig(hermeticConfig(main), async () => {
     expect(await realpath(await resolveWorkspacePath(worktreeFile))).toBe(
       await realpath(worktreeFile),
     );
@@ -308,13 +309,11 @@ test("ignore keeps sibling worktree paths outside the host baseline", async () =
   const { main, worktree } = await repositoryWithWorktree();
   await writeFile(path.join(main, "ast-mcp.toml"), v2Config("ignore"));
   const worktreeFile = path.join(worktree, "src/value.ts");
-  const config = await resolveConfig({ cwd: main, env: {} });
+  const config = await resolveConfig(hermeticConfig(main));
   expect(config.workspace.worktrees).toBe("ignore");
   expect(evaluatePolicy(config, worktreeFile, "read").policy).toBe("deny");
   await expect(
-    withConfig({ cwd: main, env: {} }, () =>
-      resolveWorkspacePath(worktreeFile),
-    ),
+    withConfig(hermeticConfig(main), () => resolveWorkspacePath(worktreeFile)),
   ).rejects.toThrow(/denied|outside/);
 });
 
@@ -323,7 +322,7 @@ test("request returns a worktree policy for sibling worktree files", async () =>
   await writeFile(path.join(main, "ast-mcp.toml"), v2Config("request"));
   const worktreeFile = path.join(worktree, "src/value.ts");
   const mainFile = path.join(main, "src/value.ts");
-  const config = await resolveConfig({ cwd: main, env: {} });
+  const config = await resolveConfig(hermeticConfig(main));
   const worktreeDecision = evaluatePolicy(config, worktreeFile, "write");
   expect(worktreeDecision.policy).toBe("request");
   expect(worktreeDecision.reason).toMatch(/worktree/i);
@@ -335,7 +334,7 @@ test("intelligence root follows the containing worktree", async () => {
   await writeFile(path.join(main, "ast-mcp.toml"), v2Config("include"));
   const worktreeFile = path.join(worktree, "src/value.ts");
   const mainFile = path.join(main, "src/value.ts");
-  await withConfig({ cwd: main, env: {} }, async () => {
+  await withConfig(hermeticConfig(main), async () => {
     expect(await intelligenceRoot([worktreeFile])).toBe(
       await realpath(worktree),
     );
@@ -343,19 +342,20 @@ test("intelligence root follows the containing worktree", async () => {
   });
 });
 
-test("relative paths resolve against PWD when it is a linked worktree", async () => {
+test("relative paths stay ambiguous when PWD names a linked worktree", async () => {
   const { main, worktree } = await repositoryWithWorktree();
   await writeFile(path.join(main, "ast-mcp.toml"), v2Config("include"));
   previousPwd = process.env.PWD;
-  process.env.PWD = worktree;
-  await withConfig({ cwd: main, env: {} }, async () => {
-    expect(await intelligenceRoot(["src/value.ts"])).toBe(
-      await realpath(worktree),
-    );
-    const resolved = await resolveWorkspacePath("src/value.ts");
-    expect(await realpath(resolved)).toBe(
-      await realpath(path.join(worktree, "src/value.ts")),
-    );
+  await withConfig(hermeticConfig(main), async () => {
+    for (const candidate of [worktree, main]) {
+      process.env.PWD = candidate;
+      await expect(intelligenceRoot(["src/value.ts"])).rejects.toMatchObject({
+        code: "workspace_ambiguous",
+      });
+      await expect(resolveWorkspacePath("src/value.ts")).rejects.toMatchObject({
+        code: "workspace_ambiguous",
+      });
+    }
   });
 });
 
