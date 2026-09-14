@@ -11,7 +11,7 @@
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "diff-match-patch-ts": "^2.0.0",
-    "dprint": "0.56.1",
+    "dprint": "0.57.4",
     "unbash": "^4.0.10",
     "zod": "^4.4.3"
   },
