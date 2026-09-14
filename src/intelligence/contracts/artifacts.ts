@@ -15,17 +15,6 @@ import {
   SyntaxFactsArtifactIdSchema,
 } from "./common.ts";
 
-export const ArtifactKindSchema = z.enum([
-  "source",
-  "syntax-facts",
-  "chunks",
-  "embedding",
-  "resolved-relationships",
-  "revision-manifest",
-  "dirty-overlay",
-]);
-export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
-
 export const SourceArtifactInputSchema = z
   .object({
     contentDigest: Sha256Schema,

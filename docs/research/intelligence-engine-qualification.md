@@ -1,6 +1,6 @@
 # Intelligence engine qualification
 
-This document records the WP01 qualification baseline for the native intelligence engine.
+This document records the native intelligence qualification baseline and packaged-runtime delivery evidence.
 
 ## Pinned dependency baseline
 
@@ -9,11 +9,15 @@ This document records the WP01 qualification baseline for the native intelligenc
 | `@lancedb/lancedb` | 0.38.0 | Apache-2.0 | All persistent records, vectors, full-text indexes, versions, and publication metadata |
 | `apache-arrow` | 18.1.0 | Apache-2.0 | Explicit table schemas compatible with LanceDB 0.38.0 |
 | `@ast-grep/napi` | 0.45.3 | MIT | Native JavaScript and TypeScript parsing and structural matching |
+| `tree-sitter-wasm` | 1.1.8 | MIT | Pinned grammar manifest and grammar WASM assets for worker-backed languages |
+| `web-tree-sitter` | 0.27.0 | MIT | Portable tree-sitter runtime used by packaged parser workers |
 | `@huggingface/transformers` | 4.2.0 | Apache-2.0 | Optional local embedding inference |
 
 The package CI and release validation matrices run on Linux, macOS, and Windows with Bun 1.4.0. Each release target qualifies native dependencies and completes a real MCP stdio initialize, tool-list, and workspace-root handshake. LanceDB declares Node 22 or newer. Bun compatibility therefore remains an application qualification, not an upstream support promise. Transformers.js model execution works under Bun, but compiled Bun binaries remain gated by upstream static native-module and WASM-path issues.
 
 The default embedding model is `onnx-community/granite-embedding-30m-english-ONNX`. Set `AST_MCP_EMBEDDING_MODEL` to override it. Ordinary tests do not load or download models. Run `AST_MCP_QUALIFY_EMBEDDINGS=1 bun run intelligence:qualify` for an explicit model qualification.
+
+JSON and JSONC configuration parsing uses Bun support. The runtime does not add a JSON or JSONC parser dependency.
 
 ## LanceDB decision
 
@@ -45,8 +49,12 @@ Run `bun run intelligence:qualify` for explicit-schema CRUD, full-text search, v
 
 Run `bun run intelligence:benchmark` for the fixed-task, identical-corpus benchmark. Its shared suite asks for exported symbols, `main` callees, and `wrapper` callees. Each task gives ast-bro and the native MCP the same corpus, scope, query intent, ten-result semantic limit, 2,000-byte measured-output cap, and exactly one semantically equivalent command. The native request also carries the 2,000-byte budget accepted by its public schema. Both workflows normalize results to symbols and call edges, then compare them exactly with independently declared expected answers. The gate computes median calls and returned bytes across tasks. It requires no success-rate loss and at least a 20 percent reduction in either metric.
 
-CI and release validation install `@ast-bro/cli@4.2.0` and `graphifyy==0.9.53` as isolated validation tools on Linux, macOS, and Windows. They set `AST_MCP_REQUIRE_COMPARATORS=1`, which fails the benchmark when either pinned executable or its required evidence is unavailable. These tools are not runtime dependencies. Local runs report explicit unavailable status without inventing measurements.
+CI and release validation provision `ast-bro` 4.2.0 and `graphify` 0.9.53 as isolated validation tools. macOS ARM64 installs the pinned `@ast-bro/cli` package with Bun. Linux, Windows, and Intel macOS install the pinned Rust crate with Cargo. Provisioning verifies both executable versions before qualification. CI sets `AST_MCP_REQUIRE_COMPARATORS=1`, which fails when either comparator or its required evidence is unavailable. These tools are not runtime dependencies. Local runs report explicit unavailable status without inventing measurements.
+
+The benchmark opens a real Git fixture through the public MCP lifecycle, builds its index, reads `index_status`, and retrieves lexical evidence. The report records the returned generation, actual persisted table counts, scan coverage, and retrieved-item count. It never substitutes fixed publication or lifecycle counts.
 
 The benchmark runs native requests twice, records cold and warm latency, and verifies identical normalized results. It also runs the production `ParserWorkerPool` twice over identical TypeScript requests in one bounded pool. The report records each pass's latency, hit and miss decisions, evictions, entries, bytes, result reuse, and reuse percentage. Cold counters must show two misses and no hits. Warm counters must show two hits and no misses, with unchanged occupancy and no eviction. The indexing phase uses the production `EmbeddingWorkerPool`, a deterministic injected `EmbeddingProvider`, `LanceIntelligenceStore`, and the production chunk and embedding publication functions. It publishes two generations, records real provider cache hits and misses, measures LanceDB growth, and performs a vector query. It also verifies guarded writes across two Git worktrees and rejects sibling-worktree and out-of-scope reads. Graphify indexes once, then executes and exactly scores every fixed task under its own 2,000-token query budget.
+
+The distribution build emits explicit dynamic, infrastructure, JVM, legacy, and systems parser-worker bundles. It copies the pinned tree-sitter manifest, runtime WASM, and available grammar WASMs into `dist/workers`. An extracted-package smoke test exercises parse, index build, index status, retrieval, and guarded writes through stdio and Streamable HTTP.
 
 The full test suite covers indexing, branch changes, detached worktrees, renames, deletions, publication, concurrent readers, lexical search, vector search, graph traversal, and recovery. Fixtures must cover repository-local, parent, global, and explicit storage scopes. They must also cover sensitive-file exclusions and PDF, archive, and Office resource limits of 50 MiB raw, 512 MiB decompressed, and a 200:1 compression ratio.

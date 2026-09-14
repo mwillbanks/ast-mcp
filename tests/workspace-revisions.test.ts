@@ -9,6 +9,7 @@ import {
   gitWorkingState,
   parseGitPorcelainV1Z,
   readGitRevisionFile,
+  runGitRaw,
   WorkspaceRegistry,
   withWorkspaceContext,
 } from "../src/intelligence/workspace/index.ts";
@@ -307,6 +308,39 @@ test("invalid refs and historical selectors on non-Git roots fail closed", async
         revision,
       }),
     ).rejects.toMatchObject({ code: "workspace_revision_invalid" });
+  }
+});
+
+test("Git subprocesses force-kill commands that ignore graceful termination", async () => {
+  const originalSpawn = Bun.spawn;
+  const signals: Array<number | undefined> = [];
+  let finish!: (code: number) => void;
+  const exited = new Promise<number>((resolve) => {
+    finish = resolve;
+  });
+  const child = {
+    exited,
+    kill(signal?: number) {
+      signals.push(signal);
+      if (signal === 9) finish(137);
+    },
+    stderr: new Blob().stream(),
+    stdout: new Blob().stream(),
+  };
+  Bun.spawn = (() => child) as unknown as typeof Bun.spawn;
+  try {
+    const controller = new AbortController();
+    const pending = runGitRaw(
+      "/unused",
+      ["status"],
+      controller.signal,
+      () => {},
+    );
+    controller.abort();
+    expect(await pending).toMatchObject({ code: 137 });
+    expect(signals).toEqual([undefined, 9]);
+  } finally {
+    Bun.spawn = originalSpawn;
   }
 });
 

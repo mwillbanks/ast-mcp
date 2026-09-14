@@ -15,8 +15,6 @@ export type DynamicLanguageId =
   | "julia"
   | "elixir";
 
-export type WasmDynamicLanguageId = Exclude<DynamicLanguageId, "luau">;
-
 export interface DynamicGrammarAssetConfig extends DynamicGrammarAsset {
   astGrepLanguage: string;
   grammarVersion: string;

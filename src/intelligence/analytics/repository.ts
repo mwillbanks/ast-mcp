@@ -109,14 +109,6 @@ function validateCommunity(
   return community;
 }
 
-function stableCreatedAt(identity: string): string {
-  const digest = createHash("sha256").update(identity).digest("hex");
-  const milliseconds = Number(
-    BigInt(`0x${digest.slice(0, 12)}`) % 4_102_444_800_000n,
-  );
-  return new Date(milliseconds).toISOString();
-}
-
 function parsedRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "string") throw new Error("analytics_payload_invalid");
   const parsed: unknown = JSON.parse(value);
@@ -228,7 +220,8 @@ export class LanceAnalyticsRepository {
       throw new Error("workspace_read_only");
 
     if (
-      reservation.publicationProtocol !== "reservation-v1" ||
+      (reservation.publicationProtocol !== "reservation-v1" &&
+        reservation.publicationProtocol !== "reservation-v2") ||
       reservation.generationId !== result.scope.generationId ||
       reservation.workspaceId !== result.scope.workspaceId ||
       reservation.revisionId !== result.scope.revisionId ||
@@ -246,7 +239,7 @@ export class LanceAnalyticsRepository {
       return {
         algorithm: `${result.algorithm}@${result.algorithmVersion}`,
         community_id: storageId,
-        created_at: stableCreatedAt(storageId),
+        created_at: this.store.currentTimestamp(),
         generation_id: result.scope.generationId,
         member_ids_json: JSON.stringify(community.memberIds),
         payload_json: JSON.stringify({
@@ -268,7 +261,7 @@ export class LanceAnalyticsRepository {
       return {
         content: summary.content,
         content_digest: summary.contentDigest,
-        created_at: stableCreatedAt(storageId),
+        created_at: this.store.currentTimestamp(),
         generation_id: result.scope.generationId,
         model_id: null,
         payload_json: JSON.stringify({

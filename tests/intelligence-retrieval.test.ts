@@ -382,6 +382,37 @@ class MockProvider implements EmbeddingProvider {
   }
 }
 
+describe("retrieval chunk identity", () => {
+  test("covers every immutable storage coordinate", () => {
+    const base = {
+      documentKind: "code" as const,
+      language: "typescript",
+      path: "src/value.ts",
+      range: RANGE,
+      sourceArtifactId: createIdentity("source", { contentDigest: "base" }),
+      symbols: ["value"],
+      text: "export const value = 1;",
+    };
+    const identities = [
+      syntheticChunkArtifactId(base),
+      syntheticChunkArtifactId({ ...base, documentKind: "structured" }),
+      syntheticChunkArtifactId({ ...base, language: "tsx" }),
+      syntheticChunkArtifactId({ ...base, path: "src/other.ts" }),
+      syntheticChunkArtifactId({
+        ...base,
+        range: { ...RANGE, endByte: RANGE.endByte + 1 },
+      }),
+      syntheticChunkArtifactId({
+        ...base,
+        sourceArtifactId: createIdentity("source", { contentDigest: "other" }),
+      }),
+      syntheticChunkArtifactId({ ...base, symbols: ["other"] }),
+      syntheticChunkArtifactId({ ...base, text: "export const value = 2;" }),
+    ];
+    expect(new Set(identities)).toHaveLength(identities.length);
+  });
+});
+
 describe("retrieval embedding provider", () => {
   test("pins model artifacts and isolates model spaces", () => {
     expect(DEFAULT_EMBEDDING_MODEL.dimensions).toBe(384);
@@ -805,6 +836,96 @@ describe("LanceDB hybrid retrieval", () => {
     await store.shutdownCoordinator();
   });
 
+  test("prioritizes exact eligible chunks and associates only overlapping occurrences", async () => {
+    const { scope, store, workspace } = await harness("candidate-priority");
+    const range = (startByte: number, endByte: number) => ({
+      end: { column: endByte, line: 0 },
+      endByte,
+      start: { column: startByte, line: 0 },
+      startByte,
+    });
+    const createChunk = (
+      input: Omit<RetrievalChunk, "artifactId">,
+    ): RetrievalChunk => ({
+      ...input,
+      artifactId: syntheticChunkArtifactId(input),
+    });
+    const sharedSource = createIdentity("source", { shared: true });
+    const unrelated = createChunk({
+      documentKind: "code",
+      language: "typescript",
+      path: "src/shared.ts",
+      range: range(0, 10),
+      sourceArtifactId: sharedSource,
+      symbols: ["UnrelatedSymbol"],
+      text: "export const unrelated = true;",
+    });
+    const target = createChunk({
+      documentKind: "code",
+      language: "typescript",
+      path: "src/shared.ts",
+      range: range(20, 30),
+      sourceArtifactId: sharedSource,
+      symbols: ["TargetSymbol"],
+      text: "export const TargetSymbol = true;",
+    });
+    let denied: RetrievalChunk | undefined;
+    for (let index = 0; index < 256; index += 1) {
+      const candidate = createChunk({
+        documentKind: "code",
+        language: "typescript",
+        path: `secret/${index}.ts`,
+        range: range(40, 50),
+        sourceArtifactId: createIdentity("source", { denied: index }),
+        symbols: ["TargetSymbol"],
+        text: "export const TargetSymbol = false;",
+      });
+      if (candidate.artifactId.localeCompare(target.artifactId) < 0) {
+        denied = candidate;
+        break;
+      }
+    }
+    if (!denied) throw new Error("missing_lower_priority_fixture");
+    const corpus = [unrelated, target, denied];
+    await publishRetrievalChunks(store, scope, corpus, workspace);
+    const graph = graphFor(scope, corpus);
+    const targetNode = graph.nodes[1];
+    if (!targetNode) throw new Error("missing_target_node");
+    const response = await retrieve(
+      store,
+      await fakeReader(store, scope),
+      {
+        budget: {
+          maxBytes: 1_000,
+          maxCandidates: 1,
+          maxDepth: 1,
+          maxItems: 1,
+          maxNodes: 10,
+          maxVectorCandidates: 1,
+          timeoutMs: 5_000,
+        },
+        deniedPaths: ["secret"],
+        exactSymbols: ["TargetSymbol"],
+        includedPaths: ["src"],
+        languages: ["typescript"],
+        query: "TargetSymbol",
+        scope,
+        semantic: false,
+      },
+      { graph, textSearch: "local", workspace },
+    );
+    expect(response.results).toHaveLength(1);
+    expect(response.results[0]).toMatchObject({
+      entityId: targetNode.nodeId,
+      path: "src/shared.ts",
+      range: range(20, 30),
+    });
+    expect(response.results[0]?.reasons.map(({ signal }) => signal)).toContain(
+      "exact-symbol",
+    );
+    await store.shutdownCoordinator();
+  });
+
   test("survives restart and falls back to local BM25 without an FTS index", async () => {
     const {
       scope,
@@ -883,18 +1004,33 @@ describe("LanceDB hybrid retrieval", () => {
       workspace,
     });
     const generation = await store.finalizePublication(reservation);
-    expect(generation.publicationProtocol).toBe("reservation-v1");
+    expect(generation.publicationProtocol).toBe("reservation-v2");
     expect(generation.generationId).toBe(reservation.generationId);
     expect(generation.requiredTables).toEqual(["chunks", "embeddings"]);
     const finalizedTables = generation.tableVersions.map(({ table }) => table);
     expect(finalizedTables).toContain("chunks");
     expect(finalizedTables).toContain("embeddings");
-    expect((await store.rows("chunks"))[0]?.publication_generation_id).toBe(
-      reservation.generationId,
-    );
-    expect((await store.rows("embeddings"))[0]?.publication_generation_id).toBe(
-      reservation.generationId,
-    );
+    expect(
+      (await store.rows("chunks"))[0]?.publication_generation_id,
+    ).toBeNull();
+    expect(
+      (await store.rows("embeddings"))[0]?.publication_generation_id,
+    ).toBeNull();
+    const generationLinks = await store.rows("generation_artifacts");
+    expect(
+      generationLinks.some(
+        (row) =>
+          row.generation_id === reservation.generationId &&
+          row.table_name === "chunks",
+      ),
+    ).toBe(true);
+    expect(
+      generationLinks.some(
+        (row) =>
+          row.generation_id === reservation.generationId &&
+          row.table_name === "embeddings",
+      ),
+    ).toBe(true);
     await expect(
       publishChunkEmbeddings(store, reservedScope, corpus, config, pool, {
         reservation,
@@ -1620,7 +1756,7 @@ describe("LanceDB hybrid retrieval", () => {
     await store.shutdownCoordinator();
   });
 
-  test("persists cancelled embedding jobs", async () => {
+  test("stops embedding publication at cancellation boundaries", async () => {
     const { scope, store, workspace } = await harness("cancel");
     const corpus = chunks().slice(0, 1);
     const config = EmbeddingModelConfigSchema.parse({
@@ -1629,23 +1765,27 @@ describe("LanceDB hybrid retrieval", () => {
       modelId: "test/model",
       revision: "test-revision",
     });
-    const provider = new MockProvider(config);
+    let providerCalls = 0;
+    const provider: EmbeddingProvider = {
+      close: async () => {},
+      config,
+      async embed(texts) {
+        providerCalls += 1;
+        return texts.map(() => [1, 0]);
+      },
+    };
     const pool = new EmbeddingWorkerPool(config, () => provider);
     const controller = new AbortController();
     controller.abort();
-    const result = await publishChunkEmbeddings(
-      store,
-      scope,
-      corpus,
-      config,
-      pool,
-      {
+    await expect(
+      publishChunkEmbeddings(store, scope, corpus, config, pool, {
         signal: controller.signal,
         workspace,
-      },
-    );
-    expect(result.failed).toBe(1);
-    expect((await store.rows("jobs"))[0]?.state).toBe("cancelled");
+      }),
+    ).rejects.toThrow("embedding_cancelled");
+    expect(providerCalls).toBe(0);
+    expect(await store.rows("jobs")).toHaveLength(0);
+    expect(await store.rows("embeddings")).toHaveLength(0);
 
     const failedConfig = EmbeddingModelConfigSchema.parse({
       ...config,
@@ -1675,8 +1815,39 @@ describe("LanceDB hybrid retrieval", () => {
     );
     expect(failed.failed).toBe(1);
     expect((await store.rows("jobs")).map(({ state }) => state).sort()).toEqual(
-      ["cancelled", "failed"],
+      ["failed"],
     );
+
+    const template = corpus[0];
+    if (!template) throw new Error("missing_test_chunk");
+    const midCorpus = Array.from({ length: 4 }, (_, index) => ({
+      ...template,
+      artifactId: createIdentity("chunks", { cancellation: index }),
+      text: `cancelled chunk ${index}`,
+    }));
+    const midConfig = EmbeddingModelConfigSchema.parse({
+      ...config,
+      maxQueue: 1,
+      workers: 1,
+    });
+    const midAbort = new AbortController();
+    let midProviderCalls = 0;
+    const midPool = {
+      async embed() {
+        midProviderCalls += 1;
+        midAbort.abort();
+        return [1, 0];
+      },
+    } as unknown as EmbeddingWorkerPool;
+    await expect(
+      publishChunkEmbeddings(store, scope, midCorpus, midConfig, midPool, {
+        signal: midAbort.signal,
+        workspace,
+      }),
+    ).rejects.toThrow("embedding_cancelled");
+    expect(midProviderCalls).toBe(1);
+    expect(await store.rows("embeddings")).toHaveLength(0);
+    expect(await store.rows("jobs")).toHaveLength(2);
     await failedPool.close();
     await pool.close();
     await store.shutdownCoordinator();

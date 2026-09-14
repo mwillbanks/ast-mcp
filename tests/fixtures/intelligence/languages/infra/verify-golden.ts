@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import {
   analyzeInfraLanguage,
   closeInfraLanguageWorker,
@@ -25,4 +25,11 @@ for (const [languageId, file] of Object.entries(files))
     source: await readFile(`${root}/${file}`, "utf8"),
   });
 await closeInfraLanguageWorker();
-assert.deepEqual(cases, golden.cases);
+if (process.argv.includes("--write")) {
+  await writeFile(
+    `${root}/graphify-golden.json`,
+    `${JSON.stringify({ ...golden, cases }, null, 2)}\n`,
+  );
+} else {
+  assert.deepEqual(cases, golden.cases);
+}

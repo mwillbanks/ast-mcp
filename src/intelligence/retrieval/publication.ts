@@ -40,11 +40,29 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function stableTimestamp(identity: string): string {
-  const value = Number(
-    BigInt(`0x${digest(identity).slice(0, 12)}`) % 4_102_444_800_000n,
-  );
-  return new Date(value).toISOString();
+export function retrievalChunkStorageRow(
+  chunkInput: RetrievalChunk,
+  createdAt: string,
+): Record<string, unknown> {
+  const chunk = RetrievalChunkSchema.parse(chunkInput);
+  const symbols = [...chunk.symbols].sort();
+  return {
+    artifact_id: chunk.artifactId,
+    byte_length: Buffer.byteLength(chunk.text),
+    created_at: createdAt,
+    document_kind: chunk.documentKind,
+    extracted_content_digest: digest(chunk.text),
+    payload_json: JSON.stringify({
+      language: chunk.language,
+      range: chunk.range,
+      symbols,
+      version: "retrieval-chunk-v1",
+    }),
+    semantic_context_digest: digest(JSON.stringify([chunk.language, symbols])),
+    source_artifact_id: chunk.sourceArtifactId,
+    syntax_facts_artifact_id: null,
+    text: chunk.text,
+  };
 }
 
 function workspaceForScope(
@@ -95,29 +113,11 @@ export async function publishRetrievalChunks(
   assertWorkspaceWritable();
   if (!workspace.writeEligibility.eligible)
     throw new Error("workspace_read_only");
-  const chunks = chunksInput.map((chunk) => RetrievalChunkSchema.parse(chunk));
-  const rows = chunks.map((chunk) => {
-    const exactContentDigest = digest(chunk.text);
-    return {
-      artifact_id: chunk.artifactId,
-      byte_length: Buffer.byteLength(chunk.text),
-      created_at: stableTimestamp(chunk.artifactId),
-      document_kind: chunk.documentKind,
-      extracted_content_digest: exactContentDigest,
-      payload_json: JSON.stringify({
-        language: chunk.language,
-        range: chunk.range,
-        symbols: [...chunk.symbols].sort(),
-        version: "retrieval-chunk-v1",
-      }),
-      publication_generation_id: scope.generationId,
-      semantic_context_digest: digest(
-        JSON.stringify([chunk.language, [...chunk.symbols].sort()]),
-      ),
-      source_artifact_id: chunk.sourceArtifactId,
-      syntax_facts_artifact_id: null,
-      text: chunk.text,
-    };
+  const rows = chunksInput.map((chunk) => {
+    const row = retrievalChunkStorageRow(chunk, store.currentTimestamp());
+    return reservation
+      ? row
+      : { ...row, publication_generation_id: scope.generationId };
   });
   if (reservation) await store.putReservedRows(reservation, "chunks", rows);
   else await store.putRows("chunks", rows);
@@ -206,20 +206,27 @@ export async function publishChunkEmbeddings(
   const dtype = ARTIFACT_DTYPES[config.dtype];
   const artifactIds: string[] = [];
   let failed = 0;
+  const throwIfCancelled = () => {
+    if (options.signal?.aborted) throw new EmbeddingCancelledError();
+  };
   const publishChunk = async (chunk: RetrievalChunk): Promise<void> => {
+    throwIfCancelled();
     const exactInputDigest = digest(chunk.text);
     const fingerprint = digest(
       JSON.stringify([chunk.artifactId, space, exactInputDigest]),
     );
     const createdAt = new Date().toISOString();
+    throwIfCancelled();
     await store.putJob(
       jobFor(store, scope, fingerprint, "pending", 0, null, createdAt),
     );
     try {
+      throwIfCancelled();
       const vector = normalizeEmbedding(
         await pool.embed(chunk.text, { signal: options.signal }),
         config.dimensions,
       );
+      throwIfCancelled();
       const coordinateArtifactId = embeddingArtifactIdentity({
         chunkArtifactId: chunk.artifactId,
         dimensions: config.dimensions,
@@ -241,7 +248,7 @@ export async function publishChunkEmbeddings(
         artifact_id: artifactId,
         byte_length: vector.length * 4,
         chunk_artifact_id: chunk.artifactId,
-        created_at: stableTimestamp(artifactId),
+        created_at: store.currentTimestamp(),
         dimensions: config.dimensions,
         dtype,
         exact_input_digest: exactInputDigest,
@@ -260,11 +267,13 @@ export async function publishChunkEmbeddings(
         publication_generation_id: scope.generationId,
         vector,
       };
+      throwIfCancelled();
       if (options.reservation)
         await store.putReservedRows(options.reservation, "embeddings", [row], {
           immutable: false,
         });
       else await store.putRows("embeddings", [row]);
+      throwIfCancelled();
       await store.putJob(
         jobFor(store, scope, fingerprint, "succeeded", 1, null, createdAt),
       );
@@ -274,14 +283,19 @@ export async function publishChunkEmbeddings(
       failed += 1;
       const cancelled =
         options.signal?.aborted || error instanceof EmbeddingCancelledError;
+      if (cancelled)
+        throw error instanceof EmbeddingCancelledError
+          ? error
+          : new EmbeddingCancelledError();
+      throwIfCancelled();
       await store.putJob(
         jobFor(
           store,
           scope,
           fingerprint,
-          cancelled ? "cancelled" : "failed",
+          "failed",
           1,
-          cancelled ? "embedding_cancelled" : "embedding_failed",
+          "embedding_failed",
           createdAt,
         ),
       );
@@ -290,9 +304,11 @@ export async function publishChunkEmbeddings(
   };
   const concurrency = Math.max(1, config.workers + config.maxQueue);
   for (let offset = 0; offset < chunks.length; offset += concurrency) {
+    throwIfCancelled();
     await Promise.all(
       chunks.slice(offset, offset + concurrency).map(publishChunk),
     );
+    throwIfCancelled();
   }
   return {
     artifactIds: artifactIds.sort(),
@@ -308,7 +324,11 @@ export function syntheticChunkArtifactId(
   return createIdentity("chunks", {
     documentKind: chunk.documentKind,
     language: chunk.language,
+    path: chunk.path,
+    range: chunk.range,
     sourceArtifactId: chunk.sourceArtifactId,
+    storageContract: "retrieval-chunk-v2",
+    symbols: [...chunk.symbols].sort(),
     textDigest: digest(chunk.text),
   });
 }

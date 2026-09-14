@@ -298,6 +298,18 @@ function openedWorkspaceId(value: unknown): string {
   if (!match) throw new Error("workspace_open omitted workspaceId");
   return match[0];
 }
+function requiredToolData<T extends Record<string, unknown>>(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+  label: string,
+): T {
+  if (result.isError)
+    throw new Error(
+      `${label} failed: ${JSON.stringify(result.structuredContent)}`,
+    );
+  const data = (result.structuredContent as { data?: T } | undefined)?.data;
+  if (!data) throw new Error(`${label} omitted structured data`);
+  return data;
+}
 
 async function native(root: string): Promise<{
   cold: ToolObservation[];
@@ -555,6 +567,89 @@ async function productionParserCache() {
   }
 }
 
+async function writeCorpus(root: string): Promise<void> {
+  await Promise.all(
+    Object.entries(CORPUS).map(([name, source]) =>
+      writeFile(path.join(root, name), source),
+    ),
+  );
+}
+
+async function publicLifecycle(owned: string) {
+  const root = path.join(owned, "public-lifecycle");
+  const storagePath = path.join(owned, "public-lifecycle-storage");
+  await mkdir(root, { recursive: true });
+  await writeCorpus(root);
+  await cli(["git", "init", "-q"], root);
+  await cli(["git", "config", "user.email", "benchmark@example.invalid"], root);
+  await cli(["git", "config", "user.name", "Benchmark"], root);
+  await cli(["git", "add", "."], root);
+  await cli(["git", "commit", "-qm", "fixture"], root);
+
+  const client = await connect(root, "benchmark-public-lifecycle");
+  try {
+    const opened = await client.callTool({
+      arguments: {
+        directory: root,
+        storage: { kind: "explicit", path: storagePath },
+      },
+      name: "workspace_open",
+    });
+    const workspaceId = openedWorkspaceId(opened.structuredContent);
+    const build = requiredToolData<Record<string, unknown>>(
+      await client.callTool({
+        arguments: { action: "build", workspaceId },
+        name: "index",
+      }),
+      "index build",
+    );
+    const status = requiredToolData<{
+      counts: Record<string, number>;
+      coverage: { exhaustive: boolean; truncated: boolean };
+      generation: string | null;
+    }>(
+      await client.callTool({
+        arguments: {
+          maxRowsPerTable: 10_000,
+          timeoutMs: 30_000,
+          workspaceId,
+        },
+        name: "index_status",
+      }),
+      "index_status",
+    );
+    const retrieval = requiredToolData<{
+      results: unknown[];
+    }>(
+      await client.callTool({
+        arguments: {
+          budget: {
+            maxBytes: 64_000,
+            maxCandidates: 100,
+            maxItems: 20,
+            timeoutMs: 30_000,
+          },
+          query: "publish",
+          semantic: false,
+          workspaceId,
+        },
+        name: "retrieve",
+      }),
+      "retrieve",
+    );
+    return {
+      buildGeneration: String(build.generation ?? ""),
+      counts: status.counts,
+      generation: status.generation,
+      retrievedItems: retrieval.results.length,
+      statusCoverage: status.coverage,
+      workspaceId,
+    };
+  } finally {
+    await client.close();
+  }
+}
+
 async function productionIndexing(
   root: string,
   storagePath: string,
@@ -708,6 +803,7 @@ async function productionIndexing(
     const warmCounters = provider.snapshot();
     const afterWarm = await bytes(storagePath);
     const warmRows = await store.rows("embeddings");
+    const embeddingPublications = [coldPublication, warmPublication];
 
     const connection = await lancedb.connect(storagePath);
     const searchRows = coldRows.map((row) => ({
@@ -751,7 +847,9 @@ async function productionIndexing(
         ),
       },
       parser,
-      publicationCount: 2,
+      publicationCount: embeddingPublications.filter(
+        (publication) => publication.artifactIds.length > 0,
+      ).length,
       publishedRows: warmRows.length,
       queryExecuted: nearest.length > 0,
       storageGrowth: {
@@ -932,11 +1030,7 @@ export async function benchmarkIntelligenceBaseline() {
   try {
     const root = path.join(owned, "corpus");
     await mkdir(path.join(root, ".git"), { recursive: true });
-    await Promise.all(
-      Object.entries(CORPUS).map(([name, source]) =>
-        writeFile(path.join(root, name), source),
-      ),
-    );
+    await writeCorpus(root);
     const [baseline, nativeResult, graphifyResult] = await Promise.all([
       astBro(root),
       native(root),
@@ -1047,6 +1141,7 @@ export async function benchmarkIntelligenceBaseline() {
       },
       indexing,
       isolation: await isolation(owned),
+      lifecycle: await publicLifecycle(owned),
       memory: { heapUsedBytes: process.memoryUsage().heapUsed, peakRssBytes },
       runtime: {
         bun: Bun.version,

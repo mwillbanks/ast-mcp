@@ -42,6 +42,7 @@ interface Parsed {
 }
 
 const encoder = new TextEncoder();
+const documentExtractorVersion = "ast-mcp.documents.v2";
 
 function lines(
   source: string,
@@ -437,14 +438,19 @@ class JsonParser {
     this.skip();
     if (this.source[this.index] !== '"') return null;
     const start = this.index++;
-    let value = "";
     while (this.index < this.source.length) {
       const char = this.source[this.index++]!;
-      if (char === '"') return { end: this.index, start, value };
-      if (char === "\\" && this.index < this.source.length) {
-        const escaped = this.source[this.index++]!;
-        value += escaped === "n" ? "\n" : escaped;
-      } else value += char;
+      if (char === '"') {
+        const token = this.source.slice(start, this.index);
+        let value = token.slice(1, -1);
+        try {
+          value = JSON.parse(token) as string;
+        } catch {
+          // The document-level Bun parser reports invalid string syntax.
+        }
+        return { end: this.index, start, value };
+      }
+      if (char === "\\" && this.index < this.source.length) this.index += 1;
     }
     return null;
   }
@@ -549,6 +555,19 @@ function json(source: string, comments: boolean): Parsed {
       ),
       severity: "error",
     });
+  try {
+    if (comments) Bun.JSONC.parse(source);
+    else JSON.parse(source);
+  } catch {
+    if (parser.diagnostics.length === 0) {
+      parser.diagnostics.push({
+        code: "malformed-document",
+        message: comments ? "Invalid JSONC document" : "Invalid JSON document",
+        range: new SourceCoordinateIndex(source).range(0, source.length),
+        severity: "error",
+      });
+    }
+  }
   return {
     diagnostics: parser.diagnostics,
     nodes: parser.nodes,
@@ -1144,6 +1163,9 @@ export async function analyzeDocument(
     sourceDigest,
     syntaxFactsArtifactId: sha256(
       JSON.stringify([
+        ...(["json", "jsonc"].includes(request.format)
+          ? [documentExtractorVersion]
+          : []),
         sourceDigest,
         request.format,
         encoding,

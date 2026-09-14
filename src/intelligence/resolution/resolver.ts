@@ -16,10 +16,10 @@ import type {
   MaterializedRelationship,
   ProjectResolutionSource,
   ResolutionEvidence,
+  ResolutionMembership,
   ResolutionSource,
   ResolutionStatus,
   ResolveGraphRequest,
-  RevisionMembership,
 } from "./types.ts";
 
 const hashPattern = /^[a-f0-9]{64}$/u;
@@ -658,7 +658,7 @@ const resolutionStatus = (
 
 interface Mutable {
   evidence: ResolutionEvidence[];
-  memberships: RevisionMembership[];
+  memberships: ResolutionMembership[];
   nodes: MaterializedNode[];
   occurrences: MaterializedOccurrence[];
   relationships: MaterializedRelationship[];
@@ -669,7 +669,7 @@ function addMembership(
   path: string,
   artifactId: string,
   entityId: string,
-  entityKind: RevisionMembership["entityKind"],
+  entityKind: ResolutionMembership["entityKind"],
 ): void {
   state.memberships.push({
     entityId,
@@ -861,12 +861,18 @@ function codeDeclarations(
     addEvidence(state, request, source, occurrence, "declaration");
   });
 }
-function documentDeclarations(
+function structuredDeclarations(
   state: Mutable,
   request: ResolveGraphRequest,
-  source: DocumentResolutionSource,
+  source: DocumentResolutionSource | ProjectResolutionSource,
+  facts: readonly {
+    id: string;
+    kind: MaterializedNode["kind"];
+    name: string;
+    range: MaterializedOccurrence["range"];
+  }[],
 ): void {
-  source.facts.nodes.forEach((fact, ordinal) => {
+  facts.forEach((fact, ordinal) => {
     const occurrence = addOccurrence(
       state,
       request,
@@ -877,47 +883,47 @@ function documentDeclarations(
       "declaration",
       ordinal,
     );
-    addNode(
-      state,
-      request,
-      source,
-      occurrence,
-      fact.nodeKind ?? "document",
-      fact.name,
-      null,
-    );
+    addNode(state, request, source, occurrence, fact.kind, fact.name, null);
     addEvidence(state, request, source, occurrence, "declaration");
   });
+}
+
+function documentDeclarations(
+  state: Mutable,
+  request: ResolveGraphRequest,
+  source: DocumentResolutionSource,
+): void {
+  structuredDeclarations(
+    state,
+    request,
+    source,
+    source.facts.nodes.map((fact) => ({
+      id: fact.id,
+      kind: fact.nodeKind ?? "document",
+      name: fact.name,
+      range: fact.range,
+    })),
+  );
 }
 function projectDeclarations(
   state: Mutable,
   request: ResolveGraphRequest,
   source: ProjectResolutionSource,
 ): void {
-  source.facts.nodes.forEach((fact, ordinal) => {
-    const occurrence = addOccurrence(
-      state,
-      request,
-      source,
-      fact.id,
-      fact.name,
-      fact.range,
-      "declaration",
-      ordinal,
-    );
-    addNode(
-      state,
-      request,
-      source,
-      occurrence,
-      fact.kind === "element" || fact.kind === "property"
-        ? "component"
-        : fact.kind,
-      fact.name,
-      null,
-    );
-    addEvidence(state, request, source, occurrence, "declaration");
-  });
+  structuredDeclarations(
+    state,
+    request,
+    source,
+    source.facts.nodes.map((fact) => ({
+      id: fact.id,
+      kind:
+        fact.kind === "element" || fact.kind === "property"
+          ? "component"
+          : fact.kind,
+      name: fact.name,
+      range: fact.range,
+    })),
+  );
 }
 function declarationNode(
   state: Mutable,

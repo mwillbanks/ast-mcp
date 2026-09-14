@@ -4,12 +4,11 @@ import {
   type LanguageCapability,
   LanguageCapabilitySchema,
 } from "../../contracts/language.ts";
+import type { DynamicGrammarManifest } from "../../parser/index.ts";
 import {
-  type DynamicGrammarManifest,
-  type DynamicGrammarManifestEntry,
-  type LanguageImplementation,
-  sha256,
-} from "../../parser/index.ts";
+  buildGrammarManifest,
+  createExtractionImplementation,
+} from "../manifest-builders.ts";
 import {
   analyzeSystemsLanguage,
   systemsExtractorFingerprint,
@@ -31,18 +30,7 @@ const extensions: Record<SystemsLanguageId, readonly string[]> = {
   swift: [".swift"],
   zig: [".zig"],
 };
-const implementation: LanguageImplementation = {
-  callResolution: false,
-  embeddedLanguages: false,
-  exportResolution: false,
-  importResolution: false,
-  inheritanceResolution: false,
-  match: false,
-  parse: true,
-  rewrite: false,
-  structuralRead: true,
-  symbolExtraction: false,
-};
+const implementation = createExtractionImplementation();
 function claim(
   status: "supported" | "partial",
   limitations: string[] = [],
@@ -95,16 +83,19 @@ function capability(languageId: SystemsLanguageId): LanguageCapability {
     ]),
   });
 }
-export const systemsLanguageAdapters = (
-  Object.keys(extensions) as SystemsLanguageId[]
-).map(
-  (languageId): SystemsLanguageAdapter => ({
+function createSystemsLanguageAdapter(
+  languageId: SystemsLanguageId,
+): SystemsLanguageAdapter {
+  return {
     analyze: analyzeSystemsLanguage,
     capability: capability(languageId),
     extensions: extensions[languageId],
     languageId,
-  }),
-);
+  };
+}
+export const systemsLanguageAdapters = (
+  Object.keys(extensions) as SystemsLanguageId[]
+).map(createSystemsLanguageAdapter);
 export function systemsLanguageAdapter(
   languageId: SystemsLanguageId,
 ): SystemsLanguageAdapter {
@@ -115,68 +106,21 @@ export function systemsLanguageAdapter(
     throw new TypeError(`Unsupported systems language: ${languageId}`);
   return adapter;
 }
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-  }
-  return value;
-}
 
 export function createSystemsGrammarManifest(
   assets: readonly SystemsGrammarAssetConfig[],
 ): DynamicGrammarManifest {
-  const byLanguage = new Map<SystemsLanguageId, SystemsGrammarAssetConfig>();
-  for (const asset of assets) {
-    if (byLanguage.has(asset.languageId))
-      throw new TypeError(`Duplicate dynamic grammar: ${asset.languageId}`);
-    byLanguage.set(asset.languageId, asset);
-  }
-  const missing = systemsLanguageAdapters
-    .map((adapter) => adapter.languageId)
-    .filter((id) => !byLanguage.has(id));
-  if (missing.length)
-    throw new TypeError(`Missing dynamic grammars: ${missing.join(", ")}`);
-  const entries: DynamicGrammarManifestEntry[] = [...byLanguage.values()]
-    .sort((a, b) => a.languageId.localeCompare(b.languageId))
-    .map((asset) => {
-      if (!/^[a-f0-9]{64}$/.test(asset.sha256))
-        throw new TypeError(`Invalid grammar SHA-256: ${asset.languageId}`);
-      const dynamicAsset = {
-        ...(asset.expandoChar ? { expandoChar: asset.expandoChar } : {}),
-        ...(asset.languageSymbol
-          ? { languageSymbol: asset.languageSymbol }
-          : {}),
-        libraryPath: asset.libraryPath,
-        ...(asset.metaVarChar ? { metaVarChar: asset.metaVarChar } : {}),
-        sha256: asset.sha256,
-      };
-      const grammarFingerprint = sha256(
-        JSON.stringify({
-          astGrepLanguage: asset.astGrepLanguage,
-          dynamicAsset,
-          extensions: [...extensions[asset.languageId]],
-          grammarVersion: asset.grammarVersion,
-          languageId: asset.languageId,
-        }),
-      );
-      return {
-        descriptor: {
-          astGrepLanguage: asset.astGrepLanguage,
-          dynamicAsset,
-          extensions: [...extensions[asset.languageId]],
-          grammarFingerprint,
-          grammarVersion: asset.grammarVersion,
-          languageId: asset.languageId,
-        },
-        implementation: { ...implementation },
-      };
-    });
-  return deepFreeze({
-    entries,
-    fingerprint: sha256(JSON.stringify(entries)),
-    schemaVersion: "ast-mcp.dynamic-grammars.v1" as const,
+  return buildGrammarManifest({
+    assets,
+    cloneDescriptorExtensions: true,
+    duplicateLabel: "dynamic grammar",
+    extensions,
+    freeze: true,
+    implementation,
+    missingLabel: "dynamic grammar",
+    requiredLanguageIds: systemsLanguageAdapters.map(
+      ({ languageId }) => languageId,
+    ),
   });
 }
 export const systemsLanguageGroupManifest: SystemsLanguageGroupManifest = {

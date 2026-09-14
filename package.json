@@ -7,6 +7,26 @@
     "url": "https://github.com/mwillbanks/ast-mcp/issues"
   },
   "dependencies": {
+    "@ast-grep/lang-bash": "0.0.8",
+    "@ast-grep/lang-c": "0.0.6",
+    "@ast-grep/lang-cpp": "0.0.6",
+    "@ast-grep/lang-csharp": "0.0.6",
+    "@ast-grep/lang-dart": "0.0.7",
+    "@ast-grep/lang-elixir": "0.0.7",
+    "@ast-grep/lang-go": "0.0.6",
+    "@ast-grep/lang-java": "0.0.7",
+    "@ast-grep/lang-kotlin": "0.0.7",
+    "@ast-grep/lang-lua": "0.0.7",
+    "@ast-grep/lang-markdown": "0.0.6",
+    "@ast-grep/lang-php": "0.0.7",
+    "@ast-grep/lang-python": "0.0.6",
+    "@ast-grep/lang-ruby": "0.0.7",
+    "@ast-grep/lang-rust": "0.0.7",
+    "@ast-grep/lang-scala": "0.0.7",
+    "@ast-grep/lang-sql": "0.0.8",
+    "@ast-grep/lang-swift": "0.0.8",
+    "@ast-grep/lang-toml": "0.0.9",
+    "@ast-grep/lang-yaml": "0.0.6",
     "@ast-grep/napi": "0.45.3",
     "@huggingface/transformers": "4.2.0",
     "@lancedb/lancedb": "0.38.0",
@@ -15,7 +35,9 @@
     "apache-arrow": "18.1.0",
     "diff-match-patch-ts": "^2.0.0",
     "dprint": "0.56.1",
+    "parse5": "8.0.1",
     "tree-sitter-wasm": "1.1.8",
+    "typescript-strada": "npm:@typescript/typescript6@6.0.2",
     "unbash": "^4.0.10",
     "web-tree-sitter": "0.27.0",
     "zod": "^4.4.3"
@@ -27,8 +49,7 @@
     "@types/bun": "^1.4.0",
     "@types/node": "^26.3.0",
     "fallow": "^3.19.0",
-    "typescript": "^7.0.2",
-    "typescript-strada": "npm:@typescript/typescript6@6.0.2"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "bun": ">=1.4.0"
@@ -66,6 +87,7 @@
   "scripts": {
     "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test",
+    "comparators:provision": "bun run scripts/provision-intelligence-comparators-cli.ts",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",
     "evals:check": "bun run templates/skills/ast-mcp/evals/validate.ts",

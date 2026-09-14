@@ -105,6 +105,29 @@ test("registry keys preserve advertised root priority", async () => {
   }
 });
 
+test("registry invalidates cached configuration when the embedding model changes", async () => {
+  const root = await project("ast-mcp-v2-embedding-cache-");
+  const registry = new ConfigRegistry();
+  try {
+    const first = await registry.get({
+      cwd: root,
+      env: { AST_MCP_EMBEDDING_MODEL: "example/first" },
+    });
+    const second = await registry.get({
+      cwd: root,
+      env: { AST_MCP_EMBEDDING_MODEL: "example/second" },
+    });
+    expect(first.intelligence.retrieval.embedding.modelId).toBe(
+      "example/first",
+    );
+    expect(second.intelligence.retrieval.embedding.modelId).toBe(
+      "example/second",
+    );
+  } finally {
+    registry.close();
+  }
+});
+
 test("mixed configuration layers retain v1 compatibility without v2 temp access", async () => {
   const v1Project = await project(
     "ast-mcp-v2-mixed-project-",

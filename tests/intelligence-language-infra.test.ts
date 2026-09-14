@@ -52,6 +52,68 @@ function required<T>(value: T | undefined, message: string): T {
 }
 afterAll(closeInfraLanguageWorker);
 
+test("infrastructure ranges preserve byte, character, and UTF-16 coordinates", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `#🙂${newline}café() { local=1; target "$local"; }`;
+    const facts = await analyzeInfraLanguage({ languageId: "bash", source });
+    const symbol = facts.symbols.find(({ name }) => name === "café");
+    const call = facts.calls.find(({ callee }) => callee === "target");
+    const binding = facts.references.find(
+      ({ name, role }) => name === "local" && role === "write",
+    );
+    const reference = facts.references.find(
+      ({ name, role }) => name === "target" && role === "read",
+    );
+    if (!symbol || !call || !binding || !reference) {
+      throw new Error("Expected Unicode symbol, call, binding, and reference");
+    }
+    const range = symbol.declarationRange;
+    const start = source.indexOf("café");
+    const end = start + "café".length;
+    const prefix = source.slice(0, start);
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("café");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(new TextEncoder().encode(prefix).byteLength);
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.characterOffset).toBe(
+      Array.from(prefix).length,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(range.startCoordinate.utf16Column).toBe(0);
+    expect(range.startCoordinate.column).toBe(0);
+    expect(
+      source.slice(
+        call.range.startCoordinate.utf16Offset,
+        call.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe(`target "$local"`);
+    expect(
+      source.slice(
+        binding.range.startCoordinate.utf16Offset,
+        binding.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("local");
+    expect(
+      source.slice(
+        reference.range.startCoordinate.utf16Offset,
+        reference.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(call.enclosingSymbolId).toBeNull();
+    expect(binding.enclosingSymbolId).toBeNull();
+    expect(reference.enclosingSymbolId).toBeNull();
+  }
+});
+
 describe("infrastructure language adapters", () => {
   test("publishes immutable, honest capabilities for every language", () => {
     expect(infraLanguageGroupManifest.groupId).toBe("infra");

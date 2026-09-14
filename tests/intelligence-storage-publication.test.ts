@@ -17,6 +17,8 @@ import {
   createStorageDomainId,
   PublicationGenerationSchema,
   type PublicationReservation,
+  PublicationReservationSchema,
+  RequiredPublicationTablesSchema,
   type StorageDomain,
 } from "../src/intelligence/contracts/storage.ts";
 import { GraphSnapshotSchema } from "../src/intelligence/graph/types.ts";
@@ -99,6 +101,55 @@ function sourceRow(id: string): StorageRow {
 }
 
 describe("publication reservation protocol", () => {
+  test("rejects malformed publication reservation contracts", async () => {
+    expect(
+      RequiredPublicationTablesSchema.safeParse(["artifacts", "artifacts"])
+        .success,
+    ).toBeFalse();
+
+    const domain = await storageDomain("contract-validation");
+    const store = await LanceIntelligenceStore.open(domain);
+    const base = analyticsFixture(["contract"], [], "contract-validation");
+    const revisionId = base.scope.revisionId;
+    const reservation = await store.reservePublication({
+      manifestArtifactId: manifestId(revisionId),
+      requiredTables: ["artifacts"],
+      reservationKey: "contract-validation",
+      revisionId,
+      workspaceId: base.scope.workspaceId,
+    });
+
+    expect(
+      PublicationReservationSchema.safeParse({
+        ...reservation,
+        attempt: undefined,
+      }).success,
+    ).toBeFalse();
+    expect(
+      PublicationReservationSchema.safeParse({
+        ...reservation,
+        generationId: "f".repeat(64),
+      }).success,
+    ).toBeFalse();
+    expect(
+      PublicationReservationSchema.safeParse({
+        ...reservation,
+        expiresAt: reservation.reservedAt,
+      }).success,
+    ).toBeFalse();
+    expect(
+      PublicationReservationSchema.safeParse({
+        ...reservation,
+        state: "abandoned",
+      }).success,
+    ).toBeFalse();
+    await expect(
+      store.recordGenerationArtifacts(reservation, "chunks", []),
+    ).rejects.toMatchObject({ code: "publication_conflict" });
+    expect(Number.isNaN(Date.parse(store.currentTimestamp()))).toBeFalse();
+    await store.shutdownCoordinator();
+  });
+
   test("reserves, writes analytics, finalizes, pins, and reloads after restart", async () => {
     const domain = await storageDomain();
     const base = analyticsFixture(
@@ -127,7 +178,7 @@ describe("publication reservation protocol", () => {
     expect(
       taggedRows.every(
         (row) =>
-          row.publication_generation_id === reservation.generationId &&
+          row.publication_generation_id === null &&
           row.generation_id === reservation.generationId,
       ),
     ).toBe(true);
@@ -137,9 +188,24 @@ describe("publication reservation protocol", () => {
       store.finalizePublication(reservation),
     ]);
     expect(generation.generationId).toBe(reservation.generationId);
-    expect(generation.publicationProtocol).toBe("reservation-v1");
+    expect(generation.publicationProtocol).toBe("reservation-v2");
+    expect(
+      await store.count(
+        "generation_artifacts",
+        `generation_id = '${generation.generationId}'`,
+      ),
+    ).toBeGreaterThan(0);
     expect(generation.tableVersions).toHaveLength(15);
     expect(duplicateGeneration).toEqual(generation);
+    expect(
+      await store.reusablePublication({
+        manifestArtifactId: reservation.manifestArtifactId,
+        requiredTables: reservation.requiredTables,
+        reservationKey: reservation.reservationKey,
+        revisionId: reservation.revisionId,
+        workspaceId: reservation.workspaceId,
+      }),
+    ).toEqual(generation);
 
     const reader = await store.pinGeneration(generation, "analytics-reader");
     expect(await repository.load(reader, workspace(snapshot))).toEqual(
@@ -204,6 +270,35 @@ describe("publication reservation protocol", () => {
     ]);
     expect(duplicate).toEqual(reservation);
     expect(concurrentDuplicate).toEqual(reservation);
+    const inputFingerprint = reservation.inputFingerprint;
+    if (!inputFingerprint) throw new Error("missing input fingerprint");
+    const distinctReservations = await Promise.all([
+      store.reservePublication({
+        ...reservation,
+        inputFingerprint,
+        manifestArtifactId: manifestId(
+          createIdentity("revision", { activeManifest: "different" }),
+        ),
+      }),
+      store.reservePublication({
+        ...reservation,
+        inputFingerprint,
+        requiredTables: ["chunks"],
+      }),
+      store.reservePublication({
+        ...reservation,
+        inputFingerprint,
+        reservationKey: "different-active-key",
+      }),
+    ]);
+    expect(
+      distinctReservations.every(
+        (candidate) => candidate.generationId !== reservation.generationId,
+      ),
+    ).toBeTrue();
+    expect(distinctReservations.map(({ attempt }) => attempt)).toEqual([
+      1, 1, 1,
+    ]);
     await expect(store.finalizePublication(reservation)).rejects.toMatchObject({
       code: "publication_conflict",
     });
@@ -274,6 +369,103 @@ describe("publication reservation protocol", () => {
     await store.shutdownCoordinator();
   });
 
+  test("skips malformed matching reuse candidates", async () => {
+    const base = analyticsFixture(["malformed"], [], "malformed-candidates");
+    const request = {
+      manifestArtifactId: manifestId(base.scope.revisionId),
+      requiredTables: ["artifacts"] as const,
+      reservationKey: "malformed-candidates",
+      revisionId: base.scope.revisionId,
+      workspaceId: base.scope.workspaceId,
+    };
+
+    const activeStore = await LanceIntelligenceStore.open(
+      await storageDomain("malformed-active"),
+    );
+    const active = await activeStore.reservePublication(request);
+    const activeRow = (
+      await activeStore.rows(
+        "publications",
+        `generation_id = '${active.generationId}'`,
+      )
+    )[0];
+    if (!activeRow) throw new Error("missing active publication");
+    const invalidActiveGenerationId = "c".repeat(64);
+    const invalidActiveTableVersionId = "d".repeat(64);
+    await activeStore.putRows("publications", [
+      {
+        ...activeRow,
+        generation_id: invalidActiveGenerationId,
+        payload_json: JSON.stringify({
+          ...active,
+          attempt: 100,
+          generationId: "invalid",
+        }),
+      },
+      {
+        ...activeRow,
+        generation_id: invalidActiveTableVersionId,
+        payload_json: JSON.stringify({
+          ...active,
+          attempt: 101,
+          generationId: invalidActiveTableVersionId,
+          tableVersions: [{ table: "artifacts", version: "invalid" }],
+        }),
+        table_versions_json: JSON.stringify([
+          { table: "artifacts", version: "invalid" },
+        ]),
+      },
+    ]);
+    expect(await activeStore.reservePublication(request)).toEqual(active);
+    await activeStore.shutdownCoordinator();
+
+    const publishedStore = await LanceIntelligenceStore.open(
+      await storageDomain("malformed-published"),
+    );
+    const reservation = await publishedStore.reservePublication(request);
+    await publishedStore.putReservedRows(reservation, "artifacts", [
+      sourceRow(createIdentity("source", { malformedCandidate: true })),
+    ]);
+    const generation = await publishedStore.finalizePublication(reservation);
+    const publishedRow = (
+      await publishedStore.rows(
+        "publications",
+        `generation_id = '${generation.generationId}'`,
+      )
+    )[0];
+    if (!publishedRow) throw new Error("missing published generation");
+    const invalidPublishedGenerationId = "e".repeat(64);
+    const invalidPublishedTableVersionId = "f".repeat(64);
+    await publishedStore.putRows("publications", [
+      {
+        ...publishedRow,
+        generation_id: invalidPublishedGenerationId,
+        payload_json: JSON.stringify({
+          ...generation,
+          generationId: "invalid",
+          publishedAt: "9999-12-31T23:59:59.999Z",
+        }),
+      },
+      {
+        ...publishedRow,
+        generation_id: invalidPublishedTableVersionId,
+        payload_json: JSON.stringify({
+          ...generation,
+          generationId: invalidPublishedTableVersionId,
+          publishedAt: "9999-12-31T23:59:59.998Z",
+          tableVersions: [{ table: "artifacts", version: "invalid" }],
+        }),
+        table_versions_json: JSON.stringify([
+          { table: "artifacts", version: "invalid" },
+        ]),
+      },
+    ]);
+    expect(await publishedStore.reusablePublication(request)).toEqual(
+      generation,
+    );
+    await publishedStore.shutdownCoordinator();
+  });
+
   test("recovers stale reservations and retention removes abandoned records", async () => {
     const domain = await storageDomain("recovery");
     let current = new Date("2026-09-10T00:00:00.000Z");
@@ -324,6 +516,203 @@ describe("publication reservation protocol", () => {
     await reopened.shutdownCoordinator();
   });
 
+  test("retries terminal attempts without mutating shared artifacts", async () => {
+    const domain = await storageDomain("retry-membership");
+    let current = new Date("2026-09-10T00:00:00.000Z");
+    const store = await LanceIntelligenceStore.open(domain, {
+      now: () => current,
+    });
+    const revisionId = createIdentity("revision", { retry: true });
+    const workspaceId = createIdentity("workspace", { retry: true });
+    const artifactId = createIdentity("source", { shared: true });
+    const request = {
+      manifestArtifactId: manifestId(revisionId),
+      requiredTables: ["artifacts"] as const,
+      reservationKey: "retry-membership",
+      revisionId,
+      workspaceId,
+    };
+
+    const first = await store.reservePublication(request);
+    await store.putReservedRows(first, "artifacts", [sourceRow(artifactId)]);
+    await store.abandonPublication(first, "retry requested");
+
+    current = new Date("2026-09-10T00:00:01.000Z");
+    const second = await store.reservePublication(request);
+    expect(second.attempt).toBe(2);
+    expect(second.generationId).not.toBe(first.generationId);
+    expect(second.inputFingerprint).toBe(first.inputFingerprint);
+    await store.putReservedRows(second, "artifacts", [
+      {
+        ...sourceRow(artifactId),
+        created_at: current.toISOString(),
+      },
+    ]);
+    const generation = await store.finalizePublication(second);
+    expect(await store.reusablePublication(request)).toEqual(generation);
+    const inputFingerprint = generation.inputFingerprint;
+    if (!inputFingerprint) throw new Error("missing input fingerprint");
+    await Promise.all(
+      [
+        {
+          ...request,
+          inputFingerprint,
+          workspaceId: createIdentity("workspace", { different: true }),
+        },
+        {
+          ...request,
+          inputFingerprint,
+          revisionId: createIdentity("revision", { different: true }),
+        },
+        {
+          ...request,
+          inputFingerprint,
+          manifestArtifactId: manifestId(
+            createIdentity("revision", { manifest: "different" }),
+          ),
+        },
+        {
+          ...request,
+          inputFingerprint,
+          requiredTables: ["chunks"] as const,
+        },
+        {
+          ...request,
+          inputFingerprint,
+          reservationKey: "different",
+        },
+      ].map(async (candidate) =>
+        expect(await store.reusablePublication(candidate)).toBeNull(),
+      ),
+    );
+
+    const artifacts = await store.rows(
+      "artifacts",
+      `artifact_id = '${artifactId}'`,
+    );
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.created_at).toBe("2026-09-10T00:00:00.000Z");
+    expect(artifacts[0]?.publication_generation_id).toBeNull();
+    expect(
+      await store.count(
+        "generation_artifacts",
+        `artifact_id = '${artifactId}'`,
+      ),
+    ).toBe(2);
+
+    const reader = await store.pinGeneration(generation, "retry-reader");
+    expect(await reader.rows("artifacts")).toHaveLength(1);
+    await reader.close();
+
+    await store.putRows("retention", [
+      {
+        keep_failed_jobs_for_days: 7,
+        keep_published_generations: 2,
+        payload_json: "{}",
+        pin_grace_seconds: 30,
+        policy_id: "newer-retention-policy",
+        preserve_reader_pins: true,
+        unreachable_artifact_days: 30,
+        updated_at: "2026-09-11T00:00:00.000Z",
+      },
+    ]);
+    const collected = await store.collect({
+      keepPublishedGenerations: 1,
+      now: current,
+      unreachableArtifactDays: 0,
+    });
+    expect(collected.deletedByTable.generation_artifacts).toBe(1);
+    expect(
+      await store.count(
+        "generation_artifacts",
+        `artifact_id = '${artifactId}'`,
+      ),
+    ).toBe(1);
+    expect(await store.count("artifacts")).toBe(1);
+    await store.shutdownCoordinator();
+  });
+
+  test("rejects reusable publications from another storage domain", async () => {
+    const local = await LanceIntelligenceStore.open(
+      await storageDomain("reuse-local"),
+    );
+    const foreign = await LanceIntelligenceStore.open(
+      await storageDomain("reuse-foreign"),
+    );
+    const base = analyticsFixture(["reuse"], [], "cross-domain-reuse");
+    const inputFingerprint = "a".repeat(64);
+    const request = {
+      inputFingerprint,
+      manifestArtifactId: manifestId(base.scope.revisionId),
+      requiredTables: ["artifacts"] as const,
+      reservationKey: "cross-domain-reuse",
+      revisionId: base.scope.revisionId,
+      workspaceId: base.scope.workspaceId,
+    };
+    const reservation = await foreign.reservePublication(request);
+    await foreign.putReservedRows(reservation, "artifacts", [
+      sourceRow(createIdentity("source", { foreign: true })),
+    ]);
+    const generation = await foreign.finalizePublication(reservation);
+    const row = (
+      await foreign.rows(
+        "publications",
+        `generation_id = '${generation.generationId}'`,
+      )
+    )[0];
+    if (!row) throw new Error("missing foreign publication");
+    await local.putRows("publications", [row]);
+
+    expect(await local.reusablePublication(request)).toBeNull();
+    await foreign.shutdownCoordinator();
+    await local.shutdownCoordinator();
+  });
+
+  test("upgrades legacy tagged immutable content without removing its tag", async () => {
+    const store = await LanceIntelligenceStore.open(
+      await storageDomain("legacy-tag-upgrade"),
+    );
+    const base = analyticsFixture(["legacy"], [], "legacy-tag-upgrade");
+    const legacyGenerationId = createIdentity("generation", {
+      legacy: "tagged-content",
+    });
+    const artifactId = createIdentity("source", { legacy: "shared-content" });
+    await store.putRows("artifacts", [
+      {
+        ...sourceRow(artifactId),
+        publication_generation_id: legacyGenerationId,
+      },
+    ]);
+    const reservation = await store.reservePublication({
+      manifestArtifactId: manifestId(base.scope.revisionId),
+      requiredTables: ["artifacts"],
+      reservationKey: "legacy-tag-upgrade",
+      revisionId: base.scope.revisionId,
+      workspaceId: base.scope.workspaceId,
+    });
+    await store.putReservedRows(reservation, "artifacts", [
+      {
+        ...sourceRow(artifactId),
+        created_at: "2026-09-11T00:00:00.000Z",
+      },
+    ]);
+    const stored = await store.rows(
+      "artifacts",
+      `artifact_id = '${artifactId}'`,
+    );
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.publication_generation_id).toBe(legacyGenerationId);
+
+    const generation = await store.finalizePublication(reservation);
+    const reader = await store.pinGeneration(
+      generation,
+      "legacy-upgrade-reader",
+    );
+    expect(await reader.rows("artifacts")).toHaveLength(1);
+    await reader.close();
+    await store.shutdownCoordinator();
+  });
+
   test("rejects invalid reservation identities and stale tokens before writes", async () => {
     const domain = await storageDomain("stale");
     let current = new Date("2026-09-10T00:00:00.000Z");
@@ -357,7 +746,13 @@ describe("publication reservation protocol", () => {
   });
   test("blocks finalization until delayed required producers are ready", async () => {
     const domain = await storageDomain("producer-readiness");
-    const store = await LanceIntelligenceStore.open(domain);
+    const ordering: string[] = [];
+    const store = await LanceIntelligenceStore.open(domain, {
+      now: () => {
+        ordering.push("now");
+        return new Date("2026-09-10T00:00:00.000Z");
+      },
+    });
     const revisionId = createIdentity("revision", { readiness: true });
     const reservation = await store.reservePublication({
       manifestArtifactId: manifestId(revisionId),
@@ -409,8 +804,19 @@ describe("publication reservation protocol", () => {
     expect(await store.latestGeneration(reservation.workspaceId)).toBeNull();
     releaseSummary();
     await delayedSummary;
+    const fence = store.coordinator.fence.bind(store.coordinator);
+    store.coordinator.fence = async (lease) => {
+      ordering.push("fence:start");
+      await fence(lease);
+      ordering.push("fence:end");
+    };
+    ordering.length = 0;
     const generation = await store.finalizePublication(reservation);
     expect(generation.requiredTables).toEqual(["communities", "summaries"]);
+    expect(ordering.at(-1)).toBe("now");
+    expect(ordering.lastIndexOf("fence:end")).toBeLessThan(
+      ordering.lastIndexOf("now"),
+    );
     await store.shutdownCoordinator();
   });
 
@@ -535,9 +941,28 @@ describe("publication reservation protocol", () => {
         },
       ]);
       await store.finalizePublication(reservation);
+      let generationLinkLoads = 0;
+      const rows = store.rows.bind(store);
+      const count = store.count.bind(store);
+      store.rows = async (...args) => {
+        if (args[0] === "generation_artifacts") {
+          generationLinkLoads++;
+          expect(args[2]?.timeoutMs).toBeGreaterThan(0);
+          expect(args[2]?.timeoutMs).toBeLessThanOrEqual(5_000);
+        }
+        return rows(...args);
+      };
+      store.count = async (...args) => {
+        if (args[0] === "generation_artifacts")
+          throw new Error("generation membership must not use per-row counts");
+        return count(...args);
+      };
       await expect(
-        store.verifyLatestGeneration(workspaceId, revisionId),
+        store.verifyLatestGeneration(workspaceId, revisionId, {
+          timeoutMs: 5_000,
+        }),
       ).rejects.toMatchObject({ code: scenario.expectedCode });
+      expect(generationLinkLoads).toBe(1);
       await store.shutdownCoordinator();
     }
   });
@@ -567,16 +992,26 @@ describe("publication reservation protocol", () => {
     expect(migrated).toHaveLength(1);
     expect(migrated[0]?.publication_generation_id).toBeNull();
     const migrations = await store.rows("migrations", "state = 'completed'");
-    expect(migrations).toHaveLength(1);
-    expect(JSON.parse(String(migrations[0]?.payload_json))).toMatchObject({
-      migratedTables: ["artifacts"],
-      migration: "publication-generation-tag-v1",
-      state: "completed",
-    });
+    expect(migrations).toHaveLength(2);
+    expect(
+      migrations.map((row) => JSON.parse(String(row.payload_json))),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          migratedTables: ["artifacts"],
+          migration: "publication-generation-tag-v1",
+          state: "completed",
+        }),
+        expect.objectContaining({
+          migration: "generation-artifacts-v2",
+          state: "completed",
+        }),
+      ]),
+    );
     await store.shutdownCoordinator();
 
     const reopened = await LanceIntelligenceStore.open(domain);
-    expect(await reopened.count("migrations", "state = 'completed'")).toBe(1);
+    expect(await reopened.count("migrations", "state = 'completed'")).toBe(2);
     expect(
       await reopened.count("artifacts", `artifact_id = '${artifactId}'`),
     ).toBe(1);

@@ -96,6 +96,77 @@ function normalize(
 }
 afterAll(closeSystemsLanguageWorker);
 
+test("systems ranges preserve byte, character, and UTF-16 coordinates", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `//🙂${newline}fn café(value: i32) { let local = target(value); }`;
+    const facts = await systemsLanguageAdapter("rust").analyze({
+      languageId: "rust",
+      source,
+    });
+    const symbol = facts.symbols.find(({ name }) => name === "café");
+    const call = facts.calls.find(({ callee }) => callee === "target");
+    const binding = facts.references.find(
+      ({ name, role }) => name === "local" && role === "write",
+    );
+    const reference = facts.references.find(
+      ({ name, role }) => name === "target" && role === "read",
+    );
+    if (!symbol || !call || !binding || !reference) {
+      throw new Error("Expected Unicode symbol, call, binding, and reference");
+    }
+    const range = symbol.declarationRange;
+    const start = source.indexOf("café");
+    const end = start + "café".length;
+    const prefix = source.slice(0, start);
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("café");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(new TextEncoder().encode(prefix).byteLength);
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.characterOffset).toBe(
+      Array.from(prefix).length,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(range.startCoordinate.utf16Column).toBe("fn ".length);
+    expect(range.startCoordinate.column).toBe("fn ".length);
+    expect(
+      source.slice(
+        call.range.startCoordinate.utf16Offset,
+        call.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target(value)");
+    expect(
+      source.slice(
+        binding.range.startCoordinate.utf16Offset,
+        binding.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("local");
+    expect(
+      source.slice(
+        reference.range.startCoordinate.utf16Offset,
+        reference.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(call.enclosingSymbolId).toBe(symbol.id);
+    expect(binding.enclosingSymbolId).toBe(symbol.id);
+    expect(reference.enclosingSymbolId).toBe(symbol.id);
+    expect(symbol.range.startCoordinate.utf16Offset).toBeLessThan(
+      call.range.startCoordinate.utf16Offset,
+    );
+    expect(symbol.range.endCoordinate.utf16Offset).toBeGreaterThan(
+      call.range.endCoordinate.utf16Offset,
+    );
+  }
+});
+
 describe("systems language WASM adapters", () => {
   test("rejects malformed worker protocol records", async () => {
     expect(
@@ -160,7 +231,7 @@ describe("systems language WASM adapters", () => {
     completeFacts.syntaxFactsArtifactId = sha256(
       JSON.stringify([
         completeFacts.sourceDigest,
-        completeFacts.grammarFingerprint,
+        completeFacts.extractorFingerprint,
         completeFacts.symbols.map((item) => item.id),
         completeFacts.imports.map((item) => item.id),
         completeFacts.calls.map((item) => item.id),

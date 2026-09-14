@@ -238,8 +238,13 @@ export interface IntelligenceToolService {
     input: GenerateInput,
     workspace: WorkspaceHandle,
     dependencies?: ConfiguredExecution["generationDependencies"],
+    signal?: AbortSignal,
   ): Promise<unknown>;
-  index(input: IndexInput, workspace: WorkspaceHandle): Promise<unknown>;
+  index(
+    input: IndexInput,
+    workspace: WorkspaceHandle,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
   indexStatus(
     workspace: WorkspaceHandle,
     input?: z.infer<typeof IndexStatusInputSchema>,
@@ -464,6 +469,26 @@ function scopedGraphLoad(
   };
 }
 
+async function loadGraphExecution(
+  store: LanceIntelligenceStore,
+  workspace: WorkspaceHandle,
+  budget: GraphAlgorithmBudget,
+  scope: Omit<GraphLoadOptions, "budget" | "state">,
+  generationId?: string,
+): Promise<{
+  execution: ReturnType<typeof graphExecution>;
+  snapshot: GraphSnapshot;
+}> {
+  const execution = graphExecution(budget);
+  const snapshot = await loadLatest(
+    store,
+    workspace,
+    generationId,
+    scopedGraphLoad(budget, execution, scope),
+  );
+  return { execution, snapshot };
+}
+
 export function createIntelligenceToolService(
   runtimeOptions: IntelligenceRuntimeOptions = {},
 ): IntelligenceToolService {
@@ -472,7 +497,7 @@ export function createIntelligenceToolService(
     async close() {
       await runtime.close();
     },
-    async generate(input, workspace, dependencies) {
+    async generate(input, workspace, dependencies, signal) {
       const config = await currentConfig();
       const configured = config.intelligence.generation;
       const provider =
@@ -504,6 +529,7 @@ export function createIntelligenceToolService(
           evidence: input.evidence.map((item) => ({ ...item, scope })),
           provider,
           scope,
+          signal,
         },
         dependencies,
       );
@@ -562,16 +588,15 @@ export function createIntelligenceToolService(
     async graphExplain(input, workspace) {
       return withStore(workspace, async (store) => {
         const budget = input.budget as GraphAlgorithmBudget;
-        const execution = graphExecution(budget);
-        const snapshot = await loadLatest(
+        const { execution, snapshot } = await loadGraphExecution(
           store,
           workspace,
-          undefined,
-          scopedGraphLoad(budget, execution, {
+          budget,
+          {
             direction: "both",
             maxDepth: 0,
             nodeIds: [input.nodeId],
-          }),
+          },
         );
         const reasons = execution.state.exhaustedReasons;
         const expired = (): boolean => {
@@ -695,18 +720,17 @@ export function createIntelligenceToolService(
     async graphPath(input, workspace) {
       return withStore(workspace, async (store) => {
         const budget = input.budget as GraphAlgorithmBudget;
-        const execution = graphExecution(budget);
-        const snapshot = await loadLatest(
+        const { execution, snapshot } = await loadGraphExecution(
           store,
           workspace,
-          undefined,
-          scopedGraphLoad(budget, execution, {
+          budget,
+          {
             direction: input.direction,
             edgeKinds: input.edgeKinds,
             maxDepth: budget.maxDepth,
             nodeIds: [input.sourceNodeId, input.targetNodeId],
             resolutionStatuses: input.resolutionStatuses,
-          }),
+          },
         );
         const result = shortestPath(
           {
@@ -729,19 +753,18 @@ export function createIntelligenceToolService(
     async graphQuery(input, workspace) {
       return withStore(workspace, async (store) => {
         const budget = input.budget as GraphAlgorithmBudget;
-        const execution = graphExecution(budget);
         const components = input.operation === "components";
-        const snapshot = await loadLatest(
+        const { execution, snapshot } = await loadGraphExecution(
           store,
           workspace,
-          undefined,
-          scopedGraphLoad(budget, execution, {
+          budget,
+          {
             direction: components ? "both" : input.direction,
             edgeKinds: input.edgeKinds,
             maxDepth: budget.maxDepth,
             nodeIds: components ? undefined : input.startNodeIds,
             resolutionStatuses: input.resolutionStatuses,
-          }),
+          },
         );
         const request = {
           budget,
@@ -777,25 +800,28 @@ export function createIntelligenceToolService(
         };
       });
     },
-    async index(input, workspace) {
+    async index(input, workspace, signal) {
       return withStore(
         workspace,
         async (store) => {
           if (input.action === "build" || input.action === "refresh") {
-            const resources = await runtime.indexResources(workspace);
-            const result = await refreshMutationIntelligence({
-              allowReadOnlySource: true,
-              analyze: resources.analyze,
-              embedding: resources.embedding,
-              parse: resources.parse,
-              store,
-              workspace,
+            return runtime.runIndexOperation(workspace, async (resources) => {
+              const result = await refreshMutationIntelligence({
+                allowReadOnlySource: true,
+                analyze: resources.analyze,
+                embedding: resources.embedding,
+                parse: resources.parse,
+                signal,
+                store,
+                supports: resources.supports,
+                workspace,
+              });
+              return {
+                ...commonResult(workspace, result.generationId),
+                action: input.action,
+                result,
+              };
             });
-            return {
-              ...commonResult(workspace, result.generationId),
-              action: input.action,
-              result,
-            };
           }
           if (input.action === "collect") {
             const result = await store.collect(input.collection);
@@ -949,7 +975,11 @@ function register(
   description: string,
   schema: z.ZodType,
   outputSchema: z.ZodType,
-  operation: (input: never, workspace: WorkspaceHandle) => Promise<unknown>,
+  operation: (
+    input: never,
+    workspace: WorkspaceHandle,
+    signal?: AbortSignal,
+  ) => Promise<unknown>,
   readOnly: boolean,
 ): void {
   server.registerTool(
@@ -971,10 +1001,11 @@ function register(
         return toolSuccess(
           await execute(
             input,
-            () =>
+            (signal) =>
               operation(
                 input as never,
                 workspaceFor((input as { workspaceId: string }).workspaceId),
+                signal,
               ),
             context,
             name,
@@ -1115,11 +1146,12 @@ export default function registerIntelligenceTools(
         return toolSuccess(
           await execute(
             input,
-            () =>
+            (signal) =>
               service.generate(
                 input,
                 workspaceFor(input.workspaceId),
                 execute.generationDependencies,
+                signal,
               ),
             context,
             "generate",

@@ -23,6 +23,7 @@ import { parseSource } from "../intelligence/parser/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { detectAstLanguage } from "../patch/languages";
 import { inspectFileCapabilities } from "./file-capabilities";
+import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
@@ -231,29 +232,13 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
       };
       const snapshots = new Map<
         string,
-        {
-          content: Buffer;
-          gid: number;
-          mode: number;
-          sha256: string;
-          uid: number;
-        }
+        Awaited<ReturnType<typeof readFileSnapshot>>
       >();
       for (const { filePath, request } of entries) {
-        const [actual, content, metadata] = await Promise.all([
-          sha256File(filePath),
-          readFile(filePath),
-          lstat(filePath),
-        ]);
+        const snapshot = await readFileSnapshot(filePath);
         await requireExpectedHash(request.expectedSha256, "file_delete");
-        verifyExpectedHash(request.expectedSha256, actual);
-        snapshots.set(filePath, {
-          content,
-          gid: metadata.gid,
-          mode: metadata.mode,
-          sha256: actual,
-          uid: metadata.uid,
-        });
+        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
+        snapshots.set(filePath, snapshot);
       }
       const workspace = currentWorkspace() ?? null;
       const sourcePlan = entries.map(({ filePath }) => {

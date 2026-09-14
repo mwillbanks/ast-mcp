@@ -163,6 +163,52 @@ describe("graph materialization", () => {
     );
   });
 
+  test("uses zero coordinates when a graph unit has no source range", () => {
+    const sourceDigest = "d".repeat(64);
+    const sourceArtifactId = sourceArtifactIdentity({
+      contentDigest: sourceDigest,
+    });
+    const graph = materializeGraph({
+      environmentFingerprint: null,
+      extractorVersion: "wp08-test-v1",
+      scope: scope("missing-range"),
+      units: [
+        {
+          facts: {
+            diagnostics: [],
+            format: "dotnet-project",
+            nodes: [],
+            parserFingerprint: "c".repeat(64),
+            partial: false,
+            relationships: [],
+            rewriteSupported: false,
+            schemaVersion: "ast-mcp.project-facts.v1",
+            sourceArtifactId,
+            sourceByteLength: 0,
+            sourceDigest,
+            syntaxFactsArtifactId: createIdentity("syntax-facts", {
+              empty: true,
+            }),
+          },
+          kind: "project",
+          path: "Empty.csproj",
+          sourceArtifactId,
+        },
+      ],
+    });
+
+    const fileNode = graph.nodes.find((node) => node.kind === "file");
+    const containment = graph.occurrences.find(
+      (occurrence) => occurrence.nodeId === fileNode?.nodeId,
+    );
+    expect(containment?.range).toEqual({
+      end: { column: 0, line: 0 },
+      endByte: 0,
+      start: { column: 0, line: 0 },
+      startByte: 0,
+    });
+  });
+
   test("diffs exact revision membership with stable pagination", async () => {
     const fixture = await corpus();
     const firstFacts = parseSource({

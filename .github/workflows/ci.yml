@@ -84,12 +84,12 @@ jobs:
       - name: Install package dependencies
         run: bun ci
       - name: Provision pinned benchmark comparators
-        run: |
-          bun add --global @ast-bro/cli@4.2.0
-          python -m pip install --disable-pip-version-check "graphifyy==0.9.53"
+        run: bun run comparators:provision
       - name: Verify package
         run: bun run check
       - name: Qualify native dependencies
+        env:
+          AST_MCP_QUALIFY_EMBEDDINGS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: bun run intelligence:qualify
       - name: Run required intelligence benchmark
         env:

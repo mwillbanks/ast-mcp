@@ -169,36 +169,6 @@ export const GraphSnapshotSchema = z
   });
 export type GraphSnapshot = z.infer<typeof GraphSnapshotSchema>;
 
-export const GraphBudgetSchema = z
-  .object({
-    maxDepth: z.number().int().nonnegative().max(1_000),
-    maxEdges: z.number().int().positive().max(1_000_000),
-    maxNodes: z.number().int().positive().max(1_000_000),
-    pageSize: z.number().int().positive().max(10_000),
-  })
-  .strict();
-export type GraphBudget = z.infer<typeof GraphBudgetSchema>;
-
-export interface GraphCoverage {
-  consideredEdges: number;
-  consideredNodes: number;
-  totalEdges: number;
-  totalNodes: number;
-}
-
-export interface GraphPage<T> {
-  coverage: GraphCoverage;
-  items: T[];
-  nextCursor: string | null;
-  truncated: boolean;
-}
-
-export interface TraversalRecord {
-  depth: number;
-  edgeId: string | null;
-  nodeId: string;
-}
-
 export interface GraphDiff {
   added: {
     edges: string[];

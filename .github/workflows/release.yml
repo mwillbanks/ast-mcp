@@ -41,9 +41,7 @@ jobs:
           python-version: "3.13"
       - run: bun ci
       - name: Provision pinned benchmark comparators
-        run: |
-          bun add --global @ast-bro/cli@4.2.0
-          python -m pip install --disable-pip-version-check "graphifyy==0.9.53"
+        run: bun run comparators:provision
       - run: bun run intelligence:qualify
       - name: Run required intelligence benchmark
         env:

@@ -96,6 +96,75 @@ function normalize(
 
 afterAll(closeJvmLanguageWorker);
 
+test("JVM ranges preserve byte, character, and UTF-16 coordinates", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `//🙂${newline}class Café { void run(int value) { int local = target(value); } }`;
+    const facts = await analyzeJvmLanguage({ languageId: "java", source });
+    const symbol = facts.symbols.find(({ name }) => name === "Café");
+    const owner = facts.symbols.find(({ name }) => name === "run");
+    const call = facts.calls.find(({ callee }) => callee === "target");
+    const binding = facts.references.find(
+      ({ name, role }) => name === "local" && role === "write",
+    );
+    const reference = facts.references.find(
+      ({ name, role }) => name === "target" && role === "read",
+    );
+    if (!symbol || !owner || !call || !binding || !reference) {
+      throw new Error("Expected Unicode symbol, call, binding, and reference");
+    }
+    const range = symbol.declarationRange;
+    const start = source.indexOf("Café");
+    const end = start + "Café".length;
+    const prefix = source.slice(0, start);
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("Café");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(new TextEncoder().encode(prefix).byteLength);
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.characterOffset).toBe(
+      Array.from(prefix).length,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(range.startCoordinate.utf16Column).toBe("class ".length);
+    expect(range.startCoordinate.column).toBe("class ".length);
+    expect(
+      source.slice(
+        call.range.startCoordinate.utf16Offset,
+        call.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target(value)");
+    expect(
+      source.slice(
+        binding.range.startCoordinate.utf16Offset,
+        binding.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("local");
+    expect(
+      source.slice(
+        reference.range.startCoordinate.utf16Offset,
+        reference.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(call.enclosingSymbolId).toBe(owner.id);
+    expect(binding.enclosingSymbolId).toBe(owner.id);
+    expect(reference.enclosingSymbolId).toBe(owner.id);
+    expect(owner.range.startCoordinate.utf16Offset).toBeLessThan(
+      call.range.startCoordinate.utf16Offset,
+    );
+    expect(owner.range.endCoordinate.utf16Offset).toBeGreaterThan(
+      call.range.endCoordinate.utf16Offset,
+    );
+  }
+});
+
 describe("JVM WASM language adapters", () => {
   test("publishes honest schema-valid availability and extraction claims", () => {
     expect(jvmLanguageGroupManifest.groupId).toBe("jvm");

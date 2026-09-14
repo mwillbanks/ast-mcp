@@ -511,6 +511,120 @@ describe("web intelligence language adapters", () => {
     ).toBe('render("🙂")');
   });
 
+  test("uses parse5 script boundaries and preserves recognized closers", () => {
+    const first = 'const repeated = "same";';
+    const second = "const next = () => 1;";
+    const source = [
+      "<!-- <script>ignored()</script> -->",
+      `<SCRIPT data-value="a > b" LANG="TS">${first}</SCRIPT\t\n>`,
+      `<div>${first}</div>`,
+      `<script type="text/javascript">${second}</script\n data-extra>`,
+    ].join("\r\n");
+    const analysis = analyzeTemplate({ languageId: "vue", source });
+    const parseErrorOffset = source.lastIndexOf(">");
+
+    expect(
+      analysis.embeddedRegions.map(
+        ({ languageId, source: embeddedSource, startUtf16, endUtf16 }) => ({
+          endUtf16,
+          languageId,
+          source: embeddedSource,
+          startUtf16,
+        }),
+      ),
+    ).toEqual([
+      {
+        endUtf16: source.indexOf(first) + first.length,
+        languageId: "typescript",
+        source: first,
+        startUtf16: source.indexOf(first),
+      },
+      {
+        endUtf16: source.lastIndexOf(second) + second.length,
+        languageId: "javascript",
+        source: second,
+        startUtf16: source.lastIndexOf(second),
+      },
+    ]);
+    expect(analysis.diagnostics).toEqual([
+      {
+        code: "malformed-embedded-region",
+        message: "HTML parse error: end-tag-with-attributes",
+        range: expect.objectContaining({
+          endCoordinate: expect.objectContaining({
+            utf16Offset: parseErrorOffset,
+          }),
+          startCoordinate: expect.objectContaining({
+            utf16Offset: parseErrorOffset,
+          }),
+        }),
+        severity: "error",
+      },
+    ]);
+    expect(analysis.facts.partial).toBe(true);
+
+    const malformedSource = '<script lang="ts">const broken = 1;';
+    const malformed = analyzeTemplate({
+      languageId: "vue",
+      source: malformedSource,
+    });
+    expect(malformed.embeddedRegions).toEqual([]);
+    expect(malformed.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "malformed-embedded-region",
+        message: "Unclosed script element",
+        range: expect.objectContaining({
+          endCoordinate: expect.objectContaining({
+            utf16Offset: malformedSource.length,
+          }),
+          startCoordinate: expect.objectContaining({ utf16Offset: 0 }),
+        }),
+        severity: "error",
+      }),
+    ]);
+  });
+
+  test("traverses scripts nested in HTML template contents", () => {
+    const body = "const nested = () => 1;";
+    const source = `<template><section><script lang="ts">${body}</script></section></template>`;
+    const analysis = analyzeTemplate({ languageId: "vue", source });
+    const start = source.indexOf(body);
+
+    expect(analysis.embeddedRegions).toEqual([
+      {
+        endUtf16: start + body.length,
+        hostLanguageId: "vue",
+        languageId: "typescript",
+        ordinal: 0,
+        source: body,
+        startUtf16: start,
+      },
+    ]);
+    expect(analysis.diagnostics).toEqual([]);
+
+    const malformedSource = `<template><script>${body}</template>`;
+    const malformed = analyzeTemplate({
+      languageId: "vue",
+      source: malformedSource,
+    });
+    expect(malformed.embeddedRegions).toEqual([]);
+    expect(malformed.diagnostics).toEqual([
+      expect.objectContaining({
+        code: "malformed-embedded-region",
+        message: "Unclosed script element",
+        range: expect.objectContaining({
+          endCoordinate: expect.objectContaining({
+            utf16Offset: malformedSource.length,
+          }),
+          startCoordinate: expect.objectContaining({
+            utf16Offset: malformedSource.indexOf("<script>"),
+          }),
+        }),
+        severity: "error",
+      }),
+    ]);
+  });
+
   test("reports malformed and unsupported template constructs honestly", async () => {
     const malformed = analyzeTemplate({
       languageId: "vue",

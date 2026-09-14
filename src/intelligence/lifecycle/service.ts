@@ -39,6 +39,7 @@ export interface IntelligenceDispatcherLifecycle {
     request: IntelligenceDispatchRequest,
   ): Promise<IntelligenceAnalysis | null>;
   close(): Promise<void>;
+  supports?(filePath: string): boolean;
 }
 
 export interface IntelligenceRuntimeOptions {
@@ -62,6 +63,7 @@ export interface IndexRuntimeResources {
     request: ParseSourceRequest,
     options?: { signal?: AbortSignal; timeoutMs?: number },
   ) => Promise<SyntaxFacts>;
+  supports: (filePath: string) => boolean;
 }
 
 export class IntelligenceRuntime {
@@ -74,6 +76,7 @@ export class IntelligenceRuntime {
   readonly #dispatcher: IntelligenceDispatcherLifecycle;
   readonly #embeddingPools = new Map<string, EmbeddingWorkerPool>();
   readonly #retiredPools = new Set<Promise<void>>();
+  readonly #operations = new Set<Promise<unknown>>();
   #closePromise?: Promise<void>;
   #closed = false;
 
@@ -98,13 +101,21 @@ export class IntelligenceRuntime {
           : new TransformersEmbeddingProvider(config, allowDownload));
   }
 
-  async indexResources(
+  async runIndexOperation<T>(
+    workspace: WorkspaceHandle | undefined,
+    operation: (resources: IndexRuntimeResources) => Promise<T>,
+  ): Promise<T> {
+    return this.#admit(async () =>
+      operation(await this.#createIndexResources(workspace)),
+    );
+  }
+
+  async #createIndexResources(
     workspace?: WorkspaceHandle,
   ): Promise<IndexRuntimeResources> {
-    this.#assertOpen();
     const config = await this.#config();
     return {
-      analyze: this.#dispatcher.analyze.bind(this.#dispatcher),
+      analyze: (request) => this.#dispatcher.analyze(request),
       ...(config.intelligence.retrieval.semantic
         ? {
             embedding: this.#embedding(
@@ -113,7 +124,9 @@ export class IntelligenceRuntime {
             ),
           }
         : {}),
-      parse: this.#parserPool.parse.bind(this.#parserPool),
+      parse: (request, options) => this.#parserPool.parse(request, options),
+      supports:
+        this.#dispatcher.supports?.bind(this.#dispatcher) ?? (() => true),
     };
   }
 
@@ -125,20 +138,22 @@ export class IntelligenceRuntime {
     config: EmbeddingModelConfig;
     vector?: readonly number[];
   }> {
-    this.#assertOpen();
-    const config = await this.#config();
-    const model = config.intelligence.retrieval.embedding;
-    if (!semantic) return { config: model };
-    return {
-      config: model,
-      vector: await this.#embedding(model, workspace).pool.embed(text),
-    };
+    return this.#admit(async () => {
+      const config = await this.#config();
+      const model = config.intelligence.retrieval.embedding;
+      if (!semantic) return { config: model };
+      return {
+        config: model,
+        vector: await this.#embedding(model, workspace).pool.embed(text),
+      };
+    });
   }
 
   async close(): Promise<void> {
     if (!this.#closePromise) {
       this.#closed = true;
       this.#closePromise = (async () => {
+        await Promise.allSettled([...this.#operations]);
         await this.#dispatcher.close();
         await this.#parserPool.close({ drain: true });
         await Promise.all([
@@ -149,6 +164,17 @@ export class IntelligenceRuntime {
       })();
     }
     await this.#closePromise;
+  }
+
+  #admit<T>(operation: () => Promise<T>): Promise<T> {
+    this.#assertOpen();
+    const pending = operation();
+    this.#operations.add(pending);
+    void pending.then(
+      () => this.#operations.delete(pending),
+      () => this.#operations.delete(pending),
+    );
+    return pending;
   }
 
   #embedding(

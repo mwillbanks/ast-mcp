@@ -4,12 +4,12 @@ import {
   type LanguageCapability,
   LanguageCapabilitySchema,
 } from "../../contracts/language.ts";
+import { type DynamicGrammarManifest, sha256 } from "../../parser/index.ts";
+import { deepFreeze } from "../immutable.ts";
 import {
-  type DynamicGrammarManifest,
-  type DynamicGrammarManifestEntry,
-  type LanguageImplementation,
-  sha256,
-} from "../../parser/index.ts";
+  buildGrammarManifest,
+  createExtractionImplementation,
+} from "../manifest-builders.ts";
 import { analyzeInfraLanguage, infraExtractorFingerprint } from "./analyzer.ts";
 import type {
   InfraGrammarAssetConfig,
@@ -33,18 +33,7 @@ const treeSitter = new Set<InfraLanguageId>([
   "systemverilog",
   "verilog",
 ]);
-const implementation: LanguageImplementation = {
-  callResolution: false,
-  embeddedLanguages: false,
-  exportResolution: false,
-  importResolution: false,
-  inheritanceResolution: false,
-  match: false,
-  parse: true,
-  rewrite: false,
-  structuralRead: true,
-  symbolExtraction: false,
-};
+const implementation = createExtractionImplementation();
 function claim(
   status: "supported" | "partial",
   provider: CapabilityClaim["provider"],
@@ -114,18 +103,21 @@ function capability(languageId: InfraLanguageId): LanguageCapability {
     symbolExtraction: claim("partial", "custom", limitations),
   });
 }
-export const infraLanguageAdapters = (
-  Object.keys(extensions) as InfraLanguageId[]
-).map(
-  (languageId): InfraLanguageAdapter => ({
+function createInfraLanguageAdapter(
+  languageId: InfraLanguageId,
+): InfraLanguageAdapter {
+  return {
     analyze: analyzeInfraLanguage,
     available: true,
     capability: capability(languageId),
     extensions: extensions[languageId],
     languageId,
     unavailableReason: null,
-  }),
-);
+  };
+}
+export const infraLanguageAdapters = (
+  Object.keys(extensions) as InfraLanguageId[]
+).map(createInfraLanguageAdapter);
 export function infraLanguageAdapter(
   languageId: InfraLanguageId,
 ): InfraLanguageAdapter {
@@ -136,70 +128,19 @@ export function infraLanguageAdapter(
     throw new TypeError(`Unsupported infrastructure language: ${languageId}`);
   return adapter;
 }
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-  }
-  return value;
-}
 export function createInfraGrammarManifest(
   assets: readonly InfraGrammarAssetConfig[],
 ): DynamicGrammarManifest {
-  const byLanguage = new Map<InfraLanguageId, InfraGrammarAssetConfig>();
-  for (const asset of assets) {
-    if (byLanguage.has(asset.languageId))
-      throw new TypeError(
-        `Duplicate infrastructure grammar: ${asset.languageId}`,
-      );
-    byLanguage.set(asset.languageId, asset);
-  }
-  const missing = infraLanguageAdapters
-    .map(({ languageId }) => languageId)
-    .filter((id) => !byLanguage.has(id));
-  if (missing.length)
-    throw new TypeError(
-      `Missing infrastructure grammars: ${missing.join(", ")}`,
-    );
-  const entries: DynamicGrammarManifestEntry[] = [...byLanguage.values()]
-    .sort((a, b) => a.languageId.localeCompare(b.languageId))
-    .map((asset) => {
-      if (!/^[a-f0-9]{64}$/.test(asset.sha256))
-        throw new TypeError(`Invalid grammar SHA-256: ${asset.languageId}`);
-      const dynamicAsset = {
-        ...(asset.expandoChar ? { expandoChar: asset.expandoChar } : {}),
-        ...(asset.languageSymbol
-          ? { languageSymbol: asset.languageSymbol }
-          : {}),
-        libraryPath: asset.libraryPath,
-        ...(asset.metaVarChar ? { metaVarChar: asset.metaVarChar } : {}),
-        sha256: asset.sha256,
-      };
-      return {
-        descriptor: {
-          astGrepLanguage: asset.astGrepLanguage,
-          dynamicAsset,
-          extensions: extensions[asset.languageId],
-          grammarFingerprint: sha256(
-            JSON.stringify({
-              astGrepLanguage: asset.astGrepLanguage,
-              dynamicAsset,
-              extensions: [...extensions[asset.languageId]],
-              grammarVersion: asset.grammarVersion,
-              languageId: asset.languageId,
-            }),
-          ),
-          grammarVersion: asset.grammarVersion,
-          languageId: asset.languageId,
-        },
-        implementation: { ...implementation },
-      };
-    });
-  return deepFreeze({
-    entries,
-    fingerprint: sha256(JSON.stringify(entries)),
-    schemaVersion: "ast-mcp.dynamic-grammars.v1",
+  return buildGrammarManifest({
+    assets,
+    duplicateLabel: "infrastructure grammar",
+    extensions,
+    freeze: true,
+    implementation,
+    missingLabel: "infrastructure grammar",
+    requiredLanguageIds: infraLanguageAdapters.map(
+      ({ languageId }) => languageId,
+    ),
   });
 }
 export const infraLanguageGroupManifest: InfraLanguageGroupManifest =

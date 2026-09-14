@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { currentConfig, withConfig } from "../src/config.ts";
+import { clearConfigCache, currentConfig, withConfig } from "../src/config.ts";
 import {
   discoverGitWorkspace,
   WorkspaceRegistry,
@@ -162,6 +162,35 @@ test("local execution preserves direct-test configuration compatibility", async 
   ).toBeString();
 });
 
+test("configured execution honors configured placement and explicit overrides", async () => {
+  const root = await temporary("ast-mcp-workspace-storage-precedence-");
+  await Promise.all([
+    mkdir(path.join(root, ".git")),
+    writeFile(
+      path.join(root, "ast-mcp.toml"),
+      [
+        "version = 2",
+        "[intelligence.storage.placement]",
+        'kind = "local"',
+        "[[paths]]",
+        'id = "workspace"',
+        'path = "."',
+        'policies = { read = "allow", write = "allow", delete = "deny" }',
+        "",
+      ].join("\n"),
+    ),
+  ]);
+  clearConfigCache();
+  const execute = configuredExecution(serverForRoot(root));
+  const configured = await execute.openWorkspace?.({ directory: root });
+  expect(configured?.storageDomain.placement).toEqual({ kind: "local" });
+  const explicit = await execute.openWorkspace?.({
+    directory: root,
+    storage: { kind: "global" },
+  });
+  expect(explicit?.storageDomain.placement).toEqual({ kind: "global" });
+});
+
 test("configured execution reopens when configuration changes during discovery", async () => {
   const root = await temporary("ast-mcp-workspace-generation-race-");
   const originalOpen = WorkspaceRegistry.prototype.open;
@@ -201,20 +230,70 @@ test("configured execution reopens when configuration changes during discovery",
   }
 });
 
-test("workspace_open without client roots uses existing host authorization", async () => {
-  const execute = configuredExecution(serverWithoutRoots());
-  expect(
-    await execute({}, async () => (await currentConfig()).projectRoot),
-  ).toBeString();
+test("workspace_open without client roots uses explicit v2 host authorization", async () => {
+  const originalCwd = process.cwd();
+  const host = await temporary("ast-mcp-workspace-host-");
   const unauthorized = await temporary("ast-mcp-workspace-unauthorized-");
-  await expect(
-    execute.openWorkspace?.({ directory: unauthorized }),
-  ).rejects.toMatchObject({
-    code: expect.stringMatching(/^(approval_required|path_denied)$/),
-  });
+  await Promise.all([
+    mkdir(path.join(host, ".git")),
+    writeFile(
+      path.join(host, "ast-mcp.toml"),
+      [
+        "version = 2",
+        "[workspace]",
+        'roots = ["."]',
+        "[[paths]]",
+        'id = "workspace"',
+        'path = "."',
+        'policies = { read = "allow", write = "allow", delete = "deny" }',
+        "",
+      ].join("\n"),
+    ),
+  ]);
 
-  const local = await execute.openWorkspace?.({ directory: process.cwd() });
-  expect(local?.checkoutRoot).toBe(await realpath(process.cwd()));
+  process.chdir(host);
+  clearConfigCache();
+  try {
+    const execute = configuredExecution(serverWithoutRoots());
+    expect(
+      await execute({}, async () => (await currentConfig()).projectRoot),
+    ).toBe(await realpath(host));
+    await expect(
+      execute.openWorkspace?.({ directory: unauthorized }),
+    ).rejects.toMatchObject({ code: "path_denied" });
+
+    const local = await execute.openWorkspace?.({ directory: host });
+    expect(local?.checkoutRoot).toBe(await realpath(host));
+  } finally {
+    process.chdir(originalCwd);
+    clearConfigCache();
+  }
+});
+
+test("workspace_open without client roots preserves explicit v1 temp authorization", async () => {
+  const originalCwd = process.cwd();
+  const host = await temporary("ast-mcp-workspace-v1-host-");
+  const authorized = await temporary("ast-mcp-workspace-v1-authorized-");
+  await Promise.all([
+    mkdir(path.join(host, ".git")),
+    mkdir(path.join(authorized, ".git")),
+    writeFile(
+      path.join(host, "ast-mcp.toml"),
+      "version = 1\n[safety]\nallow_temp_directory = true\n",
+    ),
+    writeFile(path.join(authorized, "ast-mcp.toml"), "version = 1\n"),
+  ]);
+
+  process.chdir(host);
+  clearConfigCache();
+  try {
+    const execute = configuredExecution(serverWithoutRoots());
+    const workspace = await execute.openWorkspace?.({ directory: authorized });
+    expect(workspace?.checkoutRoot).toBe(await realpath(authorized));
+  } finally {
+    process.chdir(originalCwd);
+    clearConfigCache();
+  }
 });
 
 test("distinct server sessions bind concurrent relative requests independently", async () => {

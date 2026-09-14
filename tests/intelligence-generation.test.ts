@@ -391,6 +391,30 @@ describe("optional evidence generation", () => {
     const cancelled = await cancellation;
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.reason).toBe("generation_cancelled");
+
+    const preAborted = new AbortController();
+    preAborted.abort();
+    let providerCalls = 0;
+    const cancelledBeforeProvider = await generateWithEvidence(
+      base,
+      {
+        ...request({
+          endpoint,
+          kind: "http",
+          model: "local/model",
+        }),
+        signal: preAborted.signal,
+      },
+      {
+        fetch: async () => {
+          providerCalls += 1;
+          return Response.json({});
+        },
+      },
+    );
+    expect(cancelledBeforeProvider.status).toBe("cancelled");
+    expect(cancelledBeforeProvider.reason).toBe("generation_cancelled");
+    expect(providerCalls).toBe(0);
   });
 
   test("requires advertised MCP sampling and preserves provider choice", async () => {

@@ -184,3 +184,94 @@ test("runtime drains embeddings and retires old model pools within its bound", a
     new Set(["fixture/model-a", "fixture/model-b", "fixture/model-c"]),
   );
 });
+
+test("runtime close drains an active index operation before workers close", async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const releaseGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const startedGate = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let dispatcherCloses = 0;
+  let parserCloses = 0;
+  const runtime = new IntelligenceRuntime({
+    config: async () => resolvedConfig("fixture/index-operation"),
+    dispatcher: {
+      async analyze() {
+        throw new Error("unused");
+      },
+      async close() {
+        dispatcherCloses += 1;
+      },
+    },
+    parserPool: {
+      async close() {
+        parserCloses += 1;
+      },
+      async parse() {
+        throw new Error("unused");
+      },
+    },
+  });
+
+  const pending = runtime.runIndexOperation(undefined, async () => {
+    started();
+    await releaseGate;
+    return "published";
+  });
+  await startedGate;
+  const closing = runtime.close();
+  await Bun.sleep(0);
+  expect(dispatcherCloses).toBe(0);
+  expect(parserCloses).toBe(0);
+
+  release();
+  expect(await pending).toBe("published");
+  await closing;
+  expect(dispatcherCloses).toBe(1);
+  expect(parserCloses).toBe(1);
+});
+
+test("runtime close drains admitted configuration before provider creation", async () => {
+  let releaseConfig!: () => void;
+  let configStarted!: () => void;
+  const configGate = new Promise<void>((resolve) => {
+    releaseConfig = resolve;
+  });
+  const configStartedGate = new Promise<void>((resolve) => {
+    configStarted = resolve;
+  });
+  let providerCloses = 0;
+  const runtime = new IntelligenceRuntime({
+    config: async () => {
+      configStarted();
+      await configGate;
+      return resolvedConfig("fixture/deferred");
+    },
+    embeddingProviderFactory: (config) => ({
+      async close() {
+        providerCloses += 1;
+      },
+      config,
+      async embed(texts) {
+        return texts.map(() => [1, 0]);
+      },
+    }),
+  });
+
+  const pending = runtime.queryVector("deferred", true);
+  await configStartedGate;
+  const closing = runtime.close();
+  await Bun.sleep(0);
+  expect(providerCloses).toBe(0);
+
+  releaseConfig();
+  expect(await pending).toMatchObject({ vector: [1, 0] });
+  await closing;
+  expect(providerCloses).toBe(1);
+  await expect(runtime.queryVector("closed", true)).rejects.toThrow(
+    "intelligence_runtime_closed",
+  );
+});

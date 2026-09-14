@@ -114,9 +114,6 @@ export type GenerationProviderConfig = z.infer<
   typeof GenerationProviderConfigSchema
 >;
 export type GenerationRequest = z.input<typeof GenerationRequestSchema>;
-export type ResolvedGenerationRequest = z.output<
-  typeof GenerationRequestSchema
->;
 export type GenerationEvidence = z.infer<typeof GenerationEvidenceSchema>;
 export type GeneratedAnswer = z.infer<typeof GeneratedAnswerSchema>;
 

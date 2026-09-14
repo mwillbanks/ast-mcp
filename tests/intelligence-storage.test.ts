@@ -88,7 +88,11 @@ describe("LanceDB intelligence storage", () => {
     const expectedCounts = Object.fromEntries(
       ALL_TABLES.map((table) => [
         table,
-        table === "coordinator_recovery" || table === "retention" ? 1 : 0,
+        table === "coordinator_recovery" ||
+        table === "migrations" ||
+        table === "retention"
+          ? 1
+          : 0,
       ]),
     ) as Record<LanceTableName, number>;
     expect(await store.tableCounts()).toEqual(expectedCounts);

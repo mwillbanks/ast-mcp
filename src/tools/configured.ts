@@ -36,16 +36,20 @@ export interface ConfiguredExecution {
   ): Promise<Awaited<ReturnType<WorkspaceRegistry["status"]>>>;
   <T>(
     args: unknown,
-    operation: () => Promise<T>,
+    operation: (signal?: AbortSignal) => Promise<T>,
     context?: ServerContext,
     tool?: string,
   ): Promise<T>;
 }
 
-export const localExecution: ConfiguredExecution = async (args, operation) =>
+export const localExecution: ConfiguredExecution = async (
+  args,
+  operation,
+  context,
+) =>
   withResolvedConfig(
     await configRegistry.get({ requestPaths: configRequestPaths(args) }),
-    operation,
+    () => operation((context as { signal?: AbortSignal } | undefined)?.signal),
   );
 
 async function configuredWorkspace(
@@ -76,7 +80,7 @@ async function configuredWorkspace(
     configurationGeneration: config.generation,
     directory: input.directory,
     revision: input.revision,
-    storage: input.storage,
+    storage: input.storage ?? config.intelligence.storage.placement,
   });
   config = await configRegistry.get({
     clientRoots,
@@ -91,7 +95,7 @@ async function configuredWorkspace(
       configurationGeneration: config.generation,
       directory: workspace.checkoutRoot,
       revision: input.revision,
-      storage: input.storage,
+      storage: input.storage ?? config.intelligence.storage.placement,
     });
   await registry.get(workspace.workspaceId, {
     configurationGeneration: config.generation,
@@ -150,7 +154,9 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
     if (!directory) {
       const config = await configRegistry.get({ requestPaths });
       return withResolvedConfig(config, () =>
-        withApprovalContext({ context, server, tool }, operation),
+        withApprovalContext({ context, server, tool }, () =>
+          operation((context as { signal?: AbortSignal } | undefined)?.signal),
+        ),
       );
     }
 
@@ -168,7 +174,9 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
     registry.validateRequestPaths(workspace, requestPaths);
     return withResolvedConfig(opened.config, () =>
       withWorkspaceContext(workspace, () =>
-        withApprovalContext({ context, server, tool }, operation),
+        withApprovalContext({ context, server, tool }, () =>
+          operation((context as { signal?: AbortSignal } | undefined)?.signal),
+        ),
       ),
     );
   };

@@ -508,7 +508,7 @@
         "schemaVersion": "ast-mcp.document-facts.v1",
         "sourceByteLength": 40,
         "sourceDigest": "4d1d8bd93ff9ad43ff513811cbdea45e682fe7bd12f19a5f6181d8dc8f206000",
-        "syntaxFactsArtifactId": "00c990e7e2be5b3284ba27989d0df7a0a6c469b5c1aa100d10d3f4946b1d728c"
+        "syntaxFactsArtifactId": "49900c2c9b65a3614a070292ffcaff6a9721d0caaa25f6b45c564e30687a0f9c"
       },
       "fixture": "document.json",
       "fixtureSha256": "4d1d8bd93ff9ad43ff513811cbdea45e682fe7bd12f19a5f6181d8dc8f206000",
@@ -715,7 +715,7 @@
         "schemaVersion": "ast-mcp.document-facts.v1",
         "sourceByteLength": 99,
         "sourceDigest": "65f4e1a1edd9e6eeecbad3cf80048d68a4ac90f748dc8645cb6bc366ee43c452",
-        "syntaxFactsArtifactId": "2ec1183a94b4a41b48403d89854873b896116c02cd70a4e9e79a31bfd40339c8"
+        "syntaxFactsArtifactId": "dd7daa58df0c7b471016dca5a731a363e725219cfb4d9244f7ceafd9a934b0c9"
       },
       "fixture": "document.jsonc",
       "fixtureSha256": "65f4e1a1edd9e6eeecbad3cf80048d68a4ac90f748dc8645cb6bc366ee43c452",

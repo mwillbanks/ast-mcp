@@ -2,7 +2,7 @@
   "fixtures": {
     "bash.sh": "026f013b33126e39675a09edfccfa7079b304acbcfabe78408a7cdc33763025a",
     "fortran.f90": "2e9d32613567189ee8e90719f8fcded6802ad4f571054ad353abac327e7b9b64",
-    "graphify-golden.json": "8dd74c45052cb9ee95616508bb3f5da2db064e69310ba04eecd570bbe26604a6",
+    "graphify-golden.json": "2e4c7c72bf896fa1af18cefb459ab3136afeea3471a525b061bc1a139d742acf",
     "hcl.tf": "a96da53257691fd8ce5eb1daf4746c8a8b8e12a182f9fcb212c3fa053c9b72a3",
     "malformed.sh": "e0ce7c078691cadbc4f6e36b5afe5f4e19a23601569df674165a633c5dfb4026",
     "powershell.ps1": "6724e78daaa0c5c619c8d34a05ead4d742f6c8f97071d13e72750a5fb636c795",

@@ -107,6 +107,13 @@ export const TABLE_SCHEMAS = {
     ["created_at", text()],
     ["payload_json", text()],
   ]),
+  generation_artifacts: schema([
+    ["link_id", text()],
+    ["generation_id", text()],
+    ["table_name", text()],
+    ["artifact_id", text()],
+    ["created_at", text()],
+  ]),
   graph_edges: generationSchema([
     ["edge_id", text()],
     ["source_node_id", text()],
@@ -275,7 +282,7 @@ export const ALL_TABLES = Object.freeze(
 
 if (
   COMPLETE_GENERATION_TABLES.some((table) => !ALL_TABLES.includes(table)) ||
-  ALL_TABLES.length !== 21
+  ALL_TABLES.length !== 22
 ) {
   throw new Error("LanceDB schema registry is incomplete");
 }
@@ -287,6 +294,7 @@ export const TABLE_PRIMARY_KEYS = {
   coordinator_recovery: "lease_key",
   dirty_overlays: "artifact_id",
   embeddings: "artifact_id",
+  generation_artifacts: "link_id",
   graph_edges: "edge_id",
   graph_evidence: "evidence_id",
   graph_nodes: "node_id",
@@ -316,6 +324,7 @@ export const IMMUTABLE_TABLES = new Set<LanceTableName>([
   "graph_occurrences",
   "graph_edges",
   "graph_evidence",
+  "generation_artifacts",
   "revision_membership",
   "communities",
   "summaries",

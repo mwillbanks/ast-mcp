@@ -62,6 +62,7 @@ export function createFormatterSchema<T extends z.ZodRawShape>(extra: T) {
 
 export const dependenciesSchema = z
   .object({
+    ast_bro_binary: z.string().min(1).optional(),
     dprint_binary: z.string().min(1).optional(),
   })
   .strict();

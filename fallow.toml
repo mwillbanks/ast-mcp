@@ -1,23 +1,50 @@
-# The build script passes the CLI entry to Bun programmatically.
-entry = ["bin/ast-mcp.ts"]
+# The build script passes the CLI entry to Bun programmatically. Intelligence
+# fixtures are dynamically loaded by source-owned tests as test runtime roots.
+entry = [
+  "bin/ast-mcp.ts",
+  "tests/fixtures/intelligence/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs,mdx,astro,vue,svelte}",
+]
 
 # Generated host-install surfaces and the standalone evaluator policy mirror are
-# runtime copies validated by their source-owned tests, not independent source.
+# validated by source-owned tests.
 ignorePatterns = [
   ".github/hooks/**",
   ".github/skills/**",
   "templates/skills/ast-mcp/evals/shell-policy.ts",
 ]
 
-# Fumadocs generates the collections aliases during documentation builds.
-ignoreUnresolvedImports = ["collections/browser", "collections/server"]
+# Fumadocs generates collection aliases, and parser fixtures intentionally
+# reference absent sibling modules to verify unresolved-import graph output.
+ignoreUnresolvedImports = [
+  "./missing-parser-worker.ts",
+  "./render",
+  "./render.js",
+  "./base",
+  "./base.js",
+  "collections/browser",
+  "collections/server",
+]
 
 # Dprint is a runtime CLI dependency resolved from the stable package installation.
-ignoreDependencies = ["collections", "dprint"]
+# The Svelte fixture exercises framework parsing without installing Svelte.
+ignoreDependencies = ["collections", "dprint", "svelte"]
+
+# Schemas and types frequently validate sibling declarations in the same contract file.
+ignoreExportsUsedInFile = true
 
 [duplicates]
 # Surface every duplicated pair so architectural consolidation is comprehensive.
 minOccurrences = 2
+
+# Six reviewed semantic-boundary duplicates retain family-specific behavior.
+ignoredClones = [
+  "dup:c77b3abb6f87acd9-6:2",
+  "dup:c77b3abb6f87acd9-2:2",
+  "dup:c77b3abb6f87acd9-5:2",
+  "dup:c77b3abb6f87acd9-1:2",
+  "dup:c77b3abb6f87acd9-4:2",
+  "dup:c77b3abb6f87acd9-3:2",
+]
 
 [rules]
 # Legacy external-interface suppressions are retained for compatibility with Fallow's

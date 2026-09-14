@@ -1,10 +1,9 @@
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
 import type { BudgetReason } from "./algorithms/types.ts";
+import {
+  createAuthenticatedCursorCodec,
+  digestJson as digest,
+  exactObject,
+} from "./shared.ts";
 import type { GraphDiff, GraphSnapshot } from "./types.ts";
 import { GraphSnapshotSchema } from "./types.ts";
 
@@ -29,59 +28,14 @@ export class GraphDiffInputError extends TypeError {
   }
 }
 
-const cursorDomain = "ast-mcp.graph-diff-cursor.v1";
-const processCursorKey = randomBytes(32);
-
 // Process-local authentication intentionally expires cursors after a restart.
-const processCursorCodec: GraphDiffCursorCodec = {
-  decode(cursor, binding) {
-    const parts = cursor.split(".");
-    if (parts.length !== 2) throw new Error("invalid envelope");
-    const [payload, signature] = parts;
-    if (!payload || !signature || !/^[a-f0-9]{64}$/u.test(signature))
-      throw new Error("invalid envelope");
-    const expected = cursorMac(payload, binding);
-    const received = Buffer.from(signature, "hex");
-    if (
-      received.byteLength !== expected.byteLength ||
-      !timingSafeEqual(received, expected)
-    )
-      throw new Error("invalid authentication");
-    return JSON.parse(Buffer.from(payload, "base64url").toString());
+const processCursorCodec: GraphDiffCursorCodec = createAuthenticatedCursorCodec(
+  {
+    authenticationError: "invalid authentication",
+    domain: "ast-mcp.graph-diff-cursor.v1",
+    envelopeError: "invalid envelope",
   },
-  encode(value, binding) {
-    const payload = Buffer.from(JSON.stringify(value)).toString("base64url");
-    return `${payload}.${cursorMac(payload, binding).toString("hex")}`;
-  },
-};
-
-function cursorMac(payload: string, binding: string): Buffer {
-  return createHmac("sha256", processCursorKey)
-    .update(cursorDomain)
-    .update("\0")
-    .update(binding)
-    .update("\0")
-    .update(payload)
-    .digest();
-}
-
-function digest(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-function exactObject(
-  value: unknown,
-  required: readonly string[],
-  allowed: readonly string[] = required,
-): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const keys = Object.keys(value);
-  return (
-    required.every((key) => keys.includes(key)) &&
-    keys.every((key) => allowed.includes(key))
-  );
-}
+);
 
 function offset(
   cursor: string | undefined,

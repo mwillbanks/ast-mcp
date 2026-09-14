@@ -27,6 +27,19 @@ test("qualifies native intelligence dependencies without downloading a model", a
   expect(result.ast.language).toBe("TypeScript");
   expect(result.ast.matches).toBe(1);
   expect(result.ast.rootKind).toBe("program");
+  expect(result.ast.grammarCount).toBe(26);
+  expect(result.ast.grammars).toHaveLength(26);
+  expect(
+    result.ast.grammars.some(
+      (grammar: { language: string }) =>
+        grammar.language === "json" || grammar.language === "jsonc",
+    ),
+  ).toBe(false);
+  for (const grammar of result.ast.grammars) {
+    expect(grammar.grammarVersion).toBeString();
+    expect(grammar.language).toBeString();
+    expect(grammar.rootKind).toBeString();
+  }
   expect(result.embedding.status).toBe("skipped");
   expect(result.embedding.reason).toMatch(/never download models/);
   expect(result.storage.baselineCount).toBe(1);
@@ -189,6 +202,17 @@ test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
   expect(result.indexing.queryExecuted).toBe(true);
   expect(result.indexing.vectorNearestArtifactId).toStartWith(
     "embedding-model-space:v1:",
+  );
+  expect(result.lifecycle.buildGeneration).toMatch(
+    /^generation:v1:[a-f0-9]{64}$/,
+  );
+  expect(result.lifecycle.generation).toBe(result.lifecycle.buildGeneration);
+  expect(result.lifecycle.counts.artifacts).toBeGreaterThan(0);
+  expect(result.lifecycle.counts.chunks).toBeGreaterThan(0);
+  expect(result.lifecycle.counts.publications).toBeGreaterThan(0);
+  expect(result.lifecycle.retrievedItems).toBeGreaterThan(0);
+  expect(result.lifecycle.statusCoverage).toEqual(
+    expect.objectContaining({ exhaustive: true, truncated: false }),
   );
   expect(result.memory.peakRssBytes).toBeGreaterThan(0);
   expect(result.isolation.assertionsExecuted).toBe(10);

@@ -102,6 +102,83 @@ function normalizedFacts(
 
 afterAll(closeDynamicLanguageWorker);
 
+test("dynamic ranges preserve byte, character, and UTF-16 coordinates", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `#🙂${newline}def café(value):${newline}    local = target(value)${newline}    return local`;
+    const facts = await analyzeDynamicLanguage({
+      languageId: "python",
+      source,
+    });
+    const symbol = facts.symbols.find(({ name }) => name === "café");
+    const call = facts.calls.find(({ callee }) => callee === "target");
+    const binding = facts.references.find(
+      ({ name, role }) => name === "local" && role === "write",
+    );
+    const reference = facts.references.find(
+      ({ name, role }) => name === "target" && role === "read",
+    );
+    if (!symbol || !call || !binding || !reference) {
+      throw new Error("Expected Unicode symbol, call, binding, and reference");
+    }
+    const range = symbol.declarationRange;
+    const start = source.indexOf("café");
+    const end = start + "café".length;
+    const prefix = source.slice(0, start);
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("café");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(new TextEncoder().encode(prefix).byteLength);
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.characterOffset).toBe(
+      Array.from(prefix).length,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(range.startCoordinate.utf16Column).toBe(
+      "def café(value):".indexOf("café"),
+    );
+    expect(range.startCoordinate.column).toBe(
+      Array.from(
+        "def café(value):".slice(0, "def café(value):".indexOf("café")),
+      ).length,
+    );
+    expect(
+      source.slice(
+        call.range.startCoordinate.utf16Offset,
+        call.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target(value)");
+    expect(
+      source.slice(
+        binding.range.startCoordinate.utf16Offset,
+        binding.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("local");
+    expect(
+      source.slice(
+        reference.range.startCoordinate.utf16Offset,
+        reference.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(call.enclosingSymbolId).toBe(symbol.id);
+    expect(binding.enclosingSymbolId).toBe(symbol.id);
+    expect(reference.enclosingSymbolId).toBe(symbol.id);
+    expect(symbol.range.startCoordinate.utf16Offset).toBeLessThan(
+      call.range.startCoordinate.utf16Offset,
+    );
+    expect(symbol.range.endCoordinate.utf16Offset).toBeGreaterThan(
+      call.range.endCoordinate.utf16Offset,
+    );
+  }
+});
+
 test("strictly validates worker protocol and complete fact identity", async () => {
   const source = await fixture("python");
   const facts = await analyzeDynamicLanguage({ languageId: "python", source });
@@ -538,25 +615,31 @@ describe.serial("dynamic language WASM adapters", () => {
     });
     const symbol = facts.symbols.find(({ name }) => name === "café");
     expect(symbol?.declarationRange).toMatchObject({
-      endByte: 22,
+      endByte: 25,
       endCoordinate: {
-        byteOffset: 22,
-        characterOffset: 19,
-        column: 6,
+        byteOffset: 25,
+        characterOffset: 21,
+        column: 8,
         line: 1,
-        utf16Column: 6,
-        utf16Offset: 20,
+        utf16Column: 8,
+        utf16Offset: 22,
       },
-      startByte: 18,
+      startByte: 20,
       startCoordinate: {
-        byteOffset: 18,
-        characterOffset: 15,
-        column: 2,
+        byteOffset: 20,
+        characterOffset: 17,
+        column: 4,
         line: 1,
-        utf16Column: 2,
-        utf16Offset: 16,
+        utf16Column: 4,
+        utf16Offset: 18,
       },
     });
+    expect(
+      source.slice(
+        symbol?.declarationRange.startCoordinate.utf16Offset,
+        symbol?.declarationRange.endCoordinate.utf16Offset,
+      ),
+    ).toBe("café");
   });
 
   test("keeps references scoped across shadowed names", async () => {

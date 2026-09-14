@@ -181,7 +181,6 @@ export const IntelligenceResultSchema = z
       }
     });
   });
-export type IntelligenceResult = z.infer<typeof IntelligenceResultSchema>;
 
 export const IntelligenceErrorCodeSchema = z.enum([
   "invalid_request",
@@ -264,4 +263,3 @@ export const IntelligenceErrorSchema = z
       });
     }
   });
-export type IntelligenceError = z.infer<typeof IntelligenceErrorSchema>;

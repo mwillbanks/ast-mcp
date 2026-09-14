@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -662,6 +663,7 @@ describe("LanceDB mutation journal and freshness", () => {
     await git(root, "config", "user.name", "Test");
     const file = path.join(root, "value.ts");
     const stableFile = path.join(root, "stable.ts");
+    const unsupportedFile = path.join(root, "notes.unsupported");
     const documents = new Map([
       ["notes.md", "# Notes\n\nSee [value](./value.ts).\n"],
       ["notes.txt", "Plain text notes.\n"],
@@ -676,12 +678,20 @@ describe("LanceDB mutation journal and freshness", () => {
     ]);
     await writeFile(file, "export const value = 1;\n");
     await writeFile(stableFile, "export const stable = true;\n");
+    await writeFile(unsupportedFile, "plain text\n");
     await Promise.all(
       [...documents].map(([name, content]) =>
         writeFile(path.join(root, name), content),
       ),
     );
-    await git(root, "add", "value.ts", "stable.ts", ...documents.keys());
+    await git(
+      root,
+      "add",
+      "value.ts",
+      "stable.ts",
+      "notes.unsupported",
+      ...documents.keys(),
+    );
     await git(root, "commit", "-m", "initial");
     const storagePath = path.join(root, ".index");
     const registry = new WorkspaceRegistry();
@@ -776,10 +786,13 @@ describe("LanceDB mutation journal and freshness", () => {
     ).toEqual(["abandoned", "published"]);
     store.finalizePublication = finalizePublication;
 
-    const textFile = path.join(root, "notes.unsupported");
-    await writeFile(textFile, "plain text\n");
+    const readPaths: string[] = [];
     const skipped = await withWorkspaceContext(workspace, () =>
       refreshMutationIntelligence({
+        readSource: async (filePath) => {
+          readPaths.push(filePath);
+          return readFile(filePath, "utf8");
+        },
         store,
         workspace,
       }),
@@ -787,7 +800,79 @@ describe("LanceDB mutation journal and freshness", () => {
     expect(skipped.generationId).toStartWith("generation:v1:");
     expect(skipped.parsedFiles).toEqual(expectedParsedFiles);
     expect(skipped.skippedFiles).toContain("notes.unsupported");
+    expect(readPaths).not.toContain(unsupportedFile);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(
+      withWorkspaceContext(workspace, () =>
+        refreshMutationIntelligence({
+          signal: aborted.signal,
+          store,
+          workspace,
+        }),
+      ),
+    ).rejects.toThrow("intelligence_refresh_aborted");
+
+    const publicationCount = await store.count("publications");
+    const duringRefresh = new AbortController();
+    let reads = 0;
+    await expect(
+      withWorkspaceContext(workspace, () =>
+        refreshMutationIntelligence({
+          readSource: async (filePath) => {
+            reads += 1;
+            duringRefresh.abort();
+            return readFile(filePath, "utf8");
+          },
+          signal: duringRefresh.signal,
+          store,
+          workspace,
+        }),
+      ),
+    ).rejects.toThrow("intelligence_refresh_aborted");
+    expect(reads).toBe(1);
+    expect(await store.count("publications")).toBe(publicationCount);
     await store.shutdownCoordinator();
+  });
+
+  test("aborting revision discovery kills a non-terminating Git process", async () => {
+    const root = await temporary("ast-mcp-abort-git-");
+    const bin = path.join(root, "bin");
+    await mkdir(bin);
+    const fakeGit = path.join(bin, "git");
+    await writeFile(fakeGit, "#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n");
+    await chmod(fakeGit, 0o755);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+    const base = fakeWorkspace(root, "abort-git");
+    const workspace = {
+      ...base,
+      selectedRevision: {
+        ...base.selectedRevision,
+        readOnly: true,
+        selector: { kind: "commit" as const, oid: "a".repeat(40) },
+      },
+    };
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const controller = new AbortController();
+    const startedAt = performance.now();
+    const pending = withWorkspaceContext(workspace, () =>
+      refreshMutationIntelligence({
+        signal: controller.signal,
+        store,
+        workspace,
+      }),
+    );
+    setTimeout(() => controller.abort(), 20);
+    try {
+      await expect(pending).rejects.toThrow("intelligence_refresh_aborted");
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      expect(await store.count("publications")).toBe(0);
+    } finally {
+      process.env.PATH = originalPath;
+      await store.shutdownCoordinator();
+    }
   });
 });
 
@@ -808,16 +893,115 @@ describe("mutation recovery edges", () => {
     });
     await rm(lock);
     await writeFile(lock, "");
-    const releaseInitializing = setTimeout(() => {
-      void rm(lock, { force: true });
-    }, 20);
-    const initialized = await acquireFileLock(file);
-    clearTimeout(releaseInitializing);
+    const initialized = await acquireFileLock(file, { pollMs: 5 });
+    expect(JSON.parse(await readFile(lock, "utf8"))).toMatchObject({
+      token: initialized.token,
+    });
     await initialized.release();
+    expect(await Bun.file(lock).exists()).toBeFalse();
+    await writeFile(lock, "stale");
+    await withFencedFileLocks([lock], async (leases) => {
+      expect(leases).toHaveLength(0);
+      await rm(lock);
+    });
+    expect(await Bun.file(lock).exists()).toBeFalse();
+    expect(await Bun.file(`${lock}.ast-mcp.lock`).exists()).toBeFalse();
+    expect(await mutationLockPath(path.join(root, ".hidden"))).toBe(
+      path.join(root, ".hidden.ast-mcp.lock"),
+    );
+    const pending = `${lock}.pending-orphan`;
+    await writeFile(pending, "orphan");
+    const expired = new Date(Date.now() - 120_000);
+    await utimes(pending, expired, expired);
+    const cleanupLease = await acquireFileLock(file);
+    await cleanupLease.release();
+    expect(await Bun.file(pending).exists()).toBeFalse();
+
+    const stolen = await acquireFileLock(file);
+    const replacement = {
+      ...JSON.parse(await readFile(lock, "utf8")),
+      token: "replacement-owner",
+    };
+    await writeFile(lock, JSON.stringify(replacement));
+    await stolen.release();
+    expect(JSON.parse(await readFile(lock, "utf8"))).toMatchObject({
+      token: "replacement-owner",
+    });
+    await rm(lock);
+
     expect(await withFencedFileLocks([], async (leases) => leases.length)).toBe(
       0,
     );
     clearMutationLockQueuesForTests();
+  });
+
+  test("propagates lock filesystem failures and renewal races", async () => {
+    const root = await temporary();
+    const file = path.join(root, "value.ts");
+    const lock = await mutationLockPath(file);
+    const denied = Object.assign(new Error("lock filesystem denied"), {
+      code: "EACCES",
+    });
+
+    const readdir = spyOn(fsPromises, "readdir").mockRejectedValueOnce(denied);
+    try {
+      await expect(acquireFileLock(file)).rejects.toThrow(
+        "lock filesystem denied",
+      );
+    } finally {
+      readdir.mockRestore();
+    }
+
+    await writeFile(lock, "record");
+    const read = spyOn(fsPromises, "readFile").mockRejectedValueOnce(denied);
+    try {
+      await expect(acquireFileLock(file)).rejects.toThrow(
+        "lock filesystem denied",
+      );
+    } finally {
+      read.mockRestore();
+    }
+    await rm(lock);
+
+    const releaseFailure = await acquireFileLock(file);
+    const renameFailure = spyOn(fsPromises, "rename").mockRejectedValueOnce(
+      denied,
+    );
+    try {
+      await expect(releaseFailure.release()).rejects.toThrow(
+        "lock filesystem denied",
+      );
+    } finally {
+      renameFailure.mockRestore();
+    }
+    await rm(lock, { force: true });
+
+    const raced = await acquireFileLock(file);
+    const actualRename = fsPromises.rename.bind(fsPromises);
+    const renameRace = spyOn(fsPromises, "rename").mockImplementation(
+      async (oldPath, newPath) => {
+        await actualRename(oldPath, newPath);
+        if (
+          oldPath.toString() === raced.lockPath &&
+          newPath.toString().includes(".stale-")
+        ) {
+          const active = JSON.parse(await readFile(newPath, "utf8"));
+          await writeFile(
+            raced.lockPath,
+            JSON.stringify({ ...active, token: "racing-owner" }),
+          );
+        }
+      },
+    );
+    try {
+      await expect(raced.renew()).rejects.toMatchObject({
+        code: "lock_fenced",
+      });
+    } finally {
+      renameRace.mockRestore();
+    }
+    await raced.release();
+    await rm(lock, { force: true });
   });
 
   test("renews active leases and fences expired renewal", async () => {

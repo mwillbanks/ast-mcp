@@ -1,15 +1,19 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { Lang, registerDynamicLanguage } from "@ast-grep/napi";
+import { type Lang, registerDynamicLanguage } from "@ast-grep/napi";
 import { INTELLIGENCE_SCHEMA_VERSION } from "../contracts/common.ts";
 import {
   type LanguageCapability,
   LanguageCapabilitySchema,
 } from "../contracts/language.ts";
 import { sha256 } from "./coordinates.ts";
+import {
+  LANGUAGE_CAPABILITY_CATALOG,
+  type LanguageCatalogEntry,
+  PINNED_GRAMMAR_REGISTRATIONS,
+} from "./language-catalog.ts";
 import type { ParserLanguageId } from "./types.ts";
 
-export const AST_GREP_RUNTIME_VERSION = "0.45.3";
 export const DEFAULT_EXTRACTOR_VERSION = "ast-mcp.ts-js.v1";
 
 export interface DynamicGrammarAsset {
@@ -96,58 +100,45 @@ export function snapshotDynamicGrammarManifest(
   });
 }
 
-function nativeGrammar(
-  languageId: ParserLanguageId,
-  astGrepLanguage: Lang,
-  extensions: readonly string[],
-): GrammarDescriptor {
-  const grammarVersion = `@ast-grep/napi@${AST_GREP_RUNTIME_VERSION}:${astGrepLanguage}`;
+function catalogGrammar(entry: LanguageCatalogEntry): GrammarDescriptor {
   return {
-    astGrepLanguage,
+    astGrepLanguage: entry.astGrepLanguage,
     dynamicAsset: null,
-    extensions,
+    extensions: entry.extensions,
     grammarFingerprint: fingerprint({
-      astGrepLanguage,
-      extensions: [...extensions],
-      grammarVersion,
-      languageId,
+      astGrepLanguage: entry.astGrepLanguage,
+      extensions: [...entry.extensions],
+      grammarVersion: entry.grammarVersion,
+      languageId: entry.languageId,
     }),
-    grammarVersion,
-    languageId,
+    grammarVersion: entry.grammarVersion,
+    languageId: entry.languageId,
   };
 }
 
-const NATIVE_GRAMMARS: readonly GrammarDescriptor[] = [
-  nativeGrammar("javascript", Lang.JavaScript, [".js", ".mjs", ".cjs"]),
-  nativeGrammar("jsx", Lang.JavaScript, [".jsx"]),
-  nativeGrammar("typescript", Lang.TypeScript, [".ts", ".mts", ".cts"]),
-  nativeGrammar("tsx", Lang.Tsx, [".tsx"]),
-  nativeGrammar("css", Lang.Css, [".css"]),
-  nativeGrammar("html", Lang.Html, [".html", ".htm"]),
-];
-
-const codeLanguages = new Set<ParserLanguageId>([
-  "javascript",
-  "jsx",
-  "typescript",
-  "tsx",
-]);
-
-let registeredDynamicGrammarFingerprint: string | null = null;
+const CATALOG_GRAMMARS = LANGUAGE_CAPABILITY_CATALOG.map(catalogGrammar);
+const registeredPinnedGrammarFingerprints = new WeakMap<
+  typeof registerDynamicLanguage,
+  string
+>();
+const registeredDynamicGrammarFingerprints = new WeakMap<
+  typeof registerDynamicLanguage,
+  string
+>();
 
 const implementationFor = (
-  grammar: GrammarDescriptor,
+  entry: LanguageCatalogEntry,
 ): LanguageImplementation => ({
   callResolution: false,
   embeddedLanguages: false,
   exportResolution: false,
   importResolution: false,
   inheritanceResolution: false,
-  match: true,
-  parse: true,
-  rewrite: true,
-  structuralRead: true,
-  symbolExtraction: codeLanguages.has(grammar.languageId),
+  match: entry.structuralOperations.match,
+  parse: entry.structuralOperations.parse,
+  rewrite: entry.structuralOperations.rewrite,
+  structuralRead: entry.structuralOperations.structuralRead,
+  symbolExtraction: entry.analysis.symbolExtraction,
 });
 
 const unsupported = (limitation: string) => ({
@@ -170,12 +161,12 @@ const supported = (
 export class LanguageRegistry {
   readonly #dynamicRegistrar: typeof registerDynamicLanguage;
   readonly #grammars = new Map<ParserLanguageId, GrammarDescriptor>(
-    NATIVE_GRAMMARS.map((grammar) => [grammar.languageId, grammar]),
+    CATALOG_GRAMMARS.map((grammar) => [grammar.languageId, grammar]),
   );
   readonly #implementations = new Map<ParserLanguageId, LanguageImplementation>(
-    NATIVE_GRAMMARS.map((grammar) => [
-      grammar.languageId,
-      implementationFor(grammar),
+    LANGUAGE_CAPABILITY_CATALOG.map((entry) => [
+      entry.languageId,
+      implementationFor(entry),
     ]),
   );
   #dynamicRegistered = false;
@@ -371,6 +362,22 @@ export class LanguageRegistry {
 
   registerDynamicGrammars(): void {
     if (this.#dynamicRegistered) return;
+    const pinnedFingerprint = fingerprint(PINNED_GRAMMAR_REGISTRATIONS);
+    const registeredPinnedFingerprint = registeredPinnedGrammarFingerprints.get(
+      this.#dynamicRegistrar,
+    );
+    if (registeredPinnedFingerprint === undefined) {
+      this.#dynamicRegistrar(PINNED_GRAMMAR_REGISTRATIONS);
+      registeredPinnedGrammarFingerprints.set(
+        this.#dynamicRegistrar,
+        pinnedFingerprint,
+      );
+    } else if (registeredPinnedFingerprint !== pinnedFingerprint) {
+      throw new TypeError(
+        "A different pinned grammar set is already registered in this process",
+      );
+    }
+
     const registrations: Record<
       string,
       {
@@ -399,9 +406,14 @@ export class LanguageRegistry {
     }
     if (Object.keys(registrations).length > 0) {
       const registrationFingerprint = fingerprint(registrations);
-      if (registeredDynamicGrammarFingerprint === null) {
+      const registeredDynamicGrammarFingerprint =
+        registeredDynamicGrammarFingerprints.get(this.#dynamicRegistrar);
+      if (registeredDynamicGrammarFingerprint === undefined) {
         this.#dynamicRegistrar(registrations);
-        registeredDynamicGrammarFingerprint = registrationFingerprint;
+        registeredDynamicGrammarFingerprints.set(
+          this.#dynamicRegistrar,
+          registrationFingerprint,
+        );
       } else if (
         registeredDynamicGrammarFingerprint !== registrationFingerprint
       ) {

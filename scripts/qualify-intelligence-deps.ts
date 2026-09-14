@@ -12,12 +12,20 @@ import {
   Schema,
   Utf8,
 } from "apache-arrow";
+import { defaultLanguageRegistry } from "../src/intelligence/parser/registry.ts";
+import { normalizeEmbedding as normalizeRuntimeEmbedding } from "../src/intelligence/retrieval/embedding.ts";
 
 const VECTOR_SIZE = 3;
 const DEFAULT_MODEL = "onnx-community/granite-embedding-30m-english-ONNX";
 
 export interface QualificationResult {
   ast: {
+    grammarCount: number;
+    grammars: Array<{
+      grammarVersion: string;
+      language: string;
+      rootKind: string;
+    }>;
     language: string;
     matches: number;
     rootKind: string;
@@ -46,16 +54,20 @@ export interface QualificationResult {
 }
 
 export function normalizeEmbedding(values: ArrayLike<number>): number[] {
-  const vector = Array.from(values, Number);
-  const magnitude = Math.sqrt(
-    vector.reduce((sum, value) => sum + value * value, 0),
-  );
-  if (!Number.isFinite(magnitude) || magnitude === 0)
+  try {
+    return normalizeRuntimeEmbedding(values);
+  } catch {
     throw new Error("Embedding must have a finite, non-zero magnitude");
-  return vector.map((value) => value / magnitude);
+  }
 }
 
 export function qualifyAst() {
+  defaultLanguageRegistry.registerDynamicGrammars();
+  const grammars = defaultLanguageRegistry.list().map((grammar) => ({
+    grammarVersion: grammar.grammarVersion,
+    language: String(grammar.languageId),
+    rootKind: String(parse(grammar.astGrepLanguage, "").root().kind()),
+  }));
   const source = [
     "export function publish(value: string) {",
     "  console.log(value);",
@@ -67,6 +79,8 @@ export function qualifyAst() {
     rule: { pattern: "console.log($VALUE)" },
   });
   return {
+    grammarCount: grammars.length,
+    grammars,
     language: Lang.TypeScript,
     matches: matches.length,
     rootKind: String(root.root().kind()),

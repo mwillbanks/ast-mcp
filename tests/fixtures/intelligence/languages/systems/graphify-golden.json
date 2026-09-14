@@ -4,11 +4,11 @@
       "calls": [
         {
           "callee": "printf",
-          "range": [74, 101]
+          "range": [74, 102]
         },
         {
           "callee": "helper",
-          "range": [92, 100]
+          "range": [93, 101]
         }
       ],
       "diagnostics": [],
@@ -50,7 +50,7 @@
         },
         {
           "name": "helper",
-          "range": [92, 98],
+          "range": [93, 99],
           "role": "read"
         }
       ],
@@ -65,7 +65,7 @@
           "declarationRange": [54, 58],
           "kind": "function",
           "name": "main",
-          "range": [50, 104]
+          "range": [50, 105]
         }
       ]
     },
@@ -190,7 +190,7 @@
         },
         {
           "name": "_hidden",
-          "range": [81, 88],
+          "range": [82, 89],
           "role": "write"
         }
       ],
@@ -199,7 +199,7 @@
           "declarationRange": [36, 43],
           "kind": "class",
           "name": "Service",
-          "range": [30, 95]
+          "range": [30, 96]
         },
         {
           "declarationRange": [51, 54],
@@ -208,10 +208,10 @@
           "range": [46, 56]
         },
         {
-          "declarationRange": [81, 88],
+          "declarationRange": [82, 89],
           "kind": "method",
           "name": "_hidden",
-          "range": [76, 90]
+          "range": [77, 91]
         }
       ]
     },
@@ -219,7 +219,7 @@
       "calls": [
         {
           "callee": "fmt.Println",
-          "range": [71, 90]
+          "range": [71, 91]
         }
       ],
       "diagnostics": [],
@@ -261,7 +261,7 @@
         },
         {
           "name": "helper",
-          "range": [98, 104],
+          "range": [99, 105],
           "role": "write"
         }
       ],
@@ -276,13 +276,13 @@
           "declarationRange": [63, 66],
           "kind": "method",
           "name": "Run",
-          "range": [48, 92]
+          "range": [48, 93]
         },
         {
-          "declarationRange": [98, 104],
+          "declarationRange": [99, 105],
           "kind": "function",
           "name": "helper",
-          "range": [93, 109]
+          "range": [94, 110]
         }
       ]
     },
@@ -290,7 +290,7 @@
       "calls": [
         {
           "callee": "NSLog",
-          "range": [120, 134]
+          "range": [120, 135]
         }
       ],
       "diagnostics": [],
@@ -376,13 +376,13 @@
           "declarationRange": [98, 105],
           "kind": "class",
           "name": "Service",
-          "range": [82, 142]
+          "range": [82, 143]
         },
         {
           "declarationRange": [114, 117],
           "kind": "method",
           "name": "run",
-          "range": [106, 137]
+          "range": [106, 138]
         }
       ]
     },
@@ -390,7 +390,7 @@
       "calls": [
         {
           "callee": "println",
-          "range": [116, 132]
+          "range": [116, 133]
         }
       ],
       "diagnostics": [],
@@ -475,13 +475,13 @@
           "declarationRange": [77, 85],
           "kind": "function",
           "name": "Runnable",
-          "range": [72, 137]
+          "range": [72, 138]
         },
         {
           "declarationRange": [103, 106],
           "kind": "function",
           "name": "run",
-          "range": [100, 135]
+          "range": [100, 136]
         }
       ]
     },
@@ -489,7 +489,7 @@
       "calls": [
         {
           "callee": "print",
-          "range": [73, 86]
+          "range": [73, 87]
         }
       ],
       "diagnostics": [],
@@ -541,7 +541,7 @@
         },
         {
           "name": "hidden",
-          "range": [104, 110],
+          "range": [105, 111],
           "role": "write"
         }
       ],
@@ -550,19 +550,19 @@
           "declarationRange": [31, 38],
           "kind": "class",
           "name": "Service",
-          "range": [18, 117]
+          "range": [18, 118]
         },
         {
           "declarationRange": [65, 68],
           "kind": "function",
           "name": "run",
-          "range": [53, 88]
+          "range": [53, 89]
         },
         {
-          "declarationRange": [104, 110],
+          "declarationRange": [105, 111],
           "kind": "function",
           "name": "hidden",
-          "range": [91, 115]
+          "range": [92, 116]
         }
       ]
     },
@@ -570,7 +570,7 @@
       "calls": [
         {
           "callee": "std.debug.print",
-          "range": [77, 105]
+          "range": [77, 106]
         }
       ],
       "diagnostics": [],
@@ -616,7 +616,7 @@
           "declarationRange": [64, 67],
           "kind": "function",
           "name": "run",
-          "range": [57, 108]
+          "range": [57, 109]
         }
       ]
     }

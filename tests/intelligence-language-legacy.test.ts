@@ -43,6 +43,105 @@ async function fixture(id: LegacyLanguageId) {
 }
 afterAll(closeLegacyLanguageWorker);
 
+test("legacy ranges preserve byte, character, and UTF-16 coordinates", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `//🙂${newline}procedure Café; begin end;`;
+    const facts = await analyzeLegacyLanguage({ languageId: "pascal", source });
+    const symbol = facts.symbols.find(({ name }) => name === "Café");
+    if (!symbol) throw new Error("Expected Café symbol");
+    const range = symbol.declarationRange;
+    const start = source.indexOf("Café");
+    const end = start + "Café".length;
+    const prefix = source.slice(0, start);
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("Café");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(new TextEncoder().encode(prefix).byteLength);
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.characterOffset).toBe(
+      Array.from(prefix).length,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(range.startCoordinate.utf16Column).toBe(
+      "procedure Café; begin end;".indexOf("Café"),
+    );
+    expect(range.startCoordinate.column).toBe(
+      Array.from(
+        "procedure Café; begin end;".slice(
+          0,
+          "procedure Café; begin end;".indexOf("Café"),
+        ),
+      ).length,
+    );
+  }
+});
+
+test("tree-sitter legacy ranges keep native UTF-16 offsets", async () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const source = `(* 🙂 *)${newline}let run value = target value`;
+    const facts = await analyzeLegacyLanguage({ languageId: "ocaml", source });
+    const symbol = facts.symbols.find(({ name }) => name === "run");
+    const call = facts.calls.find(({ callee }) => callee === "target");
+    const binding = facts.references.find(
+      ({ name, role }) => name === "value" && role === "write",
+    );
+    const reference = facts.references.find(
+      ({ name, role }) => name === "target" && role === "read",
+    );
+    if (!symbol || !call || !binding || !reference) {
+      throw new Error("Expected symbol, call, binding, and reference");
+    }
+    const range = symbol.declarationRange;
+    const start = source.indexOf("run");
+    const end = start + "run".length;
+
+    expect(
+      source.slice(
+        range.startCoordinate.utf16Offset,
+        range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("run");
+    expect(range.startCoordinate.utf16Offset).toBe(start);
+    expect(range.endCoordinate.utf16Offset).toBe(end);
+    expect(range.startByte).toBe(
+      new TextEncoder().encode(source.slice(0, start)).byteLength,
+    );
+    expect(range.endByte).toBe(
+      new TextEncoder().encode(source.slice(0, end)).byteLength,
+    );
+    expect(range.startCoordinate.line).toBe(1);
+    expect(
+      source.slice(
+        call.range.startCoordinate.utf16Offset,
+        call.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(
+      source.slice(
+        binding.range.startCoordinate.utf16Offset,
+        binding.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("value");
+    expect(
+      source.slice(
+        reference.range.startCoordinate.utf16Offset,
+        reference.range.endCoordinate.utf16Offset,
+      ),
+    ).toBe("target");
+    expect(call.enclosingSymbolId).toBeNull();
+    expect(binding.enclosingSymbolId).toBeNull();
+    expect(reference.enclosingSymbolId).toBeNull();
+  }
+});
+
 describe("legacy language adapters", () => {
   test("matches pinned exact Graphify-parity records for all languages", async () => {
     expect(golden.provenance.revision).toBe(GRAPHIFY_LEGACY_BASELINE_REVISION);

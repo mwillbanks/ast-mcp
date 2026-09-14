@@ -33,10 +33,16 @@ import {
   type EmbeddingWorkerPool,
   publishChunkEmbeddings,
   type RetrievalChunk,
+  retrievalChunkStorageRow,
+  syntheticChunkArtifactId,
 } from "../retrieval/index.ts";
 import type { LanceIntelligenceStore } from "../storage/store.ts";
 import type { WorkspaceHandle } from "../workspace/context.ts";
-import { gitDirtyOverlayId, readGitRevisionFile } from "../workspace/git.ts";
+import {
+  gitDirtyOverlayId,
+  readGitRevisionFile,
+  runGitRaw,
+} from "../workspace/git.ts";
 import type { MutationRefreshResult } from "./types.ts";
 
 const EXTRACTOR_VERSION = "ast-mcp.mutation-refresh.v1";
@@ -85,13 +91,6 @@ function repositoryRelativePath(
   return relative.split(path.sep).join("/");
 }
 
-function createdAt(identity: string): string {
-  const digest = identity.slice(-12);
-  return new Date(
-    Number(BigInt(`0x${digest}`) % 4_102_444_800_000n),
-  ).toISOString();
-}
-
 async function canonicalFilePath(filePath: string): Promise<string> {
   try {
     return await realpath(filePath);
@@ -100,17 +99,25 @@ async function canonicalFilePath(filePath: string): Promise<string> {
   }
 }
 
+function throwIfRefreshAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("intelligence_refresh_aborted");
+}
+
 async function repositoryFiles(
   root: string,
   excludedRoot: string,
+  signal?: AbortSignal,
 ): Promise<string[]> {
   const files: string[] = [];
   const canonicalExcludedRoot = await canonicalFilePath(excludedRoot);
   const visit = async (directory: string): Promise<void> => {
+    throwIfRefreshAborted(signal);
     const entries = await readdir(directory, { withFileTypes: true });
+    throwIfRefreshAborted(signal);
     for (const entry of entries.sort((left, right) =>
       left.name.localeCompare(right.name),
     )) {
+      throwIfRefreshAborted(signal);
       if (entry.name === ".git" || entry.name === "node_modules") continue;
       const candidate = path.join(directory, entry.name);
       if (entry.isDirectory()) {
@@ -141,8 +148,8 @@ function documentKind(format: DocumentFormat) {
 
 interface RepositorySource {
   absolutePath: string;
+  read: () => Promise<string>;
   relativePath: string;
-  source: string;
 }
 
 interface RevisionSourceSelection {
@@ -181,18 +188,63 @@ function normalizeSyntaxHierarchy(facts: SyntaxFacts): SyntaxFacts {
   };
 }
 
-function sanitizedGitEnvironment(): Record<string, string> {
-  const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env))
-    if (value !== undefined && !name.startsWith("GIT_"))
-      environment[name] = value;
-  environment.GIT_OPTIONAL_LOCKS = "0";
-  return environment;
+function appendSyntaxArtifacts(input: {
+  artifactRows: Record<string, unknown>[];
+  facts: { sourceDigest: string; syntaxFactsArtifactId: string };
+  indexedAt: string;
+  languageId: string;
+  parserFingerprint: string;
+  source: string;
+  sourceArtifactId: string;
+  syntaxRows: Record<string, unknown>[];
+}): void {
+  input.artifactRows.push({
+    artifact_id: input.sourceArtifactId,
+    byte_length: Buffer.byteLength(input.source),
+    content_bytes: Buffer.from(input.source),
+    content_digest: input.facts.sourceDigest,
+    created_at: input.indexedAt,
+    kind: "source",
+    payload_json: JSON.stringify({ contentDigest: input.facts.sourceDigest }),
+  });
+  input.syntaxRows.push({
+    artifact_id: input.facts.syntaxFactsArtifactId,
+    byte_length: Buffer.byteLength(JSON.stringify(input.facts)),
+    created_at: input.indexedAt,
+    language_id: input.languageId,
+    parser_fingerprint: input.parserFingerprint,
+    payload_json: JSON.stringify(input.facts),
+    source_artifact_id: input.sourceArtifactId,
+  });
+}
+
+function appendRetrievalChunk(
+  chunkInput: Omit<RetrievalChunk, "artifactId">,
+  indexedAt: string,
+  chunkRows: Record<string, unknown>[],
+  retrievalChunks: RetrievalChunk[],
+): void {
+  const retrievalChunk: RetrievalChunk = {
+    ...chunkInput,
+    artifactId: syntheticChunkArtifactId(chunkInput),
+  };
+  chunkRows.push(retrievalChunkStorageRow(retrievalChunk, indexedAt));
+  retrievalChunks.push(retrievalChunk);
+}
+
+async function runGitListing(
+  root: string,
+  args: string[],
+  signal?: AbortSignal,
+): Promise<{ code: number; stderr: string; stdout: Uint8Array }> {
+  return runGitRaw(root, args, signal, throwIfRefreshAborted);
 }
 
 async function revisionPaths(
   workspace: WorkspaceHandle,
+  signal?: AbortSignal,
 ): Promise<{ paths: string[]; skipped: string[] }> {
+  throwIfRefreshAborted(signal);
   const index = workspace.selectedRevision.selector.kind === "index";
   const args = index
     ? ["ls-files", "--stage", "-z"]
@@ -202,16 +254,11 @@ async function revisionPaths(
         "-z",
         workspace.selectedRevision.resolvedCommitOid as string,
       ];
-  const child = Bun.spawn(["git", "-C", workspace.checkoutRoot, ...args], {
-    env: sanitizedGitEnvironment(),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [code, stderr, stdout] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-    new Response(child.stdout).bytes(),
-  ]);
+  const { code, stderr, stdout } = await runGitListing(
+    workspace.checkoutRoot,
+    args,
+    signal,
+  );
   if (code !== 0)
     throw Object.assign(
       new Error(stderr.trim() || `Git failed with exit code ${code}`),
@@ -223,27 +270,16 @@ async function revisionPaths(
   const zeroOid = /^0+$/;
   const intentToAdd = new Set<string>();
   if (index) {
-    const intentChild = Bun.spawn(
-      [
-        "git",
-        "-C",
-        workspace.checkoutRoot,
-        "diff",
-        "--name-only",
-        "--diff-filter=A",
-        "-z",
-      ],
-      {
-        env: sanitizedGitEnvironment(),
-        stderr: "pipe",
-        stdout: "pipe",
-      },
+    throwIfRefreshAborted(signal);
+    const {
+      code: intentCode,
+      stderr: intentError,
+      stdout: intentOutput,
+    } = await runGitListing(
+      workspace.checkoutRoot,
+      ["diff", "--name-only", "--diff-filter=A", "-z"],
+      signal,
     );
-    const [intentCode, intentError, intentOutput] = await Promise.all([
-      intentChild.exited,
-      new Response(intentChild.stderr).text(),
-      new Response(intentChild.stdout).bytes(),
-    ]);
     if (intentCode !== 0)
       throw Object.assign(
         new Error(
@@ -262,6 +298,7 @@ async function revisionPaths(
     .split("\0")
     .filter(Boolean)
     .sort()) {
+    throwIfRefreshAborted(signal);
     const tab = record.indexOf("\t");
     if (tab < 0) {
       skipped.push(`${record} [git:malformed]`);
@@ -300,18 +337,23 @@ async function revisionPaths(
 
 async function selectedRevisionSources(
   workspace: WorkspaceHandle,
+  signal?: AbortSignal,
+  readSource: (filePath: string) => Promise<string> = (filePath) =>
+    readFile(filePath, "utf8"),
 ): Promise<RevisionSourceSelection> {
   if (workspace.selectedRevision.selector.kind === "working") {
     const sources: RepositorySource[] = [];
     for (const filePath of await repositoryFiles(
       workspace.checkoutRoot,
       workspace.storageDomain.storagePath,
+      signal,
     )) {
+      throwIfRefreshAborted(signal);
       const absolutePath = await canonicalFilePath(filePath);
       sources.push({
         absolutePath,
+        read: () => readSource(absolutePath),
         relativePath: repositoryRelativePath(workspace, absolutePath),
-        source: await readFile(absolutePath, "utf8"),
       });
     }
     return { skipped: [], sources };
@@ -329,8 +371,9 @@ async function selectedRevisionSources(
       ? storageRelative.split(path.sep).join("/")
       : null;
   const sources: RepositorySource[] = [];
-  const selection = await revisionPaths(workspace);
+  const selection = await revisionPaths(workspace, signal);
   for (const relativePath of selection.paths) {
+    throwIfRefreshAborted(signal);
     if (
       relativePath === excludedPrefix ||
       (excludedPrefix && relativePath.startsWith(`${excludedPrefix}/`))
@@ -339,14 +382,15 @@ async function selectedRevisionSources(
     const absolutePath = path.join(workspace.checkoutRoot, relativePath);
     sources.push({
       absolutePath,
+      read: async () =>
+        Buffer.from(
+          await readGitRevisionFile(
+            workspace.git,
+            workspace.selectedRevision,
+            absolutePath,
+          ),
+        ).toString("utf8"),
       relativePath,
-      source: Buffer.from(
-        await readGitRevisionFile(
-          workspace.git,
-          workspace.selectedRevision,
-          absolutePath,
-        ),
-      ).toString("utf8"),
     });
   }
   return { skipped: selection.skipped, sources };
@@ -365,7 +409,9 @@ export interface IntelligenceRefreshDependencies {
     request: ParseSourceRequest,
     options?: { signal?: AbortSignal; timeoutMs?: number },
   ) => Promise<SyntaxFacts>;
+  readSource?: (filePath: string) => Promise<string>;
   signal?: AbortSignal;
+  supports?: (filePath: string) => boolean;
 }
 
 export async function refreshMutationIntelligence(
@@ -376,6 +422,7 @@ export async function refreshMutationIntelligence(
   } & IntelligenceRefreshDependencies,
 ): Promise<MutationRefreshResult> {
   const { store, workspace } = input;
+  const indexedAt = (input.now ?? (() => new Date()))().toISOString();
   if (!workspace.writeEligibility.eligible && !input.allowReadOnlySource)
     throw new Error("workspace_read_only");
   const artifactRows: Record<string, unknown>[] = [];
@@ -406,13 +453,28 @@ export async function refreshMutationIntelligence(
       }
   > = [];
 
-  const selection = await selectedRevisionSources(workspace);
+  const selection = await selectedRevisionSources(
+    workspace,
+    input.signal,
+    input.readSource,
+  );
   skippedFiles.push(...selection.skipped);
   for (const revisionSource of selection.sources) {
-    if (input.signal?.aborted) throw new Error("intelligence_refresh_aborted");
+    throwIfRefreshAborted(input.signal);
     const canonicalPath = revisionSource.absolutePath;
     const relative = revisionSource.relativePath;
-    const source = revisionSource.source;
+    const knownLanguageId = languageFor(canonicalPath);
+    const knownFormat = documentFormatFor(canonicalPath);
+    if (
+      input.supports
+        ? !input.supports(canonicalPath)
+        : !input.analyze && !knownLanguageId && !knownFormat
+    ) {
+      skippedFiles.push(relative);
+      continue;
+    }
+    const source = await revisionSource.read();
+    throwIfRefreshAborted(input.signal);
     const analysis = input.analyze
       ? await input.analyze({
           filePath: canonicalPath,
@@ -420,18 +482,15 @@ export async function refreshMutationIntelligence(
           source,
         })
       : null;
+    throwIfRefreshAborted(input.signal);
     if (input.analyze && !analysis) {
       skippedFiles.push(relative);
       continue;
     }
     const languageId =
-      analysis?.kind === "code"
-        ? analysis.languageId
-        : languageFor(canonicalPath);
+      analysis?.kind === "code" ? analysis.languageId : knownLanguageId;
     const format =
-      analysis?.kind === "document"
-        ? analysis.format
-        : documentFormatFor(canonicalPath);
+      analysis?.kind === "document" ? analysis.format : knownFormat;
     if (!analysis && !languageId && !format) {
       skippedFiles.push(relative);
       continue;
@@ -449,23 +508,15 @@ export async function refreshMutationIntelligence(
           sourceArtifactId,
         }),
       };
-      artifactRows.push({
-        artifact_id: facts.sourceArtifactId,
-        byte_length: Buffer.byteLength(source),
-        content_bytes: Buffer.from(source),
-        content_digest: facts.sourceDigest,
-        created_at: createdAt(facts.sourceArtifactId),
-        kind: "source",
-        payload_json: JSON.stringify({ contentDigest: facts.sourceDigest }),
-      });
-      syntaxRows.push({
-        artifact_id: facts.syntaxFactsArtifactId,
-        byte_length: Buffer.byteLength(JSON.stringify(facts)),
-        created_at: createdAt(facts.syntaxFactsArtifactId),
-        language_id: `project:${facts.format}`,
-        parser_fingerprint: facts.parserFingerprint,
-        payload_json: JSON.stringify(facts),
-        source_artifact_id: facts.sourceArtifactId,
+      appendSyntaxArtifacts({
+        artifactRows,
+        facts,
+        indexedAt,
+        languageId: `project:${facts.format}`,
+        parserFingerprint: facts.parserFingerprint,
+        source,
+        sourceArtifactId: facts.sourceArtifactId,
+        syntaxRows,
       });
       for (const node of facts.nodes) {
         const text =
@@ -474,42 +525,18 @@ export async function refreshMutationIntelligence(
             node.range.endCoordinate.utf16Offset,
           ) || node.name;
         if (!text.trim()) continue;
-        const artifactId = createIdentity("chunks", {
-          nodeId: node.id,
-          path: relative,
-          sourceDigest: facts.sourceDigest,
-        });
         const range = retrievalRange(node.range);
         const symbols = [node.name];
-        chunkRows.push({
-          artifact_id: artifactId,
-          byte_length: Buffer.byteLength(text),
-          created_at: createdAt(artifactId),
-          document_kind: "structured",
-          extracted_content_digest: sha256(text),
-          payload_json: JSON.stringify({
-            language: facts.format,
-            range,
-            symbols,
-            version: "retrieval-chunk-v1",
-          }),
-          semantic_context_digest: sha256(
-            JSON.stringify({ kind: node.kind, path: relative, symbols }),
-          ),
-          source_artifact_id: facts.sourceArtifactId,
-          syntax_facts_artifact_id: facts.syntaxFactsArtifactId,
-          text,
-        });
-        retrievalChunks.push({
-          artifactId,
-          documentKind: "structured",
+        const chunkInput: Omit<RetrievalChunk, "artifactId"> = {
+          documentKind: "structured" as const,
           language: facts.format,
           path: relative,
           range,
           sourceArtifactId: facts.sourceArtifactId,
           symbols,
           text,
-        });
+        };
+        appendRetrievalChunk(chunkInput, indexedAt, chunkRows, retrievalChunks);
       }
       parsedFiles.push(relative);
       units.push({
@@ -537,23 +564,15 @@ export async function refreshMutationIntelligence(
           sourceArtifactId,
         }),
       };
-      artifactRows.push({
-        artifact_id: sourceArtifactId,
-        byte_length: Buffer.byteLength(source),
-        content_bytes: Buffer.from(source),
-        content_digest: facts.sourceDigest,
-        created_at: createdAt(sourceArtifactId),
-        kind: "source",
-        payload_json: JSON.stringify({ contentDigest: facts.sourceDigest }),
-      });
-      syntaxRows.push({
-        artifact_id: facts.syntaxFactsArtifactId,
-        byte_length: Buffer.byteLength(JSON.stringify(facts)),
-        created_at: createdAt(facts.syntaxFactsArtifactId),
-        language_id: `document:${format}`,
-        parser_fingerprint: documentParserFingerprint,
-        payload_json: JSON.stringify(facts),
-        source_artifact_id: sourceArtifactId,
+      appendSyntaxArtifacts({
+        artifactRows,
+        facts,
+        indexedAt,
+        languageId: `document:${format}`,
+        parserFingerprint: documentParserFingerprint,
+        source,
+        sourceArtifactId,
+        syntaxRows,
       });
       for (const node of facts.nodes) {
         const text =
@@ -563,46 +582,18 @@ export async function refreshMutationIntelligence(
             node.range.startCoordinate.utf16Offset,
             node.range.endCoordinate.utf16Offset,
           );
-        const artifactId = createIdentity("chunks", {
-          nodeId: node.id,
-          path: relative,
-          sourceDigest: facts.sourceDigest,
-        });
         const symbols = node.name ? [node.name] : [];
         const range = retrievalRange(node.range);
-        chunkRows.push({
-          artifact_id: artifactId,
-          byte_length: Buffer.byteLength(text),
-          created_at: createdAt(artifactId),
-          document_kind: documentKind(format),
-          extracted_content_digest: sha256(text),
-          payload_json: JSON.stringify({
-            language: format,
-            range,
-            symbols,
-            version: "retrieval-chunk-v1",
-          }),
-          semantic_context_digest: sha256(
-            JSON.stringify({
-              kind: node.kind,
-              name: node.name,
-              path: relative,
-            }),
-          ),
-          source_artifact_id: sourceArtifactId,
-          syntax_facts_artifact_id: null,
-          text,
-        });
-        retrievalChunks.push({
-          artifactId,
+        const chunkInput: Omit<RetrievalChunk, "artifactId"> = {
           documentKind: documentKind(format),
           language: format,
           path: relative,
           range,
-          sourceArtifactId,
+          sourceArtifactId: sourceArtifactId,
           symbols,
           text,
-        });
+        };
+        appendRetrievalChunk(chunkInput, indexedAt, chunkRows, retrievalChunks);
       }
       parsedFiles.push(relative);
       units.push({ facts, kind: "document", path: relative, sourceArtifactId });
@@ -635,23 +626,15 @@ export async function refreshMutationIntelligence(
         : input.parse
           ? await input.parse(parseRequest, { signal: input.signal })
           : parseSource(parseRequest);
-    artifactRows.push({
-      artifact_id: facts.sourceArtifactId,
-      byte_length: Buffer.byteLength(source),
-      content_bytes: Buffer.from(source),
-      content_digest: facts.sourceDigest,
-      created_at: createdAt(facts.sourceArtifactId),
-      kind: "source",
-      payload_json: JSON.stringify({ contentDigest: facts.sourceDigest }),
-    });
-    syntaxRows.push({
-      artifact_id: facts.syntaxFactsArtifactId,
-      byte_length: Buffer.byteLength(JSON.stringify(facts)),
-      created_at: createdAt(facts.syntaxFactsArtifactId),
-      language_id: facts.languageId,
-      parser_fingerprint: facts.parserFingerprint,
-      payload_json: JSON.stringify(facts),
-      source_artifact_id: facts.sourceArtifactId,
+    appendSyntaxArtifacts({
+      artifactRows,
+      facts,
+      indexedAt,
+      languageId: facts.languageId,
+      parserFingerprint: facts.parserFingerprint,
+      source,
+      sourceArtifactId: facts.sourceArtifactId,
+      syntaxRows,
     });
     const chunkSymbols =
       facts.symbols.length > 0
@@ -693,45 +676,17 @@ export async function refreshMutationIntelligence(
         symbol.range.endCoordinate.utf16Offset,
       );
       if (!text.trim()) continue;
-      const artifactId = createIdentity("chunks", {
-        path: relative,
-        sourceDigest: facts.sourceDigest,
-        symbolId: symbol.id,
-      });
       const symbols = [...new Set([symbol.name, symbol.qualifiedName])];
-      chunkRows.push({
-        artifact_id: artifactId,
-        byte_length: Buffer.byteLength(text),
-        created_at: createdAt(artifactId),
-        document_kind: "code",
-        extracted_content_digest: sha256(text),
-        payload_json: JSON.stringify({
-          language: facts.languageId,
-          range,
-          symbols,
-          version: "retrieval-chunk-v1",
-        }),
-        semantic_context_digest: sha256(
-          JSON.stringify({
-            language: facts.languageId,
-            path: relative,
-            symbols,
-          }),
-        ),
-        source_artifact_id: facts.sourceArtifactId,
-        syntax_facts_artifact_id: facts.syntaxFactsArtifactId,
-        text,
-      });
-      retrievalChunks.push({
-        artifactId,
-        documentKind: "code",
+      const chunkInput: Omit<RetrievalChunk, "artifactId"> = {
+        documentKind: "code" as const,
         language: facts.languageId,
         path: relative,
         range,
         sourceArtifactId: facts.sourceArtifactId,
         symbols,
         text,
-      });
+      };
+      appendRetrievalChunk(chunkInput, indexedAt, chunkRows, retrievalChunks);
     }
     parsedFiles.push(relative);
     units.push({
@@ -742,6 +697,7 @@ export async function refreshMutationIntelligence(
     });
   }
 
+  throwIfRefreshAborted(input.signal);
   const dirtyOverlayId =
     workspace.selectedRevision.selector.kind === "working"
       ? await gitDirtyOverlayId(
@@ -750,7 +706,7 @@ export async function refreshMutationIntelligence(
           workspace.selectedRevision.revisionId,
         )
       : null;
-  const indexedAt = (input.now ?? (() => new Date()))().toISOString();
+  throwIfRefreshAborted(input.signal);
   const dirtyOverlayRows = dirtyOverlayId
     ? [
         {
@@ -825,6 +781,7 @@ export async function refreshMutationIntelligence(
       version: "ast-mcp.resolution-environment.v2",
     }),
   );
+  throwIfRefreshAborted(input.signal);
   const resolution = materializeResolutionInput({
     environmentFingerprint,
     repositoryId: workspace.repositoryId,
@@ -837,6 +794,7 @@ export async function refreshMutationIntelligence(
   );
   const resolvedRelationshipIds = new Map<string, string>();
   for (const unit of units) {
+    throwIfRefreshAborted(input.signal);
     const relationshipIds = resolution.relationships
       .filter((relationship) =>
         relationship.evidenceIds.some(
@@ -875,7 +833,7 @@ export async function refreshMutationIntelligence(
     relationshipRows.push({
       artifact_id: artifactId,
       byte_length: Buffer.byteLength(payload),
-      created_at: createdAt(artifactId),
+      created_at: indexedAt,
       environment_fingerprint: localEnvironmentFingerprint,
       payload_json: payload,
       resolver_fingerprint: resolverFingerprint,
@@ -901,7 +859,7 @@ export async function refreshMutationIntelligence(
     byte_length: Buffer.byteLength(manifestPayload),
     content_bytes: null,
     content_digest: sha256(manifestPayload),
-    created_at: createdAt(manifestArtifactId),
+    created_at: indexedAt,
     kind: "revision-manifest",
     payload_json: manifestPayload,
   });
@@ -919,7 +877,7 @@ export async function refreshMutationIntelligence(
     "revision_membership",
     ...(input.embedding ? (["embeddings"] as const) : []),
   ] as const;
-  const reservation = await store.reservePublication({
+  const reservationInput = {
     manifestArtifactId,
     requiredTables: [...requiredTables],
     reservationKey: createIdentity("mutation-refresh", {
@@ -930,29 +888,40 @@ export async function refreshMutationIntelligence(
     }),
     revisionId: workspace.selectedRevision.revisionId,
     workspaceId: workspace.workspaceId,
-  });
+  };
+  throwIfRefreshAborted(input.signal);
+  const reusable = await store.reusablePublication(reservationInput);
+  throwIfRefreshAborted(input.signal);
+  if (reusable) {
+    return {
+      dirtyOverlayId,
+      generationId: reusable.generationId,
+      indexedAt: reusable.publishedAt,
+      parsedFiles,
+      skippedFiles,
+    };
+  }
+  const reservation = await store.reservePublication(reservationInput);
 
   try {
-    await store.putRows("relationships", uniqueRows(relationshipRows), {
-      immutable: true,
-    });
+    throwIfRefreshAborted(input.signal);
+    await store.putReservedRows(
+      reservation,
+      "relationships",
+      uniqueRows(relationshipRows),
+    );
+    throwIfRefreshAborted(input.signal);
     await store.putReservedRowsBatch(reservation, [
       {
-        options: { immutable: false },
         rows: uniqueRows(artifactRows),
         tableName: "artifacts",
       },
       {
-        options: { immutable: false },
         rows: uniqueRows(syntaxRows),
         tableName: "syntax_facts",
       },
       {
-        options: { immutable: false },
-        rows: uniqueRows(chunkRows).map((row) => ({
-          ...row,
-          publication_generation_id: reservation.generationId,
-        })),
+        rows: uniqueRows(chunkRows),
         tableName: "chunks",
       },
       ...(dirtyOverlayRows.length > 0
@@ -962,7 +931,7 @@ export async function refreshMutationIntelligence(
         rows: [
           {
             artifact_id: manifestArtifactId,
-            created_at: createdAt(manifestArtifactId),
+            created_at: indexedAt,
             dirty_overlay_id: dirtyOverlayId,
             entry_count: units.length,
             logical_bytes: Buffer.byteLength(manifestPayload),
@@ -974,7 +943,7 @@ export async function refreshMutationIntelligence(
         tableName: "revision_manifests",
       },
     ]);
-    await store.recordReservedTableVersion(reservation, "relationships");
+    throwIfRefreshAborted(input.signal);
     const snapshot = graphFromResolution(resolution, {
       generationId: reservation.generationId,
       sourceDigests: Object.fromEntries(
@@ -984,15 +953,9 @@ export async function refreshMutationIntelligence(
     });
     await new LanceGraphRepository(store).persist(snapshot, workspace, {
       allowReadOnlySource: input.allowReadOnlySource,
+      reservation,
     });
-    for (const table of [
-      "graph_nodes",
-      "graph_occurrences",
-      "graph_edges",
-      "graph_evidence",
-      "revision_membership",
-    ] as const)
-      await store.recordReservedTableVersion(reservation, table);
+    throwIfRefreshAborted(input.signal);
     if (input.embedding) {
       const embeddings = await publishChunkEmbeddings(
         store,
@@ -1009,8 +972,11 @@ export async function refreshMutationIntelligence(
         },
       );
       void embeddings;
+      throwIfRefreshAborted(input.signal);
       await store.recordReservedTableVersion(reservation, "embeddings");
+      throwIfRefreshAborted(input.signal);
     }
+    throwIfRefreshAborted(input.signal);
     const publication = await store.finalizePublication(reservation);
     return {
       dirtyOverlayId,

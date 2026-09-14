@@ -222,9 +222,40 @@ describe("LanceDB graph repository", () => {
     expect(
       calls.find(({ table }) => table === "graph_nodes")?.predicate,
     ).toContain("canonical_name LIKE");
+    const graphNodeCall = calls.find(({ table }) => table === "graph_nodes");
+    expect(graphNodeCall?.limit).toBeUndefined();
     expect(
-      calls.every(({ limit, predicate }) => limit !== undefined && !!predicate),
+      calls
+        .filter(
+          ({ table }) =>
+            table !== "graph_nodes" &&
+            table !== "graph_edges" &&
+            table !== "graph_evidence",
+        )
+        .every(({ limit, predicate }) => limit !== undefined && !!predicate),
     ).toBe(true);
+    const edgeMembershipCall = calls.findIndex(
+      ({ predicate, table }) =>
+        table === "revision_membership" &&
+        predicate?.includes("entity_kind") &&
+        predicate.includes("edge"),
+    );
+    const edgeEntityCall = calls.findLastIndex(
+      ({ table }) => table === "graph_edges",
+    );
+    const evidenceMembershipCall = calls.findIndex(
+      ({ predicate, table }) =>
+        table === "revision_membership" &&
+        predicate?.includes("entity_kind") &&
+        predicate.includes("evidence"),
+    );
+    const evidenceEntityCall = calls.findLastIndex(
+      ({ table }) => table === "graph_evidence",
+    );
+    expect(edgeMembershipCall).toBeGreaterThanOrEqual(0);
+    expect(edgeMembershipCall).toBeLessThan(edgeEntityCall);
+    expect(evidenceMembershipCall).toBeGreaterThanOrEqual(0);
+    expect(evidenceMembershipCall).toBeLessThan(evidenceEntityCall);
     expect(restored.memberships.map(({ entityId }) => entityId).sort()).toEqual(
       [
         ...restored.nodes.map(({ nodeId }) => nodeId),
@@ -234,6 +265,197 @@ describe("LanceDB graph repository", () => {
       ].sort(),
     );
     expect(GraphSnapshotSchema.parse(restored)).toEqual(restored);
+    await store.shutdownCoordinator();
+  });
+
+  test("keeps tiny-budget selection stable across reader ordering", async () => {
+    const storage = await domain();
+    const store = await LanceIntelligenceStore.open(storage);
+    const repository = new LanceGraphRepository(store);
+    const selected = fixture(
+      Array.from(
+        { length: 20 },
+        (_, index) => `export const value${index} = ${index};`,
+      ).join("\n"),
+      "membership-crowding",
+    );
+    await repository.persist(selected.snapshot, selected.workspace);
+    const logicalTarget = required(selected.snapshot.edges[0]).targetNodeId;
+    const storedNodes = await store.rows("graph_nodes");
+    const storedTarget = required(
+      storedNodes.find((row) =>
+        String(row.canonical_name).startsWith(
+          `graph-node-version:v2:${Buffer.from(logicalTarget).toString("base64url")}:`,
+        ),
+      ),
+    );
+    const storedEdges = await store.rows("graph_edges");
+    const relevantEdge = required(
+      storedEdges.find(
+        (row) =>
+          row.source_node_id === storedTarget.node_id ||
+          row.target_node_id === storedTarget.node_id,
+      ),
+    );
+    const unrelatedEdge = required(
+      storedEdges.find(
+        (row) =>
+          row.edge_id !== relevantEdge.edge_id &&
+          row.source_node_id !== storedTarget.node_id &&
+          row.target_node_id !== storedTarget.node_id,
+      ),
+    );
+    const storedEvidence = await store.rows("graph_evidence");
+    const relevantEvidence = required(
+      storedEvidence.find((row) => row.edge_id === relevantEdge.edge_id),
+    );
+    const unrelatedEvidence = required(
+      storedEvidence.find(
+        (row) =>
+          row.edge_id === unrelatedEdge.edge_id &&
+          row.evidence_id !== relevantEvidence.evidence_id,
+      ),
+    );
+    const storedMemberships = await store.rows("revision_membership");
+    const unrelatedEdgeMembership = required(
+      storedMemberships.find(
+        (row) =>
+          row.entity_kind === "edge" && row.entity_id === unrelatedEdge.edge_id,
+      ),
+    );
+    const unrelatedEvidenceMembership = required(
+      storedMemberships.find(
+        (row) =>
+          row.entity_kind === "evidence" &&
+          row.entity_id === unrelatedEvidence.evidence_id,
+      ),
+    );
+    const membershipPredicates: string[] = [];
+    const createReader = (reverseRows: boolean) =>
+      ({
+        pin: {
+          generationId: selected.scope.generationId,
+          revisionId: selected.scope.revisionId,
+          workspaceId: selected.scope.workspaceId,
+        },
+        rows: async (
+          table: Parameters<LanceIntelligenceStore["rows"]>[0],
+          predicate?: string,
+          options: { limit?: number; timeoutMs?: number } = {},
+        ) => {
+          if (table === "revision_membership") {
+            membershipPredicates.push(predicate ?? "");
+            const isExact = predicate?.includes("entity_id") ?? false;
+            if (!isExact && predicate?.includes("edge"))
+              return [unrelatedEdgeMembership];
+            if (!isExact && predicate?.includes("evidence"))
+              return [unrelatedEvidenceMembership];
+          }
+          const rows = await store.rows(table, predicate, options);
+          return reverseRows ? [...rows].reverse() : rows;
+        },
+      }) as unknown as PinnedGenerationReader;
+    const load = (reader: PinnedGenerationReader) =>
+      repository.load(reader, selected.scope, selected.workspace, {
+        budget: {
+          deadline: performance.now() + 5_000,
+          maxBytes: 100_000,
+          maxEdges: 1,
+          maxNodes: 3,
+        },
+        direction: "both",
+        maxDepth: 0,
+        nodeIds: [logicalTarget],
+        state: createGraphLoadState(),
+      });
+    const restored = await load(createReader(false));
+    const reordered = await load(createReader(true));
+    expect(restored.edges).toHaveLength(1);
+    expect(
+      restored.edges.some(
+        (edge) =>
+          edge.sourceNodeId === logicalTarget ||
+          edge.targetNodeId === logicalTarget,
+      ),
+    ).toBe(true);
+    expect(restored.evidence).not.toHaveLength(0);
+    expect(reordered.nodes).toEqual(restored.nodes);
+    expect(reordered.edges).toEqual(restored.edges);
+    expect(reordered.evidence).toEqual(restored.evidence);
+    expect(reordered.occurrences).toEqual(restored.occurrences);
+    expect(reordered.memberships).toEqual(restored.memberships);
+    expect(
+      membershipPredicates.some(
+        (predicate) =>
+          predicate.includes("edge") && predicate.includes("entity_id"),
+      ),
+    ).toBe(true);
+    expect(
+      membershipPredicates.some(
+        (predicate) =>
+          predicate.includes("evidence") && predicate.includes("entity_id"),
+      ),
+    ).toBe(true);
+    await store.shutdownCoordinator();
+  });
+
+  test("applies unrestricted edge limits after aggregating every frontier", async () => {
+    const storage = await domain();
+    const store = await LanceIntelligenceStore.open(storage);
+    const repository = new LanceGraphRepository(store);
+    const selected = fixture(
+      Array.from(
+        { length: 300 },
+        (_, index) => `export const value${index} = ${index};`,
+      ).join("\n"),
+      "unrestricted-global-limit",
+    );
+    expect(selected.snapshot.edges.length).toBeGreaterThan(300);
+    await repository.persist(selected.snapshot, selected.workspace);
+
+    const createReader = (reverseRows: boolean) =>
+      ({
+        pin: {
+          generationId: selected.scope.generationId,
+          revisionId: selected.scope.revisionId,
+          workspaceId: selected.scope.workspaceId,
+        },
+        rows: async (
+          table: Parameters<LanceIntelligenceStore["rows"]>[0],
+          predicate?: string,
+          options: { limit?: number; timeoutMs?: number } = {},
+        ) => {
+          const rows = await store.rows(table, predicate, options);
+          return reverseRows ? [...rows].reverse() : rows;
+        },
+      }) as unknown as PinnedGenerationReader;
+    const load = async (reverseRows: boolean) => {
+      const state = createGraphLoadState();
+      const snapshot = await repository.load(
+        createReader(reverseRows),
+        selected.scope,
+        selected.workspace,
+        {
+          budget: {
+            deadline: performance.now() + 15_000,
+            maxBytes: 50_000_000,
+            maxEdges: 300,
+            maxNodes: 2_000,
+          },
+          state,
+        },
+      );
+      return { snapshot, state };
+    };
+
+    const normal = await load(false);
+    const reordered = await load(true);
+    expect(normal.snapshot.edges).toHaveLength(300);
+    expect(normal.state.exhaustedReasons).toContain("edges");
+    expect(reordered.snapshot).toEqual(normal.snapshot);
+    expect(reordered.state.exhaustedReasons).toEqual(
+      normal.state.exhaustedReasons,
+    );
     await store.shutdownCoordinator();
   });
 

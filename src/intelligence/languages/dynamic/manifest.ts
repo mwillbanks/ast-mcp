@@ -3,12 +3,11 @@ import {
   type CapabilityClaim,
   LanguageCapabilitySchema,
 } from "../../contracts/language.ts";
+import type { DynamicGrammarManifest } from "../../parser/index.ts";
 import {
-  type DynamicGrammarManifest,
-  type DynamicGrammarManifestEntry,
-  type LanguageImplementation,
-  sha256,
-} from "../../parser/index.ts";
+  buildGrammarManifest,
+  createExtractionImplementation,
+} from "../manifest-builders.ts";
 import {
   analyzeDynamicLanguage,
   dynamicExtractorFingerprint,
@@ -37,18 +36,7 @@ export const GRAPHIFY_DYNAMIC_BASELINE_REVISION =
 const unavailableReason =
   "tree-sitter-wasm 1.1.8 does not include a Luau grammar";
 
-const grammarImplementation: LanguageImplementation = {
-  callResolution: false,
-  embeddedLanguages: false,
-  exportResolution: false,
-  importResolution: false,
-  inheritanceResolution: false,
-  match: false,
-  parse: true,
-  rewrite: false,
-  structuralRead: true,
-  symbolExtraction: false,
-};
+const grammarImplementation = createExtractionImplementation();
 
 function unsupported(message: string): CapabilityClaim {
   return {
@@ -144,58 +132,13 @@ export function dynamicLanguageAdapter(
 export function createDynamicGrammarManifest(
   assets: readonly DynamicGrammarAssetConfig[],
 ): DynamicGrammarManifest {
-  const seen = new Set<DynamicLanguageId>();
-  const entries: DynamicGrammarManifestEntry[] = [...assets]
-    .sort((left, right) => left.languageId.localeCompare(right.languageId))
-    .map((asset) => {
-      if (seen.has(asset.languageId)) {
-        throw new TypeError(`Duplicate dynamic grammar: ${asset.languageId}`);
-      }
-      seen.add(asset.languageId);
-      if (!/^[a-f0-9]{64}$/.test(asset.sha256)) {
-        throw new TypeError(`Invalid grammar SHA-256: ${asset.languageId}`);
-      }
-      const dynamicAsset = {
-        ...(asset.expandoChar ? { expandoChar: asset.expandoChar } : {}),
-        ...(asset.languageSymbol
-          ? { languageSymbol: asset.languageSymbol }
-          : {}),
-        libraryPath: asset.libraryPath,
-        ...(asset.metaVarChar ? { metaVarChar: asset.metaVarChar } : {}),
-        sha256: asset.sha256,
-      };
-      const grammarFingerprint = sha256(
-        JSON.stringify({
-          astGrepLanguage: asset.astGrepLanguage,
-          dynamicAsset: {
-            expandoChar: asset.expandoChar ?? null,
-            languageSymbol: asset.languageSymbol ?? null,
-            libraryPath: asset.libraryPath,
-            metaVarChar: asset.metaVarChar ?? null,
-            sha256: asset.sha256,
-          },
-          extensions: [...extensions[asset.languageId]],
-          grammarVersion: asset.grammarVersion,
-          languageId: asset.languageId,
-        }),
-      );
-      return {
-        descriptor: {
-          astGrepLanguage: asset.astGrepLanguage,
-          dynamicAsset,
-          extensions: extensions[asset.languageId],
-          grammarFingerprint,
-          grammarVersion: asset.grammarVersion,
-          languageId: asset.languageId,
-        },
-        implementation: { ...grammarImplementation },
-      };
-    });
-  return {
-    entries,
-    fingerprint: sha256(JSON.stringify(entries)),
-    schemaVersion: "ast-mcp.dynamic-grammars.v1",
-  };
+  return buildGrammarManifest({
+    assets,
+    duplicateLabel: "dynamic grammar",
+    extensions,
+    implementation: grammarImplementation,
+    normalizedFingerprintAsset: true,
+  });
 }
 
 export const dynamicLanguageGroupManifest: DynamicLanguageGroupManifest = {

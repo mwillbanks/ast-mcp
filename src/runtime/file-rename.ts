@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, readFile, unlink } from "node:fs/promises";
+import { link, lstat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   beginMutation,
@@ -12,6 +12,7 @@ import {
 } from "../intelligence/mutation/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 
+import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { pathsShareRoot, resolveWritablePath } from "./paths";
@@ -202,29 +203,13 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
       await verifyLinkCapability(entries, fence);
       const sourceSnapshots = new Map<
         string,
-        {
-          content: Buffer;
-          gid: number;
-          mode: number;
-          sha256: string;
-          uid: number;
-        }
+        Awaited<ReturnType<typeof readFileSnapshot>>
       >();
       for (const { filePath, request } of entries) {
-        const [actual, content, metadata] = await Promise.all([
-          sha256File(filePath),
-          readFile(filePath),
-          lstat(filePath),
-        ]);
+        const snapshot = await readFileSnapshot(filePath);
         await requireExpectedHash(request.expectedSha256, "file_rename");
-        verifyExpectedHash(request.expectedSha256, actual);
-        sourceSnapshots.set(filePath, {
-          content,
-          gid: metadata.gid,
-          mode: metadata.mode,
-          sha256: actual,
-          uid: metadata.uid,
-        });
+        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
+        sourceSnapshots.set(filePath, snapshot);
       }
       const sourceHashes = new Map(
         [...sourceSnapshots].map(([filePath, snapshot]) => [

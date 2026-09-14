@@ -14,7 +14,7 @@ import type {
   WebLanguageId,
 } from "./types.ts";
 
-const templateFingerprint = sha256("ast-mcp.web.templates.v1");
+const templateFingerprint = sha256("ast-mcp.web.templates.v2");
 
 function claim(
   status: "supported" | "partial",

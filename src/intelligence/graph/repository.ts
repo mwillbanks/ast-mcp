@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   GraphEdgeSchema,
   GraphEvidenceSchema,
@@ -11,6 +10,7 @@ import {
   RevisionMembershipSchema,
   revisionMembershipIdentity,
 } from "../contracts/graph.ts";
+import type { PublicationReservation } from "../contracts/storage.ts";
 import type {
   LanceIntelligenceStore,
   PinnedGenerationReader,
@@ -326,14 +326,6 @@ function decodeStoredSnapshot(snapshot: GraphSnapshot): GraphSnapshot {
   });
 }
 
-function stableCreatedAt(generationId: string): string {
-  const digest = createHash("sha256").update(generationId).digest("hex");
-  const milliseconds = Number(
-    BigInt(`0x${digest.slice(0, 12)}`) % 4_102_444_800_000n,
-  );
-  return new Date(milliseconds).toISOString();
-}
-
 function json(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -361,12 +353,6 @@ function assertAuthorized(
   }
   return scope;
 }
-
-export type GraphLoadExhaustionReason =
-  | "bytes"
-  | "edges"
-  | "milliseconds"
-  | "nodes";
 
 export interface GraphLoadBudget {
   deadline: number;
@@ -418,7 +404,10 @@ export class LanceGraphRepository {
   async persist(
     snapshotInput: GraphSnapshot,
     workspaceInput?: WorkspaceHandle,
-    options: { allowReadOnlySource?: boolean } = {},
+    options: {
+      allowReadOnlySource?: boolean;
+      reservation?: PublicationReservation;
+    } = {},
   ): Promise<void> {
     const snapshot = GraphSnapshotSchema.parse(snapshotInput);
     const workspace = workspaceInput ?? currentWorkspace();
@@ -428,21 +417,34 @@ export class LanceGraphRepository {
     if (!workspace.writeEligibility.eligible && !options.allowReadOnlySource)
       throw new Error("workspace_read_only");
     const storedSnapshot = encodeStoredSnapshot(snapshot);
-    await this.store.putRows(
+    const persistedAt = this.store.currentTimestamp();
+    const putRows = (
+      tableName:
+        | "graph_edges"
+        | "graph_evidence"
+        | "graph_nodes"
+        | "graph_occurrences"
+        | "revision_membership",
+      rows: readonly Record<string, unknown>[],
+    ) =>
+      options.reservation
+        ? this.store.putReservedRows(options.reservation, tableName, rows)
+        : this.store.putRows(tableName, rows);
+    await putRows(
       "graph_nodes",
       storedSnapshot.nodes.map((node) => ({
         canonical_name: node.canonicalName,
         content_fingerprint: node.contentFingerprint,
-        created_at: stableCreatedAt(node.nodeId),
+        created_at: persistedAt,
         kind: node.kind,
         node_id: node.nodeId,
         properties_json: json(node.properties),
       })),
     );
-    await this.store.putRows(
+    await putRows(
       "graph_occurrences",
       storedSnapshot.occurrences.map((occurrence) => ({
-        created_at: stableCreatedAt(occurrence.occurrenceId),
+        created_at: persistedAt,
         node_id: occurrence.nodeId,
         occurrence_id: occurrence.occurrenceId,
         path: occurrence.path,
@@ -451,11 +453,11 @@ export class LanceGraphRepository {
         source_artifact_id: occurrence.sourceArtifactId,
       })),
     );
-    await this.store.putRows(
+    await putRows(
       "graph_edges",
       storedSnapshot.edges.map((edge) => ({
         content_fingerprint: edge.contentFingerprint,
-        created_at: stableCreatedAt(edge.edgeId),
+        created_at: persistedAt,
         discriminator: edge.discriminator,
         edge_id: edge.edgeId,
         environment_fingerprint: edge.environmentFingerprint,
@@ -466,11 +468,11 @@ export class LanceGraphRepository {
         target_node_id: edge.targetNodeId,
       })),
     );
-    await this.store.putRows(
+    await putRows(
       "graph_evidence",
       storedSnapshot.evidence.map((evidence) => ({
         confidence: evidence.confidence,
-        created_at: stableCreatedAt(evidence.evidenceId),
+        created_at: persistedAt,
         edge_id: evidence.edgeId,
         evidence_id: evidence.evidenceId,
         extraction_method: evidence.extractionMethod,
@@ -482,11 +484,11 @@ export class LanceGraphRepository {
         source_artifact_id: evidence.sourceArtifactId,
       })),
     );
-    await this.store.putRows(
+    await putRows(
       "revision_membership",
       storedSnapshot.memberships.map((membership) => {
         return {
-          created_at: stableCreatedAt(membership.membershipId),
+          created_at: persistedAt,
           entity_id: membership.entityId,
           entity_kind: membership.entityKind,
           generation_id: membership.generationId,
@@ -550,7 +552,8 @@ export class LanceGraphRepository {
       requiredIds: readonly string[] = [],
       fill = requiredIds.length === 0,
     ): Promise<RevisionMembership[]> => {
-      const required = new Set(requiredIds);
+      const orderedRequiredIds = [...new Set(requiredIds)];
+      const required = new Set(orderedRequiredIds);
       const isSelected = (membership: RevisionMembership): boolean =>
         membership.entityKind === kind &&
         membership.generationId === scope.generationId &&
@@ -558,25 +561,35 @@ export class LanceGraphRepository {
         (required.size === 0 || required.has(membership.entityId));
       if (timeout() === 0 || limit === 0) return [];
       const selected = new Map<string, RevisionMembership>();
-      if (requiredIds.length > 0) {
-        for (let offset = 0; offset < requiredIds.length; offset += 128) {
+      if (orderedRequiredIds.length > 0) {
+        for (
+          let offset = 0;
+          offset < orderedRequiredIds.length;
+          offset += 128
+        ) {
           if (timeout() === 0 || selected.size >= limit) break;
-          const chunk = requiredIds.slice(
+          const chunk = orderedRequiredIds.slice(
             offset,
-            Math.min(
-              requiredIds.length,
-              offset + 128,
-              offset + limit - selected.size,
-            ),
+            Math.min(orderedRequiredIds.length, offset + 128),
           );
           const rows = await reader.rows(
             "revision_membership",
             `${membershipPredicate(kind)} AND ${inPredicate("entity_id", chunk)}`,
             { limit: chunk.length, timeoutMs: timeout() },
           );
-          for (const row of rows) {
-            const membership = decodeMembership(row);
-            if (!isSelected(membership)) continue;
+          const order = new Map(
+            chunk.map((entityId, index) => [entityId, index]),
+          );
+          const memberships = rows
+            .map(decodeMembership)
+            .filter(isSelected)
+            .sort(
+              (left, right) =>
+                (order.get(left.entityId) ?? Number.MAX_SAFE_INTEGER) -
+                (order.get(right.entityId) ?? Number.MAX_SAFE_INTEGER),
+            );
+          for (const membership of memberships) {
+            if (selected.size >= limit) break;
             const accepted = accept(membership);
             if (accepted) selected.set(accepted.entityId, accepted);
           }
@@ -611,6 +624,7 @@ export class LanceGraphRepository {
       idColumn: string,
       ids: readonly string[],
       decode: (row: Row) => T,
+      preserveIdOrder = false,
     ): Promise<T[]> => {
       const values: T[] = [];
       const seen = new Set<string>();
@@ -622,7 +636,17 @@ export class LanceGraphRepository {
           timeoutMs: timeout(),
         });
         const requested = new Set(chunk);
+        const rowsById = new Map<string, Row>();
         for (const row of rows) {
+          const id = String(row[idColumn]);
+          if (requested.has(id) && !rowsById.has(id)) rowsById.set(id, row);
+        }
+        const orderedRows = preserveIdOrder
+          ? chunk
+              .map((id) => rowsById.get(id))
+              .filter((row): row is Row => row !== undefined)
+          : rows;
+        for (const row of orderedRows) {
           const id = String(row[idColumn]);
           if (!requested.has(id) || seen.has(id)) continue;
           const accepted = accept(decode(row));
@@ -650,7 +674,7 @@ export class LanceGraphRepository {
               `canonical_name LIKE ${sql(`${storageNodeVersionPrefix}${Buffer.from(nodeId).toString("base64url")}:%`)}`,
           )
           .join(" OR "),
-        { limit: requestedNodeIds.length + 1, timeoutMs: timeout() },
+        { timeoutMs: timeout() },
       );
       const requested = new Set(requestedNodeIds);
       const storedNodes = new Map<string, GraphNode>();
@@ -660,17 +684,34 @@ export class LanceGraphRepository {
         const logical = decodeStoredNode(stored);
         if (!requested.has(logical.nodeId) || storedNodes.has(stored.nodeId))
           continue;
-        const accepted = accept(stored);
-        if (!accepted) break;
-        storedNodes.set(accepted.nodeId, accepted);
+        storedNodes.set(stored.nodeId, stored);
       }
-      initialNodes = [...storedNodes.values()];
-      initialNodeMemberships = await readMemberships(
+      const candidateMemberships = await readMemberships(
         "node",
-        budget.maxNodes,
-        initialNodes.map(({ nodeId }) => nodeId),
+        storedNodes.size,
+        [...storedNodes.keys()].sort((left, right) =>
+          left.localeCompare(right),
+        ),
         false,
       );
+      const candidateMembershipsById = new Map(
+        candidateMemberships.map((membership) => [
+          membership.entityId,
+          membership,
+        ]),
+      );
+      initialNodes = [];
+      initialNodeMemberships = [];
+      for (const stored of [...storedNodes.values()].sort((left, right) =>
+        left.nodeId.localeCompare(right.nodeId),
+      )) {
+        const membership = candidateMembershipsById.get(stored.nodeId);
+        if (!membership) continue;
+        const accepted = accept(stored);
+        if (!accepted) break;
+        initialNodes.push(accepted);
+        initialNodeMemberships.push(membership);
+      }
       if (
         initialNodes.length === 0 &&
         !state.exhaustedReasons.has("bytes") &&
@@ -698,10 +739,12 @@ export class LanceGraphRepository {
           legacyMatches.has(entityId),
         );
       }
-      const active = new Set(
+      const selectedActiveNodeIds = new Set(
         initialNodeMemberships.map(({ entityId }) => entityId),
       );
-      initialNodes = initialNodes.filter(({ nodeId }) => active.has(nodeId));
+      initialNodes = initialNodes.filter(({ nodeId }) =>
+        selectedActiveNodeIds.has(nodeId),
+      );
     } else {
       initialNodeMemberships = await readMemberships("node", budget.maxNodes);
       initialNodes = await readEntities(
@@ -720,6 +763,7 @@ export class LanceGraphRepository {
     const nodesById = new Map(initialNodes.map((node) => [node.nodeId, node]));
     const edgeMemberships = new Map<string, RevisionMembership>();
     const edgesById = new Map<string, GraphEdge>();
+    let globallyTruncatedEdges = false;
     const edgePredicate = (frontier: readonly string[]): string => {
       const endpoint =
         options.direction === "forward"
@@ -747,12 +791,16 @@ export class LanceGraphRepository {
       }
       const candidates = new Map<string, GraphEdge>();
       const frontierIds = new Set(frontier);
-      for (let offset = 0; offset < frontier.length; offset += 128) {
-        if (timeout() === 0 || candidates.size > remaining) break;
+      for (
+        let frontierOffset = 0;
+        frontierOffset < frontier.length;
+        frontierOffset += 128
+      ) {
+        if (timeout() === 0) break;
         const rows = await reader.rows(
           "graph_edges",
-          edgePredicate(frontier.slice(offset, offset + 128)),
-          { limit: remaining + 1, timeoutMs: timeout() },
+          edgePredicate(frontier.slice(frontierOffset, frontierOffset + 128)),
+          { timeoutMs: timeout() },
         );
         for (const row of rows) {
           if (timeout() === 0) break;
@@ -765,6 +813,7 @@ export class LanceGraphRepository {
                 : frontierIds.has(edge.sourceNodeId) ||
                   frontierIds.has(edge.targetNodeId);
           if (
+            edgesById.has(edge.edgeId) ||
             !endpointMatches ||
             (options.edgeKinds?.length &&
               !options.edgeKinds.includes(edge.kind)) ||
@@ -772,22 +821,38 @@ export class LanceGraphRepository {
               !options.resolutionStatuses.includes(edge.resolutionStatus))
           )
             continue;
-          if (!edgesById.has(edge.edgeId)) candidates.set(edge.edgeId, edge);
-          if (candidates.size > remaining) break;
+          candidates.set(edge.edgeId, edge);
         }
       }
-      if (candidates.size > remaining) state.exhaustedReasons.add("edges");
-      const bounded = [...candidates.values()].slice(0, remaining);
+      const candidateEdgeIds = [...candidates.keys()];
+      const limitApplied = candidateEdgeIds.length > remaining;
+      if (limitApplied) globallyTruncatedEdges = true;
+      const preserveEdgeOrder = requestedNodeIds.length > 0 || limitApplied;
+      if (preserveEdgeOrder)
+        candidateEdgeIds.sort((left, right) => left.localeCompare(right));
       const memberships = await readMemberships(
         "edge",
         remaining,
-        bounded.map(({ edgeId }) => edgeId),
+        candidateEdgeIds,
         false,
       );
-      const active = new Set(memberships.map(({ entityId }) => entityId));
-      for (const membership of memberships)
-        edgeMemberships.set(membership.entityId, membership);
-      return bounded.filter(({ edgeId }) => active.has(edgeId));
+      const selected = await readEntities(
+        "graph_edges",
+        "edge_id",
+        memberships.map(({ entityId }) => entityId),
+        decodeEdge,
+        preserveEdgeOrder,
+      );
+      const membershipsById = new Map(
+        memberships.map((membership) => [membership.entityId, membership]),
+      );
+      for (const edge of selected) {
+        const membership = membershipsById.get(edge.edgeId);
+        if (membership) edgeMemberships.set(edge.edgeId, membership);
+      }
+      if (selected.length >= remaining && candidates.size > selected.length)
+        state.exhaustedReasons.add("edges");
+      return selected;
     };
     if (requestedNodeIds.length > 0) {
       let frontier = [...nodesById.keys()];
@@ -819,6 +884,7 @@ export class LanceGraphRepository {
           "node_id",
           memberships.map(({ entityId }) => entityId),
           decodeNode,
+          true,
         );
         for (const node of loaded) nodesById.set(node.nodeId, node);
         const next = new Set<string>();
@@ -840,19 +906,13 @@ export class LanceGraphRepository {
         frontier = [...next];
       }
     } else {
-      const selectedNodeIds = [...nodesById.keys()];
-      for (let offset = 0; offset < selectedNodeIds.length; offset += 128) {
-        if (timeout() === 0 || edgesById.size >= budget.maxEdges) break;
-        const loaded = await loadEdgesFrom(
-          selectedNodeIds.slice(offset, offset + 128),
-        );
-        for (const edge of loaded) {
-          if (
-            nodesById.has(edge.sourceNodeId) &&
-            nodesById.has(edge.targetNodeId)
-          )
-            edgesById.set(edge.edgeId, edge);
-        }
+      const loaded = await loadEdgesFrom([...nodesById.keys()]);
+      for (const edge of loaded) {
+        if (
+          nodesById.has(edge.sourceNodeId) &&
+          nodesById.has(edge.targetNodeId)
+        )
+          edgesById.set(edge.edgeId, edge);
       }
     }
     const candidateEdges = [...edgesById.values()];
@@ -860,40 +920,46 @@ export class LanceGraphRepository {
     const dependentLimit = Math.max(1, budget.maxEdges * 4);
     const candidateEvidence = new Map<string, GraphEvidence>();
     for (let offset = 0; offset < edgeIds.length; offset += 128) {
-      if (timeout() === 0 || candidateEvidence.size >= dependentLimit) break;
+      if (timeout() === 0) break;
       const edgeChunk = edgeIds.slice(offset, offset + 128);
       const selectedEdgeIds = new Set(edgeChunk);
       const rows = await reader.rows(
         "graph_evidence",
         inPredicate("edge_id", edgeChunk),
-        {
-          limit: dependentLimit - candidateEvidence.size + 1,
-          timeoutMs: timeout(),
-        },
+        { timeoutMs: timeout() },
       );
       for (const row of rows) {
-        if (candidateEvidence.size >= dependentLimit) {
-          state.exhaustedReasons.add("edges");
-          break;
-        }
-        const item = decodeEvidence(row);
-        if (selectedEdgeIds.has(item.edgeId))
-          candidateEvidence.set(item.evidenceId, item);
+        if (timeout() === 0) break;
+        const evidence = decodeEvidence(row);
+        if (selectedEdgeIds.has(evidence.edgeId))
+          candidateEvidence.set(evidence.evidenceId, evidence);
       }
     }
-    const candidateEvidenceRows = [...candidateEvidence.values()];
+    const candidateEvidenceIds = [...candidateEvidence.keys()];
+    const preserveEvidenceOrder =
+      requestedNodeIds.length > 0 ||
+      globallyTruncatedEdges ||
+      candidateEvidenceIds.length > dependentLimit;
+    if (preserveEvidenceOrder)
+      candidateEvidenceIds.sort((left, right) => left.localeCompare(right));
     const evidenceMemberships = await readMemberships(
       "evidence",
       dependentLimit,
-      candidateEvidenceRows.map(({ evidenceId }) => evidenceId),
+      candidateEvidenceIds,
       false,
     );
-    const activeEvidenceIds = new Set(
+    const activeEvidence = await readEntities(
+      "graph_evidence",
+      "evidence_id",
       evidenceMemberships.map(({ entityId }) => entityId),
+      decodeEvidence,
+      preserveEvidenceOrder,
     );
-    const activeEvidence = candidateEvidenceRows.filter(({ evidenceId }) =>
-      activeEvidenceIds.has(evidenceId),
-    );
+    if (
+      activeEvidence.length >= dependentLimit &&
+      candidateEvidence.size > activeEvidence.length
+    )
+      state.exhaustedReasons.add("edges");
     const occurrenceMemberships = await readMemberships(
       "occurrence",
       dependentLimit,
@@ -905,6 +971,7 @@ export class LanceGraphRepository {
       "occurrence_id",
       occurrenceMemberships.map(({ entityId }) => entityId),
       decodeOccurrence,
+      requestedNodeIds.length > 0 || globallyTruncatedEdges,
     );
     const occurrenceIds = new Set(
       occurrences.map(({ occurrenceId }) => occurrenceId),
@@ -913,9 +980,7 @@ export class LanceGraphRepository {
     for (const item of activeEvidence) {
       if (timeout() === 0) break;
       if (!occurrenceIds.has(item.occurrenceId)) continue;
-      const accepted = accept(item);
-      if (!accepted) break;
-      evidence.push(accepted);
+      evidence.push(item);
     }
     const evidencedEdgeIds = new Set(evidence.map(({ edgeId }) => edgeId));
     const edges = candidateEdges.filter(({ edgeId }) =>
@@ -928,6 +993,8 @@ export class LanceGraphRepository {
       referencedOccurrenceIds.has(occurrenceId),
     );
     const nodes = [...nodesById.values()];
+    if (globallyTruncatedEdges)
+      nodes.sort((left, right) => left.nodeId.localeCompare(right.nodeId));
     const selectedIds = new Set([
       ...nodes.map(({ nodeId }) => nodeId),
       ...edges.map(({ edgeId }) => edgeId),

@@ -163,6 +163,57 @@ describe("document intelligence", () => {
     );
   });
 
+  test("enforces built-in JSON and JSONC semantics", async () => {
+    const decoded = await analyzeDocument({
+      format: "json",
+      source: '{"caf\\u00e9":"line\\n\\ud83d\\ude42"}',
+    });
+    const value = decoded.nodes.find(({ name }) => name === "café");
+    expect(value?.value).toBe("line\n🙂");
+    expect(decoded.diagnostics).toEqual([]);
+
+    const jsonc = await analyzeDocument({
+      format: "jsonc",
+      source: '{// comment\n"value":"ok",}',
+    });
+    expect(jsonc.diagnostics).toEqual([]);
+    expect(jsonc.nodes.find(({ name }) => name === "value")?.value).toBe("ok");
+
+    for (const source of [
+      "",
+      '{"value":"\\q"}',
+      '{"value":"line\nfeed"}',
+      '{"value":1,}',
+      '{// comment\n"value":1}',
+    ]) {
+      const invalid = await analyzeDocument({ format: "json", source });
+      expect(invalid.diagnostics).toContainEqual(
+        expect.objectContaining({
+          code: "malformed-document",
+          severity: "error",
+        }),
+      );
+    }
+  });
+
+  test("rejects strict JSON rewrites that only JSONC permits", async () => {
+    const source = '{"value":"ok"}';
+    const facts = await analyzeDocument({ format: "json", source });
+    const node = facts.nodes.find(({ name }) => name === "value");
+    if (!node) throw new Error("Expected JSON value node");
+
+    await expect(
+      rewriteDocumentInMemory({
+        expectedText: '"ok"',
+        facts,
+        nodeId: node.id,
+        range: node.range,
+        replacement: '"ok",',
+        source,
+      }),
+    ).rejects.toThrow("malformed");
+  });
+
   test("parses TOML and YAML without treating comments as properties", async () => {
     const toml = await analyzeDocument({
       format: "toml",

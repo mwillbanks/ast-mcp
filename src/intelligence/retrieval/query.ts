@@ -256,7 +256,11 @@ async function lexicalRanks(
     if (clock() >= deadline) return [];
     eligibleIds.push(sql(chunk.artifactId));
   }
-  const predicate = `publication_generation_id = ${sql(reader.pin.generationId)} AND artifact_id IN (${eligibleIds.join(", ")})`;
+  const artifactPredicate = `artifact_id IN (${eligibleIds.join(", ")})`;
+  const predicate =
+    reader.pin.publicationProtocol !== "reservation-v2"
+      ? `publication_generation_id = ${sql(reader.pin.generationId)} AND ${artifactPredicate}`
+      : artifactPredicate;
   const { connection, table } = await pinnedTable(store, reader, "chunks");
   try {
     const rows = await table
@@ -320,6 +324,7 @@ function embeddingRows(
   config: EmbeddingModelConfig,
   eligible: ReadonlySet<string>,
   generationId: string,
+  requireGenerationTag: boolean,
   scanLimit: number,
   deadline: number,
   clock: Clock = Date.now,
@@ -343,7 +348,8 @@ function embeddingRows(
     scanned += 1;
     const chunkArtifactId = String(row.chunk_artifact_id);
     if (
-      row.publication_generation_id !== generationId ||
+      (requireGenerationTag &&
+        row.publication_generation_id !== generationId) ||
       !eligible.has(chunkArtifactId) ||
       row.model_id !== config.modelId ||
       row.model_revision !== config.revision ||
@@ -488,6 +494,7 @@ async function vectorRanks(
     config,
     eligible,
     reader.pin.generationId,
+    reader.pin.publicationProtocol !== "reservation-v2",
     scanLimit,
     deadline,
     clock,
@@ -506,7 +513,11 @@ async function vectorRanks(
       if (clock() >= deadline) break;
       encodedIdentifiers.push(sql(identifier));
     }
-    const predicate = `publication_generation_id = ${sql(reader.pin.generationId)} AND model_id = ${sql(config.modelId)} AND model_revision = ${sql(config.revision)} AND dimensions = ${config.dimensions} AND dtype = ${sql(STORED_DTYPES[config.dtype])} AND pooling = ${sql(config.pooling)} AND chunk_artifact_id IN (${encodedIdentifiers.join(", ")})`;
+    const embeddingPredicate = `model_id = ${sql(config.modelId)} AND model_revision = ${sql(config.revision)} AND dimensions = ${config.dimensions} AND dtype = ${sql(STORED_DTYPES[config.dtype])} AND pooling = ${sql(config.pooling)} AND chunk_artifact_id IN (${encodedIdentifiers.join(", ")})`;
+    const predicate =
+      reader.pin.publicationProtocol !== "reservation-v2"
+        ? `publication_generation_id = ${sql(reader.pin.generationId)} AND ${embeddingPredicate}`
+        : embeddingPredicate;
     const { connection, table } = await pinnedTable(
       store,
       reader,
@@ -767,8 +778,22 @@ export interface RetrieveOptions {
   workspace?: WorkspaceHandle;
 }
 
+function rangesOverlap(
+  left: DecodedChunk["range"],
+  right: GraphSnapshot["occurrences"][number]["range"],
+): boolean {
+  if (left.startByte === left.endByte && right.startByte === right.endByte)
+    return left.startByte === right.startByte;
+  if (left.startByte === left.endByte)
+    return right.startByte <= left.startByte && left.startByte < right.endByte;
+  if (right.startByte === right.endByte)
+    return left.startByte <= right.startByte && right.startByte < left.endByte;
+  return left.startByte < right.endByte && right.startByte < left.endByte;
+}
+
 function selectRankableChunks(
   chunks: readonly DecodedChunk[],
+  prioritizedArtifactIds: ReadonlySet<string>,
   maxCandidates: number,
   maxBytes: number,
   deadline: number,
@@ -787,10 +812,17 @@ function selectRankableChunks(
       break;
     }
     let index = 0;
-    while (
-      index < ordered.length &&
-      (ordered[index]?.artifactId ?? "").localeCompare(chunk.artifactId) < 0
-    ) {
+    while (index < ordered.length) {
+      const current = ordered[index];
+      if (!current) break;
+      const currentPriority = prioritizedArtifactIds.has(current.artifactId);
+      const chunkPriority = prioritizedArtifactIds.has(chunk.artifactId);
+      if (
+        (chunkPriority && !currentPriority) ||
+        (chunkPriority === currentPriority &&
+          current.artifactId.localeCompare(chunk.artifactId) >= 0)
+      )
+        break;
       if (clock() >= deadline) {
         timeTruncated = true;
         break;
@@ -874,7 +906,11 @@ export async function retrieve(
       break;
     }
     scannedChunkRows += 1;
-    if (row.publication_generation_id !== reader.pin.generationId) continue;
+    if (
+      reader.pin.publicationProtocol !== "reservation-v2" &&
+      row.publication_generation_id !== reader.pin.generationId
+    )
+      continue;
     totalChunks += 1;
     try {
       chunks.push(decodeChunk(row, deadline, clock));
@@ -887,9 +923,36 @@ export async function retrieve(
     }
   }
 
+  const exactSymbols = new Set<string>();
+  for (const symbol of request.exactSymbols) {
+    if (clock() >= deadline) {
+      timeTruncated = true;
+      break;
+    }
+    exactSymbols.add(symbol);
+  }
+  for (const token of tokens(request.query, deadline, clock)) {
+    if (clock() >= deadline) {
+      timeTruncated = true;
+      break;
+    }
+    if (/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(token)) exactSymbols.add(token);
+  }
+  const exactArtifactIds = new Set<string>();
+  for (const chunk of chunks) {
+    if (
+      chunk.symbols.some((symbol) =>
+        [...exactSymbols].some(
+          (expected) => symbol.toLowerCase() === expected.toLowerCase(),
+        ),
+      )
+    )
+      exactArtifactIds.add(chunk.artifactId);
+  }
+
   const activeOccurrences = new Set<string>();
   let scannedGraphMemberships = 0;
-  let graphInputTruncated = false;
+  const graphInputTruncated = false;
   for (const item of graph.memberships) {
     if (clock() >= deadline) {
       timeTruncated = true;
@@ -902,10 +965,6 @@ export async function retrieve(
       item.revisionId !== request.scope.revisionId
     )
       continue;
-    if (activeOccurrences.size >= request.budget.maxNodes) {
-      graphInputTruncated = true;
-      break;
-    }
     activeOccurrences.add(item.entityId);
   }
 
@@ -914,8 +973,7 @@ export async function retrieve(
     GraphSnapshot["occurrences"][number][]
   >();
   let scannedGraphOccurrences = 0;
-  let occurrenceTruncated = false;
-  let acceptedOccurrences = 0;
+  const occurrenceTruncated = false;
   for (const occurrence of graph.occurrences) {
     if (clock() >= deadline) {
       timeTruncated = true;
@@ -931,14 +989,9 @@ export async function retrieve(
       )
     )
       continue;
-    if (acceptedOccurrences >= request.budget.maxCandidates) {
-      occurrenceTruncated = true;
-      break;
-    }
     const existing = occurrencesBySource.get(occurrence.sourceArtifactId) ?? [];
     existing.push(occurrence);
     occurrencesBySource.set(occurrence.sourceArtifactId, existing);
-    acceptedOccurrences += 1;
   }
 
   const eligibleChunks: DecodedChunk[] = [];
@@ -964,6 +1017,7 @@ export async function retrieve(
   }
   const selection = selectRankableChunks(
     eligibleChunks,
+    exactArtifactIds,
     request.budget.maxCandidates,
     request.budget.maxBytes,
     deadline,
@@ -972,47 +1026,13 @@ export async function retrieve(
   timeTruncated ||= selection.timeTruncated;
   const rankableChunks = selection.chunks;
 
-  const exactSymbols = new Set<string>();
-  for (const symbol of request.exactSymbols) {
-    if (clock() >= deadline) {
-      timeTruncated = true;
-      break;
-    }
-    exactSymbols.add(symbol);
-  }
-  for (const token of tokens(request.query, deadline, clock)) {
-    if (clock() >= deadline) {
-      timeTruncated = true;
-      break;
-    }
-    if (/^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(token)) exactSymbols.add(token);
-  }
-
   const exactChunks: DecodedChunk[] = [];
   for (const chunk of rankableChunks) {
     if (clock() >= deadline) {
       timeTruncated = true;
       break;
     }
-    let matched = false;
-    for (const symbol of chunk.symbols) {
-      if (clock() >= deadline) {
-        timeTruncated = true;
-        break;
-      }
-      for (const expected of exactSymbols) {
-        if (clock() >= deadline) {
-          timeTruncated = true;
-          break;
-        }
-        if (symbol.toLowerCase() === expected.toLowerCase()) {
-          matched = true;
-          break;
-        }
-      }
-      if (matched || timeTruncated) break;
-    }
-    if (!matched) continue;
+    if (!exactArtifactIds.has(chunk.artifactId)) continue;
     let index = 0;
     while (
       index < exactChunks.length &&
@@ -1148,6 +1168,7 @@ export async function retrieve(
     const chunkSignals = signals.get(chunk.artifactId) ?? [];
     for (const occurrence of occurrencesBySource.get(chunk.sourceArtifactId) ??
       []) {
+      if (!rangesOverlap(chunk.range, occurrence.range)) continue;
       if (
         clock() >= deadline ||
         candidates.length >= request.budget.maxCandidates

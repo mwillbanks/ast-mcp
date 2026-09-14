@@ -367,7 +367,9 @@ model = "fixture/model"
     { name: "sampling-client", version: "1.0.0" },
     { capabilities: { sampling: {} } },
   );
+  let samplingCalls = 0;
   client.setRequestHandler("sampling/createMessage", async (request) => {
+    samplingCalls += 1;
     expect(request.params.modelPreferences?.hints?.[0]?.name).toBe(
       "fixture/model",
     );
@@ -406,6 +408,35 @@ model = "fixture/model"
       name: "index",
     });
     expect(indexed.isError).not.toBeTrue();
+    const generationArguments = {
+      allowedCorpusArtifactIds: ["artifact-1"],
+      evidence: [
+        {
+          artifactId: "artifact-1",
+          entityId: "entity-1",
+          path: "sample.ts",
+          range: {
+            end: { column: 9, line: 0 },
+            endByte: 9,
+            start: { column: 0, line: 0 },
+            startByte: 0,
+          },
+          text: "Supported",
+        },
+      ],
+      prompt: "Answer from evidence",
+      workspaceId,
+    };
+    const controller = new AbortController();
+    const cancelled = client.callTool(
+      { arguments: generationArguments, name: "generate" },
+      { signal: controller.signal },
+    );
+    controller.abort();
+    await expect(cancelled).rejects.toThrow();
+    await Bun.sleep(20);
+    expect(samplingCalls).toBe(0);
+
     const generated = await client.callTool({
       arguments: {
         allowedCorpusArtifactIds: ["artifact-1"],
@@ -437,6 +468,7 @@ model = "fixture/model"
       },
       ok: true,
     });
+    expect(samplingCalls).toBe(1);
   } finally {
     await client.close();
     await rm(root, { force: true, recursive: true });

@@ -28,5 +28,14 @@ coveragePathIgnorePatterns = [
   "src/intelligence/languages/jvm/wasm-worker.ts",
   "src/intelligence/languages/legacy/wasm-worker.ts",
   "src/intelligence/languages/systems/wasm-worker.ts",
+  "src/intelligence/languages/shared/wasm-dynamic-worker.ts",
+  "src/intelligence/languages/shared/wasm-infra-worker.ts",
+  "src/intelligence/languages/shared/wasm-jvm-worker.ts",
+  "src/intelligence/languages/shared/wasm-legacy-worker.ts",
+  "src/intelligence/languages/shared/wasm-mainstream-worker.ts",
+  "src/intelligence/languages/shared/wasm-systems-worker.ts",
+  "src/intelligence/languages/shared/wasm-fact-assembly.ts",
+  "src/intelligence/languages/shared/wasm-tree-sitter-support.ts",
+  "src/intelligence/languages/shared/wasm-worker-runtime.ts",
 ]
 pathIgnorePatterns = ["website/**"]

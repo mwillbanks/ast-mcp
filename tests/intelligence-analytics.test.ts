@@ -239,6 +239,39 @@ describe("graph analytics", () => {
     expect(new Set(cycleScores).size).toBe(1);
   });
 
+  test("does not let self loops prevent connected nodes from merging", () => {
+    const snapshot = analyticsFixture(
+      ["left", "right"],
+      [
+        { source: "left", target: "left" },
+        { source: "left", target: "right" },
+      ],
+    );
+    const first = analyzeGraph({ options: { seed: 23 }, snapshot });
+    const repeat = analyzeGraph({ options: { seed: 23 }, snapshot });
+
+    expect(first).toEqual(repeat);
+    expect(first.communities).toHaveLength(1);
+    expect(first.communities[0]?.memberIds).toHaveLength(2);
+  });
+
+  test("excludes nonpositive edges from default betweenness paths", () => {
+    const snapshot = analyticsFixture(
+      ["left", "center", "right"],
+      [
+        { confidence: 0, source: "left", target: "center" },
+        { confidence: 0.5, source: "center", target: "right" },
+      ],
+    );
+    const first = analyzeGraph({ snapshot });
+    const repeat = analyzeGraph({ snapshot });
+
+    expect(first.centrality).toEqual(repeat.centrality);
+    expect(first.centrality.every(({ betweenness }) => betweenness === 0)).toBe(
+      true,
+    );
+  });
+
   test("rejects malformed analytic controls", () => {
     const snapshot = analyticsFixture(["one"], []);
     expect(() =>

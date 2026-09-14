@@ -84,6 +84,10 @@ max_queue = 16
     "export function workingMarker() { return 'working'; }\n",
   );
   await writeFile(
+    path.join(root, "consumer.ts"),
+    "import { workingMarker } from './historical';\nexport const workingConsumer = workingMarker();\n",
+  );
+  await writeFile(
     path.join(root, "untracked.ts"),
     "export const untrackedMarker = 'untracked';\n",
   );

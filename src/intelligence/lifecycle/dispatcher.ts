@@ -133,6 +133,35 @@ function documentFormatFor(filePath: string): DocumentFormat | null {
   return DOCUMENT_FORMATS[path.extname(filePath).toLowerCase()] ?? null;
 }
 
+export function supportsIntelligenceSource(filePath: string): boolean {
+  const extension = path.extname(filePath).toLowerCase();
+  return (
+    projectFormatFor(filePath) !== null ||
+    webLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    dynamicLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    infraLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    jvmLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    legacyLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    systemsLanguageAdapters.some((adapter) =>
+      matchingExtension(filePath, adapter.extensions),
+    ) ||
+    documentFormatFor(filePath) !== null ||
+    defaultLanguageRegistry
+      .list()
+      .some((candidate) => candidate.extensions.includes(extension))
+  );
+}
+
 let activeDispatcherLeases = 0;
 let dispatcherShutdown: Promise<void> | null = null;
 
@@ -183,6 +212,11 @@ export class IntelligenceSourceDispatcher {
   constructor(options: IntelligenceSourceDispatcherOptions) {
     this.#parse = options.parse;
     this.#leaseReady = acquireDispatcherLease();
+  }
+
+  // fallow-ignore-next-line unused-class-member
+  supports(filePath: string): boolean {
+    return supportsIntelligenceSource(filePath);
   }
 
   async analyze(
@@ -332,11 +366,6 @@ export class IntelligenceSourceDispatcher {
       kind: "code",
       languageId: grammar.languageId,
     };
-  }
-
-  async drain(): Promise<void> {
-    await this.#leaseReady;
-    await drainLanguageWorkers();
   }
 
   async close(): Promise<void> {

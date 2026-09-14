@@ -10,12 +10,11 @@ import {
   graphEvidenceIdentity,
   graphNodeIdentity,
   graphOccurrenceIdentity,
-  RevisionMembershipSchema,
-  revisionMembershipIdentity,
 } from "../contracts/graph.ts";
 import type { DocumentFacts } from "../documents/types.ts";
 import type { ProjectFacts } from "../languages/project/types.ts";
 import type { ExactSourceRange, SyntaxFacts } from "../parser/types.ts";
+import { createGraphMemberships } from "./shared.ts";
 import type {
   GraphEdge,
   GraphEvidence,
@@ -635,36 +634,12 @@ export function materializeGraph(
     }
   }
 
-  const entityKinds = [
-    ...[...nodes.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "node" as const,
-    })),
-    ...[...occurrences.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "occurrence" as const,
-    })),
-    ...[...edges.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "edge" as const,
-    })),
-    ...[...evidence.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "evidence" as const,
-    })),
-  ];
-  const memberships = entityKinds.map((item) =>
-    RevisionMembershipSchema.parse({
-      ...item,
-      generationId: scope.generationId,
-      membershipId: revisionMembershipIdentity({
-        ...item,
-        generationId: scope.generationId,
-        revisionId: scope.revisionId,
-      }),
-      revisionId: scope.revisionId,
-    }),
-  );
+  const memberships = createGraphMemberships(scope, {
+    edges: edges.keys(),
+    evidence: evidence.keys(),
+    nodes: nodes.keys(),
+    occurrences: occurrences.keys(),
+  });
 
   return GraphSnapshotSchema.parse({
     edges: sorted(edges.values(), "edgeId"),

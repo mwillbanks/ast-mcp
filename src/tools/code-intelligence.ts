@@ -9,8 +9,8 @@ import {
   toolSuccess,
 } from "../helpers/mcp-schema";
 import {
-  defaultLanguageRegistry,
   findStructuralMatches,
+  LANGUAGE_CAPABILITY_CATALOG,
   type ParserLanguageId,
   parseSource,
   rewriteStructuralMatches,
@@ -20,6 +20,7 @@ import { LanceIntelligenceStore } from "../intelligence/storage/index.ts";
 import {
   currentWorkspace,
   readGitRevisionFile,
+  runGitRaw,
   type WorkspaceHandle,
 } from "../intelligence/workspace/index.ts";
 import { detectAstLanguage } from "../patch/languages";
@@ -79,6 +80,7 @@ const inputSchema = z
     target: z.string().min(1).optional(),
     tests: z.boolean().optional(),
     text: z.string().optional(),
+    timeout_ms: z.number().int().positive().max(300_000).optional(),
     top_k: z.number().int().positive().max(1_000).optional(),
     workspaceId: z.string().min(1).optional(),
     write: z.boolean().optional(),
@@ -136,19 +138,11 @@ function relative(root: string, file: string): string {
   return path.relative(root, file).split(path.sep).join("/");
 }
 
-function sanitizedGitEnvironment(): Record<string, string> {
-  const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !name.startsWith("GIT_"))
-      environment[name] = value;
-  }
-  environment.GIT_OPTIONAL_LOCKS = "0";
-  return environment;
-}
-
 async function revisionFilePaths(
   workspace: WorkspaceHandle,
+  signal?: AbortSignal,
 ): Promise<string[]> {
+  throwIfAborted(signal);
   const revision = workspace.selectedRevision;
   const args =
     revision.selector.kind === "index"
@@ -160,19 +154,15 @@ async function revisionFilePaths(
           "-z",
           revision.resolvedCommitOid as string,
         ];
-  const child = Bun.spawn(["git", "-C", workspace.checkoutRoot, ...args], {
-    env: sanitizedGitEnvironment(),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [code, stderr, stdout] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-    new Response(child.stdout).bytes(),
-  ]);
+  const { code, stderr, stdout } = await runGitRaw(
+    workspace.checkoutRoot,
+    args,
+    signal,
+    throwIfAborted,
+  );
   if (code !== 0)
     throw Object.assign(
-      new Error(stderr.trim() || `Git failed with exit code ${code}`),
+      new Error(stderr || `Git failed with exit code ${code}`),
       { code: "workspace_git_failure", retryable: false },
     );
   return Buffer.from(stdout)
@@ -236,15 +226,14 @@ function selectedRevisionPaths(
 async function requestedFiles(
   input: ToolInput,
   root: string,
+  signal?: AbortSignal,
 ): Promise<string[]> {
+  throwIfAborted(signal);
   const workspace = currentWorkspace();
   if (workspace && workspace.selectedRevision.selector.kind !== "working") {
-    return selectedRevisionPaths(
-      input,
-      root,
-      workspace,
-      await revisionFilePaths(workspace),
-    );
+    const repositoryPaths = await revisionFilePaths(workspace, signal);
+    throwIfAborted(signal);
+    return selectedRevisionPaths(input, root, workspace, repositoryPaths);
   }
   const explicit = [
     ...(input.paths ?? []),
@@ -254,6 +243,7 @@ async function requestedFiles(
   if (explicit.length) {
     const files: string[] = [];
     for (const value of explicit) {
+      throwIfAborted(signal);
       const resolved = await resolveWorkspacePath(path.resolve(root, value));
       const metadata = await Bun.file(resolved)
         .stat()
@@ -266,8 +256,10 @@ async function requestedFiles(
           dot: false,
           followSymlinks: false,
           onlyFiles: true,
-        }))
+        })) {
+          throwIfAborted(signal);
           files.push(entry);
+        }
       }
     }
     return [...new Set(files)].sort();
@@ -280,6 +272,7 @@ async function requestedFiles(
     followSymlinks: false,
     onlyFiles: true,
   })) {
+    throwIfAborted(signal);
     if (
       !entry.includes(`${path.sep}node_modules${path.sep}`) &&
       !entry.includes(`${path.sep}.git${path.sep}`) &&
@@ -316,36 +309,85 @@ const MAX_OMITTED_PATHS = 20;
 async function sourceFor(
   filePath: string,
   workspace: WorkspaceHandle | undefined,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   if (workspace && workspace.selectedRevision.selector.kind !== "working")
     return Buffer.from(
       await readGitRevisionFile(
         workspace.git,
         workspace.selectedRevision,
         filePath,
+        signal,
       ),
     ).toString("utf8");
   return readFile(filePath, "utf8");
 }
 
+function abortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  return Object.assign(new Error("Code intelligence request was aborted"), {
+    code: "aborted",
+    retryable: true,
+  });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function catalogLanguage(
+  filePath: string,
+  requested?: string,
+): ParserLanguageId | null {
+  if (requested) {
+    return (
+      LANGUAGE_CAPABILITY_CATALOG.find(
+        (entry) => entry.languageId === requested,
+      )?.languageId ?? null
+    );
+  }
+  const name = path.basename(filePath).toLowerCase();
+  return (
+    [...LANGUAGE_CAPABILITY_CATALOG]
+      .flatMap((entry) =>
+        entry.extensions.map((extension) => ({ entry, extension })),
+      )
+      .sort((left, right) => right.extension.length - left.extension.length)
+      .find(({ extension }) => name.endsWith(extension.toLowerCase()))?.entry
+      .languageId ??
+    detectAstLanguage(filePath) ??
+    null
+  );
+}
+
 async function loadFiles(
   input: ToolInput,
+  signal?: AbortSignal,
 ): Promise<{ files: NativeFile[]; root: string; scan: ScanCoverage }> {
+  throwIfAborted(signal);
   const root = await requestRoot(input);
-  const selected = await requestedFiles(input, root);
+  const selected = await requestedFiles(input, root, signal);
+  throwIfAborted(signal);
   const config = await currentConfig();
   const workspace = currentWorkspace();
-  const supported = new Set(
-    defaultLanguageRegistry.list().map((grammar) => grammar.languageId),
-  );
+  const allowedLanguages = input.languages
+    ? new Set(input.languages)
+    : undefined;
   const eligible: Array<{ language: ParserLanguageId; path: string }> = [];
   const unsupported: string[] = [];
   for (const filePath of selected) {
-    const language = input.lang ?? detectAstLanguage(filePath);
+    throwIfAborted(signal);
+    const language = catalogLanguage(filePath, input.lang);
+    const catalog = language
+      ? LANGUAGE_CAPABILITY_CATALOG.find(
+          (entry) => entry.languageId === language,
+        )
+      : undefined;
     if (
       config.files.read.modes.includes("ast") &&
-      language &&
-      supported.has(language as ParserLanguageId)
+      catalog?.structuralOperations.parse &&
+      (!allowedLanguages || allowedLanguages.has(language as string))
     )
       eligible.push({ language: language as ParserLanguageId, path: filePath });
     else unsupported.push(relative(root, filePath));
@@ -358,11 +400,14 @@ async function loadFiles(
   const files: NativeFile[] = [];
   const unreadable: string[] = [];
   for (const item of selectedEligible) {
+    throwIfAborted(signal);
     try {
-      const source = await sourceFor(item.path, workspace);
+      const source = await sourceFor(item.path, workspace, signal);
+      throwIfAborted(signal);
       const facts = parseSource({ languageId: item.language, source });
       files.push({ facts, path: item.path, source });
     } catch {
+      if (signal?.aborted) throw abortError(signal);
       unreadable.push(relative(root, item.path));
     }
   }
@@ -536,17 +581,6 @@ function symbolView(file: NativeFile, root: string, includeSource = false) {
   }));
 }
 
-function imports(files: NativeFile[], root: string) {
-  return files.flatMap((file) =>
-    file.facts.imports.map((entry) => ({
-      from: relative(root, file.path),
-      importedName: entry.importedName,
-      source: entry.source,
-      typeOnly: entry.typeOnly,
-    })),
-  );
-}
-
 function symbolMatches(file: NativeFile, target: string) {
   return file.facts.symbols.filter(
     (symbol) =>
@@ -556,28 +590,56 @@ function symbolMatches(file: NativeFile, target: string) {
   );
 }
 
+type CallView = {
+  callee: string;
+  caller: string | null;
+  line?: number;
+  path: string;
+  range?: { endLine: number; startLine: number };
+};
+
 function callsFor(
   files: NativeFile[],
   root: string,
   target: string,
   direction: "in" | "out",
   fullRange = false,
-) {
-  const symbolIds = new Set(
-    files.flatMap((file) =>
-      symbolMatches(file, target).map((symbol) => symbol.id),
+  signal?: AbortSignal,
+): CallView[] {
+  throwIfAborted(signal);
+  const symbols = new Map(
+    flatMapFilesWithAbort(files, signal, (file) =>
+      file.facts.symbols.map((symbol) => {
+        throwIfAborted(signal);
+        return [symbol.id, symbol.qualifiedName] as const;
+      }),
     ),
   );
-  return files.flatMap((file) =>
-    file.facts.calls
-      .filter((call) =>
+  const symbolIds = new Set(
+    flatMapFilesWithAbort(files, signal, (file) =>
+      symbolMatches(file, target).map((symbol) => {
+        throwIfAborted(signal);
+        return symbol.id;
+      }),
+    ),
+  );
+  const views: CallView[] = [];
+  for (const file of files) {
+    throwIfAborted(signal);
+    for (const call of file.facts.calls) {
+      throwIfAborted(signal);
+      const selected =
         direction === "in"
           ? call.callee === target || call.callee.endsWith(`.${target}`)
           : call.enclosingSymbolId !== null &&
-            symbolIds.has(call.enclosingSymbolId),
-      )
-      .map((call) => ({
+            symbolIds.has(call.enclosingSymbolId);
+      if (!selected) continue;
+      views.push({
         callee: call.callee,
+        caller:
+          call.enclosingSymbolId === null
+            ? null
+            : (symbols.get(call.enclosingSymbolId) ?? null),
         path: relative(root, file.path),
         ...(fullRange
           ? {
@@ -587,8 +649,66 @@ function callsFor(
               },
             }
           : { line: call.range.start.line + 1 }),
-      })),
+      });
+    }
+  }
+  return views.sort(
+    (left, right) =>
+      left.path.localeCompare(right.path) ||
+      (left.line ?? left.range?.startLine ?? 0) -
+        (right.line ?? right.range?.startLine ?? 0) ||
+      left.callee.localeCompare(right.callee),
   );
+}
+
+function tracedCalls(
+  files: NativeFile[],
+  root: string,
+  target: string,
+  direction: "in" | "out",
+  depth: number,
+  fullRange: boolean,
+  signal?: AbortSignal,
+): CallView[] {
+  const results = new Map<string, CallView>();
+  let frontier = [target];
+  const visited = new Set<string>();
+  for (let level = 0; level < depth && frontier.length > 0; level += 1) {
+    const next = new Set<string>();
+    for (const current of frontier.sort()) {
+      throwIfAborted(signal);
+      if (visited.has(current)) continue;
+      visited.add(current);
+      for (const call of callsFor(
+        files,
+        root,
+        current,
+        direction,
+        fullRange,
+        signal,
+      )) {
+        throwIfAborted(signal);
+        results.set(JSON.stringify(call), call);
+        const adjacent = direction === "out" ? call.callee : call.caller;
+        if (adjacent && !visited.has(adjacent)) next.add(adjacent);
+      }
+    }
+    frontier = [...next];
+  }
+  return [...results.values()];
+}
+
+function utf8Prefix(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value) <= maxBytes) return value;
+  let result = "";
+  let bytes = 0;
+  for (const character of value) {
+    const next = Buffer.byteLength(character);
+    if (bytes + next > maxBytes) break;
+    result += character;
+    bytes += next;
+  }
+  return result;
 }
 
 function bounded<T>(
@@ -596,66 +716,260 @@ function bounded<T>(
   input: ToolInput,
 ): { items: T[]; total: number; truncated: boolean } {
   const limit = input.limit ?? input.top_k ?? 200;
+  const byteLimit = input.budget ?? Number.POSITIVE_INFINITY;
+  const items: T[] = [];
+  let bytes = 2;
+  for (const value of values.slice(0, limit)) {
+    const itemBytes = Buffer.byteLength(JSON.stringify(value));
+    const separatorBytes = items.length === 0 ? 0 : 1;
+    if (bytes + itemBytes + separatorBytes > byteLimit) break;
+    items.push(value);
+    bytes += itemBytes + separatorBytes;
+  }
   return {
-    items: values.slice(0, limit),
+    items,
     total: values.length,
-    truncated: values.length > limit,
+    truncated: items.length < values.length,
   };
 }
 
-function importGraph(files: NativeFile[], root: string) {
-  const known = new Set(files.map((file) => relative(root, file.path)));
-  return imports(files, root).map((edge) => {
-    let target = edge.source;
-    if (target.startsWith(".")) {
-      const base = path.posix.normalize(
-        path.posix.join(path.posix.dirname(edge.from), target),
+type ImportEdge = {
+  ambiguous: boolean;
+  external: boolean;
+  from: string;
+  to: string;
+};
+
+type CompilerAlias = {
+  prefix: string;
+  suffix: string;
+  targets: string[];
+};
+
+async function compilerAliases(
+  root: string,
+  workspace: WorkspaceHandle | undefined,
+  signal?: AbortSignal,
+): Promise<CompilerAlias[]> {
+  for (const name of ["tsconfig.json", "jsconfig.json"]) {
+    try {
+      const source = await sourceFor(path.join(root, name), workspace, signal);
+      const config = Bun.JSONC.parse(source) as {
+        compilerOptions?: {
+          baseUrl?: string;
+          paths?: Record<string, string[]>;
+        };
+      };
+      const baseUrl = path.posix.normalize(
+        config.compilerOptions?.baseUrl?.replaceAll("\\", "/") ?? ".",
       );
-      target =
-        [...known].find(
-          (candidate) =>
-            candidate === base ||
-            candidate.replace(/\.[^.]+$/, "") === base ||
-            candidate.startsWith(`${base}/index.`),
-        ) ?? target;
+      return Object.entries(config.compilerOptions?.paths ?? {})
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([pattern, targets]) => {
+          const marker = pattern.indexOf("*");
+          return {
+            prefix: marker < 0 ? pattern : pattern.slice(0, marker),
+            suffix: marker < 0 ? "" : pattern.slice(marker + 1),
+            targets: targets.map((target) =>
+              path.posix.normalize(path.posix.join(baseUrl, target)),
+            ),
+          };
+        });
+    } catch {
+      if (signal?.aborted) throw abortError(signal);
+      // The workspace does not define compiler aliases in this file.
     }
-    return { external: !known.has(target), from: edge.from, to: target };
+  }
+  return [];
+}
+
+function resolveKnownPath(
+  candidate: string,
+  known: readonly string[],
+): string[] {
+  const normalized = path.posix.normalize(candidate);
+  if (path.posix.extname(normalized)) {
+    return known.filter((entry) => entry === normalized);
+  }
+  return known.filter(
+    (entry) =>
+      entry === normalized ||
+      entry.replace(/\.[^./]+$/u, "") === normalized ||
+      entry.startsWith(`${normalized}/index.`),
+  );
+}
+
+function aliasCandidates(
+  specifier: string,
+  aliases: readonly CompilerAlias[],
+): string[] {
+  return aliases.flatMap((alias) => {
+    if (
+      !specifier.startsWith(alias.prefix) ||
+      !specifier.endsWith(alias.suffix)
+    )
+      return [];
+    const value = specifier.slice(
+      alias.prefix.length,
+      specifier.length - alias.suffix.length || undefined,
+    );
+    return alias.targets.map((target) => target.replace("*", value));
   });
 }
 
-function graphCycles(
-  edges: Array<{ from: string; to: string; external: boolean }>,
-) {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of edges)
-    if (!edge.external)
-      adjacency.set(edge.from, [...(adjacency.get(edge.from) ?? []), edge.to]);
-  const cycles = new Set<string>();
-  const visit = (node: string, stack: string[]) => {
-    const index = stack.indexOf(node);
-    if (index >= 0) {
-      cycles.add([...stack.slice(index), node].join(" -> "));
-      return;
+async function importGraph(
+  files: NativeFile[],
+  root: string,
+  signal?: AbortSignal,
+): Promise<ImportEdge[]> {
+  const known = files.map((file) => relative(root, file.path)).sort();
+  const workspace = currentWorkspace();
+  const aliases = await compilerAliases(root, workspace, signal);
+  const raw = files.flatMap((file) => {
+    throwIfAborted(signal);
+    const from = relative(root, file.path);
+    return [
+      ...file.facts.imports.map((entry) => ({
+        from,
+        source: entry.source,
+      })),
+      ...file.facts.exports
+        .filter(
+          (entry): entry is typeof entry & { source: string } =>
+            entry.source !== null,
+        )
+        .map((entry) => ({ from, source: entry.source })),
+    ];
+  });
+  const edges = new Map<string, ImportEdge>();
+  for (const edge of raw) {
+    throwIfAborted(signal);
+    const candidates = edge.source.startsWith(".")
+      ? [
+          path.posix.normalize(
+            path.posix.join(path.posix.dirname(edge.from), edge.source),
+          ),
+        ]
+      : aliasCandidates(edge.source, aliases);
+    const matches = [
+      ...new Set(
+        candidates.flatMap((candidate) => resolveKnownPath(candidate, known)),
+      ),
+    ].sort();
+    if (matches.length === 0) {
+      const unresolved: ImportEdge = {
+        ambiguous: false,
+        external: true,
+        from: edge.from,
+        to: edge.source,
+      };
+      edges.set(JSON.stringify(unresolved), unresolved);
+      continue;
     }
-    for (const next of adjacency.get(node) ?? []) visit(next, [...stack, node]);
+    for (const target of matches) {
+      const resolved: ImportEdge = {
+        ambiguous: matches.length > 1,
+        external: false,
+        from: edge.from,
+        to: target,
+      };
+      edges.set(JSON.stringify(resolved), resolved);
+    }
+  }
+  return [...edges.values()].sort(
+    (left, right) =>
+      left.from.localeCompare(right.from) || left.to.localeCompare(right.to),
+  );
+}
+
+function graphCycles(
+  edges: readonly ImportEdge[],
+  maxCycles: number,
+  signal?: AbortSignal,
+): { cycles: string[]; truncated: boolean } {
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    if (edge.external) continue;
+    const targets = adjacency.get(edge.from) ?? [];
+    if (!targets.includes(edge.to)) targets.push(edge.to);
+    adjacency.set(edge.from, targets.sort());
+  }
+  const state = new Map<string, "active" | "done">();
+  const stack: string[] = [];
+  const positions = new Map<string, number>();
+  const cycles = new Set<string>();
+
+  const canonicalCycle = (nodes: string[]): string => {
+    const body = nodes.slice(0, -1);
+    const rotations = body.map((_, index) => [
+      ...body.slice(index),
+      ...body.slice(0, index),
+    ]);
+    const canonical = rotations
+      .map((rotation) => rotation.join(" -> "))
+      .sort()[0];
+    return `${canonical} -> ${canonical?.split(" -> ")[0] ?? ""}`;
   };
-  for (const node of adjacency.keys()) visit(node, []);
-  return [...cycles].sort();
+
+  const visit = (node: string): void => {
+    throwIfAborted(signal);
+    state.set(node, "active");
+    positions.set(node, stack.length);
+    stack.push(node);
+    for (const next of adjacency.get(node) ?? []) {
+      if (cycles.size > maxCycles) break;
+      const nextState = state.get(next);
+      if (nextState === "active") {
+        const index = positions.get(next) as number;
+        cycles.add(canonicalCycle([...stack.slice(index), next]));
+      } else if (nextState !== "done") {
+        visit(next);
+      }
+    }
+    stack.pop();
+    positions.delete(node);
+    state.set(node, "done");
+  };
+
+  for (const node of [...adjacency.keys()].sort()) {
+    if (cycles.size > maxCycles) break;
+    if (!state.has(node)) visit(node);
+  }
+  return {
+    cycles: [...cycles].sort().slice(0, maxCycles),
+    truncated: cycles.size > maxCycles,
+  };
+}
+
+function flatMapFilesWithAbort<T>(
+  files: readonly NativeFile[],
+  signal: AbortSignal | undefined,
+  transform: (file: NativeFile) => readonly T[],
+): T[] {
+  const result: T[] = [];
+  for (const file of files) {
+    throwIfAborted(signal);
+    result.push(...transform(file));
+  }
+  return result;
 }
 
 async function executeNative(
   name: (typeof TOOL_NAMES)[number],
   input: ToolInput,
   state: NativeExecutionState,
+  signal?: AbortSignal,
 ) {
   if (name === "squeeze") {
+    throwIfAborted(signal);
     const text = input.text ?? input.query ?? "";
     const compact = text.replace(/\s+/g, " ").trim();
     const budget = input.budget ?? 8_000;
+    const boundedText = utf8Prefix(compact, budget);
     return {
       schema: "ast-mcp.squeeze.v1",
-      text: compact.slice(0, budget),
-      truncated: compact.length > budget,
+      text: boundedText,
+      truncated: boundedText !== compact,
     };
   }
   if (name === "run" && input.write)
@@ -669,20 +983,34 @@ async function executeNative(
         suggestedNextCall: "file_hash then file_patch",
       },
     );
-  const { files, root, scan } = await loadFiles(input);
+  const graphOperation = [
+    "deps",
+    "reverse_deps",
+    "cycles",
+    "graph",
+    "impact",
+  ].includes(name);
+  const scanInput =
+    graphOperation && (input.file || input.path)
+      ? { ...input, file: undefined, path: undefined }
+      : input;
+  const { files, root, scan } = await loadFiles(scanInput, signal);
+  throwIfAborted(signal);
   state.scan = scan;
   const schema = `ast-mcp.${name}.v1`;
   if (name === "map" || name === "digest") {
-    const mapped = files.map((file) => ({
-      diagnostics: file.facts.diagnostics,
-      language: file.facts.languageId,
-      partial: file.facts.partial,
-      path: relative(root, file.path),
-      symbols: symbolView(file, root).slice(
-        0,
-        input.max_members ?? (name === "digest" ? 50 : 200),
-      ),
-    }));
+    const mapped = flatMapFilesWithAbort(files, signal, (file) => [
+      {
+        diagnostics: file.facts.diagnostics,
+        language: file.facts.languageId,
+        partial: file.facts.partial,
+        path: relative(root, file.path),
+        symbols: symbolView(file, root).slice(
+          0,
+          input.max_members ?? (name === "digest" ? 50 : 200),
+        ),
+      },
+    ]);
     const result = bounded(mapped, input);
     return {
       files: result.items,
@@ -697,7 +1025,10 @@ async function executeNative(
       input.symbols ?? (input.target ? [input.target] : []),
     );
     const symbols = files
-      .flatMap((file) => symbolView(file, root, true))
+      .flatMap((file) => {
+        throwIfAborted(signal);
+        return symbolView(file, root, true);
+      })
       .filter(
         (symbol) =>
           targets.size === 0 ||
@@ -711,14 +1042,17 @@ async function executeNative(
       schema,
       ...bounded(
         files
-          .flatMap((file) => symbolView(file, root))
+          .flatMap((file) => {
+            throwIfAborted(signal);
+            return symbolView(file, root);
+          })
           .filter((symbol) => symbol.exported),
         input,
       ),
     };
   if (name === "implements") {
     const target = input.target ?? "";
-    const items = files.flatMap((file) =>
+    const items = flatMapFilesWithAbort(files, signal, (file) =>
       [...file.facts.implementations, ...file.facts.inheritance]
         .filter(
           (relationship) =>
@@ -741,7 +1075,10 @@ async function executeNative(
       ""
     ).toLowerCase();
     const items = files
-      .flatMap((file) => symbolView(file, root, true))
+      .flatMap((file) => {
+        throwIfAborted(signal);
+        return symbolView(file, root, true);
+      })
       .filter(
         (symbol) =>
           symbol.name.toLowerCase().includes(query) ||
@@ -758,6 +1095,7 @@ async function executeNative(
     if (!input.pattern) throw new Error("run requires pattern");
     const items: Array<Record<string, unknown>> = [];
     for (const file of files) {
+      throwIfAborted(signal);
       if (!input.rewrite) {
         items.push(
           ...findStructuralMatches(
@@ -766,13 +1104,16 @@ async function executeNative(
             input.pattern as string,
           ).map((match) => ({ ...match, path: relative(root, file.path) })),
         );
+        throwIfAborted(signal);
         continue;
       }
+      throwIfAborted(signal);
       const matches = findStructuralMatches(
         file.source,
         file.facts.languageId,
         input.pattern as string,
       );
+      throwIfAborted(signal);
       const preview = rewriteStructuralMatches(
         file.source,
         file.facts.languageId,
@@ -784,6 +1125,7 @@ async function executeNative(
           },
         ],
       );
+      throwIfAborted(signal);
       items.push(
         ...preview.edits.map((edit) => ({
           ...edit,
@@ -793,46 +1135,78 @@ async function executeNative(
     }
     return { schema, ...bounded(items, input) };
   }
-  const edges = importGraph(files, root);
+  const edges = await importGraph(files, root, signal);
+  const visibleEdges = edges.filter((edge) => {
+    throwIfAborted(signal);
+    return (
+      (!input.hide_external || !edge.external) &&
+      (!input.hide_ambiguous || !edge.ambiguous)
+    );
+  });
   if (name === "graph")
     return {
       schema,
-      ...bounded(
-        input.hide_external ? edges.filter((edge) => !edge.external) : edges,
-        input,
-      ),
+      ...bounded(visibleEdges, input),
     };
-  if (name === "cycles") return { cycles: graphCycles(edges), schema };
+  if (name === "cycles") {
+    const limit = input.limit ?? input.top_k ?? 200;
+    const result = graphCycles(visibleEdges, limit, signal);
+    return { ...result, schema };
+  }
   if (name === "deps" || name === "reverse_deps") {
-    const selected = input.file
-      ? relative(root, path.resolve(root, input.file))
+    const selectedPath = input.file ?? input.path;
+    const selected = selectedPath
+      ? relative(root, path.resolve(root, selectedPath))
       : "";
-    const values = edges.filter((edge) =>
+    const values = visibleEdges.filter((edge) =>
       name === "deps" ? edge.from === selected : edge.to === selected,
     );
     return { schema, ...bounded(values, input) };
   }
   const target = input.target ?? "";
   const fullRange = input.detail === "full";
-  const callers = callsFor(files, root, target, "in", fullRange);
-  const callees = callsFor(files, root, target, "out", fullRange);
+  const depth = input.direct ? 1 : (input.depth ?? 1);
+  const callers = tracedCalls(
+    files,
+    root,
+    target,
+    "in",
+    depth,
+    fullRange,
+    signal,
+  );
+  const callees = tracedCalls(
+    files,
+    root,
+    target,
+    "out",
+    depth,
+    fullRange,
+    signal,
+  );
   if (name === "callers") return { schema, ...bounded(callers, input) };
   if (name === "callees") return { schema, ...bounded(callees, input) };
   if (name === "trace")
     return {
       callees: bounded(callees, input),
       callers: bounded(callers, input),
+      depth,
       schema,
       target,
     };
-  const dependents = edges.filter((edge) => edge.to.includes(target));
-  const tests = [...callers, ...dependents].filter(
-    (item) =>
+  const dependents = edges.filter((edge) => {
+    throwIfAborted(signal);
+    return edge.to.includes(target);
+  });
+  const tests = [...callers, ...dependents].filter((item) => {
+    throwIfAborted(signal);
+    return (
       "path" in item &&
       /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\./.test(
         item.path,
-      ),
-  );
+      )
+    );
+  });
   if (name === "impact")
     return {
       callees: bounded(callees, input),
@@ -843,19 +1217,44 @@ async function executeNative(
       tests: bounded(tests, input),
     };
   const definitions = files
-    .flatMap((file) =>
-      symbolMatches(file, target).flatMap(() => symbolView(file, root, true)),
-    )
+    .flatMap((file) => {
+      throwIfAborted(signal);
+      return symbolMatches(file, target).flatMap(() => {
+        throwIfAborted(signal);
+        return symbolView(file, root, true);
+      });
+    })
     .filter(
       (item) =>
         item.name === target || item.qualifiedName.endsWith(`.${target}`),
     );
   const budget = input.budget ?? 32_000;
-  const payload = { callees, callers, definitions, schema, target };
-  const serialized = JSON.stringify(payload);
-  return serialized.length <= budget
-    ? payload
-    : { schema, target, text: serialized.slice(0, budget), truncated: true };
+  const payload = {
+    callees: [] as typeof callees,
+    callers: [] as typeof callers,
+    definitions: [] as typeof definitions,
+    schema,
+    target,
+    truncated: false,
+  };
+  const candidates = [
+    ...definitions.map((item) => ["definitions", item] as const),
+    ...callers.map((item) => ["callers", item] as const),
+    ...callees.map((item) => ["callees", item] as const),
+  ];
+  for (const [section, item] of candidates) {
+    throwIfAborted(signal);
+    const candidate = {
+      ...payload,
+      [section]: [...payload[section], item],
+    };
+    if (Buffer.byteLength(JSON.stringify(candidate)) > budget) {
+      payload.truncated = true;
+      break;
+    }
+    payload[section].push(item as never);
+  }
+  return payload;
 }
 
 export default function registerNativeCodeIntelligenceTools(
@@ -879,24 +1278,53 @@ export default function registerNativeCodeIntelligenceTools(
       },
       async (input, context) => {
         try {
-          const data = await execute(
-            input,
-            async () => {
-              const state = { scan: emptyScanCoverage() };
-              const payload = (await executeNative(
-                name,
+          const controller = new AbortController();
+          const upstream = (context as { signal?: AbortSignal }).signal;
+          const abortFromUpstream = () => controller.abort(upstream?.reason);
+          if (upstream?.aborted) abortFromUpstream();
+          else
+            upstream?.addEventListener("abort", abortFromUpstream, {
+              once: true,
+            });
+          const timer =
+            input.timeout_ms === undefined
+              ? undefined
+              : setTimeout(
+                  () =>
+                    controller.abort(
+                      Object.assign(
+                        new Error("Code intelligence request timed out"),
+                        { code: "timeout", retryable: true },
+                      ),
+                    ),
+                  input.timeout_ms,
+                );
+          const data = await (async () => {
+            try {
+              return await execute(
                 input,
-                state,
-              )) as Record<string, unknown>;
-              return withScopeMetadata(
-                payload,
-                state.scan,
-                outputOmissions(payload),
+                async () => {
+                  const state = { scan: emptyScanCoverage() };
+                  const payload = (await executeNative(
+                    name,
+                    input,
+                    state,
+                    controller.signal,
+                  )) as Record<string, unknown>;
+                  return withScopeMetadata(
+                    payload,
+                    state.scan,
+                    outputOmissions(payload),
+                  );
+                },
+                context,
+                name,
               );
-            },
-            context,
-            name,
-          );
+            } finally {
+              if (timer !== undefined) clearTimeout(timer);
+              upstream?.removeEventListener("abort", abortFromUpstream);
+            }
+          })();
           const result = toolSuccess(data);
           return {
             ...result,

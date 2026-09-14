@@ -1,10 +1,4 @@
 import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
-import {
   GenerationIdSchema,
   RevisionIdSchema,
 } from "../../contracts/common.ts";
@@ -16,6 +10,11 @@ import {
   ResolutionStatusSchema,
   RevisionMembershipSchema,
 } from "../../contracts/graph.ts";
+import {
+  createAuthenticatedCursorCodec,
+  exactObject,
+  digestJson as fingerprint,
+} from "../shared.ts";
 import type {
   AlgorithmCoverage,
   AlgorithmMembership,
@@ -104,20 +103,6 @@ const budgetKeys = [
   "maxNodes",
   "pageSize",
 ] as const;
-
-function exactObject(
-  value: unknown,
-  required: readonly string[],
-  allowed: readonly string[] = required,
-): value is Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const keys = Object.keys(value);
-  return (
-    required.every((key) => keys.includes(key)) &&
-    keys.every((key) => allowed.includes(key))
-  );
-}
 
 function validateBudget(value: unknown): asserts value is GraphAlgorithmBudget {
   if (!exactObject(value, budgetKeys)) {
@@ -354,48 +339,13 @@ function prepare(
   };
 }
 
-function fingerprint(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-const cursorDomain = "ast-mcp.graph-algorithm-cursor.v2";
-const processCursorKey = randomBytes(32);
-
 // The process-local key intentionally makes cursors expire after a process restart.
-const processCursorCodec: GraphAlgorithmCursorCodec = {
-  decode(cursor, binding) {
-    const parts = cursor.split(".");
-    if (parts.length !== 2) throw new Error("Invalid cursor envelope");
-    const [payload, signature] = parts;
-    if (!payload || !signature || !/^[a-f0-9]{64}$/.test(signature))
-      throw new Error("Invalid cursor envelope");
-    const expected = createHmac("sha256", processCursorKey)
-      .update(cursorDomain)
-      .update("\0")
-      .update(binding)
-      .update("\0")
-      .update(payload)
-      .digest();
-    const received = Buffer.from(signature, "hex");
-    if (
-      received.byteLength !== expected.byteLength ||
-      !timingSafeEqual(received, expected)
-    )
-      throw new Error("Invalid cursor authentication");
-    return JSON.parse(Buffer.from(payload, "base64url").toString());
-  },
-  encode(value, binding) {
-    const payload = Buffer.from(JSON.stringify(value)).toString("base64url");
-    const signature = createHmac("sha256", processCursorKey)
-      .update(cursorDomain)
-      .update("\0")
-      .update(binding)
-      .update("\0")
-      .update(payload)
-      .digest("hex");
-    return `${payload}.${signature}`;
-  },
-};
+const processCursorCodec: GraphAlgorithmCursorCodec =
+  createAuthenticatedCursorCodec({
+    authenticationError: "Invalid cursor authentication",
+    domain: "ast-mcp.graph-algorithm-cursor.v2",
+    envelopeError: "Invalid cursor envelope",
+  });
 
 function decodeCursor(
   cursor: string | undefined,

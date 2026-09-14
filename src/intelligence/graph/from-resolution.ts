@@ -9,8 +9,6 @@ import {
   graphEvidenceIdentity,
   graphNodeIdentity,
   graphOccurrenceIdentity,
-  RevisionMembershipSchema,
-  revisionMembershipIdentity,
 } from "../contracts/graph.ts";
 import type {
   MaterializedNode,
@@ -18,6 +16,7 @@ import type {
   GraphMaterializationInput as ResolutionGraph,
 } from "../resolution/types.ts";
 import { parseResolutionGraphMaterialization } from "./resolution-schema.ts";
+import { createGraphMemberships } from "./shared.ts";
 import type {
   GraphEdge,
   GraphEvidence,
@@ -478,36 +477,12 @@ export function graphFromResolution(
     a.evidenceId.localeCompare(b.evidenceId),
   );
   const allEdges = edges.sort((a, b) => a.edgeId.localeCompare(b.edgeId));
-  const entityKinds = [
-    ...[...nodes.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "node" as const,
-    })),
-    ...[...occurrences.keys()].map((entityId) => ({
-      entityId,
-      entityKind: "occurrence" as const,
-    })),
-    ...allEdges.map((item) => ({
-      entityId: item.edgeId,
-      entityKind: "edge" as const,
-    })),
-    ...allEvidence.map((item) => ({
-      entityId: item.evidenceId,
-      entityKind: "evidence" as const,
-    })),
-  ];
-  const memberships = entityKinds.map((item) =>
-    RevisionMembershipSchema.parse({
-      ...item,
-      generationId: scope.generationId,
-      membershipId: revisionMembershipIdentity({
-        ...item,
-        generationId: scope.generationId,
-        revisionId: scope.revisionId,
-      }),
-      revisionId: scope.revisionId,
-    }),
-  );
+  const memberships = createGraphMemberships(scope, {
+    edges: allEdges.map((item) => item.edgeId),
+    evidence: allEvidence.map((item) => item.evidenceId),
+    nodes: nodes.keys(),
+    occurrences: occurrences.keys(),
+  });
   return GraphSnapshotSchema.parse({
     edges: allEdges,
     evidence: allEvidence,

@@ -1,4 +1,5 @@
 import { SourceCoordinateIndex, sha256 } from "../../parser/index.ts";
+import { deepFreeze } from "../immutable.ts";
 import type {
   ProjectAnalyzeRequest,
   ProjectDiagnostic,
@@ -438,18 +439,31 @@ function lineRanges(
   }
   return result;
 }
+function createProjectFactContext(source: string): {
+  diagnostics: ProjectDiagnostic[];
+  digest: string;
+  nodes: ProjectNode[];
+  range(start: number, end: number): ReturnType<SourceCoordinateIndex["range"]>;
+  relationships: ProjectRelationship[];
+} {
+  const coordinates = new SourceCoordinateIndex(source);
+  return {
+    diagnostics: [],
+    digest: sha256(source),
+    nodes: [],
+    range: (start, end) =>
+      coordinates.range(byteToUtf16(source, start), byteToUtf16(source, end)),
+    relationships: [],
+  };
+}
+
 function slnFacts(source: string): {
   diagnostics: ProjectDiagnostic[];
   nodes: ProjectNode[];
   relationships: ProjectRelationship[];
 } {
-  const coordinates = new SourceCoordinateIndex(source);
-  const digest = sha256(source);
-  const nodes: ProjectNode[] = [];
-  const relationships: ProjectRelationship[] = [];
-  const diagnostics: ProjectDiagnostic[] = [];
-  const range = (start: number, end: number) =>
-    coordinates.range(byteToUtf16(source, start), byteToUtf16(source, end));
+  const { diagnostics, digest, nodes, range, relationships } =
+    createProjectFactContext(source);
   for (const line of lineRanges(source)) {
     const trimmed = line.text.trimStart();
     const leading = line.text.length - trimmed.length;
@@ -506,14 +520,9 @@ function formFacts(
   nodes: ProjectNode[];
   relationships: ProjectRelationship[];
 } {
-  const coordinates = new SourceCoordinateIndex(source);
-  const digest = sha256(source);
-  const nodes: ProjectNode[] = [];
-  const relationships: ProjectRelationship[] = [];
-  const diagnostics: ProjectDiagnostic[] = [];
+  const { diagnostics, digest, nodes, range, relationships } =
+    createProjectFactContext(source);
   const stack: string[] = [];
-  const range = (start: number, end: number) =>
-    coordinates.range(byteToUtf16(source, start), byteToUtf16(source, end));
   for (const line of lineRanges(source)) {
     const text = line.text.trim();
     const lower = text.toLowerCase();
@@ -623,14 +632,6 @@ function formFacts(
     })),
     relationships,
   };
-}
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-  }
-  return value;
 }
 export function analyzeProjectFormat(
   request: ProjectAnalyzeRequest,

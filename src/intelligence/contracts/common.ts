@@ -4,7 +4,6 @@ import { z } from "zod";
 export const INTELLIGENCE_SCHEMA_VERSION = "ast-mcp.intelligence.v1" as const;
 
 export const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
-export type Sha256 = z.infer<typeof Sha256Schema>;
 
 export const IdentitySchema = z
   .string()
@@ -27,7 +26,6 @@ export const SourceArtifactIdSchema = namespacedIdentitySchema("source");
 export const SyntaxFactsArtifactIdSchema =
   namespacedIdentitySchema("syntax-facts");
 export const ChunkArtifactIdSchema = namespacedIdentitySchema("chunks");
-export const EmbeddingArtifactIdSchema = namespacedIdentitySchema("embedding");
 export const ResolvedRelationshipsArtifactIdSchema = namespacedIdentitySchema(
   "resolved-relationships",
 );
@@ -43,10 +41,6 @@ export const GenerationIdSchema = namespacedIdentitySchema("generation");
 export const JobIdSchema = namespacedIdentitySchema("job");
 export const ReaderPinIdSchema = namespacedIdentitySchema("reader-pin");
 export const SearchHitIdSchema = namespacedIdentitySchema("search-hit");
-export const RetentionPolicyIdSchema =
-  namespacedIdentitySchema("retention-policy");
-export const MigrationIdSchema = namespacedIdentitySchema("migration");
-export const CoordinatorIdSchema = namespacedIdentitySchema("coordinator");
 
 export const NonEmptyStringSchema = z.string().trim().min(1);
 export const AbsolutePathSchema = z
@@ -89,9 +83,6 @@ export const RepositoryRelativePathSchema = z
       !value.endsWith("/"),
     { message: "Repository path must be normalized" },
   );
-export type RepositoryRelativePath = z.infer<
-  typeof RepositoryRelativePathSchema
->;
 
 export function compareRepositoryPaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -103,7 +94,6 @@ export const SourcePositionSchema = z.object({
   column: z.number().int().nonnegative(),
   line: z.number().int().nonnegative(),
 });
-export type SourcePosition = z.infer<typeof SourcePositionSchema>;
 
 export const EvidenceRangeSchema = z
   .object({

@@ -50,9 +50,9 @@ A stale hash, ambiguous match, capped preview, unsupported route, formatter reje
 
 ## Distribution
 
-Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. Host configurations reference the stable installed CLI, so native intelligence and the pinned formatter remain available for the installation lifetime.
+Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence and the pinned formatter remain available for the installation lifetime.
 
-Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. Dprint formats candidate writes across supported languages.
+Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Dprint formats candidate writes across supported languages. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
 
 ## Install
 

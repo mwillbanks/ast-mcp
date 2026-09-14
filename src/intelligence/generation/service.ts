@@ -174,6 +174,8 @@ export async function generateWithEvidence<T>(
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) controller.abort();
   try {
+    if (controller.signal.aborted)
+      return abortedResult(base, provider, identity, timedOut);
     const providerRequest = {
       evidence: request.evidence,
       maxTokens: request.budget.maxOutputTokens,

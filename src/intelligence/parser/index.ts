@@ -1,4 +1,5 @@
 export * from "./coordinates.ts";
+export * from "./language-catalog.ts";
 export * from "./parser.ts";
 export * from "./pool.ts";
 export * from "./registry.ts";

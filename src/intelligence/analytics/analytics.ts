@@ -333,6 +333,33 @@ function seededOrder(graph: LevelGraph, seed: number): number[] {
     .map(({ index }) => index);
 }
 
+function selectCommunity(
+  initial: number,
+  candidates: readonly number[],
+  weights: ReadonlyMap<number, number>,
+  totals: readonly number[],
+  resolution: number,
+  strength: number,
+  denominator: number,
+  tolerance: number,
+): number {
+  let best = initial;
+  let bestGain = 0;
+  for (const candidate of candidates) {
+    const gain =
+      (weights.get(candidate) ?? 0) -
+      (resolution * strength * (totals[candidate] ?? 0)) / denominator;
+    if (
+      gain > bestGain + tolerance ||
+      (Math.abs(gain - bestGain) <= tolerance && candidate < best)
+    ) {
+      best = candidate;
+      bestGain = gain;
+    }
+  }
+  return best;
+}
+
 function localMove(
   graph: LevelGraph,
   seed: number,
@@ -364,27 +391,23 @@ function localMove(
       const strength = graph.strengths[node] ?? 0;
       const weights = new Map<number, number>();
       for (const [neighbor, weight] of graph.adjacency.get(node) ?? []) {
+        if (neighbor === node) continue;
         const community = partition[neighbor] ?? neighbor;
         weights.set(community, (weights.get(community) ?? 0) + weight);
       }
       totals[current] = (totals[current] ?? 0) - strength;
-      let best = current;
-      let bestGain = 0;
-      const candidates = [...new Set([current, ...weights.keys()])].sort(
-        (left, right) => left - right,
+      const best = selectCommunity(
+        current,
+        [...new Set([current, ...weights.keys()])].sort(
+          (left, right) => left - right,
+        ),
+        weights,
+        totals,
+        resolution,
+        strength,
+        denominator,
+        tolerance,
       );
-      for (const candidate of candidates) {
-        const gain =
-          (weights.get(candidate) ?? 0) -
-          (resolution * strength * (totals[candidate] ?? 0)) / denominator;
-        if (
-          gain > bestGain + tolerance ||
-          (Math.abs(gain - bestGain) <= tolerance && candidate < best)
-        ) {
-          best = candidate;
-          bestGain = gain;
-        }
-      }
       partition[node] = best;
       totals[best] = (totals[best] ?? 0) + strength;
       if (best !== current) moved = true;
@@ -457,22 +480,16 @@ function leidenRefinement(
       if (community === current) continue;
       weights.set(community, (weights.get(community) ?? 0) + weight);
     }
-    let best = current;
-    let bestGain = 0;
-    for (const candidate of [...weights.keys()].sort(
-      (left, right) => left - right,
-    )) {
-      const gain =
-        (weights.get(candidate) ?? 0) -
-        (resolution * strength * (totals[candidate] ?? 0)) / denominator;
-      if (
-        gain > bestGain + tolerance ||
-        (Math.abs(gain - bestGain) <= tolerance && candidate < best)
-      ) {
-        best = candidate;
-        bestGain = gain;
-      }
-    }
+    const best = selectCommunity(
+      current,
+      [...weights.keys()].sort((left, right) => left - right),
+      weights,
+      totals,
+      resolution,
+      strength,
+      denominator,
+      tolerance,
+    );
     if (best !== current) {
       refined[node] = best;
       totals[current] = (totals[current] ?? 0) - strength;
@@ -660,7 +677,7 @@ function betweenness(
   const adjacency = new Map<string, string[]>();
   for (const nodeId of projection.nodeIds) adjacency.set(nodeId, []);
   for (const edge of projection.edges) {
-    if (edge.sourceNodeId === edge.targetNodeId) continue;
+    if (edge.weight <= 0 || edge.sourceNodeId === edge.targetNodeId) continue;
     adjacency.get(edge.sourceNodeId)?.push(edge.targetNodeId);
     adjacency.get(edge.targetNodeId)?.push(edge.sourceNodeId);
   }

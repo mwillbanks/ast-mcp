@@ -4,6 +4,7 @@ import {
   documentCapabilityFingerprint,
 } from "./documents/manifest.ts";
 import { dynamicLanguageGroupManifest } from "./languages/dynamic/manifest.ts";
+import { deepFreeze } from "./languages/immutable.ts";
 import { infraLanguageGroupManifest } from "./languages/infra/manifest.ts";
 import { jvmLanguageGroupManifest } from "./languages/jvm/manifest.ts";
 import { legacyLanguageGroupManifest } from "./languages/legacy/manifest.ts";
@@ -38,15 +39,6 @@ type AdapterGroup = {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-  }
-  return value;
 }
 
 export function createIntelligenceManifestRegistry(

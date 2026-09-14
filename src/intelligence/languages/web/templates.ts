@@ -1,3 +1,4 @@
+import { type ParserError, parseFragment } from "parse5";
 import type {
   ExactSourceRange,
   NormalizedSyntaxNode,
@@ -30,7 +31,7 @@ interface RegionCandidate {
   start: number;
 }
 
-const templateExtractorVersion = "ast-mcp.web.templates.v1";
+const templateExtractorVersion = "ast-mcp.web.templates.v2";
 
 function id(
   sourceDigest: string,
@@ -50,30 +51,97 @@ function id(
   );
 }
 
-function scriptLanguage(attributes: string): "javascript" | "typescript" {
-  return /(?:lang\s*=\s*["'](?:ts|typescript)["']|type\s*=\s*["']text\/typescript["'])/i.test(
-    attributes,
-  )
+interface HtmlLocation {
+  endOffset: number;
+  endTag?: HtmlLocation;
+  startOffset: number;
+  startTag?: HtmlLocation;
+}
+
+interface HtmlNode {
+  attrs?: Array<{ name: string; value: string }>;
+  childNodes?: HtmlNode[];
+  content?: HtmlNode;
+  sourceCodeLocation?: HtmlLocation;
+  tagName?: string;
+}
+
+interface HtmlParseIssue {
+  code: string;
+  end: number;
+  start: number;
+}
+
+interface ScriptExtraction {
+  malformedStarts: number[];
+  parseIssues: HtmlParseIssue[];
+  regions: RegionCandidate[];
+}
+
+function scriptLanguage(
+  attributes: readonly { name: string; value: string }[],
+): "javascript" | "typescript" {
+  const values = new Map(
+    attributes.map(({ name, value }) => [
+      name.toLowerCase(),
+      value.toLowerCase(),
+    ]),
+  );
+  return ["ts", "typescript"].includes(values.get("lang") ?? "") ||
+    values.get("type") === "text/typescript"
     ? "typescript"
     : "javascript";
 }
 
-function tagRegions(source: string): RegionCandidate[] {
-  const regions: RegionCandidate[] = [];
-  const pattern = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-  for (const match of source.matchAll(pattern)) {
-    const whole = match[0];
-    const attributes = match[1] ?? "";
-    const body = match[2] ?? "";
-    const offset = match.index ?? 0;
-    const bodyOffset = whole.indexOf(body);
-    regions.push({
-      end: offset + bodyOffset + body.length,
-      languageId: scriptLanguage(attributes),
-      start: offset + bodyOffset,
-    });
-  }
-  return regions;
+function tagRegions(source: string): ScriptExtraction {
+  const extraction: ScriptExtraction = {
+    malformedStarts: [],
+    parseIssues: [],
+    regions: [],
+  };
+  const parseIssues: HtmlParseIssue[] = [];
+  const fragment = parseFragment(source, {
+    onParseError(error: ParserError) {
+      parseIssues.push({
+        code: error.code,
+        end: error.endOffset,
+        start: error.startOffset,
+      });
+    },
+    sourceCodeLocationInfo: true,
+  }) as unknown as HtmlNode;
+  const visited = new Set<HtmlNode>();
+  const visit = (node: HtmlNode): void => {
+    if (visited.has(node)) return;
+    visited.add(node);
+    if (node.tagName?.toLowerCase() === "script") {
+      const location = node.sourceCodeLocation;
+      const startTag = location?.startTag;
+      const endTag = location?.endTag;
+      if (!startTag || !endTag) {
+        extraction.malformedStarts.push(
+          startTag?.startOffset ?? location?.startOffset ?? 0,
+        );
+      } else {
+        extraction.regions.push({
+          end: endTag.startOffset,
+          languageId: scriptLanguage(node.attrs ?? []),
+          start: startTag.endOffset,
+        });
+        extraction.parseIssues.push(
+          ...parseIssues.filter(
+            (issue) =>
+              issue.start >= endTag.startOffset &&
+              issue.start <= endTag.endOffset,
+          ),
+        );
+      }
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+    for (const child of node.content?.childNodes ?? []) visit(child);
+  };
+  visit(fragment);
+  return extraction;
 }
 
 function delimiterRegions(
@@ -123,9 +191,10 @@ function uniqueRegions(regions: RegionCandidate[]): RegionCandidate[] {
 function candidates(
   languageId: WebLanguageId,
   source: string,
+  scripts: ScriptExtraction,
 ): RegionCandidate[] {
   if (languageId === "vue" || languageId === "svelte") {
-    return uniqueRegions(tagRegions(source));
+    return uniqueRegions(scripts.regions);
   }
   if (languageId === "astro") {
     return uniqueRegions([
@@ -135,7 +204,7 @@ function candidates(
         /\r?\n---(?=\s*(?:\r?\n|$))/,
         "typescript",
       ),
-      ...tagRegions(source),
+      ...scripts.regions,
     ]);
   }
   if (languageId === "ejs") {
@@ -326,17 +395,36 @@ function malformedDiagnostics(
   languageId: WebLanguageId,
   source: string,
   _regions: readonly EmbeddedRegion[],
+  scripts: ScriptExtraction,
 ): WebLanguageDiagnostic[] {
   const coordinates = new SourceCoordinateIndex(source);
   const diagnostics: WebLanguageDiagnostic[] = [];
+  if (["astro", "svelte", "vue"].includes(languageId)) {
+    for (const start of scripts.malformedStarts) {
+      diagnostics.push({
+        code: "malformed-embedded-region",
+        message: "Unclosed script element",
+        range: coordinates.range(start, source.length),
+        severity: "error",
+      });
+    }
+    for (const issue of scripts.parseIssues) {
+      const start = Math.min(issue.start, source.length);
+      const end = Math.min(Math.max(issue.end, start), source.length);
+      diagnostics.push({
+        code: "malformed-embedded-region",
+        message: `HTML parse error: ${issue.code}`,
+        range: coordinates.range(start, end),
+        severity: "error",
+      });
+    }
+  }
   const checks: Array<[RegExp, RegExp, string]> =
-    languageId === "vue" || languageId === "svelte"
-      ? [[/<script\b/gi, /<\/script\s*>/gi, "Unclosed script element"]]
-      : languageId === "ejs"
-        ? [[/<%(?:_|-|=|#)?/g, /[-_]?%>/g, "Unclosed EJS block"]]
-        : languageId === "blade"
-          ? [[/@php\b/g, /@endphp\b/g, "Unclosed Blade PHP block"]]
-          : [];
+    languageId === "ejs"
+      ? [[/<%(?:_|-|=|#)?/g, /[-_]?%>/g, "Unclosed EJS block"]]
+      : languageId === "blade"
+        ? [[/@php\b/g, /@endphp\b/g, "Unclosed Blade PHP block"]]
+        : [];
   for (const [open, close, message] of checks) {
     const openCount = [...source.matchAll(open)].length;
     const closeCount = [...source.matchAll(close)].length;
@@ -365,13 +453,27 @@ function malformedDiagnostics(
   return diagnostics;
 }
 
+function syntaxDiagnostic(diagnostic: WebLanguageDiagnostic): SyntaxDiagnostic {
+  return {
+    code:
+      diagnostic.code === "malformed-embedded-region"
+        ? "parse-error"
+        : "missing-node",
+    message: diagnostic.message,
+    range: diagnostic.range,
+    severity: diagnostic.severity,
+  };
+}
+
 export function analyzeTemplate(
   request: WebAnalyzeRequest,
 ): WebLanguageAnalysis {
   const sourceDigest = sha256(request.source);
+  const scripts = tagRegions(request.source);
   const regions: EmbeddedRegion[] = candidates(
     request.languageId,
     request.source,
+    scripts,
   ).map((region, ordinal) => ({
     endUtf16: region.end,
     hostLanguageId: request.languageId,
@@ -456,20 +558,9 @@ export function analyzeTemplate(
     request.languageId,
     request.source,
     regions,
+    scripts,
   );
-  diagnostics.push(
-    ...hostDiagnostics.map(
-      (diagnostic): SyntaxDiagnostic => ({
-        code:
-          diagnostic.code === "malformed-embedded-region"
-            ? "parse-error"
-            : "missing-node",
-        message: diagnostic.message,
-        range: diagnostic.range,
-        severity: diagnostic.severity,
-      }),
-    ),
-  );
+  diagnostics.push(...hostDiagnostics.map(syntaxDiagnostic));
   const facts: SyntaxFacts = {
     calls,
     diagnostics,
@@ -481,7 +572,7 @@ export function analyzeTemplate(
     inheritance,
     languageId: request.languageId,
     nodes: [root],
-    parserFingerprint: sha256("ast-mcp.web.template-parser.v1"),
+    parserFingerprint: sha256("ast-mcp.web.template-parser.v2"),
     partial: diagnostics.some((diagnostic) => diagnostic.severity === "error"),
     references,
     rootNodeId: root.id,

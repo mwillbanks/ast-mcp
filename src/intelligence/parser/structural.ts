@@ -1,4 +1,5 @@
 import { parse, type SgNode } from "@ast-grep/napi";
+import { compareSourceRanges } from "../graph/shared.ts";
 import { SourceCoordinateIndex, sha256 } from "./coordinates.ts";
 import { defaultLanguageRegistry, type LanguageRegistry } from "./registry.ts";
 import type {
@@ -18,15 +19,12 @@ function orderedMatches(
   registry.registerDynamicGrammars();
   const root = parse(grammar.astGrepLanguage, source).root();
   const coordinates = new SourceCoordinateIndex(source);
-  const nodes = root.findAll(pattern).sort((left, right) => {
-    const leftRange = left.range();
-    const rightRange = right.range();
-    return (
-      leftRange.start.index - rightRange.start.index ||
-      leftRange.end.index - rightRange.end.index ||
-      String(left.kind()).localeCompare(String(right.kind()))
-    );
-  });
+  const nodes = root.findAll(pattern).sort((left, right) =>
+    compareSourceRanges(left.range(), right.range(), {
+      left: String(left.kind()),
+      right: String(right.kind()),
+    }),
+  );
   const matches = nodes.map((node, ordinal) => {
     const range = coordinates.fromAstRange(node.range());
     return {
@@ -111,14 +109,9 @@ export function rewriteStructuralMatches(
     ) {
       throw new TypeError("Expected match count must be a nonnegative integer");
     }
-    const nodes = root.findAll(operation.pattern).sort((left, right) => {
-      const leftRange = left.range();
-      const rightRange = right.range();
-      return (
-        leftRange.start.index - rightRange.start.index ||
-        leftRange.end.index - rightRange.end.index
-      );
-    });
+    const nodes = root
+      .findAll(operation.pattern)
+      .sort((left, right) => compareSourceRanges(left.range(), right.range()));
     if (nodes.length !== operation.expectedMatches) {
       throw new RangeError(
         "Structural operation " +

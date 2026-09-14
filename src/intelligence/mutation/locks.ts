@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { lstat, open, readFile, rename, rm } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
 
@@ -34,6 +42,8 @@ interface LockRecord {
 
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_POLL_MS = 10;
+const ORPHAN_ARTIFACT_GRACE_MS = 60_000;
+const ORPHAN_CLEANUP_LIMIT = 32;
 const queues = new Map<string, Promise<void>>();
 
 function lockError(
@@ -119,9 +129,10 @@ export async function mutationLockPath(filePath: string): Promise<string> {
       directory = parent;
     }
   }
+  const basename = path.basename(filePath);
   const name =
     directory === targetDirectory
-      ? `.${path.basename(filePath)}.ast-mcp.lock`
+      ? `${basename.startsWith(".") ? "" : "."}${basename}.ast-mcp.lock`
       : `.${sha256(filePath).slice(0, 24)}.ast-mcp.lock`;
   return path.join(directory, name);
 }
@@ -158,9 +169,149 @@ async function delay(
   });
 }
 
+async function restoreMovedLock(
+  lock: string,
+  tombstone: string,
+): Promise<void> {
+  try {
+    await link(tombstone, lock);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
 async function removeIfOwned(lock: string, token: string): Promise<void> {
-  const record = await readRecord(lock);
-  if (record?.token === token) await rm(lock, { force: true });
+  const tombstone = `${lock}.stale-${randomUUID()}`;
+  try {
+    await rename(lock, tombstone);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  try {
+    const record = await readRecord(tombstone);
+    if (record?.token !== token) await restoreMovedLock(lock, tombstone);
+  } finally {
+    await rm(tombstone, { force: true });
+  }
+}
+
+async function writePendingRecord(
+  lock: string,
+  record: LockRecord,
+): Promise<string> {
+  const pending = `${lock}.pending-${randomUUID()}`;
+  const handle = await open(pending, "wx", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(record), "utf8");
+    await handle.sync();
+  } catch (error) {
+    await rm(pending, { force: true });
+    throw error;
+  } finally {
+    await handle.close();
+  }
+  return pending;
+}
+
+async function publishNewRecord(
+  lock: string,
+  record: LockRecord,
+): Promise<void> {
+  const pending = await writePendingRecord(lock, record);
+  try {
+    await link(pending, lock);
+  } finally {
+    await rm(pending, { force: true });
+  }
+}
+
+async function replaceOwnedRecord(
+  lock: string,
+  active: LockRecord,
+  renewed: LockRecord,
+): Promise<void> {
+  const pending = await writePendingRecord(lock, renewed);
+  const tombstone = `${lock}.stale-${randomUUID()}`;
+  try {
+    await rename(lock, tombstone);
+    const moved = await readRecord(tombstone);
+    if (
+      !moved ||
+      moved.token !== active.token ||
+      moved.epoch !== active.epoch ||
+      moved.expiresAt !== active.expiresAt
+    ) {
+      await restoreMovedLock(lock, tombstone);
+      throw lockError("lock_fenced", "File lock ownership was fenced", false);
+    }
+    try {
+      await link(pending, lock);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+        throw lockError("lock_fenced", "File lock ownership was fenced", false);
+      throw error;
+    }
+  } finally {
+    await Promise.all([
+      rm(pending, { force: true }),
+      rm(tombstone, { force: true }),
+    ]);
+  }
+}
+
+async function cleanupOrphanArtifacts(lock: string): Promise<void> {
+  const directory = path.dirname(lock);
+  const basename = path.basename(lock);
+  let entries: string[];
+  try {
+    entries = await readdir(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const cutoff = Date.now() - ORPHAN_ARTIFACT_GRACE_MS;
+  const candidates = entries
+    .filter(
+      (entry) =>
+        entry.startsWith(`${basename}.pending-`) ||
+        entry.startsWith(`${basename}.stale-`),
+    )
+    .sort()
+    .slice(0, ORPHAN_CLEANUP_LIMIT);
+  for (const candidate of candidates) {
+    const artifact = path.join(directory, candidate);
+    try {
+      const metadata = await lstat(artifact);
+      if (metadata.isFile() && metadata.mtimeMs <= cutoff)
+        await rm(artifact, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function recoverInitializing(
+  lock: string,
+  initializingSince: number,
+): Promise<boolean> {
+  if (Date.now() - initializingSince < 250) return false;
+  const tombstone = `${lock}.stale-${randomUUID()}`;
+  try {
+    await rename(lock, tombstone);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  try {
+    if ((await readFile(tombstone, "utf8")).length !== 0) {
+      await restoreMovedLock(lock, tombstone);
+      return false;
+    }
+    return true;
+  } finally {
+    await rm(tombstone, { force: true });
+  }
 }
 
 async function recoverExpired(
@@ -211,6 +362,7 @@ export async function acquireFileLock(
   const ownerId = options.ownerId ?? `${process.pid}:${randomUUID()}`;
   let epoch = 1;
   let malformedSince: number | null = null;
+  await cleanupOrphanArtifacts(lock);
   while (true) {
     const timestamp = now();
     assertWaiting(options, timestamp);
@@ -224,9 +376,7 @@ export async function acquireFileLock(
       token,
     };
     try {
-      const handle = await open(lock, "wx", 0o600);
-      await handle.writeFile(JSON.stringify(record), "utf8");
-      await handle.close();
+      await publishNewRecord(lock, record);
       let expiresAt = record.expiresAt;
       let released = false;
       let pendingAccess = Promise.resolve();
@@ -265,40 +415,24 @@ export async function acquireFileLock(
             "File lock ownership was fenced",
             false,
           );
-        const renewal = await open(lock, "r+");
-        try {
-          const before = await renewal.stat();
-          const current = exactRecord(
-            JSON.parse(await renewal.readFile("utf8")),
+        const renewed: LockRecord = {
+          ...active,
+          expiresAt: now() + leaseMs,
+        };
+        await replaceOwnedRecord(lock, active, renewed);
+        const latest = await readRecord(lock);
+        if (
+          !latest ||
+          latest.token !== token ||
+          latest.epoch !== epoch ||
+          latest.expiresAt !== renewed.expiresAt
+        )
+          throw lockError(
+            "lock_fenced",
+            "File lock ownership was fenced",
+            false,
           );
-          if (
-            !current ||
-            current.token !== token ||
-            current.epoch !== epoch ||
-            current.expiresAt !== active.expiresAt
-          )
-            throw lockError(
-              "lock_fenced",
-              "File lock ownership was fenced",
-              false,
-            );
-          const latest = await lstat(lock);
-          if (latest.dev !== before.dev || latest.ino !== before.ino)
-            throw lockError(
-              "lock_fenced",
-              "File lock ownership was fenced",
-              false,
-            );
-          const renewed: LockRecord = {
-            ...current,
-            expiresAt: now() + leaseMs,
-          };
-          await renewal.truncate(0);
-          await renewal.write(JSON.stringify(renewed), 0, "utf8");
-          expiresAt = renewed.expiresAt;
-        } finally {
-          await renewal.close();
-        }
+        expiresAt = renewed.expiresAt;
       };
       const exclusive = <Result>(
         action: () => Promise<Result>,
@@ -336,13 +470,27 @@ export async function acquireFileLock(
         existing = await readRecord(lock);
       } catch (readError) {
         const code = (readError as { code?: string }).code;
-        if (code === "lock_record_malformed" && malformedSince === null)
+        if (
+          (code === "lock_record_initializing" ||
+            code === "lock_record_malformed") &&
+          malformedSince === null
+        )
           malformedSince = Date.now();
         const withinInitializationGrace =
           malformedSince !== null && Date.now() - malformedSince < 250;
         if (
-          code === "lock_record_initializing" ||
-          (code === "lock_record_malformed" && withinInitializationGrace)
+          code === "lock_record_initializing" &&
+          !withinInitializationGrace &&
+          (await recoverInitializing(lock, malformedSince ?? Date.now()))
+        ) {
+          epoch += 1;
+          malformedSince = null;
+          continue;
+        }
+        if (
+          (code === "lock_record_initializing" ||
+            code === "lock_record_malformed") &&
+          withinInitializationGrace
         ) {
           await delay(pollMs, options);
           continue;
@@ -417,7 +565,9 @@ export async function withFencedFileLocks<Result>(
   operation: (leases: readonly FileLockLease[]) => Promise<Result>,
   options: FileLockOptions = {},
 ): Promise<Result> {
-  const sorted = [...new Set(filePaths)].sort();
+  const sorted = [...new Set(filePaths)]
+    .filter((filePath) => !path.basename(filePath).includes(".ast-mcp.lock"))
+    .sort();
   const leases: FileLockLease[] = [];
   const acquire = async (index: number): Promise<Result> => {
     if (index === sorted.length) return operation(leases);

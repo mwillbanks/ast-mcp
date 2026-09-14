@@ -99,7 +99,6 @@ export const RetrievalIntentSchema = z.enum([
   "behavior",
   "documentation",
 ]);
-export type RetrievalIntent = z.infer<typeof RetrievalIntentSchema>;
 
 export const RetrievalBudgetSchema = z
   .object({
@@ -119,7 +118,6 @@ export const RetrievalBudgetSchema = z
     timeoutMs: z.number().int().positive().max(120_000).default(5_000),
   })
   .strict();
-export type RetrievalBudget = z.infer<typeof RetrievalBudgetSchema>;
 
 export const RetrievalRequestSchema = z
   .object({

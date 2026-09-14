@@ -1,16 +1,12 @@
 import { z } from "zod";
 import {
   AbsolutePathSchema,
-  ChunkArtifactIdSchema,
-  CoordinatorIdSchema,
   createIdentity,
   GenerationIdSchema,
   INTELLIGENCE_SCHEMA_VERSION,
   JobIdSchema,
-  MigrationIdSchema,
   NonEmptyStringSchema,
   ReaderPinIdSchema,
-  RetentionPolicyIdSchema,
   RevisionIdSchema,
   RevisionManifestArtifactIdSchema,
   Sha256Schema,
@@ -101,6 +97,7 @@ export const LanceTableNameSchema = z.enum([
   "graph_occurrences",
   "graph_edges",
   "graph_evidence",
+  "generation_artifacts",
   "revision_membership",
   "workspaces",
   "jobs",
@@ -193,11 +190,13 @@ function sortedTableVersions(
 export const PublicationProtocolSchema = z.enum([
   "legacy-v1",
   "reservation-v1",
+  "reservation-v2",
 ]);
-export type PublicationProtocol = z.infer<typeof PublicationProtocolSchema>;
 
 export const PublicationReservationIdentityInputSchema = z
   .object({
+    attempt: z.number().int().positive().optional(),
+    inputFingerprint: Sha256Schema.optional(),
     manifestArtifactId: RevisionManifestArtifactIdSchema,
     requiredTables: RequiredPublicationTablesSchema,
     reservationKey: NonEmptyStringSchema,
@@ -211,9 +210,16 @@ export function createPublicationReservationId(
   input: z.input<typeof PublicationReservationIdentityInputSchema>,
 ): string {
   const parsed = PublicationReservationIdentityInputSchema.parse(input);
+  const { attempt, inputFingerprint, ...coordinates } = parsed;
   return createIdentity("generation", {
-    ...parsed,
-    requiredTables: sortedRequiredTables(parsed.requiredTables),
+    ...(attempt === undefined ? {} : { attempt }),
+    ...(inputFingerprint === undefined ? {} : { inputFingerprint }),
+    manifestArtifactId: coordinates.manifestArtifactId,
+    requiredTables: sortedRequiredTables(coordinates.requiredTables),
+    reservationKey: coordinates.reservationKey,
+    revisionId: coordinates.revisionId,
+    storageDomainId: coordinates.storageDomainId,
+    workspaceId: coordinates.workspaceId,
   });
 }
 
@@ -234,11 +240,13 @@ export const PublicationReservationSchema = z
   .object({
     abandonedAt: TimestampSchema.nullable(),
     abandonReason: NonEmptyStringSchema.nullable(),
+    attempt: z.number().int().positive().optional(),
     expiresAt: TimestampSchema,
     generationId: GenerationIdSchema,
     immutable: z.literal(false),
+    inputFingerprint: Sha256Schema.optional(),
     manifestArtifactId: RevisionManifestArtifactIdSchema,
-    publicationProtocol: z.literal("reservation-v1"),
+    publicationProtocol: z.enum(["reservation-v1", "reservation-v2"]),
     requiredTables: RequiredPublicationTablesSchema,
     reservationKey: NonEmptyStringSchema,
     reservedAt: TimestampSchema,
@@ -253,6 +261,8 @@ export const PublicationReservationSchema = z
   .superRefine((reservation, context) => {
     addUniqueTableVersionIssue(reservation.tableVersions, context);
     const expected = createPublicationReservationId({
+      attempt: reservation.attempt,
+      inputFingerprint: reservation.inputFingerprint,
       manifestArtifactId: reservation.manifestArtifactId,
       requiredTables: reservation.requiredTables,
       reservationKey: reservation.reservationKey,
@@ -260,6 +270,18 @@ export const PublicationReservationSchema = z
       storageDomainId: reservation.storageDomainId,
       workspaceId: reservation.workspaceId,
     });
+    const isV2 = reservation.publicationProtocol === "reservation-v2";
+    if (
+      isV2 !==
+      (reservation.attempt !== undefined &&
+        reservation.inputFingerprint !== undefined)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Reservation v2 requires attempt and input fingerprint",
+        path: ["publicationProtocol"],
+      });
+    }
     if (reservation.generationId !== expected) {
       context.addIssue({
         code: "custom",
@@ -317,8 +339,10 @@ export function createPublicationGenerationId(
 
 export const PublicationGenerationSchema = z
   .object({
+    attempt: z.number().int().positive().optional(),
     generationId: GenerationIdSchema,
     immutable: z.literal(true),
+    inputFingerprint: Sha256Schema.optional(),
     manifestArtifactId: RevisionManifestArtifactIdSchema,
     publicationProtocol: PublicationProtocolSchema.optional(),
     publishedAt: TimestampSchema,
@@ -340,8 +364,11 @@ export const PublicationGenerationSchema = z
     if (!complete) return;
     const protocol = generation.publicationProtocol ?? "legacy-v1";
     const expected =
-      protocol === "reservation-v1" && generation.reservationKey
+      (protocol === "reservation-v1" || protocol === "reservation-v2") &&
+      generation.reservationKey
         ? createPublicationReservationId({
+            attempt: generation.attempt,
+            inputFingerprint: generation.inputFingerprint,
             manifestArtifactId: generation.manifestArtifactId,
             requiredTables: generation.requiredTables ?? [],
             reservationKey: generation.reservationKey,
@@ -357,8 +384,14 @@ export const PublicationGenerationSchema = z
             workspaceId: generation.workspaceId,
           });
     if (
-      (protocol === "reservation-v1" &&
+      ((protocol === "reservation-v1" || protocol === "reservation-v2") &&
         (!generation.reservationKey || !generation.requiredTables)) ||
+      (protocol === "reservation-v2" &&
+        (generation.attempt === undefined ||
+          generation.inputFingerprint === undefined)) ||
+      (protocol !== "reservation-v2" &&
+        (generation.attempt !== undefined ||
+          generation.inputFingerprint !== undefined)) ||
       (protocol === "legacy-v1" &&
         (generation.reservationKey != null ||
           generation.requiredTables !== undefined)) ||
@@ -375,9 +408,11 @@ export type PublicationGeneration = z.infer<typeof PublicationGenerationSchema>;
 
 export const ReaderPinSchema = z
   .object({
+    attempt: z.number().int().positive().optional(),
     createdAt: TimestampSchema,
     expiresAt: TimestampSchema,
     generationId: GenerationIdSchema,
+    inputFingerprint: Sha256Schema.optional(),
     manifestArtifactId: RevisionManifestArtifactIdSchema,
     pinId: ReaderPinIdSchema,
     publicationProtocol: PublicationProtocolSchema.optional(),
@@ -395,8 +430,11 @@ export const ReaderPinSchema = z
     if (complete) {
       const protocol = pin.publicationProtocol ?? "legacy-v1";
       const expected =
-        protocol === "reservation-v1" && pin.reservationKey
+        (protocol === "reservation-v1" || protocol === "reservation-v2") &&
+        pin.reservationKey
           ? createPublicationReservationId({
+              attempt: pin.attempt,
+              inputFingerprint: pin.inputFingerprint,
               manifestArtifactId: pin.manifestArtifactId,
               requiredTables: pin.requiredTables ?? [],
               reservationKey: pin.reservationKey,
@@ -412,8 +450,12 @@ export const ReaderPinSchema = z
               workspaceId: pin.workspaceId,
             });
       if (
-        (protocol === "reservation-v1" &&
+        ((protocol === "reservation-v1" || protocol === "reservation-v2") &&
           (!pin.reservationKey || !pin.requiredTables)) ||
+        (protocol === "reservation-v2" &&
+          (pin.attempt === undefined || pin.inputFingerprint === undefined)) ||
+        (protocol !== "reservation-v2" &&
+          (pin.attempt !== undefined || pin.inputFingerprint !== undefined)) ||
         (protocol === "legacy-v1" &&
           (pin.reservationKey != null || pin.requiredTables !== undefined)) ||
         pin.generationId !== expected
@@ -448,6 +490,8 @@ export function assertReaderPinsGeneration(
     pin.workspaceId !== generation.workspaceId ||
     pin.revisionId !== generation.revisionId ||
     pin.manifestArtifactId !== generation.manifestArtifactId ||
+    pin.attempt !== generation.attempt ||
+    pin.inputFingerprint !== generation.inputFingerprint ||
     (pin.publicationProtocol ?? "legacy-v1") !==
       (generation.publicationProtocol ?? "legacy-v1") ||
     (pin.reservationKey ?? null) !== (generation.reservationKey ?? null) ||
@@ -516,69 +560,3 @@ export function createJobIdempotencyKey(
 ): string {
   return createIdentity("job", JobIdempotencyInputSchema.parse(input));
 }
-
-export const PendingEmbeddingSchema = z
-  .object({
-    chunkArtifactId: ChunkArtifactIdSchema,
-    jobId: JobIdSchema,
-    modelFingerprint: Sha256Schema,
-    retryAfter: TimestampSchema.nullable(),
-    state: z.enum(["pending", "running", "failed"]),
-  })
-  .strict();
-
-export const RetentionPolicySchema = z
-  .object({
-    keepFailedJobsForDays: z.number().int().nonnegative(),
-    keepPublishedGenerations: z.number().int().positive(),
-    pinGraceSeconds: z.number().int().nonnegative(),
-    policyId: RetentionPolicyIdSchema,
-    preserveReaderPins: z.literal(true),
-  })
-  .strict();
-
-export const MigrationChangeSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("create-table"),
-      table: LanceTableNameSchema,
-    })
-    .strict(),
-  z
-    .object({
-      column: NonEmptyStringSchema,
-      kind: z.literal("add-column"),
-      table: LanceTableNameSchema,
-    })
-    .strict(),
-  z
-    .object({
-      index: NonEmptyStringSchema,
-      kind: z.literal("create-index"),
-      table: LanceTableNameSchema,
-    })
-    .strict(),
-]);
-
-export const MigrationPreviewSchema = z
-  .object({
-    changes: z.array(MigrationChangeSchema),
-    destructive: z.literal(false),
-    fromSchemaVersion: NonEmptyStringSchema,
-    migrationId: MigrationIdSchema,
-    toSchemaVersion: z.literal(INTELLIGENCE_SCHEMA_VERSION),
-    warnings: z.array(NonEmptyStringSchema),
-  })
-  .strict();
-
-export const CoordinatorRecoverySchema = z
-  .object({
-    coordinatorId: CoordinatorIdSchema,
-    epoch: z.number().int().nonnegative(),
-    inFlightJobIds: z.array(JobIdSchema),
-    lastPublishedGenerationId: GenerationIdSchema.nullable(),
-    recoveredAt: TimestampSchema.nullable(),
-    state: z.enum(["clean", "recovering", "recovered"]),
-    storageDomainId: StorageDomainIdSchema,
-  })
-  .strict();

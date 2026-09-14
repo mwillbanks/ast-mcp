@@ -1,18 +1,11 @@
 import { INTELLIGENCE_SCHEMA_VERSION } from "../../contracts/common.ts";
 import { sha256 } from "../../parser/index.ts";
+import { deepFreeze } from "../immutable.ts";
 import type {
   ProjectFormatCapability,
   ProjectLanguageGroupManifest,
 } from "./types.ts";
 
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-  }
-  return value;
-}
 export const projectFormatCapabilities: readonly ProjectFormatCapability[] =
   deepFreeze([
     {

@@ -2,15 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
   EmbeddedSourceMap,
   findStructuralMatches,
+  LANGUAGE_CAPABILITY_CATALOG,
   LanguageRegistry,
   ParserError,
   ParserWorkerPool,
+  PINNED_GRAMMAR_REGISTRATIONS,
   parseSource,
   rewriteStructuralMatches,
   SourceCoordinateIndex,
   StructuredParserRegistry,
   validateGrammarAsset,
 } from "../src/intelligence/parser/index.ts";
+import { languageForExtension } from "../src/patch/languages.ts";
 
 describe("native intelligence parser", () => {
   test("extracts reusable TypeScript syntax facts without paths", () => {
@@ -380,6 +383,106 @@ describe("native intelligence parser", () => {
     expect(registry.list()).toEqual(["fixture-json", "fixture-jsonc"]);
   });
 
+  test("uses one catalog for analysis and structural language support", () => {
+    const registry = new LanguageRegistry(() => undefined);
+    const catalogIds = LANGUAGE_CAPABILITY_CATALOG.map(
+      (entry) => entry.languageId,
+    );
+    const registryIds = registry.list().map((grammar) => grammar.languageId);
+
+    expect(registryIds).toEqual([...catalogIds].sort());
+    expect(catalogIds).not.toContain("json");
+    expect(catalogIds).not.toContain("jsonc");
+    expect(Object.keys(PINNED_GRAMMAR_REGISTRATIONS).sort()).toEqual(
+      catalogIds.slice(6).sort(),
+    );
+    expect(languageForExtension(".jsx")).toBe("jsx");
+    expect(languageForExtension(".dart")).toBe("dart");
+    expect(languageForExtension(".json")).toBe("json");
+    expect(languageForExtension(".jsonc")).toBe("jsonc");
+
+    const expectedVersions: Readonly<Record<string, string>> = {
+      bash: "0.0.8",
+      c: "0.0.6",
+      cpp: "0.0.6",
+      csharp: "0.0.6",
+      dart: "0.0.7",
+      elixir: "0.0.7",
+      go: "0.0.6",
+      java: "0.0.7",
+      kotlin: "0.0.7",
+      lua: "0.0.7",
+      markdown: "0.0.6",
+      php: "0.0.7",
+      python: "0.0.6",
+      ruby: "0.0.7",
+      rust: "0.0.7",
+      scala: "0.0.7",
+      sql: "0.0.8",
+      swift: "0.0.8",
+      toml: "0.0.9",
+      yaml: "0.0.6",
+    };
+    for (const entry of LANGUAGE_CAPABILITY_CATALOG) {
+      expect(entry.structuralOperations).toEqual({
+        match: true,
+        parse: true,
+        rewrite: true,
+        structuralRead: true,
+      });
+      const expectedVersion = expectedVersions[entry.languageId];
+      if (expectedVersion) {
+        expect(entry.grammarVersion).toBe(
+          `@ast-grep/lang-${entry.languageId}@${expectedVersion}`,
+        );
+      } else {
+        expect(entry.grammarVersion).toStartWith("@ast-grep/napi@0.45.3:");
+      }
+    }
+
+    expect(
+      LANGUAGE_CAPABILITY_CATALOG.find(
+        (entry) => entry.languageId === "typescript",
+      )?.analysis.symbolExtraction,
+    ).toBe(true);
+    expect(
+      LANGUAGE_CAPABILITY_CATALOG.find((entry) => entry.languageId === "toml")
+        ?.analysis.symbolExtraction,
+    ).toBe(false);
+  });
+
+  test("parses sources with pinned native grammar packages", () => {
+    const samples: Readonly<Record<string, string>> = {
+      bash: "echo ok",
+      c: "int main(void) { return 0; }",
+      cpp: "int main() { return 0; }",
+      csharp: "class Service {}",
+      dart: "void main() {}",
+      elixir: "defmodule Service do\nend",
+      go: "package main\nfunc main() {}",
+      java: "class Service {}",
+      kotlin: "class Service",
+      lua: "local value = 1",
+      markdown: "# Heading",
+      php: "<?php function run() {}",
+      python: "def run():\n    return 1",
+      ruby: "def run\nend",
+      rust: "fn main() {}",
+      scala: "class Service",
+      sql: "select 1;",
+      swift: "func run() {}",
+      toml: 'name = "fixture"',
+      yaml: "name: fixture",
+    };
+
+    for (const [languageId, source] of Object.entries(samples)) {
+      const facts = parseSource({ languageId, source });
+      expect(facts.languageId).toBe(languageId);
+      expect(facts.nodes.length).toBeGreaterThan(0);
+      expect(facts.grammarFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    }
+  });
+
   test("validates dynamic grammar assets by stable fingerprint", async () => {
     const nativeBindings = await Array.fromAsync(
       new Bun.Glob("node_modules/@ast-grep/napi-*/ast-grep-napi.*.node").scan({
@@ -469,17 +572,19 @@ describe("native intelligence parser", () => {
     // The injected registrar exercises the production manifest conversion safely.
     dynamicRegistry.registerDynamicGrammars();
     dynamicRegistry.registerDynamicGrammars();
-    expect(registrations).toEqual([
-      {
-        FixtureLanguage: {
-          expandoChar: "_",
-          extensions: [".fixture"],
-          languageSymbol: "tree_sitter_fixture",
-          libraryPath,
-          metaVarChar: "$",
-        },
+    expect(registrations).toHaveLength(2);
+    expect(Object.keys(registrations[0] as object).sort()).toEqual(
+      Object.keys(PINNED_GRAMMAR_REGISTRATIONS).sort(),
+    );
+    expect(registrations[1]).toEqual({
+      FixtureLanguage: {
+        expandoChar: "_",
+        extensions: [".fixture"],
+        languageSymbol: "tree_sitter_fixture",
+        libraryPath,
+        metaVarChar: "$",
       },
-    ]);
+    });
     const manifest = dynamicRegistry.dynamicManifest();
     expect(Object.isFrozen(manifest)).toBe(true);
     expect(Object.isFrozen(manifest.entries)).toBe(true);

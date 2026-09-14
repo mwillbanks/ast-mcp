@@ -103,6 +103,7 @@ export interface PublishInput {
 }
 
 export interface ReservePublicationInput extends PublishInput {
+  inputFingerprint?: string;
   requiredTables: readonly PublicationGenerationTable[];
   reservationKey: string;
   ttlMs?: number;
@@ -359,8 +360,34 @@ export class PinnedGenerationReader {
         { tableName },
       );
     }
+    let effectivePredicate = predicate;
+    if (this.pin.publicationProtocol === "reservation-v2") {
+      const links = this.tables.get("generation_artifacts");
+      if (!links) {
+        throw new StorageError(
+          "mixed_generation",
+          "Generation artifact manifest is unavailable",
+          false,
+          { generationId: this.pin.generationId },
+        );
+      }
+      const linkedRows = await links
+        .query()
+        .where(
+          `generation_id = ${sqlString(this.pin.generationId)} AND table_name = ${sqlString(tableName)}`,
+        )
+        .toArray({ timeoutMs: options.timeoutMs });
+      const primaryKey = TABLE_PRIMARY_KEYS[tableName];
+      const membership = linkedRows
+        .map((row) => `${primaryKey} = ${sqlString(String(row.artifact_id))}`)
+        .join(" OR ");
+      if (!membership) return [];
+      effectivePredicate = predicate
+        ? `(${predicate}) AND (${membership})`
+        : membership;
+    }
     let query = table.query();
-    if (predicate) query = query.where(predicate);
+    if (effectivePredicate) query = query.where(effectivePredicate);
     if (options.limit !== undefined) query = query.limit(options.limit);
     return (await query.toArray({
       timeoutMs: options.timeoutMs,
@@ -567,6 +594,78 @@ export class LanceIntelligenceStore {
           }
           await writeMigration("completed");
         }
+        const membershipMigrationId = createIdentity("migration", {
+          migration: "generation-artifacts-v2",
+          storageDomainId: this.domain.domainId,
+        });
+        const completedMembershipMigration = await this.count(
+          "migrations",
+          `migration_id = ${sqlString(membershipMigrationId)} AND state = 'completed'`,
+        );
+        if (completedMembershipMigration === 0) {
+          const startedAt = this.now().toISOString();
+          const writeMembershipMigration = async (
+            state: "completed" | "running",
+            migratedLinks: number,
+          ): Promise<void> => {
+            await this.writeRowsUnlocked(
+              lease,
+              "migrations",
+              [
+                {
+                  completed_at:
+                    state === "completed" ? this.now().toISOString() : null,
+                  from_schema_version:
+                    "ast-mcp.intelligence.v1-publication-tags",
+                  migration_id: membershipMigrationId,
+                  payload_json: JSON.stringify({
+                    migratedLinks,
+                    migration: "generation-artifacts-v2",
+                    state,
+                  }),
+                  started_at: startedAt,
+                  state,
+                  to_schema_version: INTELLIGENCE_SCHEMA_VERSION,
+                },
+              ],
+              false,
+            );
+          };
+          let migratedLinks = 0;
+          await writeMembershipMigration("running", migratedLinks);
+          for (const tableName of COMPLETE_GENERATION_TABLES) {
+            const table = await latestTable(this.connection, tableName);
+            const rows = await table
+              .query()
+              .where("publication_generation_id IS NOT NULL")
+              .toArray();
+            const primaryKey = TABLE_PRIMARY_KEYS[tableName];
+            const links = rows.map((row) => {
+              const artifactId = String(row[primaryKey]);
+              const generationId = String(row.publication_generation_id);
+              return {
+                artifact_id: artifactId,
+                created_at: this.now().toISOString(),
+                generation_id: generationId,
+                link_id: createIdentity("generation-artifact", {
+                  artifactId,
+                  generationId,
+                  tableName,
+                }),
+                table_name: tableName,
+              };
+            });
+            await this.writeRowsUnlocked(
+              lease,
+              "generation_artifacts",
+              links,
+              true,
+            );
+            migratedLinks += links.length;
+            await writeMembershipMigration("running", migratedLinks);
+          }
+          await writeMembershipMigration("completed", migratedLinks);
+        }
         if ((await this.count("retention")) === 0) {
           const now = new Date().toISOString();
           const policyId = createIdentity("retention-policy", {
@@ -642,6 +741,10 @@ export class LanceIntelligenceStore {
     predicate?: string,
   ): Promise<number> {
     return this.count(tableName, predicate);
+  }
+
+  currentTimestamp(): string {
+    return this.now().toISOString();
   }
 
   async tableCounts(): Promise<Readonly<Record<LanceTableName, number>>> {
@@ -810,6 +913,9 @@ export class LanceIntelligenceStore {
       stored.workspaceId !== token.workspaceId ||
       stored.revisionId !== token.revisionId ||
       stored.manifestArtifactId !== token.manifestArtifactId ||
+      stored.attempt !== token.attempt ||
+      stored.inputFingerprint !== token.inputFingerprint ||
+      stored.publicationProtocol !== token.publicationProtocol ||
       stored.reservationKey !== token.reservationKey ||
       stored.storageDomainId !== token.storageDomainId ||
       JSON.stringify(stored.requiredTables) !==
@@ -831,6 +937,69 @@ export class LanceIntelligenceStore {
       );
     }
     return stored;
+  }
+
+  private async linkGenerationArtifactIdsUnlocked(
+    lease: CoordinatorLease,
+    reservation: PublicationReservation,
+    tableName: PublicationGenerationTable,
+    artifactIds: readonly string[],
+  ): Promise<void> {
+    const links = [...new Set(artifactIds)].map((artifactId) => ({
+      artifact_id: artifactId,
+      created_at: this.now().toISOString(),
+      generation_id: reservation.generationId,
+      link_id: createIdentity("generation-artifact", {
+        artifactId,
+        generationId: reservation.generationId,
+        tableName,
+      }),
+      table_name: tableName,
+    }));
+    await this.writeRowsUnlocked(lease, "generation_artifacts", links, true);
+  }
+
+  private async linkGenerationArtifactsUnlocked(
+    lease: CoordinatorLease,
+    reservation: PublicationReservation,
+    tableName: PublicationGenerationTable,
+    rows: readonly StorageRow[],
+  ): Promise<void> {
+    const primaryKey = TABLE_PRIMARY_KEYS[tableName];
+    await this.linkGenerationArtifactIdsUnlocked(
+      lease,
+      reservation,
+      tableName,
+      rows.map((row) => String(row[primaryKey])),
+    );
+  }
+
+  async recordGenerationArtifacts(
+    reservationInput: PublicationReservation,
+    tableName: PublicationGenerationTable,
+    artifactIds: readonly string[],
+  ): Promise<void> {
+    this.assertWritable();
+    await this.coordinator.exclusive(
+      `record generation artifacts for ${tableName}`,
+      async (lease) => {
+        const reservation = await this.activeReservation(reservationInput);
+        if (!reservation.requiredTables.includes(tableName)) {
+          throw new StorageError(
+            "publication_conflict",
+            "Generation artifact table was not declared by the reservation",
+            false,
+            { generationId: reservation.generationId, tableName },
+          );
+        }
+        await this.linkGenerationArtifactIdsUnlocked(
+          lease,
+          reservation,
+          tableName,
+          artifactIds,
+        );
+      },
+    );
   }
 
   private async updateReservedTableVersion(
@@ -859,6 +1028,96 @@ export class LanceIntelligenceStore {
     return updated;
   }
 
+  private publicationInputFingerprint(input: ReservePublicationInput): string {
+    return (
+      input.inputFingerprint ??
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            manifestArtifactId: input.manifestArtifactId,
+            requiredTables: [...input.requiredTables].sort(),
+            reservationKey: input.reservationKey,
+            revisionId: input.revisionId,
+            storageDomainId: this.domain.domainId,
+            workspaceId: input.workspaceId,
+          }),
+        )
+        .digest("hex")
+    );
+  }
+
+  private publicationCoordinatesMatch(
+    record: Record<string, unknown> | null,
+    input: ReservePublicationInput,
+    inputFingerprint: string,
+    requiredTables: readonly string[],
+  ): boolean {
+    return (
+      record?.publicationProtocol === "reservation-v2" &&
+      record.storageDomainId === this.domain.domainId &&
+      record.workspaceId === input.workspaceId &&
+      record.revisionId === input.revisionId &&
+      record.manifestArtifactId === input.manifestArtifactId &&
+      record.reservationKey === input.reservationKey &&
+      record.inputFingerprint === inputFingerprint &&
+      JSON.stringify(record.requiredTables) === JSON.stringify(requiredTables)
+    );
+  }
+
+  private async activeReservedTable(
+    reservationInput: PublicationReservation,
+    tableName: PublicationGenerationTable,
+    conflictMessage: string,
+  ): Promise<PublicationReservation> {
+    const reservation = await this.activeReservation(reservationInput);
+    if (!reservation.requiredTables.includes(tableName)) {
+      throw new StorageError("publication_conflict", conflictMessage, false, {
+        generationId: reservation.generationId,
+        tableName,
+      });
+    }
+    return reservation;
+  }
+
+  private async updateRecoveryPublication(
+    lease: CoordinatorLease,
+    generationId: string,
+  ): Promise<void> {
+    const recovery = await latestTable(this.connection, "coordinator_recovery");
+    await this.coordinator.fence(lease);
+    const observedAt = this.now().toISOString();
+    await recovery.update({
+      values: { last_published_generation_id: generationId },
+      where:
+        `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
+        `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(observedAt)}`,
+    });
+  }
+
+  async reusablePublication(
+    input: ReservePublicationInput,
+  ): Promise<PublicationGeneration | null> {
+    const inputFingerprint = this.publicationInputFingerprint(input);
+    const requiredTables = [...input.requiredTables].sort();
+    const compatible = (await this.rows("publications"))
+      .map((row) => parseJsonRecord(row.payload_json))
+      .filter(
+        (record) =>
+          record?.state === "published" &&
+          this.publicationCoordinatesMatch(
+            record,
+            input,
+            inputFingerprint,
+            requiredTables,
+          ),
+      )
+      .map((record) => PublicationGenerationSchema.safeParse(record))
+      .filter((result) => result.success)
+      .map((result) => result.data)
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
+    return compatible[0] ?? null;
+  }
+
   async reservePublication(
     input: ReservePublicationInput,
   ): Promise<PublicationReservation> {
@@ -866,51 +1125,57 @@ export class LanceIntelligenceStore {
     const ttlMs = boundedInteger(input.ttlMs, 300_000, 1, 86_400_000);
     return this.coordinator.exclusive("reserve publication", async (lease) => {
       const reservedAt = this.now();
+      const requiredTables = [...input.requiredTables].sort();
+      const inputFingerprint = this.publicationInputFingerprint(input);
+      const attempts = (await this.rows("publications"))
+        .map((row) => parseJsonRecord(row.payload_json))
+        .filter((record) =>
+          this.publicationCoordinatesMatch(
+            record,
+            input,
+            inputFingerprint,
+            requiredTables,
+          ),
+        )
+        .map((record) => PublicationReservationSchema.safeParse(record))
+        .filter((result) => result.success)
+        .map((result) => result.data);
+      const active = attempts
+        .filter(
+          (record) =>
+            record?.state === "reserved" &&
+            Date.parse(String(record.expiresAt)) > reservedAt.getTime(),
+        )
+        .sort(
+          (left, right) => Number(right?.attempt) - Number(left?.attempt),
+        )[0];
+      if (active) return active;
+      const attempt =
+        attempts.reduce(
+          (maximum, record) => Math.max(maximum, Number(record?.attempt ?? 0)),
+          0,
+        ) + 1;
       const generationId = createPublicationReservationId({
+        attempt,
+        inputFingerprint,
         manifestArtifactId: input.manifestArtifactId,
-        requiredTables: [...input.requiredTables],
+        requiredTables,
         reservationKey: input.reservationKey,
         revisionId: input.revisionId,
         storageDomainId: this.domain.domainId,
         workspaceId: input.workspaceId,
       });
-      const existing = await this.publicationRecord(generationId);
-      if (existing) {
-        if (existing.state === "published") {
-          throw new StorageError(
-            "publication_finalized",
-            "Publication reservation is already finalized",
-            false,
-            { generationId },
-          );
-        }
-        if (existing.state === "abandoned") {
-          throw new StorageError(
-            "publication_abandoned",
-            "Publication reservation was abandoned",
-            false,
-            { generationId },
-          );
-        }
-        if (this.now().getTime() >= Date.parse(existing.expiresAt)) {
-          throw new StorageError(
-            "publication_stale",
-            "Publication reservation expired",
-            false,
-            { expiresAt: existing.expiresAt, generationId },
-          );
-        }
-        return existing;
-      }
       const reservation = PublicationReservationSchema.parse({
         abandonedAt: null,
         abandonReason: null,
+        attempt,
         expiresAt: new Date(reservedAt.getTime() + ttlMs).toISOString(),
         generationId,
         immutable: false,
+        inputFingerprint,
         manifestArtifactId: input.manifestArtifactId,
-        publicationProtocol: "reservation-v1",
-        requiredTables: [...input.requiredTables].sort(),
+        publicationProtocol: "reservation-v2",
+        requiredTables,
         reservationKey: input.reservationKey,
         reservedAt: reservedAt.toISOString(),
         revisionId: input.revisionId,
@@ -948,15 +1213,11 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       `write reserved ${tableName}`,
       async (lease) => {
-        const reservation = await this.activeReservation(reservationInput);
-        if (!reservation.requiredTables.includes(tableName)) {
-          throw new StorageError(
-            "publication_conflict",
-            "Reserved write table was not declared by the reservation",
-            false,
-            { generationId: reservation.generationId, tableName },
-          );
-        }
+        const reservation = await this.activeReservedTable(
+          reservationInput,
+          tableName,
+          "Reserved write table was not declared by the reservation",
+        );
         const tagged = rows.map((row) => {
           if (
             row.publication_generation_id !== undefined &&
@@ -982,7 +1243,7 @@ export class LanceIntelligenceStore {
           }
           return {
             ...row,
-            publication_generation_id: reservation.generationId,
+            publication_generation_id: null,
           };
         });
         const metrics = await this.writeRowsUnlocked(
@@ -990,6 +1251,12 @@ export class LanceIntelligenceStore {
           tableName,
           tagged,
           options.immutable ?? IMMUTABLE_TABLES.has(tableName),
+        );
+        await this.linkGenerationArtifactsUnlocked(
+          lease,
+          reservation,
+          tableName,
+          tagged,
         );
         await this.updateReservedTableVersion(lease, reservation, tableName);
         return metrics;
@@ -1048,7 +1315,7 @@ export class LanceIntelligenceStore {
             }
             return {
               ...row,
-              publication_generation_id: reservation.generationId,
+              publication_generation_id: null,
             };
           });
           metrics.push(
@@ -1058,6 +1325,12 @@ export class LanceIntelligenceStore {
               tagged,
               write.options?.immutable ?? IMMUTABLE_TABLES.has(write.tableName),
             ),
+          );
+          await this.linkGenerationArtifactsUnlocked(
+            lease,
+            reservation,
+            write.tableName,
+            tagged,
           );
           reservation = await this.updateReservedTableVersion(
             lease,
@@ -1073,6 +1346,7 @@ export class LanceIntelligenceStore {
   async recordReservedTableVersion(
     reservationInput: PublicationReservation,
     tableName: (typeof COMPLETE_GENERATION_TABLES)[number],
+    artifactIds: readonly string[] = [],
   ): Promise<PublicationReservation> {
     this.assertWritable();
     if (!COMPLETE_GENERATION_TABLES.includes(tableName)) {
@@ -1086,15 +1360,17 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       `record reserved ${tableName}`,
       async (lease) => {
-        const reservation = await this.activeReservation(reservationInput);
-        if (!reservation.requiredTables.includes(tableName)) {
-          throw new StorageError(
-            "publication_conflict",
-            "Reserved version table was not declared by the reservation",
-            false,
-            { generationId: reservation.generationId, tableName },
-          );
-        }
+        const reservation = await this.activeReservedTable(
+          reservationInput,
+          tableName,
+          "Reserved version table was not declared by the reservation",
+        );
+        await this.linkGenerationArtifactIdsUnlocked(
+          lease,
+          reservation,
+          tableName,
+          artifactIds,
+        );
         return this.updateReservedTableVersion(lease, reservation, tableName);
       },
     );
@@ -1109,7 +1385,9 @@ export class LanceIntelligenceStore {
       const existing = await this.publicationRecord(token.generationId);
       if (existing?.state === "published") {
         if (
-          existing.publicationProtocol === "reservation-v1" &&
+          existing.publicationProtocol === token.publicationProtocol &&
+          existing.attempt === token.attempt &&
+          existing.inputFingerprint === token.inputFingerprint &&
           existing.reservationKey === token.reservationKey &&
           existing.workspaceId === token.workspaceId &&
           existing.revisionId === token.revisionId &&
@@ -1142,17 +1420,26 @@ export class LanceIntelligenceStore {
           { generationId: reservation.generationId, missingTables },
         );
       }
+      const producerVersions = new Map(
+        reservation.tableVersions.map((pin) => [pin.table, pin.version]),
+      );
       const tableVersions = await Promise.all(
         COMPLETE_GENERATION_TABLES.map(async (tableName) => {
+          const producerVersion = producerVersions.get(tableName);
+          if (producerVersion !== undefined) {
+            return { table: tableName, version: producerVersion };
+          }
           const table = await latestTable(this.connection, tableName);
           return { table: tableName, version: await table.version() };
         }),
       );
       const generation = PublicationGenerationSchema.parse({
+        attempt: reservation.attempt,
         generationId: reservation.generationId,
         immutable: true,
+        inputFingerprint: reservation.inputFingerprint,
         manifestArtifactId: reservation.manifestArtifactId,
-        publicationProtocol: "reservation-v1",
+        publicationProtocol: reservation.publicationProtocol,
         publishedAt: this.now().toISOString(),
         requiredTables: reservation.requiredTables,
         reservationKey: reservation.reservationKey,
@@ -1169,19 +1456,7 @@ export class LanceIntelligenceStore {
         [this.publicationRow(generation)],
         false,
       );
-      const recovery = await latestTable(
-        this.connection,
-        "coordinator_recovery",
-      );
-      await this.coordinator.fence(lease);
-      await recovery.update({
-        values: {
-          last_published_generation_id: generation.generationId,
-        },
-        where:
-          `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
-          `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(this.now().toISOString())}`,
-      });
+      await this.updateRecoveryPublication(lease, generation.generationId);
       return generation;
     });
   }
@@ -1280,19 +1555,7 @@ export class LanceIntelligenceStore {
         ],
         true,
       );
-      const recovery = await latestTable(
-        this.connection,
-        "coordinator_recovery",
-      );
-      await this.coordinator.fence(lease);
-      await recovery.update({
-        values: {
-          last_published_generation_id: generation.generationId,
-        },
-        where:
-          `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
-          `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(new Date().toISOString())}`,
-      });
+      await this.updateRecoveryPublication(lease, generation.generationId);
       return generation;
     });
   }
@@ -1314,6 +1577,22 @@ export class LanceIntelligenceStore {
     return generations[0] ?? null;
   }
 
+  private generationContainsArtifact(
+    generation: PublicationGeneration,
+    generationLinks: ReadonlySet<string>,
+    tableName: PublicationGenerationTable,
+    artifactId: string,
+    legacyGenerationId?: unknown,
+  ): boolean {
+    if (generation.publicationProtocol !== "reservation-v2") {
+      return (
+        tableName === "relationships" ||
+        String(legacyGenerationId) === generation.generationId
+      );
+    }
+    return generationLinks.has(`${tableName}\0${artifactId}`);
+  }
+
   async verifyLatestGeneration(
     workspaceId: string,
     revisionId: string,
@@ -1324,7 +1603,22 @@ export class LanceIntelligenceStore {
     exhaustive: boolean;
     generation: PublicationGeneration;
   }> {
-    const generation = await this.latestGeneration(workspaceId);
+    const timeoutMs = options.timeoutMs ?? 5_000;
+    const deadline = performance.now() + timeoutMs;
+    const remainingTimeout = (): number => {
+      const remaining = Math.ceil(deadline - performance.now());
+      if (remaining > 0) return remaining;
+      throw new StorageError(
+        "storage_unavailable",
+        "Generation verification exceeded its configured timeout",
+        true,
+        { timeoutMs },
+      );
+    };
+    const maxArtifacts = options.maxArtifacts ?? 100_000;
+    const generation = await this.latestGeneration(workspaceId, {
+      timeoutMs: remainingTimeout(),
+    });
     if (
       !generation ||
       generation.workspaceId !== workspaceId ||
@@ -1341,6 +1635,37 @@ export class LanceIntelligenceStore {
           workspaceId,
         },
       );
+    }
+    const generationLinks = new Set<string>();
+    if (generation.publicationProtocol === "reservation-v2") {
+      const trackedTables = [
+        "artifacts",
+        "relationships",
+        "revision_manifests",
+        "syntax_facts",
+      ] as const satisfies readonly PublicationGenerationTable[];
+      const linkLimit = maxArtifacts + 3;
+      const links = await this.rows(
+        "generation_artifacts",
+        `generation_id = ${sqlString(generation.generationId)} AND (` +
+          trackedTables
+            .map((tableName) => `table_name = ${sqlString(tableName)}`)
+            .join(" OR ") +
+          ")",
+        { limit: linkLimit, timeoutMs: remainingTimeout() },
+      );
+      if (links.length === linkLimit)
+        throw new StorageError(
+          "storage_unavailable",
+          "Generation membership verification exceeded its configured bound",
+          true,
+          { maxArtifacts },
+        );
+      for (const link of links) {
+        generationLinks.add(
+          `${String(link.table_name)}\0${String(link.artifact_id)}`,
+        );
+      }
     }
     const required = generation.requiredTables ?? COMPLETE_GENERATION_TABLES;
     const pins = new Map(
@@ -1391,7 +1716,7 @@ export class LanceIntelligenceStore {
             `artifact_id = ${sqlString(generation.manifestArtifactId)} AND revision_id = ${sqlString(revisionId)}`,
           )
           .limit(1)
-          .toArray({ timeoutMs: options.timeoutMs ?? 5_000 })
+          .toArray({ timeoutMs: remainingTimeout() })
       )[0];
       if (!manifest)
         throw new StorageError(
@@ -1402,7 +1727,13 @@ export class LanceIntelligenceStore {
         );
       if (
         String(manifest.artifact_id) !== generation.manifestArtifactId ||
-        String(manifest.publication_generation_id) !== generation.generationId
+        !this.generationContainsArtifact(
+          generation,
+          generationLinks,
+          "revision_manifests",
+          generation.manifestArtifactId,
+          manifest.publication_generation_id,
+        )
       )
         throw new StorageError(
           "mixed_generation",
@@ -1447,7 +1778,7 @@ export class LanceIntelligenceStore {
           .query()
           .where(`artifact_id = ${sqlString(generation.manifestArtifactId)}`)
           .limit(1)
-          .toArray({ timeoutMs: options.timeoutMs ?? 5_000 })
+          .toArray({ timeoutMs: remainingTimeout() })
       )[0];
       if (!persistedManifestRow)
         throw new StorageError(
@@ -1457,8 +1788,13 @@ export class LanceIntelligenceStore {
           { manifestArtifactId: generation.manifestArtifactId },
         );
       if (
-        String(persistedManifestRow.publication_generation_id) !==
-        generation.generationId
+        !this.generationContainsArtifact(
+          generation,
+          generationLinks,
+          "artifacts",
+          generation.manifestArtifactId,
+          persistedManifestRow.publication_generation_id,
+        )
       )
         throw new StorageError(
           "mixed_generation",
@@ -1538,7 +1874,6 @@ export class LanceIntelligenceStore {
         (sum, values) => sum + values.size,
         0,
       );
-      const maxArtifacts = options.maxArtifacts ?? 100_000;
       if (referenceCount > maxArtifacts)
         throw new StorageError(
           "storage_unavailable",
@@ -1570,13 +1905,18 @@ export class LanceIntelligenceStore {
             .query()
             .where(predicate)
             .limit(values.size)
-            .toArray({ timeoutMs: options.timeoutMs ?? 5_000 });
+            .toArray({ timeoutMs: remainingTimeout() });
           const found = new Set<string>();
           for (const row of rows) {
             const artifactId = String(row.artifact_id);
             if (
-              tableName !== "relationships" &&
-              String(row.publication_generation_id) !== generation.generationId
+              !this.generationContainsArtifact(
+                generation,
+                generationLinks,
+                tableName,
+                artifactId,
+                row.publication_generation_id,
+              )
             )
               throw new StorageError(
                 "mixed_generation",
@@ -1674,9 +2014,11 @@ export class LanceIntelligenceStore {
     }
     const createdAt = this.now();
     const pin = ReaderPinSchema.parse({
+      attempt: generation.attempt,
       createdAt: createdAt.toISOString(),
       expiresAt: new Date(createdAt.getTime() + ttlMs).toISOString(),
       generationId: generation.generationId,
+      inputFingerprint: generation.inputFingerprint,
       manifestArtifactId: generation.manifestArtifactId,
       pinId: createIdentity("reader-pin", {
         generationId: generation.generationId,
@@ -1727,6 +2069,13 @@ export class LanceIntelligenceStore {
           );
         }
         tables.set(versionPin.table, table);
+      }
+      if (pin.publicationProtocol === "reservation-v2") {
+        const links = await latestTable(
+          this.connection,
+          "generation_artifacts",
+        );
+        tables.set("generation_artifacts", links);
       }
     } catch (error) {
       for (const table of tables.values()) table.close();
@@ -2073,6 +2422,15 @@ export class LanceIntelligenceStore {
         }
 
         const publicationRows = await this.rows("publications");
+        for (const row of publicationRows) {
+          const record = parseJsonRecord(row.payload_json);
+          if (
+            row.state === "reserved" &&
+            Date.parse(String(record?.expiresAt ?? "")) > now.getTime()
+          ) {
+            protectedGenerations.add(String(row.generation_id));
+          }
+        }
         const publications = publicationRows
           .filter((row) => row.state === "published")
           .map((row) => ({
@@ -2114,33 +2472,42 @@ export class LanceIntelligenceStore {
           }
         }
         await deleteCandidates("publications", obsoletePublications);
+        const generationArtifactRows = await this.rows("generation_artifacts");
+        await deleteCandidates(
+          "generation_artifacts",
+          generationArtifactRows.filter(
+            (row) =>
+              String(row.created_at) <= cutoff &&
+              !protectedGenerations.has(String(row.generation_id)),
+          ),
+        );
+        for (const row of generationArtifactRows) {
+          if (protectedGenerations.has(String(row.generation_id))) {
+            protectedIdentities.add(String(row.artifact_id));
+          }
+        }
 
+        const collectProtectedRows = (
+          rows: readonly StorageRow[],
+          revisionColumn: "base_revision_id" | "revision_id",
+        ): void => {
+          for (const row of rows) {
+            if (
+              protectedRevisions.has(String(row[revisionColumn])) ||
+              protectedIdentities.has(String(row.artifact_id))
+            ) {
+              protectedIdentities.add(String(row.artifact_id));
+              collectIdentityStrings(
+                parseJsonRecord(row.payload_json),
+                protectedIdentities,
+              );
+            }
+          }
+        };
         const manifestRows = await this.rows("revision_manifests");
-        for (const row of manifestRows) {
-          if (
-            protectedRevisions.has(String(row.revision_id)) ||
-            protectedIdentities.has(String(row.artifact_id))
-          ) {
-            protectedIdentities.add(String(row.artifact_id));
-            collectIdentityStrings(
-              parseJsonRecord(row.payload_json),
-              protectedIdentities,
-            );
-          }
-        }
+        collectProtectedRows(manifestRows, "revision_id");
         const overlayRows = await this.rows("dirty_overlays");
-        for (const row of overlayRows) {
-          if (
-            protectedRevisions.has(String(row.base_revision_id)) ||
-            protectedIdentities.has(String(row.artifact_id))
-          ) {
-            protectedIdentities.add(String(row.artifact_id));
-            collectIdentityStrings(
-              parseJsonRecord(row.payload_json),
-              protectedIdentities,
-            );
-          }
-        }
+        collectProtectedRows(overlayRows, "base_revision_id");
 
         const syntaxRows = await this.rows("syntax_facts");
         const relationshipRows = await this.rows("relationships");
@@ -2453,7 +2820,22 @@ export class LanceIntelligenceStore {
         missing.push(row);
         continue;
       }
-      if (immutable && !equivalentRows(prior, row)) {
+      const preserveLegacyPublicationTag =
+        immutable &&
+        row.publication_generation_id === null &&
+        typeof prior.publication_generation_id === "string";
+      const comparableRow = immutable
+        ? {
+            ...row,
+            ...(preserveLegacyPublicationTag
+              ? {
+                  publication_generation_id: prior.publication_generation_id,
+                }
+              : {}),
+            ...("created_at" in row ? { created_at: prior.created_at } : {}),
+          }
+        : row;
+      if (immutable && !equivalentRows(prior, comparableRow)) {
         throw new StorageError(
           "immutable_conflict",
           `Immutable LanceDB row ${key} has conflicting content`,

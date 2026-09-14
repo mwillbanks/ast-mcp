@@ -27,6 +27,13 @@ interface GitResult {
   stdout: Uint8Array;
 }
 
+function throwIfGitAborted(signal?: AbortSignal): void {
+  if (signal?.aborted)
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new Error("Git operation was aborted");
+}
+
 function sanitizedGitEnvironment(): Record<string, string> {
   const environment: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
@@ -37,21 +44,43 @@ function sanitizedGitEnvironment(): Record<string, string> {
   return environment;
 }
 
-async function runGitRaw(
+export async function runGitRaw(
   directory: string,
   args: string[],
+  signal?: AbortSignal,
+  assertNotAborted: (signal?: AbortSignal) => void = throwIfGitAborted,
 ): Promise<GitResult> {
+  assertNotAborted(signal);
   const child = Bun.spawn(["git", "-C", directory, ...args], {
     env: sanitizedGitEnvironment(),
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [code, stderr, stdout] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-    new Response(child.stdout).bytes(),
-  ]);
-  return { code, stderr: stderr.trim(), stdout };
+  let forceKill: ReturnType<typeof setTimeout> | undefined;
+  const terminate = () => {
+    try {
+      child.kill();
+    } catch {}
+    forceKill = setTimeout(() => {
+      try {
+        child.kill(9);
+      } catch {}
+    }, 250);
+  };
+  signal?.addEventListener("abort", terminate, { once: true });
+  if (signal?.aborted) terminate();
+  try {
+    const [code, stderr, stdout] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+      new Response(child.stdout).bytes(),
+    ]);
+    assertNotAborted(signal);
+    return { code, stderr: stderr.trim(), stdout };
+  } finally {
+    signal?.removeEventListener("abort", terminate);
+    if (forceKill) clearTimeout(forceKill);
+  }
 }
 
 async function runGitText(directory: string, args: string[]): Promise<string> {
@@ -327,6 +356,7 @@ export async function readGitRevisionFile(
   git: GitWorkspaceIdentity,
   revision: ResolvedRevision,
   absolutePath: string,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   if (!git.isGit || revision.selector.kind === "working") {
     throw new WorkspaceError(
@@ -340,7 +370,7 @@ export async function readGitRevisionFile(
     revision.selector.kind === "index"
       ? `:${relative}`
       : `${revision.resolvedCommitOid}:${relative}`;
-  const result = await runGitRaw(git.checkoutRoot, ["show", object]);
+  const result = await runGitRaw(git.checkoutRoot, ["show", object], signal);
   if (result.code !== 0) {
     throw new WorkspaceError(
       "workspace_revision_invalid",

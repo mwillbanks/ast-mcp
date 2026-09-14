@@ -56,6 +56,7 @@ function environmentFingerprint(environment: NodeJS.ProcessEnv) {
     "AST_MCP_ALLOW_EXTERNAL_ROOTS",
     "AST_MCP_ALLOW_TEMP_DIRECTORY",
     "AST_MCP_DPRINT_CONFIG",
+    "AST_MCP_EMBEDDING_MODEL",
     "DPRINT_BINARY",
     "AST_MCP_HTTP_HOST",
     "PORT",

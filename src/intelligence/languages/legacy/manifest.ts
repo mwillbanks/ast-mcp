@@ -4,6 +4,7 @@ import {
   LanguageCapabilitySchema,
 } from "../../contracts/language.ts";
 import { sha256 } from "../../parser/index.ts";
+import { deepFreeze } from "../immutable.ts";
 import {
   analyzeLegacyLanguage,
   legacyExtractorFingerprint,
@@ -45,14 +46,6 @@ function partial(languageId: LegacyLanguageId): CapabilityClaim {
     provider: treeSitter ? "tree-sitter" : "custom",
     status: "partial",
   };
-}
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const child of Object.values(value as Record<string, unknown>))
-      deepFreeze(child);
-    Object.freeze(value);
-  }
-  return value;
 }
 
 export const legacyLanguageAdapters = deepFreeze(

@@ -209,15 +209,17 @@ export async function smokeMcpStdio(
       | {
           structuredContent?: {
             data?: {
-              canonicalRootAnchor?: unknown;
-              checkoutRoot?: unknown;
-              workspaceId?: unknown;
+              workspace?: {
+                canonicalRootAnchor?: unknown;
+                checkoutRoot?: unknown;
+                workspaceId?: unknown;
+              };
             };
             ok?: unknown;
           };
         }
       | undefined;
-    const openedWorkspace = openedResult?.structuredContent?.data;
+    const openedWorkspace = openedResult?.structuredContent?.data?.workspace;
     const expectedRoot = path.resolve(root);
     const selectedWorkspace =
       !opened.error &&

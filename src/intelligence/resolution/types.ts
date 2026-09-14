@@ -3,7 +3,6 @@ import type { ProjectFacts } from "../languages/project/types.ts";
 import type { SyntaxFacts } from "../parser/types.ts";
 
 export type ResolutionStatus = "resolved" | "ambiguous" | "unresolved";
-export type ResolutionSourceKind = "code" | "document" | "project";
 
 export interface ResolutionContext {
   environmentFingerprint: string;
@@ -125,7 +124,7 @@ export interface MaterializedRelationship {
   target: string;
   targetNodeIds: readonly string[];
 }
-export interface RevisionMembership {
+export interface ResolutionMembership {
   entityId: string;
   entityKind: "node" | "occurrence" | "relationship" | "evidence";
   id: string;
@@ -137,7 +136,7 @@ export interface RevisionMembership {
 export interface GraphMaterializationInput extends ResolutionContext {
   evidence: readonly ResolutionEvidence[];
   id: string;
-  memberships: readonly RevisionMembership[];
+  memberships: readonly ResolutionMembership[];
   nodes: readonly MaterializedNode[];
   occurrences: readonly MaterializedOccurrence[];
   relationships: readonly MaterializedRelationship[];

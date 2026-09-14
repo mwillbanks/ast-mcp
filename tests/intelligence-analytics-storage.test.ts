@@ -178,6 +178,39 @@ describe("LanceDB analytics repository", () => {
     await reopened.shutdownCoordinator();
   });
 
+  test("rejects mismatched legacy publication tags", async () => {
+    const storage = await domain();
+    const store = await LanceIntelligenceStore.open(storage);
+    const repository = new LanceAnalyticsRepository(store);
+    const result = analyzeGraph({
+      snapshot: analyticsFixture(
+        ["one", "two"],
+        [{ source: "one", target: "two" }],
+      ),
+    });
+    const mismatchedReader = {
+      pin: {
+        generationId: result.scope.generationId,
+        publicationProtocol: "reservation-v1",
+        revisionId: result.scope.revisionId,
+        workspaceId: result.scope.workspaceId,
+      },
+      rows: async () => [
+        {
+          generation_id: result.scope.generationId,
+          publication_generation_id: createIdentity("generation", {
+            mismatched: true,
+          }),
+        },
+      ],
+    } as unknown as PinnedGenerationReader;
+
+    await expect(
+      repository.load(mismatchedReader, workspace(result)),
+    ).rejects.toThrow("analytics_publication_tag_mismatch");
+    await store.shutdownCoordinator();
+  });
+
   test("rejects forged deterministic facts before persistence", async () => {
     const storage = await domain();
     const store = await LanceIntelligenceStore.open(storage);
