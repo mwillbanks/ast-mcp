@@ -95,26 +95,37 @@ function toolData<T>(result: Awaited<ReturnType<Client["callTool"]>>): T {
   return data;
 }
 
+async function callPackageTool(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  try {
+    return await client.callTool({ arguments: args, name });
+  } catch (error) {
+    throw new Error(`Packaged MCP ${name} operation failed: ${String(error)}`, {
+      cause: error,
+    });
+  }
+}
+
 async function exercisePackage(
   client: Client,
   fixture: string,
   storagePath: string,
   writable: string,
 ): Promise<void> {
-  const opened = await client.callTool({
-    arguments: {
-      directory: fixture,
-      storage: { kind: "explicit", path: storagePath },
-    },
-    name: "workspace_open",
+  const opened = await callPackageTool(client, "workspace_open", {
+    directory: fixture,
+    storage: { kind: "explicit", path: storagePath },
   });
   const id = workspaceId(opened.structuredContent);
   const mapped = toolData<{
     files: Array<{ symbols: Array<{ name: string }> }>;
   }>(
-    await client.callTool({
-      arguments: { paths: ["entry.ts"], workspaceId: id },
-      name: "map",
+    await callPackageTool(client, "map", {
+      paths: ["entry.ts"],
+      workspaceId: id,
     }),
   );
   expect(
@@ -122,9 +133,9 @@ async function exercisePackage(
   ).toContain("publish");
 
   const built = toolData<{ generation: string }>(
-    await client.callTool({
-      arguments: { action: "build", workspaceId: id },
-      name: "index",
+    await callPackageTool(client, "index", {
+      action: "build",
+      workspaceId: id,
     }),
   );
   expect(built.generation).toMatch(/^generation:v1:[a-f0-9]{64}$/);
@@ -132,9 +143,9 @@ async function exercisePackage(
     counts: Record<string, number>;
     generation: string | null;
   }>(
-    await client.callTool({
-      arguments: { timeoutMs: 30_000, workspaceId: id },
-      name: "index_status",
+    await callPackageTool(client, "index_status", {
+      timeoutMs: 30_000,
+      workspaceId: id,
     }),
   );
   expect(status.generation).toBe(built.generation);
@@ -143,42 +154,36 @@ async function exercisePackage(
   expect(status.counts.publications).toBeGreaterThan(0);
 
   const retrieved = toolData<{ results: unknown[] }>(
-    await client.callTool({
-      arguments: {
-        budget: {
-          maxBytes: 64_000,
-          maxCandidates: 100,
-          maxItems: 20,
-          timeoutMs: 30_000,
-        },
-        query: "publish",
-        semantic: false,
-        workspaceId: id,
+    await callPackageTool(client, "retrieve", {
+      budget: {
+        maxBytes: 64_000,
+        maxCandidates: 100,
+        maxItems: 20,
+        timeoutMs: 30_000,
       },
-      name: "retrieve",
+      query: "publish",
+      semantic: false,
+      workspaceId: id,
     }),
   );
   expect(retrieved.results.length).toBeGreaterThan(0);
 
   const hashed = toolData<{ files: Array<{ sha256: string }> }>(
-    await client.callTool({
-      arguments: { filePaths: [writable], workspaceId: id },
-      name: "file_hash",
+    await callPackageTool(client, "file_hash", {
+      filePaths: [writable],
+      workspaceId: id,
     }),
   );
   toolData(
-    await client.callTool({
-      arguments: {
-        files: {
-          [writable]: {
-            aiderBlocks: [{ replace: "updated\n", search: "original\n" }],
-            expectedSha256: hashed.files[0]?.sha256,
-            patchStrategy: "aider_block",
-          },
+    await callPackageTool(client, "file_patch", {
+      files: {
+        [writable]: {
+          aiderBlocks: [{ replace: "updated\n", search: "original\n" }],
+          expectedSha256: hashed.files[0]?.sha256,
+          patchStrategy: "aider_block",
         },
-        workspaceId: id,
       },
-      name: "file_patch",
+      workspaceId: id,
     }),
   );
   expect(await readFile(path.join(fixture, writable), "utf8")).toBe(
@@ -291,12 +296,19 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
         () => capturedDiagnostics(serverStdout, serverStderr),
       );
       try {
-        await exercisePackage(
-          http,
-          fixture,
-          path.join(owned, "http-storage"),
-          "http.txt",
-        );
+        try {
+          await exercisePackage(
+            http,
+            fixture,
+            path.join(owned, "http-storage"),
+            "http.txt",
+          );
+        } catch (error) {
+          throw new Error(
+            `Packaged HTTP lifecycle failed with server exit code ${String(server.exitCode)}: ${String(error)}\n${capturedDiagnostics(serverStdout, serverStderr)}`,
+            { cause: error },
+          );
+        }
       } finally {
         await http.close();
       }

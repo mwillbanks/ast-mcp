@@ -39,6 +39,19 @@ test("restores prior attributes after a metadata failure", async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-attributes-"));
   const filePath = path.join(folder, "note.txt");
   await writeFile(filePath, "content");
+  if (process.platform === "win32") {
+    try {
+      await expect(
+        applyFileChattr(filePath, {
+          chmod: 0o600,
+          chown: { gid: 0, uid: 0 },
+        }),
+      ).rejects.toThrow("server process owner");
+    } finally {
+      await rm(folder, { force: true, recursive: true });
+    }
+    return;
+  }
   const chown = spyOn(fsPromises, "chown").mockRejectedValue(
     new Error("chown denied"),
   );
