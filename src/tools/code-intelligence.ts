@@ -741,6 +741,7 @@ type ImportEdge = {
 };
 
 type CompilerAlias = {
+  hasWildcard: boolean;
   prefix: string;
   suffix: string;
   targets: string[];
@@ -765,15 +766,27 @@ async function compilerAliases(
       );
       return Object.entries(config.compilerOptions?.paths ?? {})
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([pattern, targets]) => {
+        .flatMap(([pattern, targets]) => {
           const marker = pattern.indexOf("*");
-          return {
-            prefix: marker < 0 ? pattern : pattern.slice(0, marker),
-            suffix: marker < 0 ? "" : pattern.slice(marker + 1),
-            targets: targets.map((target) =>
-              path.posix.normalize(path.posix.join(baseUrl, target)),
-            ),
-          };
+          if (marker !== pattern.lastIndexOf("*")) return [];
+          const hasWildcard = marker >= 0;
+          const validTargets = targets.filter((target) => {
+            const targetMarker = target.indexOf("*");
+            return (
+              targetMarker === target.lastIndexOf("*") &&
+              (hasWildcard || targetMarker < 0)
+            );
+          });
+          return [
+            {
+              hasWildcard,
+              prefix: marker < 0 ? pattern : pattern.slice(0, marker),
+              suffix: marker < 0 ? "" : pattern.slice(marker + 1),
+              targets: validTargets.map((target) =>
+                path.posix.normalize(path.posix.join(baseUrl, target)),
+              ),
+            },
+          ];
         });
     } catch {
       if (signal?.aborted) throw abortError(signal);
@@ -799,21 +812,32 @@ function resolveKnownPath(
   );
 }
 
+function substituteAliasWildcard(target: string, value: string): string {
+  const marker = target.indexOf("*");
+  if (marker < 0) return target;
+  return `${target.slice(0, marker)}${value}${target.slice(marker + 1)}`;
+}
+
 function aliasCandidates(
   specifier: string,
   aliases: readonly CompilerAlias[],
 ): string[] {
   return aliases.flatMap((alias) => {
+    if (!alias.hasWildcard) {
+      return specifier === alias.prefix ? alias.targets : [];
+    }
     if (
       !specifier.startsWith(alias.prefix) ||
       !specifier.endsWith(alias.suffix)
     )
       return [];
-    const value = specifier.slice(
-      alias.prefix.length,
-      specifier.length - alias.suffix.length || undefined,
+    const captureStart = alias.prefix.length;
+    const captureEnd = specifier.length - alias.suffix.length;
+    if (captureEnd < captureStart) return [];
+    const value = specifier.slice(captureStart, captureEnd);
+    return alias.targets.map((target) =>
+      substituteAliasWildcard(target, value),
     );
-    return alias.targets.map((target) => target.replace("*", value));
   });
 }
 

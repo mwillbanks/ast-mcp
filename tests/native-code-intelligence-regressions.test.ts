@@ -34,12 +34,44 @@ async function fixture(): Promise<{
       // Bun parses this JSONC without another dependency.
       "compilerOptions": {
         "baseUrl": ".",
-        "paths": { "@lib/*": ["lib/*"] }
+        "paths": {
+          "*-suffix": ["leading/index*"],
+          "@bad**": ["bad/*"],
+          "@exact": ["lib/exact.ts"],
+          "@invalid/*": ["repeated/*/literal-*"],
+          "@lib/*": ["lib/*"],
+          "ab*bc": ["overlap/*"]
+        }
       }
     }\n`,
   );
   await mkdir(path.join(root, "lib"));
+  await writeFile(path.join(root, "lib/exact.ts"), "export const exact = 1;\n");
   await writeFile(path.join(root, "lib/value.ts"), "export const value = 1;\n");
+  await mkdir(path.join(root, "repeated", "value"), { recursive: true });
+  await writeFile(
+    path.join(root, "repeated", "value", "literal-*.ts"),
+    "export const repeated = 1;\n",
+  );
+  await mkdir(path.join(root, "leading"));
+  await writeFile(
+    path.join(root, "leading", "index.ts"),
+    "export const leading = 1;\n",
+  );
+  await mkdir(path.join(root, "overlap"));
+  await writeFile(
+    path.join(root, "overlap", "b.ts"),
+    "export const overlap = 1;\n",
+  );
+  await writeFile(
+    path.join(root, "overlap", "index.ts"),
+    "export const overlapIndex = 1;\n",
+  );
+  await mkdir(path.join(root, "bad"));
+  await writeFile(
+    path.join(root, "bad", "value.ts"),
+    "export const bad = 1;\n",
+  );
   await mkdir(path.join(root, "dual"));
   await writeFile(path.join(root, "dual/foo.ts"), "export const value = 1;\n");
   await writeFile(path.join(root, "dual/foo.js"), "export const value = 2;\n");
@@ -49,7 +81,16 @@ async function fixture(): Promise<{
   );
   await writeFile(
     path.join(root, "barrel.ts"),
-    'export { value } from "@lib/value";\n',
+    [
+      'export { leading } from "-suffix";',
+      'export * from "@badvalue*";',
+      'export { exact } from "@exact";',
+      'export * from "@exact/prefix";',
+      'export * from "@invalid/value";',
+      'export { value } from "@lib/value";',
+      'export * from "abc";',
+      "",
+    ].join("\n"),
   );
   await writeFile(
     path.join(root, "consumer.ts"),
@@ -114,17 +155,71 @@ test("direct tools analyze catalog languages and resolve dependency scope", asyn
       name: "deps",
     });
     expect(dependencies.isError).not.toBeTrue();
-    expect(dependencies.structuredContent).toMatchObject({
-      data: {
-        items: [
-          expect.objectContaining({
-            external: false,
-            from: "barrel.ts",
-            to: "lib/value.ts",
-          }),
-        ],
-      },
+    const dependencyItems = (
+      dependencies.structuredContent as {
+        data: { items: Array<{ external: boolean; from: string; to: string }> };
+      }
+    ).data.items;
+    expect(dependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: false,
+        from: "barrel.ts",
+        to: "leading/index.ts",
+      }),
+    );
+    expect(dependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: false,
+        from: "barrel.ts",
+        to: "lib/exact.ts",
+      }),
+    );
+    expect(dependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: false,
+        from: "barrel.ts",
+        to: "lib/value.ts",
+      }),
+    );
+
+    const allDependencies = await client.callTool({
+      arguments: { file: "barrel.ts", workspaceId },
+      name: "deps",
     });
+    expect(allDependencies.isError).not.toBeTrue();
+    const allDependencyItems = (
+      allDependencies.structuredContent as {
+        data: { items: Array<{ external: boolean; from: string; to: string }> };
+      }
+    ).data.items;
+    expect(allDependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: true,
+        from: "barrel.ts",
+        to: "@badvalue*",
+      }),
+    );
+    expect(allDependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: true,
+        from: "barrel.ts",
+        to: "@exact/prefix",
+      }),
+    );
+    expect(allDependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: true,
+        from: "barrel.ts",
+        to: "@invalid/value",
+      }),
+    );
+    expect(allDependencyItems).toContainEqual(
+      expect.objectContaining({
+        external: true,
+        from: "barrel.ts",
+        to: "abc",
+      }),
+    );
 
     for (const selector of [
       { file: "lib/value.ts" },

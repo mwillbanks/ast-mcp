@@ -8,8 +8,8 @@ import {
 
 test("uses the pinned npm ast-bro package only on supported macOS ARM64", () => {
   expect(astBroProvisionCommand("darwin", "arm64")).toEqual([
-    "bun",
-    "add",
+    "npm",
+    "install",
     "--global",
     "@ast-bro/cli@4.2.0",
   ]);
@@ -72,7 +72,7 @@ test("provisions and verifies both pinned comparators", async () => {
     graphify: "graphify 0.9.53",
   });
   expect(commands).toEqual([
-    ["bun", "add", "--global", "@ast-bro/cli@4.2.0"],
+    ["npm", "install", "--global", "@ast-bro/cli@4.2.0"],
     [
       "/python",
       "-m",

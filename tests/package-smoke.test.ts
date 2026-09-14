@@ -20,6 +20,64 @@ async function command(args: string[], cwd: string): Promise<string> {
   return stdout.trim();
 }
 
+async function drainOutput(
+  stream: ReadableStream<Uint8Array>,
+  chunks: string[],
+): Promise<void> {
+  const decoder = new TextDecoder();
+  for await (const chunk of stream) {
+    chunks.push(decoder.decode(chunk, { stream: true }));
+  }
+  chunks.push(decoder.decode());
+}
+
+function capturedDiagnostics(stdout: string[], stderr: string[]): string {
+  const output = [
+    stdout.length > 0 ? `stdout:\n${stdout.join("").trim()}` : "",
+    stderr.length > 0 ? `stderr:\n${stderr.join("").trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return output || "no server output";
+}
+
+async function connectHttpClient(
+  url: URL,
+  exitCode: () => number | null,
+  diagnostics: () => string,
+): Promise<Client> {
+  const deadline = Date.now() + 30_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    const serverExitCode = exitCode();
+    if (serverExitCode !== null) {
+      throw new Error(
+        `Packaged HTTP server exited with code ${serverExitCode}: ${diagnostics()}`,
+      );
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const client = new Client({ name: "package-http-smoke", version: "1" });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(url), {
+        timeout: Math.min(2_000, remainingMs),
+      });
+      return client;
+    } catch (error) {
+      lastError = error;
+      await client.close().catch(() => undefined);
+    }
+
+    const backoffMs = Math.min(250, deadline - Date.now());
+    if (backoffMs > 0) await Bun.sleep(backoffMs);
+  }
+
+  throw new Error(
+    `Packaged HTTP server did not accept MCP initialize within 30 seconds: ${String(lastError)}\n${diagnostics()}`,
+  );
+}
+
 function workspaceId(result: unknown): string {
   const match = JSON.stringify(result).match(/workspace:v1:[a-f0-9]{64}/);
   if (!match) throw new Error("workspace_open omitted workspaceId");
@@ -221,22 +279,17 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       ],
       { cwd: fixture, stderr: "pipe", stdout: "pipe" },
     );
+    const serverStdout: string[] = [];
+    const serverStderr: string[] = [];
+    const stdoutDrain = drainOutput(server.stdout, serverStdout);
+    const stderrDrain = drainOutput(server.stderr, serverStderr);
     try {
       const url = new URL(`http://127.0.0.1:${port}/mcp`);
-      for (let attempt = 0; attempt < 80; attempt += 1) {
-        if (
-          await fetch(url).then(
-            () => true,
-            () => false,
-          )
-        )
-          break;
-        if (attempt === 79)
-          throw new Error("Packaged HTTP server did not start");
-        await Bun.sleep(25);
-      }
-      const http = new Client({ name: "package-http-smoke", version: "1" });
-      await http.connect(new StreamableHTTPClientTransport(url));
+      const http = await connectHttpClient(
+        url,
+        () => server.exitCode,
+        () => capturedDiagnostics(serverStdout, serverStderr),
+      );
       try {
         await exercisePackage(
           http,
@@ -250,6 +303,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     } finally {
       if (server.exitCode === null) server.kill("SIGTERM");
       await server.exited;
+      await Promise.all([stdoutDrain, stderrDrain]);
     }
   } finally {
     await rm(owned, { force: true, recursive: true });

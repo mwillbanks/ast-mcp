@@ -8,7 +8,7 @@ export function astBroProvisionCommand(
   arch: string,
 ): string[] {
   if (platform === "darwin" && arch === "arm64")
-    return ["bun", "add", "--global", `@ast-bro/cli@${AST_BRO_VERSION}`];
+    return ["npm", "install", "--global", `@ast-bro/cli@${AST_BRO_VERSION}`];
   return [
     "cargo",
     "install",

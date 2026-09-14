@@ -28,7 +28,7 @@ test("validates and applies shared file chattr", async () => {
       }),
     ).toThrow("server process owner");
     const chattr = await applyFileChattr(filePath, { chmod: 0o600 });
-    expect(chattr.chmod).toBe(0o600);
+    expect(chattr.chmod).toBe(process.platform === "win32" ? 0o666 : 0o600);
     expect(await resultingFileChattr(filePath)).toEqual(chattr);
     expect(await readFile(filePath, "utf8")).toBe("content");
   } finally {
