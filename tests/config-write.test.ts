@@ -2,7 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
+import {
+  clearConfigCache,
+  globalConfigPath,
+  resolveConfig,
+  withConfig,
+} from "../src/config";
 import {
   existingPathPolicies,
   pathTableIds,
@@ -15,6 +20,7 @@ import {
   withApprovalContext,
 } from "../src/runtime/approval";
 import { applyConfigCore, applyConfigPaths } from "../src/runtime/config-write";
+import { hermeticConfig } from "./support/hermetic-config";
 
 const created: string[] = [];
 
@@ -89,10 +95,7 @@ afterEach(async () => {
 test("defaults enable MCP configuration tools with approval required", async () => {
   const root = await project("ast-mcp-config-write-default-");
   await writeFile(path.join(root, "ast-mcp.toml"), "version = 2\n");
-  const config = await resolveConfig({
-    cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
-  });
+  const config = await resolveConfig(hermeticConfig(root));
   expect(config.mcp.configuration).toEqual({
     enabled: true,
     requireApproval: true,
@@ -106,20 +109,17 @@ test("unknown configuration keys are rejected", async () => {
     path.join(root, "ast-mcp.toml"),
     "version = 2\n[mcp]\nunexpected = true\n",
   );
-  await expect(
-    resolveConfig({
-      cwd: root,
-      env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
-    }),
-  ).rejects.toThrow(/unexpected|unrecognized|invalid/i);
+  await expect(resolveConfig(hermeticConfig(root))).rejects.toThrow(
+    /unexpected|unrecognized|invalid/i,
+  );
 });
 
 test("config_core updates a section while preserving paths and comments", async () => {
   const root = await project("ast-mcp-config-write-core-");
   const file = path.join(root, "ast-mcp.toml");
   await writeFile(file, v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await approveNext(() =>
       applyConfigCore({ safety: { require_hash: false } }),
     );
@@ -128,7 +128,7 @@ test("config_core updates a section while preserving paths and comments", async 
   expect(source).toContain("# keep this comment");
   expect(source).toContain('id = "workspace"');
   expect(source).toContain("require_hash = false");
-  const config = await resolveConfig({ cwd: root, env });
+  const config = await resolveConfig(options);
   expect(config.safety.requireHash).toBeFalse();
 });
 
@@ -136,10 +136,10 @@ test("config_paths batches add, update, and remove", async () => {
   const root = await project("ast-mcp-config-write-paths-");
   const file = path.join(root, "ast-mcp.toml");
   await writeFile(file, v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
+  const options = hermeticConfig(root);
   const extra = path.join(root, "extra");
   await mkdir(extra);
-  await withConfig({ cwd: root, env }, async () => {
+  await withConfig(options, async () => {
     await approveNext(() =>
       applyConfigPaths({
         operations: [
@@ -167,7 +167,7 @@ test("config_paths batches add, update, and remove", async () => {
   expect(source).not.toContain('id = "extra"');
   expect(source).toContain('write = "request"');
   await expect(
-    withConfig({ cwd: root, env }, () =>
+    withConfig(options, () =>
       approveNext(() =>
         applyConfigPaths({
           operations: [{ id: "missing", op: "remove" }],
@@ -180,8 +180,8 @@ test("config_paths batches add, update, and remove", async () => {
 test("configuration tools require elicitation by default", async () => {
   const root = await project("ast-mcp-config-write-approval-");
   await writeFile(path.join(root, "ast-mcp.toml"), v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await expect(
       withApprovalContext(approvalScope(undefined, {}), () =>
         applyConfigCore({ http: { port: 4001 } }),
@@ -201,8 +201,8 @@ test("require_approval false skips elicitation except mcp.configuration changes"
     path.join(root, "ast-mcp.toml"),
     `${v2Source()}\n[mcp.configuration]\nenabled = true\nrequire_approval = false\n`,
   );
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await applyConfigCore({ http: { port: 4010 } });
     await expect(
       withApprovalContext(approvalScope(), () =>
@@ -212,7 +212,7 @@ test("require_approval false skips elicitation except mcp.configuration changes"
       ),
     ).rejects.toBeInstanceOf(InputRequiredSignal);
   });
-  const config = await resolveConfig({ cwd: root, env });
+  const config = await resolveConfig(options);
   expect(config.http.port).toBe(4010);
 });
 
@@ -222,8 +222,8 @@ test("disabled MCP configuration tools fail closed", async () => {
     path.join(root, "ast-mcp.toml"),
     `${v2Source()}\n[mcp.configuration]\nenabled = false\n`,
   );
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await expect(
       applyConfigCore({ safety: { require_hash: false } }),
     ).rejects.toMatchObject({ code: "configuration_mcp_disabled" });
@@ -233,8 +233,7 @@ test("disabled MCP configuration tools fail closed", async () => {
 test("configuration writes reload without restarting the registry", async () => {
   const root = await project("ast-mcp-config-write-reload-");
   await writeFile(path.join(root, "ast-mcp.toml"), v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  const options = { cwd: root, env };
+  const options = hermeticConfig(root);
   const initial = await configRegistry.snapshot(options);
   const result = await withConfig(options, async () =>
     approveNext(() => applyConfigCore({ http: { port: 4321 } })),
@@ -251,8 +250,8 @@ test("configuration writes reload without restarting the registry", async () => 
 test("version 1 configuration cannot be edited through MCP tools", async () => {
   const root = await project("ast-mcp-config-write-v1-");
   await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await expect(applyConfigCore({ http: { port: 9 } })).rejects.toMatchObject({
       code: "configuration_migration_required",
     });
@@ -263,8 +262,8 @@ test("rejects empty core patches, duplicate path ids, and invalid TOML writes", 
   const root = await project("ast-mcp-config-write-errors-");
   const file = path.join(root, "ast-mcp.toml");
   await writeFile(file, v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await expect(applyConfigCore({})).rejects.toMatchObject({
       code: "configuration_empty_patch",
     });
@@ -301,8 +300,8 @@ test("rejects empty core patches, duplicate path ids, and invalid TOML writes", 
 
 test("deep merges mcp.configuration across global and project layers", async () => {
   const root = await project("ast-mcp-config-write-mcp-merge-");
-  const globalHome = path.join(root, "xdg");
-  const globalFile = path.join(globalHome, "ast-mcp", "ast-mcp.toml");
+  const options = hermeticConfig(root);
+  const globalFile = globalConfigPath(options);
   await mkdir(path.dirname(globalFile), { recursive: true });
   await writeFile(
     globalFile,
@@ -312,10 +311,7 @@ test("deep merges mcp.configuration across global and project layers", async () 
     path.join(root, "ast-mcp.toml"),
     "version = 2\n[mcp.configuration]\nrequire_approval = false\n",
   );
-  const config = await resolveConfig({
-    cwd: root,
-    env: { XDG_CONFIG_HOME: globalHome },
-  });
+  const config = await resolveConfig(options);
   expect(config.mcp.configuration).toEqual({
     enabled: false,
     requireApproval: false,
@@ -330,8 +326,8 @@ test("config_core updates grouped workspace, files, and formatting keys", async 
   const root = await project("ast-mcp-config-write-grouped-");
   const file = path.join(root, "ast-mcp.toml");
   await writeFile(file, v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await approveNext(() =>
       applyConfigCore({
         files: {
@@ -353,8 +349,8 @@ test("config_core updates grouped workspace, files, and formatting keys", async 
 
 test("missing configuration files and invalid writes fail closed", async () => {
   const root = await project("ast-mcp-config-write-invalid-");
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await expect(
       applyConfigCore({ http: { port: 9 }, target: "global" }),
     ).rejects.toMatchObject({ code: "configuration_missing" });
@@ -382,8 +378,8 @@ test("config_paths writes follow_symlinks, excludes, and quoted ids", async () =
     file,
     v2Source().replace('id = "workspace"', "id = 'workspace'"),
   );
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await approveNext(() =>
       applyConfigPaths({
         operations: [
@@ -405,8 +401,8 @@ test("config_paths merges partial policy updates", async () => {
   const root = await project("ast-mcp-config-write-policy-merge-");
   const file = path.join(root, "ast-mcp.toml");
   await writeFile(file, v2Source());
-  const env = { XDG_CONFIG_HOME: path.join(root, "xdg") };
-  await withConfig({ cwd: root, env }, async () => {
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
     await approveNext(() =>
       applyConfigPaths({
         operations: [

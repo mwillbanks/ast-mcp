@@ -6,11 +6,13 @@ export function hermeticConfig(
   env: NodeJS.ProcessEnv = {},
 ): ResolveConfigOptions {
   const stateRoot = path.join(cwd, ".ast-mcp-test-state");
+  const configHome = path.join(stateRoot, "xdg");
   return {
     cwd,
     env: {
       ...env,
-      XDG_CONFIG_HOME: path.join(stateRoot, "xdg"),
+      APPDATA: configHome,
+      XDG_CONFIG_HOME: configHome,
     },
     home: path.join(stateRoot, "home"),
   };
