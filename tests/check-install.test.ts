@@ -151,7 +151,7 @@ test("resolves native Windows aliases before POSIX shims", async () => {
     "/d",
     "/s",
     "/c",
-    `"${windowsAlias}" mcp`,
+    `call "${windowsAlias}" mcp`,
   ]);
 });
 
@@ -169,7 +169,7 @@ test("checker covers every local host surface", async () => {
       home,
     );
 
-    expect(result.installed).toBeTrue();
+    expect(result).toMatchObject({ installed: true, smokeError: null });
   }
   const configFile = path.join(root, ".mcp.json");
   const config = JSON.parse(await readFile(configFile, "utf8"));
@@ -199,7 +199,7 @@ test("checker covers every global host surface", async () => {
       home,
     );
 
-    expect(result.installed).toBeTrue();
+    expect(result).toMatchObject({ installed: true, smokeError: null });
     expect(result.installCommand).not.toContain("--root");
     expect(result.installCommand).toContain("--trust dprint");
     expect(result.updateCommand).toStartWith("ast-mcp update");

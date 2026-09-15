@@ -181,6 +181,8 @@ export async function resolveInstallerEndpoint(
     clearConfigCache();
   }
   const config = await resolveConfig({
+    clientRoots:
+      options.scope === "local" ? [path.resolve(options.root)] : undefined,
     cwd: options.scope === "local" ? options.root : options.home,
     env: options.env,
     home: options.home,

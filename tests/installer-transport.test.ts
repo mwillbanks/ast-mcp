@@ -104,7 +104,14 @@ describe("installer HTTP transport", () => {
     expect(config).toContain("# retained");
     expect(config).toContain("port = 4567");
 
-    await update({ root, scope: "local", targets: ["codex"] });
+    const previousRoots = process.env.AST_MCP_ROOTS;
+    process.env.AST_MCP_ROOTS = process.cwd();
+    try {
+      await update({ root, scope: "local", targets: ["codex"] });
+    } finally {
+      if (previousRoots === undefined) delete process.env.AST_MCP_ROOTS;
+      else process.env.AST_MCP_ROOTS = previousRoots;
+    }
     expect(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
     ).toContain('url = "http://127.0.0.1:4567/mcp"');

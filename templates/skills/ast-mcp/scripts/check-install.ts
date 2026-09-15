@@ -130,7 +130,7 @@ export function mcpStdioCommand(
       "/d",
       "/s",
       "/c",
-      `"${binary}" mcp`,
+      `call "${binary}" mcp`,
     ];
   return [binary, "mcp"];
 }
@@ -669,6 +669,7 @@ export async function checkInstall(
   const global = options.scope === "global";
   const checks = await targetChecks(options, home, global);
   let smoke: McpSmokeResult | null = null;
+  let smokeError: string | null = null;
   if (
     checks.mcp &&
     options.transport === "stdio" &&
@@ -688,10 +689,14 @@ export async function checkInstall(
     if (binary) {
       try {
         smoke = await smokeMcpStdio(binary, options.root);
-      } catch {
+      } catch (error) {
+        smokeError = error instanceof Error ? error.message : String(error);
         checks.mcp = false;
       }
-    } else checks.mcp = false;
+    } else {
+      smokeError = "No platform-compatible ast-mcp executable was found";
+      checks.mcp = false;
+    }
   }
   if (options.service) checks.service = await serviceCurrent(options, home);
   const installed = Object.values(checks).every(Boolean);
@@ -718,6 +723,7 @@ export async function checkInstall(
           : undefined,
     repairCommand: commands.repairCommand,
     smoke,
+    smokeError,
     uninstallCommand: commands.uninstallCommand,
     updateCommand: commands.updateCommand,
     ...options,
