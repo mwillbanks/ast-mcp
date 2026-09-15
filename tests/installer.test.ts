@@ -12,6 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
+import { commandForPlatform } from "../src/runtime/subprocess";
 import {
   executableNames,
   isExecutable,
@@ -208,11 +209,44 @@ describe("installer", () => {
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];
     expect(globalCopilot.type).toBe("local");
-    expect(globalCopilot.args).toEqual(["mcp"]);
-    expect(globalCopilot.command).toBe(alias);
-    expect(
-      await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-    ).toContain(JSON.stringify(alias));
+    const invocation = commandForPlatform(alias, ["mcp"]);
+    expect(globalCopilot.args).toEqual(invocation.args);
+    expect(globalCopilot.command).toBe(invocation.command);
+    const codex = await readFile(path.join(home, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
+    expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
+  });
+  test("writes global Windows host commands for a spaced native alias", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp windows & root-"),
+    );
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp windows & home-"),
+    );
+    created.push(root, home);
+    const alias = await executable(
+      path.join(home, ".bun/bin/ast-mcp"),
+      "win32",
+    );
+    await install({
+      home,
+      platform: "win32",
+      root,
+      scope: "global",
+      targets: ["codex", "claude", "copilot"],
+    });
+    const invocation = commandForPlatform(alias, ["mcp"], "win32");
+    expect(invocation.args.at(-1)).toBe(`call "${alias}" mcp`);
+    const copilot = JSON.parse(
+      await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
+    ).mcpServers["ast-mcp"];
+    expect(copilot).toMatchObject({
+      args: invocation.args,
+      command: invocation.command,
+    });
+    const codex = await readFile(path.join(home, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
+    expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
   });
   test("writes Bun, npm, pnpm, and Yarn global manager aliases", async () => {
     for (const manager of ["bun", "npm", "pnpm", "yarn"]) {
@@ -233,9 +267,15 @@ describe("installer", () => {
         scope: "global",
         targets: ["codex"],
       });
-      expect(
-        await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-      ).toContain(JSON.stringify(alias));
+      const invocation = commandForPlatform(alias, ["mcp"]);
+      const codex = await readFile(
+        path.join(home, ".codex/config.toml"),
+        "utf8",
+      );
+      expect(codex).toContain(
+        `command = ${JSON.stringify(invocation.command)}`,
+      );
+      expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
     }
   });
 

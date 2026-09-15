@@ -171,7 +171,7 @@ test("calls native code intelligence through the server", async () => {
     });
     expect(opened.isError).not.toBeTrue();
     const openedText = JSON.stringify(opened.structuredContent);
-    expect(openedText).toContain(`"checkoutRoot":"${root}"`);
+    expect(openedText).toContain(`"checkoutRoot":${JSON.stringify(root)}`);
     const workspaceId = openedText.match(/workspace:v1:[a-f0-9]{64}/)?.[0];
     expect(workspaceId).toBeDefined();
     if (!workspaceId) throw new Error("workspace_open omitted workspaceId");

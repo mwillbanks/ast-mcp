@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { install, update } from "../src/installer";
 import {
+  commandForPlatform,
   executableNames,
   resolveLocalBinaryAlias,
 } from "../templates/skills/ast-mcp/scripts/binary-resolution";
@@ -130,7 +131,9 @@ async function folders() {
 }
 
 test("resolves native Windows aliases before POSIX shims", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-resolve-"));
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp resolve & alias-"),
+  );
   created.push(root);
   const directory = path.join(root, "node_modules/.bin");
   const windowsName = executableNames("ast-mcp", "win32").find((name) =>
@@ -152,7 +155,7 @@ test("resolves native Windows aliases before POSIX shims", async () => {
     "/v:off",
     "/s",
     "/c",
-    `call ${windowsAlias} mcp`,
+    `call "${windowsAlias}" mcp`,
   ]);
 });
 
@@ -249,12 +252,19 @@ test("checker covers every global host surface", async () => {
     "ast-mcp",
     workingResponses(root),
   );
+  const secondaryCommand = commandForPlatform(
+    secondaryAlias,
+    ["mcp"],
+    process.platform,
+  );
   await writeFile(
     configFile,
-    config.replace(
-      /command = .+/,
-      `command = ${JSON.stringify(secondaryAlias)}`,
-    ),
+    config
+      .replace(
+        /command = .+/,
+        `command = ${JSON.stringify(secondaryCommand.command)}`,
+      )
+      .replace(/args = .+/, `args = ${JSON.stringify(secondaryCommand.args)}`),
   );
   expect(
     (
