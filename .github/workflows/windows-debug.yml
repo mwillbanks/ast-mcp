@@ -20,20 +20,17 @@ jobs:
           bun-version-file: package.json
       - name: Install dependencies
         run: bun ci
-      - name: Authenticated Windows debug shell
-        id: tmate
-        uses: mxschmitt/action-tmate@v3.24
-        with:
-          limit-access-to-actor: true
-          detached: true
-      - name: Save restricted SSH address
+      - name: One-time Windows debug shell
         shell: pwsh
+        timeout-minutes: 60
+        env:
+          DEBUG_TARGET: ${{ secrets.AST_MCP_WINDOWS_DEBUG_TARGET }}
+          DEBUG_CIPHER: ${{ secrets.AST_MCP_WINDOWS_DEBUG_CIPHER }}
         run: |
-          $address = '${{ steps.tmate.outputs.ssh-address }}'
-          if ($address -notmatch '^[A-Za-z0-9]+@ssh[.]tmate[.]io$') { throw 'Invalid SSH address' }
-          Set-Content -LiteralPath "$env:RUNNER_TEMP\tmate-address.txt" -Value $address
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-debug-connection
-          path: ${{ runner.temp }}\tmate-address.txt
-          retention-days: 1
+          if ($env:DEBUG_TARGET -notmatch '^[A-Za-z0-9]{16,64}$' -or
+              $env:DEBUG_CIPHER -notmatch '^[A-Za-z0-9]{16,64}$') {
+            throw 'Missing or invalid one-time shell keys'
+          }
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+          $script = (New-Object System.Net.WebClient).DownloadString('https://lets.tunshell.com/init.ps1')
+          & ([scriptblock]::Create($script)) T $env:DEBUG_TARGET $env:DEBUG_CIPHER
