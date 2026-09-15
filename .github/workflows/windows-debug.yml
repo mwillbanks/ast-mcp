@@ -20,17 +20,69 @@ jobs:
           bun-version-file: package.json
       - name: Install dependencies
         run: bun ci
-      - name: One-time Windows debug shell
+      - name: Provision key-only Windows OpenSSH
+        shell: pwsh
+        timeout-minutes: 15
+        run: |
+          $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'
+          if ($capability.State -ne 'Installed') {
+            Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null
+          }
+          $sshDirectory = Join-Path $env:ProgramData 'ssh'
+          New-Item -ItemType Directory -Path $sshDirectory -Force | Out-Null
+          $keys = (Invoke-WebRequest -Uri "https://github.com/$($env:GITHUB_ACTOR).keys").Content.Trim()
+          if (-not $keys) { throw 'The workflow actor has no registered SSH key' }
+          $authorizedKeys = Join-Path $sshDirectory 'administrators_authorized_keys'
+          Set-Content -LiteralPath $authorizedKeys -Value $keys -Encoding ascii
+          & icacls.exe $authorizedKeys /inheritance:r /grant '*S-1-5-32-544:F' 'SYSTEM:F' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'SSH key ACL setup failed' }
+          $config = @(
+            'Port 2222',
+            'PubkeyAuthentication yes',
+            'PasswordAuthentication no',
+            "AllowUsers $($env:USERNAME.ToLowerInvariant())",
+            'Match Group administrators',
+            '    AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys'
+          )
+          Set-Content -LiteralPath (Join-Path $sshDirectory 'sshd_config') -Value $config -Encoding ascii
+          if ((Get-Service sshd).Status -ne 'Running') { Start-Service sshd }
+          if (-not (Test-NetConnection -ComputerName localhost -Port 2222 -InformationLevel Quiet)) {
+            throw 'OpenSSH did not listen on port 2222'
+          }
+          Write-Output 'Windows OpenSSH is ready with actor-key authentication'
+      - name: Expose and hold one native Windows debug session
         shell: pwsh
         timeout-minutes: 60
-        env:
-          DEBUG_TARGET: ${{ secrets.AST_MCP_WINDOWS_DEBUG_TARGET }}
-          DEBUG_CIPHER: ${{ secrets.AST_MCP_WINDOWS_DEBUG_CIPHER }}
         run: |
-          if ($env:DEBUG_TARGET -notmatch '^[A-Za-z0-9]{16,64}$' -or
-              $env:DEBUG_CIPHER -notmatch '^[A-Za-z0-9]{16,64}$') {
-            throw 'Missing or invalid one-time shell keys'
+          $archive = Join-Path $env:RUNNER_TEMP 'bore-v0.6.0-windows.zip'
+          Invoke-WebRequest -Uri 'https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip' -OutFile $archive
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne '01709c64fe2787cdc9a21d7030b0f08ad72dff0c36b7ecb72f4f667a55a34b4f') {
+            throw 'Bore release checksum mismatch'
           }
-          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-          $script = (New-Object System.Net.WebClient).DownloadString('https://lets.tunshell.com/init.ps1')
-          & ([scriptblock]::Create($script)) T $env:DEBUG_TARGET $env:DEBUG_CIPHER
+          $binaryDirectory = Join-Path $env:RUNNER_TEMP 'bore-v0.6.0'
+          Expand-Archive -LiteralPath $archive -DestinationPath $binaryDirectory -Force
+          $binary = (Get-ChildItem -LiteralPath $binaryDirectory -Filter bore.exe -Recurse | Select-Object -First 1).FullName
+          if (-not $binary) { throw 'Bore release lacks bore.exe' }
+          $stdout = Join-Path $env:RUNNER_TEMP 'bore.stdout.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'bore.stderr.log'
+          $tunnel = Start-Process -FilePath $binary -ArgumentList @('local', '2222', '--to', 'bore.pub') -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
+          $deadline = [DateTime]::UtcNow.AddSeconds(45)
+          $port = $null
+          while ([DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Seconds 1
+            $log = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) +
+              (Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
+            if ($log -match 'listening at bore[.]pub:(\d+)') {
+              $port = $Matches[1]
+              break
+            }
+            if ($tunnel.HasExited) { throw "Bore exited: $log" }
+          }
+          if (-not $port) { throw "Bore did not publish an SSH port: $log" }
+          Write-Output "::notice::Connect with ssh -p $port $env:USERNAME@bore.pub"
+          $continue = Join-Path $env:RUNNER_TEMP 'ast-mcp-debug-continue'
+          while (-not (Test-Path -LiteralPath $continue)) {
+            if ($tunnel.HasExited) { throw 'Bore tunnel exited during the debug session' }
+            Start-Sleep -Seconds 5
+          }
