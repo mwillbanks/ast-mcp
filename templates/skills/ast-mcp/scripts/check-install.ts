@@ -140,6 +140,8 @@ export async function smokeMcpStdio(
   root: string,
   timeoutMs = 15_000,
 ): Promise<McpSmokeResult> {
+  const windowsBatch =
+    globalThis.process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(binary);
   const process = Bun.spawn(mcpStdioCommand(binary), {
     cwd: root,
     env: {
@@ -150,6 +152,7 @@ export async function smokeMcpStdio(
     stderr: "pipe",
     stdin: "pipe",
     stdout: "pipe",
+    windowsVerbatimArguments: windowsBatch,
   });
   const deadline = Date.now() + timeoutMs;
   const responses = new Map<number, Record<string, unknown>>();

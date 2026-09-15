@@ -121,6 +121,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
     this.worker = active;
     active.unref();
     active.on("message", (response: unknown) => {
+      if (this.worker !== active) return;
       const responseId =
         response && typeof response === "object"
           ? (response as Record<string, unknown>).id
