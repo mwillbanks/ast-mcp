@@ -9,8 +9,6 @@ import {
   executableNames,
   globalBinDirectories,
   isExecutable,
-  resolveGlobalBinaryAlias,
-  resolveLocalBinaryAlias,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
 
@@ -609,6 +607,41 @@ function targetChecks(options: CheckOptions, home: string, global: boolean) {
   if (options.target === "claude") return claudeChecks(options, home, global);
   return copilotChecks(options, home, global);
 }
+
+async function configuredStdioCommand(
+  options: CheckOptions,
+  home: string,
+  global: boolean,
+): Promise<string | undefined> {
+  let entry: unknown;
+  if (options.target === "codex") {
+    const base = global
+      ? path.join(home, ".codex")
+      : path.join(options.root, ".codex");
+    const content = await readFile(
+      path.join(base, "config.toml"),
+      "utf8",
+    ).catch(() => "");
+    const block =
+      content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
+    const command = block.match(/command = (".*")/)?.[1];
+    if (command) entry = JSON.parse(command);
+  } else {
+    const file =
+      options.target === "claude"
+        ? global
+          ? path.join(home, ".claude.json")
+          : path.join(options.root, ".mcp.json")
+        : global
+          ? path.join(home, ".copilot/mcp-config.json")
+          : path.join(options.root, ".github/mcp.json");
+    const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
+    entry = value.mcpServers?.["ast-mcp"]?.command;
+  }
+  if (typeof entry !== "string") return undefined;
+  return global ? path.resolve(entry) : path.resolve(options.root, entry);
+}
+
 function serviceFile(options: CheckOptions, home: string) {
   const digest = new Bun.CryptoHasher("sha256")
     .update(path.resolve(options.root))
@@ -689,17 +722,7 @@ export async function checkInstall(
     options.transport === "stdio" &&
     process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE !== "1"
   ) {
-    const binary =
-      options.scope === "local"
-        ? resolveLocalBinaryAlias("ast-mcp", options.root)
-        : resolveGlobalBinaryAlias("ast-mcp", {
-            globalBinDirectories: globalBinDirectories(
-              "ast-mcp",
-              process.platform,
-              home,
-            ),
-            platform: process.platform,
-          });
+    const binary = await configuredStdioCommand(options, home, global);
     if (binary) {
       try {
         smoke = await smokeMcpStdio(binary, options.root);

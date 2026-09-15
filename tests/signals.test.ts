@@ -47,6 +47,10 @@ test.skipIf(process.platform === "win32")(
     reader.releaseLock();
 
     processHandle.kill("SIGTERM");
+    const stderr = processHandle.stderr.getReader();
+    const closing = await stderr.read();
+    stderr.releaseLock();
+    expect(new TextDecoder().decode(closing.value)).toContain("closed:SIGTERM");
     processHandle.kill("SIGINT");
 
     expect(await processHandle.exited).toBe(1);
