@@ -151,10 +151,14 @@ test("write results are finalized before restrictive metadata is committed", asy
       }),
     );
     expect((result.files as Record<string, unknown>)[target]).toMatchObject({
-      chattr: { chmod: 0 },
       sha256: sha256("private\n"),
     });
-    expect((await stat(target)).mode & 0o777).toBe(0);
+    if (process.platform !== "win32") {
+      expect((result.files as Record<string, unknown>)[target]).toMatchObject({
+        chattr: { chmod: 0 },
+      });
+      expect((await stat(target)).mode & 0o777).toBe(0);
+    }
   } finally {
     await chmod(target, 0o600).catch(() => undefined);
     await rm(root, { force: true, recursive: true });

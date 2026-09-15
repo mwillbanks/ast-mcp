@@ -1,24 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer as createNetServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
 import { evaluateHook } from "../src/hook";
 import { BatchingStdioServerTransport } from "../src/stdio";
-
-async function availablePort() {
-  const socket = createNetServer();
-  await new Promise<void>((resolve) => socket.listen(0, "127.0.0.1", resolve));
-  const address = socket.address();
-  if (!address || typeof address === "string")
-    throw new Error("Could not allocate a test port");
-  await new Promise<void>((resolve, reject) =>
-    socket.close((error) => (error ? reject(error) : resolve())),
-  );
-  return address.port;
-}
+import { spawnHttpMcpProcess, spawnLiveProcess } from "./support/live-process";
 
 test("hook routes common nested shell and interpreter wrappers", () => {
   for (const command of [
@@ -95,51 +83,42 @@ test("stdio closes oversized input and handles drain and write errors", async ()
 });
 
 test("HTTP expires idle sessions deterministically", async () => {
-  const port = await availablePort();
-  const processHandle = Bun.spawn(
-    [process.execPath, path.resolve(import.meta.dir, "../src/http-entry.ts")],
+  const server = await spawnHttpMcpProcess(
+    process.execPath,
+    [path.resolve(import.meta.dir, "../bin/ast-mcp.ts"), "mcp"],
     {
       env: {
         ...process.env,
         AST_MCP_SESSION_SWEEP_INTERVAL_MS: "1",
         AST_MCP_SESSION_TIMEOUT_MS: "1",
-        PORT: String(port),
       },
-      stderr: "pipe",
-      stdout: "pipe",
     },
   );
 
   try {
-    const url = `http://127.0.0.1:${port}/mcp`;
-    let initialized: Response | undefined;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      initialized = await fetch(url, {
-        body: JSON.stringify({
-          id: 1,
-          jsonrpc: "2.0",
-          method: "initialize",
-          params: {
-            capabilities: {},
-            clientInfo: { name: "idle-test", version: "1.0.0" },
-            protocolVersion: "2025-06-18",
-          },
-        }),
-        headers: {
-          accept: "application/json, text/event-stream",
-          "content-type": "application/json",
+    const initialized = await fetch(server.url, {
+      body: JSON.stringify({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "idle-test", version: "1.0.0" },
+          protocolVersion: "2025-06-18",
         },
-        method: "POST",
-      }).catch(() => undefined);
-      if (initialized) break;
-      await Bun.sleep(25);
-    }
-    expect(initialized?.status).toBe(200);
-    const sessionId = initialized?.headers.get("mcp-session-id");
+      }),
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+    expect(initialized.status).toBe(200);
+    const sessionId = initialized.headers.get("mcp-session-id");
     expect(sessionId).toBeTruthy();
 
     await Bun.sleep(30);
-    const expired = await fetch(url, {
+    const expired = await fetch(server.url, {
       body: JSON.stringify({
         id: 2,
         jsonrpc: "2.0",
@@ -155,8 +134,7 @@ test("HTTP expires idle sessions deterministically", async () => {
     });
     expect(expired.status).toBe(404);
   } finally {
-    if (processHandle.exitCode === null) processHandle.kill("SIGTERM");
-    await processHandle.exited;
+    await server.stop();
   }
 });
 
@@ -569,33 +547,20 @@ test("eval fixtures cover every special surface category", async () => {
 });
 
 test("live stdio server returns Invalid Request for an empty batch", async () => {
-  const child = Bun.spawn(["bun", "run", "src/index.ts"], {
+  const child = spawnLiveProcess(process.execPath, ["run", "src/index.ts"], {
     cwd: process.cwd(),
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
   });
-  const reader = child.stdout.getReader();
 
   try {
-    child.stdin.write(new TextEncoder().encode("[]\n"));
-    const result = await Promise.race([
-      reader.read(),
-      Bun.sleep(2_000).then(() => {
-        throw new Error("stdio server did not answer the empty batch");
-      }),
-    ]);
-    if (result.done || !result.value)
-      throw new Error("stdio server closed before responding");
-    const response = JSON.parse(new TextDecoder().decode(result.value)) as {
+    child.process.stdin.write(new TextEncoder().encode("[]\n"));
+    const response = JSON.parse(await child.readStdoutLine(2_000)) as {
       error?: { code?: number };
       id?: unknown;
     };
     expect(response.id).toBeNull();
     expect(response.error?.code).toBe(-32600);
   } finally {
-    child.kill();
-    await child.exited;
+    await child.stop();
   }
 });
 

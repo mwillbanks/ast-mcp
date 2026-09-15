@@ -36,7 +36,8 @@ ignoreExportsUsedInFile = true
 # Surface every duplicated pair so architectural consolidation is comprehensive.
 minOccurrences = 2
 
-# Six reviewed semantic-boundary duplicates retain family-specific behavior.
+# Reviewed semantic-boundary duplicates retain family-specific behavior.
+# The installed skill copies the batch adapter without importing project source.
 ignoredClones = [
   "dup:c77b3abb6f87acd9-6:2",
   "dup:c77b3abb6f87acd9-2:2",
@@ -44,6 +45,7 @@ ignoredClones = [
   "dup:c77b3abb6f87acd9-1:2",
   "dup:c77b3abb6f87acd9-4:2",
   "dup:c77b3abb6f87acd9-3:2",
+  "dup:c77b3abb6f87acd9-7:2",
 ]
 
 [rules]

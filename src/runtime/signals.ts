@@ -1,6 +1,17 @@
-export const PROCESS_SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+const POSIX_PROCESS_SIGNALS = ["SIGTERM", "SIGINT", "SIGHUP"] as const;
+const WINDOWS_PROCESS_SIGNALS = ["SIGINT", "SIGBREAK"] as const;
 
-export type ProcessSignal = (typeof PROCESS_SIGNALS)[number];
+export type ProcessSignal =
+  | (typeof POSIX_PROCESS_SIGNALS)[number]
+  | (typeof WINDOWS_PROCESS_SIGNALS)[number];
+
+export function processSignals(
+  platform: NodeJS.Platform = process.platform,
+): readonly ProcessSignal[] {
+  return platform === "win32" ? WINDOWS_PROCESS_SIGNALS : POSIX_PROCESS_SIGNALS;
+}
+
+export const PROCESS_SIGNALS = processSignals();
 
 export interface SignalHost {
   exit(code: number): unknown;

@@ -40,12 +40,14 @@ function normalizeDependencies(
 ): ConfigLayer["dependencies"] {
   if (!dependencies) return undefined;
   return {
-    ast_bro_binary: dependencies.ast_bro_binary
-      ? resolvedCommand(dependencies.ast_bro_binary, base)
-      : undefined,
-    dprint_binary: dependencies.dprint_binary
-      ? resolvedCommand(dependencies.dprint_binary, base)
-      : undefined,
+    ...(dependencies.ast_bro_binary
+      ? {
+          ast_bro_binary: resolvedCommand(dependencies.ast_bro_binary, base),
+        }
+      : {}),
+    ...(dependencies.dprint_binary
+      ? { dprint_binary: resolvedCommand(dependencies.dprint_binary, base) }
+      : {}),
   };
 }
 
@@ -56,16 +58,24 @@ function normalizeFormatting(
   if (!formatting) return undefined;
   return {
     ...formatting,
-    dprint_config: formatting.dprint_config
-      ? resolvedPath(formatting.dprint_config, base)
-      : undefined,
-    formatters: formatting.formatters?.map((formatter) => ({
-      ...formatter,
-      command: resolvedCommand(formatter.command, base),
-      extensions: formatter.extensions?.map((extension) =>
-        extension.toLowerCase(),
-      ),
-    })),
+    ...(formatting.dprint_config
+      ? { dprint_config: resolvedPath(formatting.dprint_config, base) }
+      : {}),
+    ...(formatting.formatters
+      ? {
+          formatters: formatting.formatters.map((formatter) => ({
+            ...formatter,
+            command: resolvedCommand(formatter.command, base),
+            ...(formatter.extensions
+              ? {
+                  extensions: formatter.extensions.map((extension) =>
+                    extension.toLowerCase(),
+                  ),
+                }
+              : {}),
+          })),
+        }
+      : {}),
   };
 }
 

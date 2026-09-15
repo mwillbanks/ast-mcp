@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  commandForPlatform,
   directoryBinaryCandidates,
   executableNames,
   globalBinDirectories,
@@ -125,15 +126,46 @@ export function mcpStdioCommand(
   binary: string,
   platform: NodeJS.Platform = process.platform,
 ) {
-  if (platform === "win32" && /\.(?:cmd|bat)$/iu.test(binary))
-    return [
-      process.env.ComSpec ?? "cmd.exe",
-      "/d",
-      "/s",
-      "/c",
-      `call "${binary}" mcp`,
-    ];
-  return [binary, "mcp"];
+  const invocation = commandForPlatform(binary, ["mcp"], platform);
+  return [invocation.command, ...invocation.args];
+}
+
+async function terminateMcpProcess(
+  processHandle: ReturnType<typeof Bun.spawn>,
+) {
+  if (processHandle.exitCode !== null) return;
+  if (process.platform === "win32") {
+    try {
+      const taskkill = Bun.spawn(
+        ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
+        { stderr: "ignore", stdin: "ignore", stdout: "ignore" },
+      );
+      await Promise.race([taskkill.exited, Bun.sleep(500)]);
+      if (taskkill.exitCode === null) taskkill.kill();
+    } catch {
+      processHandle.kill();
+    }
+  } else {
+    try {
+      process.kill(-processHandle.pid, "SIGTERM");
+    } catch {
+      processHandle.kill("SIGTERM");
+    }
+  }
+  const stopped = await Promise.race([
+    processHandle.exited.then(() => true),
+    Bun.sleep(500).then(() => false),
+  ]);
+  if (!stopped && processHandle.exitCode === null) {
+    if (process.platform !== "win32") {
+      try {
+        process.kill(-processHandle.pid, "SIGKILL");
+      } catch {
+        processHandle.kill("SIGKILL");
+      }
+    } else processHandle.kill("SIGKILL");
+  }
+  await Promise.race([processHandle.exited, Bun.sleep(500)]);
 }
 
 export async function smokeMcpStdio(
@@ -141,10 +173,10 @@ export async function smokeMcpStdio(
   root: string,
   timeoutMs = 15_000,
 ): Promise<McpSmokeResult> {
-  const windowsBatch =
-    globalThis.process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(binary);
-  const process = Bun.spawn(mcpStdioCommand(binary), {
+  const invocation = commandForPlatform(binary, ["mcp"]);
+  const process = Bun.spawn([invocation.command, ...invocation.args], {
     cwd: root,
+    detached: globalThis.process.platform !== "win32",
     env: {
       ...Bun.env,
       AST_MCP_PROJECT_ROOT: root,
@@ -153,8 +185,9 @@ export async function smokeMcpStdio(
     stderr: "pipe",
     stdin: "pipe",
     stdout: "pipe",
-    windowsVerbatimArguments: windowsBatch,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
+  const stderrDrain = new Response(process.stderr).text().catch(() => "");
   const deadline = Date.now() + timeoutMs;
   const responses = new Map<number, Record<string, unknown>>();
   const reader = process.stdout.getReader();
@@ -247,9 +280,9 @@ export async function smokeMcpStdio(
       typeof openedWorkspace?.workspaceId === "string" &&
       openedWorkspace.workspaceId.startsWith("workspace:v1:") &&
       typeof openedWorkspace.checkoutRoot === "string" &&
-      path.resolve(openedWorkspace.checkoutRoot) === expectedRoot &&
+      sameNativePath(openedWorkspace.checkoutRoot, expectedRoot) &&
       typeof openedWorkspace.canonicalRootAnchor === "string" &&
-      path.resolve(openedWorkspace.canonicalRootAnchor) === expectedRoot;
+      sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
     if (!selectedWorkspace)
       throw new Error("MCP smoke did not select the requested workspace");
     return { exposedTools, initialized: true, selectedWorkspace };
@@ -260,9 +293,9 @@ export async function smokeMcpStdio(
       Bun.sleep(500).then(() => false),
     ]);
     if (!exited) {
-      process.kill();
-      await process.exited;
+      await terminateMcpProcess(process);
     }
+    await Promise.race([stderrDrain, Bun.sleep(500)]);
   }
 }
 
@@ -338,11 +371,13 @@ async function hookCurrent(
   root: string | undefined,
   home: string,
 ) {
-  const config = JSON.parse(
+  const config = Bun.JSONC.parse(
     await readFile(configFile, "utf8").catch(() => "{}"),
   );
-  const entries = Array.isArray(config.hooks?.[event])
-    ? config.hooks[event]
+  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+  const hostConfig = config as Record<string, any>;
+  const entries = Array.isArray(hostConfig.hooks?.[event])
+    ? hostConfig.hooks[event]
     : [];
   const commands =
     event === "preToolUse"
@@ -391,12 +426,44 @@ async function stdioCommandCurrent(
   root?: string,
   home = os.homedir(),
 ) {
-  return (
-    (await astMcpEntry(entry?.command, root, home)) &&
-    Array.isArray(entry?.args) &&
-    entry.args.length === 1 &&
-    entry.args[0] === "mcp"
-  );
+  return (await matchingStdioBinary(entry, root, home)) !== undefined;
+}
+
+function sameCommand(left: unknown, right: string) {
+  if (typeof left !== "string") return false;
+  if (!path.isAbsolute(left) || !path.isAbsolute(right))
+    return process.platform === "win32"
+      ? left.toLowerCase() === right.toLowerCase()
+      : left === right;
+  return sameNativePath(left, right);
+}
+
+async function matchingStdioBinary(
+  entry: McpEntry | undefined,
+  root?: string,
+  home = os.homedir(),
+) {
+  if (!entry || !Array.isArray(entry.args)) return undefined;
+  const directories = root
+    ? [path.join(root, "node_modules/.bin")]
+    : globalBinDirectories("ast-mcp", process.platform, home);
+  const binaries = directoryBinaryCandidates(
+    directories,
+    executableNames("ast-mcp", process.platform),
+  ).filter((candidate) => isExecutable(candidate, process.platform));
+  for (const binary of binaries) {
+    const configured = root
+      ? `./${path.relative(root, binary).split(path.sep).join("/")}`
+      : binary;
+    const expected = commandForPlatform(configured, ["mcp"]);
+    if (
+      sameCommand(entry.command, expected.command) &&
+      entry.args.length === expected.args.length &&
+      entry.args.every((argument, index) => argument === expected.args[index])
+    )
+      return binary;
+  }
+  return undefined;
 }
 
 function entryTypeCurrent(
@@ -440,8 +507,10 @@ async function jsonMcpCurrent(
   url?: string,
   home = os.homedir(),
 ) {
-  const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
-  const entry: McpEntry | undefined = value[section]?.["ast-mcp"];
+  const value = Bun.JSONC.parse(await readFile(file, "utf8").catch(() => "{}"));
+  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+  const hostConfig = value as Record<string, any>;
+  const entry: McpEntry | undefined = hostConfig[section]?.["ast-mcp"];
   return transport === "http"
     ? httpJsonMcpCurrent(entry, type, url)
     : stdioJsonMcpCurrent(entry, root, type, home);
@@ -460,11 +529,16 @@ async function codexStdioMcpCurrent(
   home: string,
 ) {
   const command = block.match(/command = (".*")/);
+  const args = block.match(/^args = (\[.*\])$/m);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
-    !block.includes('args = ["mcp"]') ||
     !command ||
-    !(await astMcpEntry(JSON.parse(command[1]), root, home))
+    !args ||
+    !(await stdioCommandCurrent(
+      { args: JSON.parse(args[1]), command: JSON.parse(command[1]) },
+      root,
+      home,
+    ))
   )
     return false;
   return !block.includes("AST_MCP_PROJECT_ROOT") && !block.includes("env =");
@@ -613,7 +687,7 @@ async function configuredStdioCommand(
   home: string,
   global: boolean,
 ): Promise<string | undefined> {
-  let entry: unknown;
+  let entry: McpEntry | undefined;
   if (options.target === "codex") {
     const base = global
       ? path.join(home, ".codex")
@@ -625,7 +699,9 @@ async function configuredStdioCommand(
     const block =
       content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
     const command = block.match(/command = (".*")/)?.[1];
-    if (command) entry = JSON.parse(command);
+    const args = block.match(/^args = (\[.*\])$/m)?.[1];
+    if (command && args)
+      entry = { args: JSON.parse(args), command: JSON.parse(command) };
   } else {
     const file =
       options.target === "claude"
@@ -635,11 +711,14 @@ async function configuredStdioCommand(
         : global
           ? path.join(home, ".copilot/mcp-config.json")
           : path.join(options.root, ".github/mcp.json");
-    const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
-    entry = value.mcpServers?.["ast-mcp"]?.command;
+    const value = Bun.JSONC.parse(
+      await readFile(file, "utf8").catch(() => "{}"),
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+    const hostConfig = value as Record<string, any>;
+    entry = hostConfig.mcpServers?.["ast-mcp"];
   }
-  if (typeof entry !== "string") return undefined;
-  return global ? path.resolve(entry) : path.resolve(options.root, entry);
+  return matchingStdioBinary(entry, global ? undefined : options.root, home);
 }
 
 function serviceFile(options: CheckOptions, home: string) {

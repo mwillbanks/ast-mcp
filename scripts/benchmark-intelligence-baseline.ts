@@ -189,7 +189,13 @@ const median = (values: number[]) => {
 
 async function cli(command: string[], cwd: string) {
   const started = Bun.nanoseconds();
-  const child = Bun.spawn(command, { cwd, stderr: "pipe", stdout: "pipe" });
+  const child = Bun.spawn(command, {
+    cwd,
+    killSignal: "SIGKILL",
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 60_000,
+  });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -812,21 +818,28 @@ async function productionIndexing(
     const embeddingPublications = [coldPublication, warmPublication];
 
     const connection = await lancedb.connect(storagePath);
-    const searchRows = coldRows.map((row) => ({
-      artifact_id: String(row.artifact_id),
-      vector: Array.from(row.vector as Iterable<number>),
-    }));
-    const table = await connection.createTable(
-      "benchmark_vector_search",
-      searchRows,
-      { mode: "overwrite" },
-    );
-    const nearest = await table
-      .search(searchRows[0]?.vector ?? [])
-      .limit(1)
-      .toArray();
-    table.close();
-    connection.close();
+    let nearest: unknown[] = [];
+    try {
+      const searchRows = coldRows.map((row) => ({
+        artifact_id: String(row.artifact_id),
+        vector: Array.from(row.vector as Iterable<number>),
+      }));
+      const table = await connection.createTable(
+        "benchmark_vector_search",
+        searchRows,
+        { mode: "overwrite" },
+      );
+      try {
+        nearest = await table
+          .search(searchRows[0]?.vector ?? [])
+          .limit(1)
+          .toArray();
+      } finally {
+        table.close();
+      }
+    } finally {
+      connection.close();
+    }
 
     return {
       cold: {
@@ -887,7 +900,12 @@ async function isolation(root: string) {
   const second = path.join(root, "second");
   await mkdir(repo);
   const git = async (args: string[]) => {
-    const child = Bun.spawn(["git", ...args], { cwd: repo, stderr: "pipe" });
+    const child = Bun.spawn(["git", ...args], {
+      cwd: repo,
+      killSignal: "SIGKILL",
+      stderr: "pipe",
+      timeout: 30_000,
+    });
     const [code, error] = await Promise.all([
       child.exited,
       new Response(child.stderr).text(),

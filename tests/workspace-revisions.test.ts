@@ -313,17 +313,28 @@ test("invalid refs and historical selectors on non-Git roots fail closed", async
 
 test("Git subprocesses force-kill commands that ignore graceful termination", async () => {
   const originalSpawn = Bun.spawn;
-  const signals: Array<number | undefined> = [];
+  const signals: Array<number | NodeJS.Signals | undefined> = [];
+  let exitCode: number | null = null;
   let finish!: (code: number) => void;
   const exited = new Promise<number>((resolve) => {
     finish = resolve;
   });
   const child = {
-    exited,
-    kill(signal?: number) {
-      signals.push(signal);
-      if (signal === 9) finish(137);
+    get exitCode() {
+      return exitCode;
     },
+    exited,
+    kill(signal?: number | NodeJS.Signals) {
+      signals.push(signal);
+      if (
+        signal === "SIGKILL" ||
+        (process.platform === "win32" && signal === undefined)
+      ) {
+        exitCode = 137;
+        finish(exitCode);
+      }
+    },
+    pid: 123,
     stderr: new Blob().stream(),
     stdout: new Blob().stream(),
   };
@@ -338,7 +349,9 @@ test("Git subprocesses force-kill commands that ignore graceful termination", as
     );
     controller.abort();
     expect(await pending).toMatchObject({ code: 137 });
-    expect(signals).toEqual([undefined, 9]);
+    expect(signals).toEqual(
+      process.platform === "win32" ? [undefined] : ["SIGTERM", "SIGKILL"],
+    );
   } finally {
     Bun.spawn = originalSpawn;
   }

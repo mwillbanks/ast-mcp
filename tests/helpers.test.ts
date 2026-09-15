@@ -24,14 +24,15 @@ describe("shared helpers", () => {
   });
 
   test("normalizes dependency commands relative to the configuration file", () => {
-    const configPath = path.join("/workspace", "config", "ast-mcp.toml");
+    const configDirectory = path.resolve("/workspace", "config");
+    const configPath = path.join(configDirectory, "ast-mcp.toml");
     expect(
       normalizeConfigLayer(
         { dependencies: { dprint_binary: "./bin/dprint" } },
         configPath,
       ).dependencies,
     ).toEqual({
-      dprint_binary: path.join("/workspace", "config", "bin/dprint"),
+      dprint_binary: path.join(configDirectory, "bin/dprint"),
     });
   });
 

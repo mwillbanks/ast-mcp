@@ -249,7 +249,8 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
           sourceContentBase64: snapshot?.content.toString("base64") ?? null,
           sourceGid:
             process.platform === "win32" ? null : (snapshot?.gid ?? null),
-          sourceMode: snapshot?.mode ?? null,
+          sourceMode:
+            process.platform === "win32" ? null : (snapshot?.mode ?? null),
           sourceSha256: snapshot?.sha256 ?? null,
           sourceUid:
             process.platform === "win32" ? null : (snapshot?.uid ?? null),

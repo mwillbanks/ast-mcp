@@ -26,6 +26,7 @@ import {
   LanceIntelligenceStore,
   type StorageError,
   snapshotStorageDirectory,
+  storagePathIdentity,
   validateRelocationCoordinates,
 } from "../src/intelligence/storage/index.ts";
 
@@ -497,6 +498,7 @@ describe("LanceDB storage recovery and retention", () => {
         where: `generation_id = '${generation.generationId}'`,
       });
     }
+    publicationTable.close();
     connection.close();
 
     const retention = (await store.rows("retention"))[0];
@@ -799,6 +801,36 @@ describe("LanceDB storage recovery and retention", () => {
     });
     expect(await readdir(countParent)).toEqual([]);
     await store.shutdownCoordinator();
+  });
+
+  test("classifies Windows network paths and canonicalizes path aliases", async () => {
+    for (const networkPath of [
+      String.raw`\\server\share\index`,
+      String.raw`\\?\UNC\server\share\index`,
+      "//server/share/index",
+    ]) {
+      await expect(
+        assertSupportedStoragePath(networkPath),
+      ).rejects.toMatchObject({
+        code: "network_filesystem_unsupported",
+      });
+    }
+
+    expect(storagePathIdentity(String.raw`C:\Data\INDEX`)).toBe(
+      storagePathIdentity(String.raw`c:\data\index`),
+    );
+    expect(storagePathIdentity(String.raw`\\?\C:\Data\INDEX`)).toBe(
+      storagePathIdentity(String.raw`c:\data\index`),
+    );
+    expect(storagePathIdentity(String.raw`\\?\UNC\server\share\index`)).toBe(
+      storagePathIdentity(String.raw`\\SERVER\SHARE\INDEX`),
+    );
+    expect(() =>
+      validateRelocationCoordinates(
+        String.raw`C:\Data\Index`,
+        String.raw`c:\data\index\nested`,
+      ),
+    ).toThrow("must be disjoint");
   });
 
   test("rejects unproven network storage modes", async () => {

@@ -2,33 +2,24 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-
-function availablePort() {
-  const probe = Bun.serve({
-    fetch: () => new Response("probe"),
-    port: 0,
-  });
-  const port = probe.port;
-  probe.stop(true);
-  return port;
-}
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 test("HTTP startup reads project TOML before binding", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-http-config-"));
-  const port = availablePort();
   await mkdir(path.join(root, ".git"));
   await writeFile(
     path.join(root, "ast-mcp.toml"),
     `[http]
 host = "127.0.0.1"
-port = ${port}
+port = 3768
 session_timeout_ms = 5000
 session_sweep_interval_ms = 1000
 `,
   );
 
-  const processHandle = Bun.spawn(
-    [process.execPath, path.resolve(import.meta.dir, "../src/http-entry.ts")],
+  const server = await spawnHttpMcpProcess(
+    process.execPath,
+    [path.resolve(import.meta.dir, "../bin/ast-mcp.ts"), "mcp"],
     {
       cwd: path.resolve(import.meta.dir, ".."),
       env: {
@@ -36,24 +27,14 @@ session_sweep_interval_ms = 1000
         AST_MCP_PROJECT_ROOT: root,
         PORT: undefined,
       },
-      stderr: "pipe",
-      stdout: "pipe",
+      host: false,
     },
   );
 
   try {
-    let response: Response | undefined;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      response = await fetch(`http://127.0.0.1:${port}/missing`).catch(
-        () => undefined,
-      );
-      if (response) break;
-      await Bun.sleep(25);
-    }
-    expect(response?.status).toBe(404);
+    expect((await fetch(new URL("/missing", server.url))).status).toBe(404);
   } finally {
-    if (processHandle.exitCode === null) processHandle.kill("SIGTERM");
-    await processHandle.exited;
+    await server.stop();
     await rm(root, { force: true, recursive: true });
   }
 });

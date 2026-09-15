@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 import type { Connection, Table } from "@lancedb/lancedb";
 import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
@@ -38,6 +37,7 @@ import {
   type RelocationPreview,
   type RelocationResult,
   snapshotStorageDirectory,
+  storagePathIdentity,
   validateRelocationCoordinates,
 } from "./relocation.ts";
 import {
@@ -259,8 +259,26 @@ function prepareRow(tableName: LanceTableName, row: StorageRow): StorageRow {
 
 async function latestTable(connection: Connection, name: LanceTableName) {
   const table = await connection.openTable(name);
-  await table.checkoutLatest();
-  return table;
+  try {
+    await table.checkoutLatest();
+    return table;
+  } catch (error) {
+    table.close();
+    throw error;
+  }
+}
+
+async function withLatestTable<T>(
+  connection: Connection,
+  name: LanceTableName,
+  action: (table: Table) => Promise<T>,
+): Promise<T> {
+  const table = await latestTable(connection, name);
+  try {
+    return await action(table);
+  } finally {
+    table.close();
+  }
 }
 
 function arrowSchemaSignature(schema: Schema): readonly string[] {
@@ -425,7 +443,10 @@ export class LanceIntelligenceStore {
       networkFileSystem: options.networkFileSystem,
       networkProof: options.networkProof,
     });
-    if (resolve(storagePath) !== resolve(domain.storagePath)) {
+    if (
+      storagePathIdentity(storagePath) !==
+      storagePathIdentity(domain.storagePath)
+    ) {
       throw new StorageError(
         "storage_unavailable",
         "Storage domain path is not canonical",
@@ -440,39 +461,46 @@ export class LanceIntelligenceStore {
       readConsistencyInterval: 0,
     });
     const access = options.access ?? "read-write";
-
-    if (access === "read-write") {
-      await connection.createEmptyTable(
-        "coordinator_recovery",
-        TABLE_SCHEMAS.coordinator_recovery,
-        { existOk: true, mode: "create" },
-      );
-    } else {
-      const names = await connection.tableNames();
-      if (!names.includes("coordinator_recovery")) {
-        throw new StorageError(
-          "storage_unavailable",
-          "Read-only storage requires an initialized LanceDB directory",
-          false,
+    let store: LanceIntelligenceStore | undefined;
+    try {
+      if (access === "read-write") {
+        const table = await connection.createEmptyTable(
+          "coordinator_recovery",
+          TABLE_SCHEMAS.coordinator_recovery,
+          { existOk: true, mode: "create" },
         );
+        table.close();
+      } else {
+        const names = await connection.tableNames();
+        if (!names.includes("coordinator_recovery")) {
+          throw new StorageError(
+            "storage_unavailable",
+            "Read-only storage requires an initialized LanceDB directory",
+            false,
+          );
+        }
       }
-    }
 
-    const coordinator = StorageCoordinator.forStorageDirectory(
-      connection,
-      domain.domainId,
-      storagePath,
-      options,
-    );
-    const store = new LanceIntelligenceStore(
-      connection,
-      domain,
-      access,
-      coordinator,
-      options.now ?? (() => new Date()),
-    );
-    await store.initialize();
-    return store;
+      const coordinator = StorageCoordinator.forStorageDirectory(
+        connection,
+        domain.domainId,
+        storagePath,
+        options,
+      );
+      store = new LanceIntelligenceStore(
+        connection,
+        domain,
+        access,
+        coordinator,
+        options.now ?? (() => new Date()),
+      );
+      await store.initialize();
+      return store;
+    } catch (error) {
+      if (store) await store.shutdownCoordinator();
+      else connection.close();
+      throw error;
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -487,7 +515,11 @@ export class LanceIntelligenceStore {
           );
         }
         const table = await latestTable(this.connection, tableName);
-        assertCompatibleSchema(tableName, await table.schema());
+        try {
+          assertCompatibleSchema(tableName, await table.schema());
+        } finally {
+          table.close();
+        }
       }
       return;
     }
@@ -499,21 +531,26 @@ export class LanceIntelligenceStore {
         for (const tableName of ALL_TABLES) {
           if (existingTables.has(tableName)) continue;
           await this.coordinator.fence(lease);
-          await this.connection.createEmptyTable(
+          const table = await this.connection.createEmptyTable(
             tableName,
             TABLE_SCHEMAS[tableName],
             { mode: "create" },
           );
+          table.close();
         }
 
         const legacyTables: PublicationGenerationTable[] = [];
         for (const tableName of ALL_TABLES) {
           const table = await latestTable(this.connection, tableName);
-          const actual = await table.schema();
-          if (isLegacyPublicationTagSchema(tableName, actual)) {
-            legacyTables.push(tableName as PublicationGenerationTable);
-          } else {
-            assertCompatibleSchema(tableName, actual);
+          try {
+            const actual = await table.schema();
+            if (isLegacyPublicationTagSchema(tableName, actual)) {
+              legacyTables.push(tableName as PublicationGenerationTable);
+            } else {
+              assertCompatibleSchema(tableName, actual);
+            }
+          } finally {
+            table.close();
           }
         }
         const migrationId = createIdentity("migration", {
@@ -521,13 +558,18 @@ export class LanceIntelligenceStore {
           storageDomainId: this.domain.domainId,
         });
         const migrationTable = await latestTable(this.connection, "migrations");
-        const existingMigration = (
-          await migrationTable
-            .query()
-            .where(`migration_id = ${sqlString(migrationId)}`)
-            .limit(1)
-            .toArray()
-        )[0];
+        let existingMigration: Record<string, unknown> | undefined;
+        try {
+          existingMigration = (
+            await migrationTable
+              .query()
+              .where(`migration_id = ${sqlString(migrationId)}`)
+              .limit(1)
+              .toArray()
+          )[0];
+        } finally {
+          migrationTable.close();
+        }
         if (legacyTables.length > 0 || existingMigration?.state === "running") {
           const startedAt =
             String(existingMigration?.started_at ?? "") ||
@@ -582,13 +624,17 @@ export class LanceIntelligenceStore {
           for (const tableName of legacyTables) {
             await this.coordinator.fence(lease);
             const table = await latestTable(this.connection, tableName);
-            await table.addColumns([
-              {
-                name: "publication_generation_id",
-                valueSql: "CAST(NULL AS STRING)",
-              },
-            ]);
-            assertCompatibleSchema(tableName, await table.schema());
+            try {
+              await table.addColumns([
+                {
+                  name: "publication_generation_id",
+                  valueSql: "CAST(NULL AS STRING)",
+                },
+              ]);
+              assertCompatibleSchema(tableName, await table.schema());
+            } finally {
+              table.close();
+            }
             migratedTables.push(tableName);
             await writeMigration("running");
           }
@@ -634,11 +680,15 @@ export class LanceIntelligenceStore {
           let migratedLinks = 0;
           await writeMembershipMigration("running", migratedLinks);
           for (const tableName of COMPLETE_GENERATION_TABLES) {
-            const table = await latestTable(this.connection, tableName);
-            const rows = await table
-              .query()
-              .where("publication_generation_id IS NOT NULL")
-              .toArray();
+            const rows = await withLatestTable(
+              this.connection,
+              tableName,
+              (table) =>
+                table
+                  .query()
+                  .where("publication_generation_id IS NOT NULL")
+                  .toArray(),
+            );
             const primaryKey = TABLE_PRIMARY_KEYS[tableName];
             const links = rows.map((row) => {
               const artifactId = String(row[primaryKey]);
@@ -721,19 +771,21 @@ export class LanceIntelligenceStore {
     predicate?: string,
     options: { limit?: number; timeoutMs?: number } = {},
   ): Promise<readonly StorageRow[]> {
-    const table = await latestTable(this.connection, tableName);
-    assertCompatibleSchema(tableName, await table.schema());
-    let query = table.query();
-    if (predicate) query = query.where(predicate);
-    if (options.limit !== undefined) query = query.limit(options.limit);
-    return (await query.toArray({
-      timeoutMs: options.timeoutMs,
-    })) as StorageRow[];
+    return withLatestTable(this.connection, tableName, async (table) => {
+      assertCompatibleSchema(tableName, await table.schema());
+      let query = table.query();
+      if (predicate) query = query.where(predicate);
+      if (options.limit !== undefined) query = query.limit(options.limit);
+      return (await query.toArray({
+        timeoutMs: options.timeoutMs,
+      })) as StorageRow[];
+    });
   }
 
   async count(tableName: LanceTableName, predicate?: string): Promise<number> {
-    const table = await latestTable(this.connection, tableName);
-    return table.countRows(predicate);
+    return withLatestTable(this.connection, tableName, (table) =>
+      table.countRows(predicate),
+    );
   }
 
   async countRows(
@@ -856,12 +908,16 @@ export class LanceIntelligenceStore {
   private async publicationRecord(
     generationId: string,
   ): Promise<PublicationGeneration | PublicationReservation | null> {
-    const table = await latestTable(this.connection, "publications");
-    const rows = await table
-      .query()
-      .where(`generation_id = ${sqlString(generationId)}`)
-      .limit(1)
-      .toArray();
+    const rows = await withLatestTable(
+      this.connection,
+      "publications",
+      (table) =>
+        table
+          .query()
+          .where(`generation_id = ${sqlString(generationId)}`)
+          .limit(1)
+          .toArray(),
+    );
     const payload = parseJsonRecord(rows[0]?.payload_json);
     if (!payload) return null;
     return payload.state === "published"
@@ -1007,8 +1063,9 @@ export class LanceIntelligenceStore {
     reservation: PublicationReservation,
     tableName: (typeof COMPLETE_GENERATION_TABLES)[number],
   ): Promise<PublicationReservation> {
-    const table = await latestTable(this.connection, tableName);
-    const version = await table.version();
+    const version = await withLatestTable(this.connection, tableName, (table) =>
+      table.version(),
+    );
     const versions = new Map(
       reservation.tableVersions.map((pin) => [pin.table, pin.version]),
     );
@@ -1083,15 +1140,20 @@ export class LanceIntelligenceStore {
     lease: CoordinatorLease,
     generationId: string,
   ): Promise<void> {
-    const recovery = await latestTable(this.connection, "coordinator_recovery");
-    await this.coordinator.fence(lease);
-    const observedAt = this.now().toISOString();
-    await recovery.update({
-      values: { last_published_generation_id: generationId },
-      where:
-        `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
-        `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(observedAt)}`,
-    });
+    await withLatestTable(
+      this.connection,
+      "coordinator_recovery",
+      async (recovery) => {
+        await this.coordinator.fence(lease);
+        const observedAt = this.now().toISOString();
+        await recovery.update({
+          values: { last_published_generation_id: generationId },
+          where:
+            `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
+            `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(observedAt)}`,
+        });
+      },
+    );
   }
 
   async reusablePublication(
@@ -1429,8 +1491,12 @@ export class LanceIntelligenceStore {
           if (producerVersion !== undefined) {
             return { table: tableName, version: producerVersion };
           }
-          const table = await latestTable(this.connection, tableName);
-          return { table: tableName, version: await table.version() };
+          const version = await withLatestTable(
+            this.connection,
+            tableName,
+            (table) => table.version(),
+          );
+          return { table: tableName, version };
         }),
       );
       const generation = PublicationGenerationSchema.parse({
@@ -1496,8 +1562,12 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive("publish generation", async (lease) => {
       const tableVersions = await Promise.all(
         COMPLETE_GENERATION_TABLES.map(async (tableName) => {
-          const table = await latestTable(this.connection, tableName);
-          return { table: tableName, version: await table.version() };
+          const version = await withLatestTable(
+            this.connection,
+            tableName,
+            (table) => table.version(),
+          );
+          return { table: tableName, version };
         }),
       );
       const generationId = createPublicationGenerationId({
@@ -1507,15 +1577,16 @@ export class LanceIntelligenceStore {
         tableVersions,
         workspaceId: input.workspaceId,
       });
-      const publicationTable = await latestTable(
+      const existing = await withLatestTable(
         this.connection,
         "publications",
+        (publicationTable) =>
+          publicationTable
+            .query()
+            .where(`generation_id = ${sqlString(generationId)}`)
+            .limit(1)
+            .toArray(),
       );
-      const existing = await publicationTable
-        .query()
-        .where(`generation_id = ${sqlString(generationId)}`)
-        .limit(1)
-        .toArray();
       if (existing[0]) {
         return PublicationGenerationSchema.parse(
           parseJsonRecord(existing[0].payload_json),
@@ -1705,10 +1776,12 @@ export class LanceIntelligenceStore {
         false,
       );
     const manifestTable = await this.connection.openTable("revision_manifests");
-    const artifactTable = await this.connection.openTable("artifacts");
+    let artifactTable: Table | undefined;
     try {
+      const openedArtifactTable = await this.connection.openTable("artifacts");
+      artifactTable = openedArtifactTable;
       await manifestTable.checkout(manifestPin.version);
-      await artifactTable.checkout(artifactPin.version);
+      await openedArtifactTable.checkout(artifactPin.version);
       const manifest = (
         await manifestTable
           .query()
@@ -1774,7 +1847,7 @@ export class LanceIntelligenceStore {
           { manifestArtifactId: generation.manifestArtifactId },
         );
       const persistedManifestRow = (
-        await artifactTable
+        await openedArtifactTable
           .query()
           .where(`artifact_id = ${sqlString(generation.manifestArtifactId)}`)
           .limit(1)
@@ -1894,7 +1967,7 @@ export class LanceIntelligenceStore {
           );
         const table =
           tableName === "artifacts"
-            ? artifactTable
+            ? openedArtifactTable
             : await this.connection.openTable(tableName);
         try {
           await table.checkout(pin.version);
@@ -1978,7 +2051,7 @@ export class LanceIntelligenceStore {
               { missingArtifactIds: missing.slice(0, 100) },
             );
         } finally {
-          if (table !== artifactTable) table.close();
+          if (table !== openedArtifactTable) table.close();
         }
       }
       return {
@@ -1989,7 +2062,7 @@ export class LanceIntelligenceStore {
       };
     } finally {
       manifestTable.close();
-      artifactTable.close();
+      artifactTable?.close();
     }
   }
 
@@ -2059,16 +2132,21 @@ export class LanceIntelligenceStore {
     try {
       for (const versionPin of pin.tableVersions) {
         const table = await this.connection.openTable(versionPin.table);
-        await table.checkout(versionPin.version);
-        if ((await table.version()) !== versionPin.version) {
-          throw new StorageError(
-            "mixed_generation",
-            "LanceDB did not checkout the requested generation version",
-            false,
-            { table: versionPin.table, version: versionPin.version },
-          );
+        try {
+          await table.checkout(versionPin.version);
+          if ((await table.version()) !== versionPin.version) {
+            throw new StorageError(
+              "mixed_generation",
+              "LanceDB did not checkout the requested generation version",
+              false,
+              { table: versionPin.table, version: versionPin.version },
+            );
+          }
+          tables.set(versionPin.table, table);
+        } catch (error) {
+          table.close();
+          throw error;
         }
-        tables.set(versionPin.table, table);
       }
       if (pin.publicationProtocol === "reservation-v2") {
         const links = await latestTable(
@@ -2110,9 +2188,10 @@ export class LanceIntelligenceStore {
   async releaseReaderPin(pinId: string): Promise<void> {
     if (this.access === "read-only") return;
     await this.coordinator.exclusive("release reader pin", async (lease) => {
-      const table = await latestTable(this.connection, "reader_pins");
-      await this.coordinator.fence(lease);
-      await table.delete(`pin_id = ${sqlString(pinId)}`);
+      await withLatestTable(this.connection, "reader_pins", async (table) => {
+        await this.coordinator.fence(lease);
+        await table.delete(`pin_id = ${sqlString(pinId)}`);
+      });
     });
   }
 
@@ -2121,26 +2200,27 @@ export class LanceIntelligenceStore {
     await this.coordinator.exclusive(
       `create ${tableName}.${column} index`,
       async (lease) => {
-        const table = await latestTable(this.connection, tableName);
-        const field = (await table.schema()).fields.find(
-          (candidate) => candidate.name === column,
-        );
-        if (!field) {
-          throw new StorageError(
-            "invalid_schema",
-            `Cannot index absent column ${column}`,
-            false,
-            {
-              column,
-              tableName,
-            },
+        await withLatestTable(this.connection, tableName, async (table) => {
+          const field = (await table.schema()).fields.find(
+            (candidate) => candidate.name === column,
           );
-        }
-        const indices = await table.listIndices();
-        if (!indices.some((index) => index.columns.includes(column))) {
-          await this.coordinator.fence(lease);
-          await table.createIndex(column);
-        }
+          if (!field) {
+            throw new StorageError(
+              "invalid_schema",
+              `Cannot index absent column ${column}`,
+              false,
+              {
+                column,
+                tableName,
+              },
+            );
+          }
+          const indices = await table.listIndices();
+          if (!indices.some((index) => index.columns.includes(column))) {
+            await this.coordinator.fence(lease);
+            await table.createIndex(column);
+          }
+        });
       },
     );
   }
@@ -2222,29 +2302,34 @@ export class LanceIntelligenceStore {
         );
         let ignored = 0;
         for (const tableName of COMPLETE_GENERATION_TABLES) {
-          const table = await latestTable(this.connection, tableName);
-          const current = await table.version();
+          const current = await withLatestTable(
+            this.connection,
+            tableName,
+            (table) => table.version(),
+          );
           ignored += Math.max(
             0,
             current - (pinnedVersions.get(tableName) ?? 1),
           );
         }
-        const recovery = await latestTable(
+        await withLatestTable(
           this.connection,
           "coordinator_recovery",
-        );
-        await this.coordinator.fence(lease);
-        await recovery.update({
-          values: {
-            in_flight_job_ids_json: "[]",
-            last_published_generation_id: latest?.generationId ?? null,
-            recovered_at: now,
-            state: "recovered",
+          async (recovery) => {
+            await this.coordinator.fence(lease);
+            await recovery.update({
+              values: {
+                in_flight_job_ids_json: "[]",
+                last_published_generation_id: latest?.generationId ?? null,
+                recovered_at: now,
+                state: "recovered",
+              },
+              where:
+                `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
+                `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(new Date().toISOString())}`,
+            });
           },
-          where:
-            `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
-            `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(new Date().toISOString())}`,
-        });
+        );
         return {
           abandonedReservationIds,
           ignoredUnpublishedTableVersions: ignored,
@@ -2355,16 +2440,17 @@ export class LanceIntelligenceStore {
             )
             .slice(0, maxDeletesPerTable);
           if (candidates.length === 0) return;
-          const table = await latestTable(this.connection, tableName);
-          await this.coordinator.fence(lease);
-          await table.delete(
-            candidates
-              .map(
-                (row) =>
-                  `${primaryKey} = ${sqlString(String(row[primaryKey]))}`,
-              )
-              .join(" OR "),
-          );
+          await withLatestTable(this.connection, tableName, async (table) => {
+            await this.coordinator.fence(lease);
+            await table.delete(
+              candidates
+                .map(
+                  (row) =>
+                    `${primaryKey} = ${sqlString(String(row[primaryKey]))}`,
+                )
+                .join(" OR "),
+            );
+          });
           deletions[tableName] =
             (deletions[tableName] ?? 0) + candidates.length;
         };
@@ -2718,7 +2804,8 @@ export class LanceIntelligenceStore {
   async relocate(preview: RelocationPreview): Promise<RelocationResult> {
     this.assertWritable();
     if (
-      resolve(preview.sourcePath) !== resolve(this.storagePath) ||
+      storagePathIdentity(preview.sourcePath) !==
+        storagePathIdentity(this.storagePath) ||
       JSON.stringify(preview.tableCounts) !==
         JSON.stringify(await this.tableCounts())
     ) {
@@ -2799,77 +2886,84 @@ export class LanceIntelligenceStore {
     }
 
     const table = await latestTable(this.connection, tableName);
-    assertCompatibleSchema(tableName, await table.schema());
-    const predicate = keys
-      .map((key) => `${primaryKey} = ${sqlString(key)}`)
-      .join(" OR ");
-    const existingRows = (await table
-      .query()
-      .where(predicate)
-      .toArray()) as StorageRow[];
-    const existing = new Map(
-      existingRows.map((row) => [String(row[primaryKey]), row]),
-    );
-    const missing: StorageRow[] = [];
-    let reusedRows = 0;
-    let reusedBytes = 0;
-    for (const row of prepared) {
-      const key = String(row[primaryKey]);
-      const prior = existing.get(key);
-      if (!prior) {
-        missing.push(row);
-        continue;
+    try {
+      assertCompatibleSchema(tableName, await table.schema());
+      const predicate = keys
+        .map((key) => `${primaryKey} = ${sqlString(key)}`)
+        .join(" OR ");
+      const existingRows = (await table
+        .query()
+        .where(predicate)
+        .toArray()) as StorageRow[];
+      const existing = new Map(
+        existingRows.map((row) => [String(row[primaryKey]), row]),
+      );
+      const missing: StorageRow[] = [];
+      let reusedRows = 0;
+      let reusedBytes = 0;
+      for (const row of prepared) {
+        const key = String(row[primaryKey]);
+        const prior = existing.get(key);
+        if (!prior) {
+          missing.push(row);
+          continue;
+        }
+        const preserveLegacyPublicationTag =
+          immutable &&
+          row.publication_generation_id === null &&
+          typeof prior.publication_generation_id === "string";
+        const comparableRow = immutable
+          ? {
+              ...row,
+              ...(preserveLegacyPublicationTag
+                ? {
+                    publication_generation_id: prior.publication_generation_id,
+                  }
+                : {}),
+              ...("created_at" in row ? { created_at: prior.created_at } : {}),
+            }
+          : row;
+        if (immutable && !equivalentRows(prior, comparableRow)) {
+          throw new StorageError(
+            "immutable_conflict",
+            `Immutable LanceDB row ${key} has conflicting content`,
+            false,
+            { primaryKey, tableName },
+          );
+        }
+        reusedRows += 1;
+        reusedBytes += rowBytes(row);
       }
-      const preserveLegacyPublicationTag =
-        immutable &&
-        row.publication_generation_id === null &&
-        typeof prior.publication_generation_id === "string";
-      const comparableRow = immutable
-        ? {
-            ...row,
-            ...(preserveLegacyPublicationTag
-              ? {
-                  publication_generation_id: prior.publication_generation_id,
-                }
-              : {}),
-            ...("created_at" in row ? { created_at: prior.created_at } : {}),
-          }
-        : row;
-      if (immutable && !equivalentRows(prior, comparableRow)) {
-        throw new StorageError(
-          "immutable_conflict",
-          `Immutable LanceDB row ${key} has conflicting content`,
-          false,
-          { primaryKey, tableName },
-        );
-      }
-      reusedRows += 1;
-      reusedBytes += rowBytes(row);
-    }
 
-    if (immutable) {
-      if (missing.length > 0) {
+      if (immutable) {
+        if (missing.length > 0) {
+          await this.coordinator.fence(lease);
+          await table
+            .mergeInsert(primaryKey)
+            .whenNotMatchedInsertAll()
+            .execute(missing, { timeoutMs: 10_000 });
+        }
+      } else {
         await this.coordinator.fence(lease);
         await table
           .mergeInsert(primaryKey)
+          .whenMatchedUpdateAll()
           .whenNotMatchedInsertAll()
-          .execute(missing, { timeoutMs: 10_000 });
+          .execute(prepared, { timeoutMs: 10_000 });
       }
-    } else {
-      await this.coordinator.fence(lease);
-      await table
-        .mergeInsert(primaryKey)
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
-        .execute(prepared, { timeoutMs: 10_000 });
+      const insertedBytes = missing.reduce(
+        (sum, row) => sum + rowBytes(row),
+        0,
+      );
+      return {
+        insertedBytes,
+        insertedRows: missing.length,
+        logicalBytes: insertedBytes + reusedBytes,
+        reusedBytes,
+        reusedRows,
+      };
+    } finally {
+      table.close();
     }
-    const insertedBytes = missing.reduce((sum, row) => sum + rowBytes(row), 0);
-    return {
-      insertedBytes,
-      insertedRows: missing.length,
-      logicalBytes: insertedBytes + reusedBytes,
-      reusedBytes,
-      reusedRows,
-    };
   }
 }

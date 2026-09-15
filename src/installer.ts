@@ -32,6 +32,7 @@ import {
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
 } from "./runtime/dependencies";
+import { commandForPlatform } from "./runtime/subprocess";
 import {
   createServicePlan,
   installService,
@@ -42,7 +43,10 @@ import {
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
-const installerRuntime = new AsyncLocalStorage<{ cliEntry: string }>();
+const installerRuntime = new AsyncLocalStorage<{
+  cliEntry: string;
+  platform: NodeJS.Platform;
+}>();
 function stableGlobalCliEntry(
   value: string | undefined,
   directories: string[],
@@ -106,6 +110,41 @@ function cliEntryFor(root: string | undefined, _home: string) {
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
 }
+
+function displayCommandPart(value: string, platform: NodeJS.Platform) {
+  if (/^[A-Za-z0-9_./:\\=-]+$/u.test(value)) return value;
+  if (platform === "win32") return `"${value.replaceAll('"', '""')}"`;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function manualHttpLaunchCommand(
+  cliCommand: string,
+  root: string,
+  endpoint: HttpEndpoint,
+  platform: NodeJS.Platform,
+) {
+  const parts = [
+    cliCommand,
+    "mcp",
+    "--transport",
+    "http",
+    "--host",
+    endpoint.host,
+    "--port",
+    String(endpoint.port),
+  ];
+  if (
+    platform === "win32" &&
+    [root, ...parts].some((part) => /[%!^"]/u.test(part))
+  )
+    throw new Error(
+      "Windows manual HTTP launch paths and arguments cannot contain CMD expansion characters or quotes",
+    );
+  const launch = parts
+    .map((part) => displayCommandPart(part, platform))
+    .join(" ");
+  return `${platform === "win32" ? "cd /d" : "cd"} ${displayCommandPart(root, platform)} && ${launch}`;
+}
 const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
 type Target = (typeof targets)[number];
@@ -113,7 +152,9 @@ type Target = (typeof targets)[number];
 // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
 async function json(file: string): Promise<Record<string, any>> {
   try {
-    return JSON.parse(await readFile(file, "utf8"));
+    const value = Bun.JSONC.parse(await readFile(file, "utf8"));
+    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+    return value as Record<string, any>;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw error;
@@ -130,7 +171,12 @@ function definition(
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
-  return { args: ["mcp"], command: cliEntryFor(root, home) };
+  const invocation = commandForPlatform(
+    cliEntryFor(root, home),
+    ["mcp"],
+    installerRuntime.getStore()?.platform,
+  );
+  return { args: invocation.args, command: invocation.command };
 }
 async function codexMcp(
   file: string,
@@ -143,10 +189,11 @@ async function codexMcp(
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
+  const stdio = definition(root, home, "stdio");
   const block =
     transport === "http"
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(cliEntryFor(root, home))}\nargs = ["mcp"]\n# ast-mcp:end`;
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}\n# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
@@ -827,7 +874,10 @@ async function reconcile(
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";
   return installerRuntime.run(
-    { cliEntry: configuredCliEntry(options, root, home) },
+    {
+      cliEntry: configuredCliEntry(options, root, home),
+      platform: options.platform ?? process.platform,
+    },
     async () => {
       const transport = await selectedTransport(options, operation);
       validateReconcileOptions(options, transport);
@@ -973,7 +1023,10 @@ export async function uninstall(options: InstallOptions) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   return installerRuntime.run(
-    { cliEntry: configuredCliEntry(options, root, home) },
+    {
+      cliEntry: configuredCliEntry(options, root, home),
+      platform: options.platform ?? process.platform,
+    },
     async () => {
       const global = options.scope === "global";
       const paths = options.targets.flatMap((target) =>
@@ -1000,10 +1053,25 @@ export async function runInstallerCli(
     process.stderr.write(
       "ast-mcp: --root is deprecated; run this command from the project root.\n",
     );
-  const operationHandlers = { install, uninstall, update };
-  const changed = await operationHandlers[operation](options);
   const root = path.resolve(options.root);
   const global = options.scope === "global";
+  const manualHttp =
+    operation !== "uninstall" &&
+    options.service !== true &&
+    (await selectedTransport(options, operation)) === "http";
+  if (
+    (options.platform ?? process.platform) === "win32" &&
+    manualHttp &&
+    [
+      root,
+      configuredCliEntry(options, root, options.home ?? os.homedir()),
+    ].some((part) => /[%!^"]/u.test(part))
+  )
+    throw new Error(
+      "Windows manual HTTP launch project path cannot contain CMD expansion characters or quotes",
+    );
+  const operationHandlers = { install, uninstall, update };
+  const changed = await operationHandlers[operation](options);
   const effectiveTransport =
     operation === "uninstall"
       ? (options.transport ?? "stdio")
@@ -1030,7 +1098,7 @@ export async function runInstallerCli(
       ? createServicePlan(serviceConfiguration(options, endpoint))
       : undefined;
   const manualStart =
-    endpoint && options.service !== true
+    endpoint && options.service !== true && operation !== "uninstall"
       ? installerRuntime.run(
           {
             cliEntry: configuredCliEntry(
@@ -1038,9 +1106,15 @@ export async function runInstallerCli(
               root,
               options.home ?? os.homedir(),
             ),
+            platform: options.platform ?? process.platform,
           },
           () =>
-            `${global ? "" : `cd ${JSON.stringify(root)} && `}${JSON.stringify(cliEntryFor(global ? undefined : root, options.home ?? os.homedir()))} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`,
+            manualHttpLaunchCommand(
+              configuredCliEntry(options, root, options.home ?? os.homedir()),
+              root,
+              endpoint,
+              options.platform ?? process.platform,
+            ),
         )
       : undefined;
   const result = {

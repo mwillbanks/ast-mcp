@@ -14,6 +14,7 @@ import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
 import {
   executableNames,
+  isExecutable,
   resolveLocalBinaryAlias,
 } from "../templates/skills/ast-mcp/scripts/binary-resolution";
 
@@ -50,6 +51,16 @@ async function executable(
 }
 
 describe("installer", () => {
+  test("rejects directories as executable aliases", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-directory-alias-"),
+    );
+    created.push(root);
+    const alias = path.join(root, "node_modules/.bin/ast-mcp");
+    await mkdir(alias, { recursive: true });
+    expect(isExecutable(alias)).toBeFalse();
+  });
+
   test("installs every local host idempotently", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-install-"));
     created.push(root);
@@ -150,16 +161,23 @@ describe("installer", () => {
     const expected = `./${path.relative(root, resolved).split(path.sep).join("/")}`;
     expect(resolved.toLowerCase()).toBe(alias.toLowerCase());
     expect(expected.toLowerCase()).toEndWith(".cmd");
-    expect(
-      await readFile(path.join(root, ".codex/config.toml"), "utf8"),
-    ).toContain(`command = ${JSON.stringify(expected)}`);
+    const codex = await readFile(path.join(root, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify("cmd.exe")}`);
+    expect(codex).toContain(`call ${expected} mcp`);
     for (const file of [".mcp.json", ".github/mcp.json"]) {
       const document = JSON.parse(
         await readFile(path.join(root, file), "utf8"),
       );
       const definition =
         document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
-      expect(definition.command).toBe(expected);
+      expect(definition.command).toBe("cmd.exe");
+      expect(definition.args).toEqual([
+        "/d",
+        "/v:off",
+        "/s",
+        "/c",
+        `call ${expected} mcp`,
+      ]);
     }
     for (const file of [
       ".codex/hooks.json",

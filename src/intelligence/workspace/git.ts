@@ -1,6 +1,7 @@
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
+import { terminateProcessTree } from "../../runtime/subprocess.ts";
 import {
   createRevisionId,
   dirtyOverlayArtifactIdentity,
@@ -52,20 +53,14 @@ export async function runGitRaw(
 ): Promise<GitResult> {
   assertNotAborted(signal);
   const child = Bun.spawn(["git", "-C", directory, ...args], {
+    detached: process.platform !== "win32",
     env: sanitizedGitEnvironment(),
     stderr: "pipe",
     stdout: "pipe",
   });
-  let forceKill: ReturnType<typeof setTimeout> | undefined;
+  let termination: Promise<void> | undefined;
   const terminate = () => {
-    try {
-      child.kill();
-    } catch {}
-    forceKill = setTimeout(() => {
-      try {
-        child.kill(9);
-      } catch {}
-    }, 250);
+    termination ??= terminateProcessTree(child, { graceMs: 250 });
   };
   signal?.addEventListener("abort", terminate, { once: true });
   if (signal?.aborted) terminate();
@@ -79,7 +74,7 @@ export async function runGitRaw(
     return { code, stderr: stderr.trim(), stdout };
   } finally {
     signal?.removeEventListener("abort", terminate);
-    if (forceKill) clearTimeout(forceKill);
+    if (termination) await termination;
   }
 }
 

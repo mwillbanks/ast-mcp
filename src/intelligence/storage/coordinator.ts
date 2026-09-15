@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
 import type { Connection, Table } from "@lancedb/lancedb";
 import { createIdentity } from "../contracts/common.ts";
 import { isRetryableLanceError, StorageError } from "./errors.ts";
+import { storagePathIdentity } from "./relocation.ts";
 import { assertCompatibleSchema } from "./schemas.ts";
 
 export interface CoordinatorOptions {
@@ -98,7 +98,7 @@ export class StorageCoordinator {
     storagePath: string,
     options: CoordinatorOptions,
   ) {
-    this.storagePath = resolve(storagePath);
+    this.storagePath = storagePathIdentity(storagePath);
     this.options = options;
     this.leaseDurationMs = options.leaseDurationMs ?? 15_000;
     this.now = options.now ?? (() => new Date());
@@ -116,7 +116,7 @@ export class StorageCoordinator {
     storagePath: string,
     options: CoordinatorOptions = {},
   ): StorageCoordinator {
-    const canonicalPath = resolve(storagePath);
+    const canonicalPath = storagePathIdentity(storagePath);
     const existing = coordinators.get(canonicalPath);
     if (existing) {
       if (existing.storageDomainId !== storageDomainId) {
@@ -204,22 +204,26 @@ export class StorageCoordinator {
       const lease = this.lease;
       if (lease) {
         const table = await this.coordinatorTable();
-        const now = this.now().toISOString();
-        await withLanceRetry(
-          "release coordinator lease",
-          () =>
-            table.update({
-              values: {
-                heartbeat_at: now,
-                lease_expires_at: now,
-                state: "clean",
-              },
-              where:
-                `lease_key = 'writer' AND owner_id = ${sqlString(this.ownerId)} ` +
-                `AND epoch = ${lease.epoch}`,
-            }),
-          this.options,
-        );
+        try {
+          const now = this.now().toISOString();
+          await withLanceRetry(
+            "release coordinator lease",
+            () =>
+              table.update({
+                values: {
+                  heartbeat_at: now,
+                  lease_expires_at: now,
+                  state: "clean",
+                },
+                where:
+                  `lease_key = 'writer' AND owner_id = ${sqlString(this.ownerId)} ` +
+                  `AND epoch = ${lease.epoch}`,
+              }),
+            this.options,
+          );
+        } finally {
+          table.close();
+        }
       }
     } finally {
       this.lease = null;
@@ -232,13 +236,28 @@ export class StorageCoordinator {
 
   private async coordinatorTable(): Promise<Table> {
     const table = await this.connection.openTable("coordinator_recovery");
-    await table.checkoutLatest();
-    assertCompatibleSchema("coordinator_recovery", await table.schema());
-    return table;
+    try {
+      await table.checkoutLatest();
+      assertCompatibleSchema("coordinator_recovery", await table.schema());
+      return table;
+    } catch (error) {
+      table.close();
+      throw error;
+    }
   }
 
   private async acquireOrRenew(): Promise<CoordinatorLease> {
     const table = await this.coordinatorTable();
+    try {
+      return await this.acquireOrRenewWithTable(table);
+    } finally {
+      table.close();
+    }
+  }
+
+  private async acquireOrRenewWithTable(
+    table: Table,
+  ): Promise<CoordinatorLease> {
     const observedAt = this.now();
     const rows = (await table
       .query()
@@ -338,57 +357,65 @@ export class StorageCoordinator {
 
   private async renewLease(expected: CoordinatorLease): Promise<void> {
     const table = await this.coordinatorTable();
-    const observedAt = this.now();
-    const expiresAt = new Date(
-      observedAt.getTime() + this.leaseDurationMs,
-    ).toISOString();
-    await withLanceRetry(
-      "renew coordinator lease",
-      () =>
-        table.update({
-          values: {
-            heartbeat_at: observedAt.toISOString(),
-            lease_expires_at: expiresAt,
-            state: "active",
-          },
-          where:
-            `lease_key = 'writer' AND owner_id = ${sqlString(expected.ownerId)} ` +
-            `AND epoch = ${expected.epoch} AND lease_expires_at > ${sqlString(observedAt.toISOString())}`,
-        }),
-      this.options,
-    );
-    expected.expiresAt = expiresAt;
-    await this.assertOwnership(expected);
-    this.lease = expected;
+    try {
+      const observedAt = this.now();
+      const expiresAt = new Date(
+        observedAt.getTime() + this.leaseDurationMs,
+      ).toISOString();
+      await withLanceRetry(
+        "renew coordinator lease",
+        () =>
+          table.update({
+            values: {
+              heartbeat_at: observedAt.toISOString(),
+              lease_expires_at: expiresAt,
+              state: "active",
+            },
+            where:
+              `lease_key = 'writer' AND owner_id = ${sqlString(expected.ownerId)} ` +
+              `AND epoch = ${expected.epoch} AND lease_expires_at > ${sqlString(observedAt.toISOString())}`,
+          }),
+        this.options,
+      );
+      expected.expiresAt = expiresAt;
+      await this.assertOwnership(expected);
+      this.lease = expected;
+    } finally {
+      table.close();
+    }
   }
 
   private async assertOwnership(expected: CoordinatorLease): Promise<void> {
     const table = await this.coordinatorTable();
-    const rows = (await table
-      .query()
-      .where("lease_key = 'writer'")
-      .limit(2)
-      .toArray()) as LeaseRow[];
-    const row = rows[0];
-    if (
-      rows.length !== 1 ||
-      !row ||
-      row.owner_id !== expected.ownerId ||
-      Number(row.epoch) !== expected.epoch ||
-      Date.parse(row.lease_expires_at) <= this.now().getTime()
-    ) {
-      this.lease = null;
-      throw new StorageError(
-        "coordinator_unavailable",
-        "LanceDB coordinator ownership changed during a serialized operation",
-        true,
-        {
-          actualEpoch: row?.epoch,
-          actualOwnerId: row?.owner_id,
-          expectedEpoch: expected.epoch,
-          expectedOwnerId: expected.ownerId,
-        },
-      );
+    try {
+      const rows = (await table
+        .query()
+        .where("lease_key = 'writer'")
+        .limit(2)
+        .toArray()) as LeaseRow[];
+      const row = rows[0];
+      if (
+        rows.length !== 1 ||
+        !row ||
+        row.owner_id !== expected.ownerId ||
+        Number(row.epoch) !== expected.epoch ||
+        Date.parse(row.lease_expires_at) <= this.now().getTime()
+      ) {
+        this.lease = null;
+        throw new StorageError(
+          "coordinator_unavailable",
+          "LanceDB coordinator ownership changed during a serialized operation",
+          true,
+          {
+            actualEpoch: row?.epoch,
+            actualOwnerId: row?.owner_id,
+            expectedEpoch: expected.epoch,
+            expectedOwnerId: expected.ownerId,
+          },
+        );
+      }
+    } finally {
+      table.close();
     }
   }
 }

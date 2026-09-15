@@ -20,6 +20,7 @@ import {
   relative,
   resolve,
   sep,
+  win32,
 } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import type { LanceTableName } from "../contracts/storage.ts";
@@ -56,6 +57,54 @@ export interface RelocationResult extends RelocationPreview {
   verified: true;
 }
 
+function windowsNetworkPath(storagePath: string): boolean {
+  return (
+    /^\\\\\?\\UNC\\/i.test(storagePath) ||
+    /^\\\\(?![?.]\\)[^\\]+\\[^\\]+/.test(storagePath) ||
+    /^\/\/(?![?.]\/)[^/]+\/[^/]+/.test(storagePath)
+  );
+}
+
+function windowsPathSyntax(storagePath: string): boolean {
+  return (
+    process.platform === "win32" ||
+    /^[a-z]:[\\/]/i.test(storagePath) ||
+    /^\\\\\?\\/.test(storagePath) ||
+    windowsNetworkPath(storagePath)
+  );
+}
+
+export function storagePathIdentity(storagePath: string): string {
+  if (windowsPathSyntax(storagePath)) {
+    const canonical = win32.resolve(storagePath);
+    if (/^\\\\\?\\UNC\\/i.test(canonical)) {
+      return `\\\\${canonical.slice(8)}`.toLowerCase();
+    }
+    if (/^\\\\\?\\/.test(canonical)) {
+      return canonical.slice(4).toLowerCase();
+    }
+    return canonical.toLowerCase();
+  }
+  return resolve(storagePath);
+}
+
+function pathContainedBy(root: string, target: string): boolean {
+  const windows = windowsPathSyntax(root) || windowsPathSyntax(target);
+  const pathRelative = windows ? win32.relative : relative;
+  const pathSeparator = windows ? win32.sep : sep;
+  const pathIsAbsolute = windows ? win32.isAbsolute : isAbsolute;
+  const remainder = pathRelative(
+    storagePathIdentity(root),
+    storagePathIdentity(target),
+  );
+  return (
+    remainder !== "" &&
+    remainder !== ".." &&
+    !remainder.startsWith(`..${pathSeparator}`) &&
+    !pathIsAbsolute(remainder)
+  );
+}
+
 const NETWORK_FILE_SYSTEM_TYPES = new Set([
   0x0000_6969, 0xfe53_4d42, 0xff53_4d42,
 ]);
@@ -78,6 +127,9 @@ export async function assertSupportedStoragePath(
   storagePath: string,
   policy: StoragePathPolicy = {},
 ): Promise<string> {
+  if (windowsNetworkPath(storagePath) && !policy.networkProof?.verified) {
+    rejectUnsupportedNetworkFileSystem(storagePath);
+  }
   if (
     !isAbsolute(storagePath) ||
     /^[a-z][a-z0-9+.-]*:\/\//i.test(storagePath)
@@ -160,12 +212,12 @@ export function validateRelocationCoordinates(
   sourcePath: string,
   destinationPath: string,
 ): void {
-  const source = resolve(sourcePath);
-  const destination = resolve(destinationPath);
+  const source = storagePathIdentity(sourcePath);
+  const destination = storagePathIdentity(destinationPath);
   if (
-    source === destination ||
-    destination.startsWith(`${source}${sep}`) ||
-    source.startsWith(`${destination}${sep}`)
+    storagePathIdentity(source) === storagePathIdentity(destination) ||
+    pathContainedBy(source, destination) ||
+    pathContainedBy(destination, source)
   ) {
     throw new StorageError(
       "storage_unavailable",
@@ -237,7 +289,7 @@ export async function copyRelocationSnapshot(
       const realSource = await realpath(source);
       if (
         !sourceStat.isFile() ||
-        !realSource.startsWith(`${realSourceRoot}${sep}`)
+        !pathContainedBy(realSourceRoot, realSource)
       ) {
         throw new StorageError(
           "relocation_verification_failed",
@@ -286,8 +338,12 @@ export async function copyRelocationSnapshot(
         await Promise.all(
           ALL_TABLES.map(async (tableName) => {
             const table = await connection.openTable(tableName);
-            assertCompatibleSchema(tableName, await table.schema());
-            return [tableName, await table.countRows()] as const;
+            try {
+              assertCompatibleSchema(tableName, await table.schema());
+              return [tableName, await table.countRows()] as const;
+            } finally {
+              table.close();
+            }
           }),
         ),
       ) as Record<LanceTableName, number>;

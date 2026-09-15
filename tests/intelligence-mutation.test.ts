@@ -847,8 +847,10 @@ describe("LanceDB mutation journal and freshness", () => {
         finish = resolve;
       });
       const child = {
+        exitCode: null,
         exited,
         kill: () => finish(137),
+        pid: 123,
         stderr: new Blob().stream(),
         stdout: new Blob().stream(),
       };

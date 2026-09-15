@@ -88,11 +88,13 @@ function protectedConfiguration(
   target: string,
   platform: NodeJS.Platform,
 ): boolean {
-  const normalizedTarget = platform === "win32" ? target.toLowerCase() : target;
+  const canonicalTarget = canonicalizePathSync(target);
+  const normalizedTarget =
+    platform === "win32" ? canonicalTarget.toLowerCase() : canonicalTarget;
   return [config.sources.global, config.sources.project]
     .filter((item): item is string => Boolean(item))
     .some((item) => {
-      const candidate = path.resolve(item);
+      const candidate = canonicalizePathSync(item);
       return (
         (platform === "win32" ? candidate.toLowerCase() : candidate) ===
         normalizedTarget

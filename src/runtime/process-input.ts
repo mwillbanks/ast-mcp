@@ -1,4 +1,9 @@
-import { execFile } from "node:child_process";
+import {
+  commandForPlatform,
+  readSubprocessOutput,
+  terminateProcessTree,
+} from "./subprocess";
+
 export function runCommandInput(
   command: string,
   args: string[],
@@ -6,32 +11,53 @@ export function runCommandInput(
   options: { cwd?: string; timeoutMs?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const timeoutMs = options.timeoutMs ?? 30_000;
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      command,
-      args,
-      {
-        cwd: options.cwd,
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: timeoutMs,
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          const detail = (stderr || stdout || error.message).trim();
-          reject(
-            new Error(
-              error.killed
-                ? `${command} timed out after ${timeoutMs}ms${detail ? `: ${detail}` : ""}`
-                : `${command} failed: ${detail}`,
-              { cause: error },
-            ),
-          );
-        } else resolve({ stderr, stdout });
-      },
+  return (async () => {
+    const invocation = commandForPlatform(command, args);
+    const child = Bun.spawn([invocation.command, ...invocation.args], {
+      cwd: options.cwd,
+      detached: process.platform !== "win32",
+      stderr: "pipe",
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+    });
+    const stop = () => terminateProcessTree(child);
+    const controller = new AbortController();
+    const stdoutPromise = readSubprocessOutput(
+      child.stdout,
+      controller.signal,
+      stop,
     );
-    // The process callback reports failures. Prevent a second uncaught stdin EPIPE.
-    child.stdin?.on("error", Function.prototype as (error: Error) => void);
-    child.stdin?.end(input);
-  });
+    const stderrPromise = readSubprocessOutput(
+      child.stderr,
+      controller.signal,
+      stop,
+    );
+    try {
+      const completion = Promise.all([
+        child.exited,
+        stdoutPromise,
+        stderrPromise,
+      ]);
+      const completed = await Promise.race([
+        completion.then((value) => value),
+        Bun.sleep(timeoutMs).then(() => null),
+      ]);
+      if (!completed) {
+        await terminateProcessTree(child, { force: true });
+        controller.abort();
+        throw new Error(`${command} timed out after ${timeoutMs}ms`);
+      }
+      const [exitCode, stdout, stderr] = completed;
+      if (exitCode !== 0) {
+        const detail = (stderr || stdout || `exit code ${exitCode}`).trim();
+        throw new Error(`${command} failed: ${detail}`);
+      }
+      return { stderr, stdout };
+    } catch (error) {
+      await terminateProcessTree(child, { force: true });
+      controller.abort();
+      throw error;
+    }
+  })();
 }

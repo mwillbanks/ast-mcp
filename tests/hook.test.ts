@@ -134,6 +134,38 @@ describe("agent hook", () => {
     ).toBeTrue();
   });
 
+  test("uses the invoked Windows shell dialect", () => {
+    for (const event of [
+      { tool_input: { command: "ni file -ItemType File" }, tool_name: "pwsh" },
+      {
+        tool_input: { command: '[IO.File]::WriteAllText("file", "value")' },
+        tool_name: "powershell",
+      },
+      { tool_input: { command: "dir && del file" }, tool_name: "cmd.exe" },
+      { toolInput: { command: "copy source target" }, toolName: "cmd" },
+      {
+        tool_input: {
+          command: 'powershell.exe -NoProfile -Command "sc file value"',
+        },
+        tool_name: "exec_command",
+      },
+    ])
+      expect(evaluateHook(event).denied).toBeTrue();
+
+    expect(
+      evaluateHook({
+        tool_input: { command: "cp source target" },
+        tool_name: "exec_command",
+      }).denied,
+    ).toBeFalse();
+    expect(
+      evaluateHook({
+        tool_input: { command: "Get-Content file" },
+        tool_name: "powershell",
+      }).denied,
+    ).toBeFalse();
+  });
+
   test("emits compatible denial payloads", () => {
     const payload = decisionPayload({ denied: true, reason: "no" }) as {
       hookSpecificOutput: { permissionDecision: string };

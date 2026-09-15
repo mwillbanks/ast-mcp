@@ -674,22 +674,24 @@ test("migration preserves inline comments on versions and table headers", () => 
   expect(migrated).toContain('mode = "stdout"');
 });
 
-test("migration restores source mode after umask-filtered staging", async () => {
-  const root = await project("ast-mcp-v2-migrate-mode-");
-  const file = path.join(root, "ast-mcp.toml");
-  const source = "[formatting]\nenabled = false\n";
-  await writeFile(file, source);
-  await chmod(file, 0o666);
-  const migrated = migrateConfigSource(source, file);
-  const previousUmask = process.umask(0o077);
-  try {
-    await writeMigratedConfig(file, migrated.source, false);
-  } finally {
-    process.umask(previousUmask);
-  }
-  if (process.platform !== "win32")
+test.skipIf(process.platform === "win32")(
+  "migration restores source mode after umask-filtered staging",
+  async () => {
+    const root = await project("ast-mcp-v2-migrate-mode-");
+    const file = path.join(root, "ast-mcp.toml");
+    const source = "[formatting]\nenabled = false\n";
+    await writeFile(file, source);
+    await chmod(file, 0o666);
+    const migrated = migrateConfigSource(source, file);
+    const previousUmask = process.umask(0o077);
+    try {
+      await writeMigratedConfig(file, migrated.source, false);
+    } finally {
+      process.umask(previousUmask);
+    }
     expect((await lstat(file)).mode & 0o777).toBe(0o666);
-});
+  },
+);
 
 test("migrated external roots reach the v2 policy engine", async () => {
   const root = await project("ast-mcp-v2-migrate-external-");
@@ -935,35 +937,38 @@ test("policy specificity counts only include patterns matching the target", asyn
   );
 });
 
-test("policy checks preserve symlink identity and deny unpermitted links", async () => {
-  const root = await project(
-    "ast-mcp-v2-policy-symlink-",
-    [
-      "version = 2",
-      "[[paths]]",
-      'id = "workspace"',
-      'path = "."',
-      'policies = { read = "allow", write = "allow" }',
-      "follow_symlinks = false",
-      "",
-    ].join("\n"),
-  );
-  const target = path.join(root, "target.txt");
-  const link = path.join(root, "link.txt");
-  await writeFile(target, "value");
-  await symlink(target, link);
-  const config = await resolveConfig({
-    cwd: root,
-    env: {
-      APPDATA: path.join(root, "xdg"),
-      XDG_CONFIG_HOME: path.join(root, "xdg"),
-    },
-  });
-  expect(await evaluatePolicyForCheck(config, link, "read")).toMatchObject({
-    canonicalPath: path.join(await realpath(root), "link.txt"),
-    policy: "deny",
-  });
-});
+test.skipIf(process.platform === "win32")(
+  "policy checks preserve symlink identity and deny unpermitted links",
+  async () => {
+    const root = await project(
+      "ast-mcp-v2-policy-symlink-",
+      [
+        "version = 2",
+        "[[paths]]",
+        'id = "workspace"',
+        'path = "."',
+        'policies = { read = "allow", write = "allow" }',
+        "follow_symlinks = false",
+        "",
+      ].join("\n"),
+    );
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    await writeFile(target, "value");
+    await symlink(target, link);
+    const config = await resolveConfig({
+      cwd: root,
+      env: {
+        APPDATA: path.join(root, "xdg"),
+        XDG_CONFIG_HOME: path.join(root, "xdg"),
+      },
+    });
+    expect(await evaluatePolicyForCheck(config, link, "read")).toMatchObject({
+      canonicalPath: path.join(await realpath(root), "link.txt"),
+      policy: "deny",
+    });
+  },
+);
 
 test("v2 endpoint policies permit cross-root rename and isolate exact-file scans", async () => {
   const root = await project("ast-mcp-v2-cross-root-project-", "version = 2\n");

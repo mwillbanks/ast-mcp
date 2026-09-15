@@ -15,6 +15,7 @@ import {
 import {
   clearCoordinatorRegistryForTests,
   LanceIntelligenceStore,
+  StorageCoordinator,
   StorageError,
   withLanceRetry,
 } from "../src/intelligence/storage/index.ts";
@@ -63,6 +64,34 @@ function sourceRow(index: number) {
 }
 
 describe("LanceDB storage coordination", () => {
+  test("shares a coordinator across Windows path aliases", async () => {
+    clearCoordinatorRegistryForTests();
+    let closes = 0;
+    const connection = {
+      close() {
+        closes += 1;
+      },
+    } as unknown as Parameters<
+      typeof StorageCoordinator.forStorageDirectory
+    >[0];
+    const first = StorageCoordinator.forStorageDirectory(
+      connection,
+      "domain",
+      String.raw`C:\Data\Index`,
+    );
+    const second = StorageCoordinator.forStorageDirectory(
+      connection,
+      "domain",
+      String.raw`\\?\C:\DATA\INDEX`,
+    );
+
+    expect(second).toBe(first);
+    await first.release();
+    expect(closes).toBe(0);
+    await second.release();
+    expect(closes).toBe(1);
+  });
+
   test("serializes bounded concurrent append workers without duplicate artifacts", async () => {
     const storage = await domain();
     const store = await LanceIntelligenceStore.open(storage, {
@@ -219,6 +248,7 @@ describe("LanceDB storage coordination", () => {
       },
       where: "lease_key = 'writer'",
     });
+    leaseTable.close();
     raw.close();
 
     const recovered = await LanceIntelligenceStore.open(storage, {
@@ -278,6 +308,7 @@ describe("LanceDB storage coordination", () => {
       },
       where: "lease_key = 'writer'",
     });
+    leaseTable.close();
     raw.close();
 
     await expect(leaseLoss).resolves.toMatchObject({

@@ -102,7 +102,7 @@ async function restoreMutationRecord(
               await fence();
               await chown(file.filePath, file.sourceUid, file.sourceGid);
             }
-            if (file.sourceMode !== null) {
+            if (process.platform !== "win32" && file.sourceMode !== null) {
               await fence();
               await chmod(file.filePath, file.sourceMode);
             }
@@ -121,14 +121,17 @@ async function restoreMutationRecord(
         await fence();
         await writeFile(temporary, source, {
           flag: "wx",
-          mode: file.sourceMode ?? undefined,
+          mode:
+            process.platform === "win32"
+              ? undefined
+              : (file.sourceMode ?? undefined),
         });
         try {
           if (file.sourceUid !== null && file.sourceGid !== null) {
             await fence();
             await chown(temporary, file.sourceUid, file.sourceGid);
           }
-          if (file.sourceMode !== null) {
+          if (process.platform !== "win32" && file.sourceMode !== null) {
             await fence();
             await chmod(temporary, file.sourceMode);
           }
@@ -153,7 +156,8 @@ async function restoreMutationRecord(
           ]);
           if (
             actual !== file.sourceSha256 ||
-            (file.sourceMode !== null &&
+            (process.platform !== "win32" &&
+              file.sourceMode !== null &&
               (metadata.mode & 0o7777) !== (file.sourceMode & 0o7777)) ||
             (file.sourceUid !== null && metadata.uid !== file.sourceUid) ||
             (file.sourceGid !== null && metadata.gid !== file.sourceGid)

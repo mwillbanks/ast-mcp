@@ -40,8 +40,10 @@ export interface ComparatorProvisionDependencies {
 
 export async function runComparatorCommand(command: string[]): Promise<string> {
   const child = Bun.spawn(command, {
+    killSignal: "SIGKILL",
     stderr: "pipe",
     stdout: "pipe",
+    timeout: 300_000,
   });
   const [exitCode, stderr, stdout] = await Promise.all([
     child.exited,

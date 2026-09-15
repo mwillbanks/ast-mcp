@@ -130,7 +130,10 @@ export default function registerLifecycleTools(
                           process.platform === "win32"
                             ? null
                             : snapshot.attributes.chown.gid,
-                        sourceMode: snapshot.attributes.chmod,
+                        sourceMode:
+                          process.platform === "win32"
+                            ? null
+                            : snapshot.attributes.chmod,
                         sourceSha256: snapshot.sha256,
                         sourceUid:
                           process.platform === "win32"

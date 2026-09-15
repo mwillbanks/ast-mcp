@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -6,6 +6,42 @@ export interface GlobalBinaryResolutionOptions {
   globalBinDirectories?: string[];
   home?: string;
   platform?: NodeJS.Platform;
+}
+
+export interface PlatformCommand {
+  args: string[];
+  command: string;
+  windowsVerbatimArguments?: boolean;
+}
+
+function batchArgument(value: string) {
+  if (/[\0\r\n"%!^]/u.test(value))
+    throw new Error(
+      "Windows batch command arguments cannot contain quotes, expansion characters, or control characters",
+    );
+  if (/^[A-Za-z0-9_./:\\=-]+$/u.test(value)) return value;
+  return `"${value}"`;
+}
+
+export function commandForPlatform(
+  command: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+  comspec = process.env.ComSpec ?? "cmd.exe",
+): PlatformCommand {
+  if (platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(command))
+    return { args, command };
+  return {
+    args: [
+      "/d",
+      "/v:off",
+      "/s",
+      "/c",
+      `call ${[command, ...args].map(batchArgument).join(" ")}`,
+    ],
+    command: comspec,
+    windowsVerbatimArguments: true,
+  };
 }
 
 export function executableNames(name: string, platform: NodeJS.Platform) {
@@ -26,11 +62,10 @@ export function isExecutable(
   platform: NodeJS.Platform = process.platform,
 ) {
   try {
-    accessSync(
-      file,
-      platform === "win32" ? constants.F_OK : constants.F_OK | constants.X_OK,
-    );
-    return true;
+    const metadata = statSync(file);
+    if (!metadata.isFile()) return false;
+    if (platform === "win32") return true;
+    return (metadata.mode & 0o111) !== 0;
   } catch {
     return false;
   }

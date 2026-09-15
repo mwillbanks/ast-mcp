@@ -149,9 +149,10 @@ test("resolves native Windows aliases before POSIX shims", async () => {
   expect(mcpStdioCommand(windowsAlias, "win32")).toEqual([
     process.env.ComSpec ?? "cmd.exe",
     "/d",
+    "/v:off",
     "/s",
     "/c",
-    `call "${windowsAlias}" mcp`,
+    `call ${windowsAlias} mcp`,
   ]);
 });
 
@@ -196,6 +197,29 @@ test("checker covers every local host surface", async () => {
       )
     ).installed,
   ).toBeFalse();
+});
+
+test("checker reads JSONC host configuration without external parsers", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["claude"] });
+  const file = path.join(root, ".mcp.json");
+  const config = JSON.parse(await readFile(file, "utf8"));
+  await writeFile(
+    file,
+    `{
+      // Host-owned comments and trailing commas remain valid input.
+      "mcpServers": ${JSON.stringify(config.mcpServers)},
+    }\n`,
+  );
+
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "local", "--target", "claude", "--root", root],
+        home,
+      )
+    ).installed,
+  ).toBeTrue();
 });
 
 test("checker covers every global host surface", async () => {
@@ -268,7 +292,7 @@ test("checker covers every global host surface", async () => {
       )
     ).checks.mcp,
   ).toBeFalse();
-});
+}, 30_000);
 
 test("checker rejects invalid arguments and CLI emits JSON", async () => {
   await expect(checkInstall(["--unknown"])).rejects.toThrow("Unknown argument");

@@ -788,7 +788,8 @@ async function executePreparedFileBatch<T, Prepared>(
         process.platform === "win32"
           ? null
           : (snapshot?.chattr.chown.gid ?? null),
-      sourceMode: snapshot?.mode ?? null,
+      sourceMode:
+        process.platform === "win32" ? null : (snapshot?.mode ?? null),
       sourceSha256: snapshot ? sha256(snapshot.content) : null,
       sourceUid:
         process.platform === "win32"

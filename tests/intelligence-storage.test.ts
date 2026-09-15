@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
@@ -587,17 +587,22 @@ describe("LanceDB intelligence storage", () => {
       await store.shutdownCoordinator();
       const connection = await lancedb.connect(domain.storagePath);
       await connection.dropTable("graph_nodes");
-      if (failure === "schema")
-        await connection.createEmptyTable(
+      if (failure === "schema") {
+        const table = await connection.createEmptyTable(
           "graph_nodes",
           new Schema([new Field("wrong", new Utf8(), false)]),
         );
+        table.close();
+      }
       connection.close();
       await expect(
         LanceIntelligenceStore.open(domain, { access: "read-only" }),
       ).rejects.toMatchObject({
         code: failure === "missing" ? "storage_unavailable" : "invalid_schema",
       });
+      const movedPath = `${domain.storagePath}-closed`;
+      await rename(domain.storagePath, movedPath);
+      await rename(movedPath, domain.storagePath);
     }
   });
 
