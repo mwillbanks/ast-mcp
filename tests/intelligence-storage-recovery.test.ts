@@ -628,7 +628,7 @@ describe("LanceDB storage recovery and retention", () => {
     await expect(
       assertSupportedStoragePath(join(blockingFile, "child")),
     ).rejects.toMatchObject({
-      code: "ENOTDIR",
+      code: "storage_unavailable",
     });
 
     if (process.platform !== "win32") {

@@ -1,0 +1,13 @@
+**/node_modules
+**/.bun
+**/.next
+dist
+coverage
+graphify-out
+.ast-bro
+.fallow
+.grok
+.codex
+.agents
+website
+tsconfig.tsbuildinfo

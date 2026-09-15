@@ -160,21 +160,25 @@ export async function assertSupportedStoragePath(
   return canonical;
 }
 
+function blockedStoragePath(path: string): StorageError {
+  return new StorageError(
+    "storage_unavailable",
+    "LanceDB storage path cannot pass through a file",
+    false,
+    { storagePath: path },
+  );
+}
+
 async function nearestExistingAncestor(path: string): Promise<string> {
   let candidate = path;
   for (;;) {
     try {
       const metadata = await stat(candidate);
-      if (!metadata.isDirectory()) {
-        throw new StorageError(
-          "storage_unavailable",
-          "LanceDB storage path cannot pass through a file",
-          false,
-          { storagePath: path },
-        );
-      }
+      if (!metadata.isDirectory()) throw blockedStoragePath(path);
       return candidate;
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOTDIR")
+        throw blockedStoragePath(path);
       if (
         !(error instanceof Error) ||
         !("code" in error) ||

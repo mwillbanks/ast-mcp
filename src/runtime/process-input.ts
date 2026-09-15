@@ -8,7 +8,11 @@ export function runCommandInput(
   command: string,
   args: string[],
   input: string,
-  options: { cwd?: string; timeoutMs?: number } = {},
+  options: {
+    cwd?: string;
+    env?: Record<string, string | undefined>;
+    timeoutMs?: number;
+  } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   return (async () => {
@@ -16,6 +20,7 @@ export function runCommandInput(
     const child = Bun.spawn([invocation.command, ...invocation.args], {
       cwd: options.cwd,
       detached: process.platform !== "win32",
+      env: options.env,
       stderr: "pipe",
       stdin: new Blob([input]),
       stdout: "pipe",

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { lstat, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
@@ -8,6 +9,31 @@ import { canonicalizePathSync, containingRoot, pathWithin } from "./path-utils";
 import { runCommandInput } from "./process-input";
 
 const dprint = configuredDprintBinary;
+
+export function dprintCacheDirectory(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  if (env.DPRINT_CACHE_DIR) return paths.resolve(env.DPRINT_CACHE_DIR);
+  if (platform === "win32")
+    return paths.join(
+      env.LOCALAPPDATA ?? paths.join(home, "AppData", "Local"),
+      "dprint",
+    );
+  if (platform === "darwin")
+    return paths.join(home, "Library", "Caches", "dprint");
+  return paths.join(env.XDG_CACHE_HOME ?? paths.join(home, ".cache"), "dprint");
+}
+
+async function dprintEnvironment(): Promise<
+  Record<string, string | undefined>
+> {
+  const cache = dprintCacheDirectory();
+  await mkdir(cache, { recursive: true });
+  return { ...process.env, DPRINT_CACHE_DIR: cache };
+}
 function formatterRoot(config: ResolvedConfig, filePath: string) {
   const project = config.projectRoot;
   if (
@@ -122,7 +148,7 @@ export async function formatContent(
       formatterPath(config, filePath),
     ],
     content,
-    { cwd: formatterRoot(config, filePath) },
+    { cwd: formatterRoot(config, filePath), env: await dprintEnvironment() },
   );
   return result.stdout;
 }
