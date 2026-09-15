@@ -623,9 +623,8 @@ function environmentLayer(
   suppressRootSelectors = false,
 ): { names: string[]; value: InternalConfig } {
   const usage = new EnvironmentUsage();
-  const roots = suppressRootSelectors
-    ? undefined
-    : environmentRoots(env, cwd, usage);
+  const environmentRootsValue = environmentRoots(env, cwd, usage);
+  const roots = suppressRootSelectors ? undefined : environmentRootsValue;
   const safety = environmentSafety(env, usage);
   const formatting = environmentFormatting(env, cwd, usage);
   const intelligence = environmentIntelligence(env, usage);

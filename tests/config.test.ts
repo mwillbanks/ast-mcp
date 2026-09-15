@@ -296,7 +296,10 @@ test("uses client roots and rejects a request crossing conflicting policies", as
     ...new Set([first, second, await realpath(first), await realpath(second)]),
   ]);
   expect(selected.http.host).toBe("client.example");
-  expect(selected.sources.environment).toEqual(["AST_MCP_HTTP_HOST"]);
+  expect(selected.sources.environment).toEqual([
+    "AST_MCP_ROOTS",
+    "AST_MCP_HTTP_HOST",
+  ]);
 
   await expect(
     resolveConfig({
