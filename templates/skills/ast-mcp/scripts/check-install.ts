@@ -253,8 +253,15 @@ export async function smokeMcpStdio(
       throw new Error("MCP smoke did not select the requested workspace");
     return { exposedTools, initialized: true, selectedWorkspace };
   } finally {
-    process.kill();
-    await process.exited;
+    process.stdin.end();
+    const exited = await Promise.race([
+      process.exited.then(() => true),
+      Bun.sleep(500).then(() => false),
+    ]);
+    if (!exited) {
+      process.kill();
+      await process.exited;
+    }
   }
 }
 
