@@ -25,7 +25,7 @@ function formatterRoot(config: ResolvedConfig, filePath: string) {
 function formatterPath(config: ResolvedConfig, filePath: string) {
   const root = formatterRoot(config, filePath);
   const relative = path.relative(root, filePath);
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+  return relative && pathWithin(root, filePath)
     ? relative.split(path.sep).join("/")
     : path.basename(filePath);
 }

@@ -3,27 +3,9 @@ import {
   terminateProcessTree,
 } from "../src/runtime/subprocess.ts";
 
-const AST_BRO_VERSION = "4.2.0";
 const GRAPHIFY_DISTRIBUTION = "graphifyy";
 const GRAPHIFY_EXECUTABLE = "graphify";
 const GRAPHIFY_VERSION = "0.9.53";
-
-export function astBroProvisionCommand(
-  platform: NodeJS.Platform,
-  arch: string,
-): string[] {
-  if (platform === "darwin" && arch === "arm64")
-    return ["npm", "install", "--global", `@ast-bro/cli@${AST_BRO_VERSION}`];
-  return [
-    "cargo",
-    "install",
-    "ast-bro",
-    "--version",
-    AST_BRO_VERSION,
-    "--locked",
-    "--force",
-  ];
-}
 
 export function graphifyProvisionCommand(python: string): string[] {
   return [
@@ -44,7 +26,6 @@ export interface ComparatorProvisionDependencies {
 }
 
 export function comparatorCommandTimeout(command: string[]): number {
-  if (command[0] === "cargo" && command[1] === "install") return 1_500_000;
   if (command[1] === "--version") return 30_000;
   return 300_000;
 }
@@ -52,7 +33,6 @@ export function comparatorCommandTimeout(command: string[]): number {
 async function captureCommandStderr(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  showProgress: boolean,
   onUpdate: (value: string) => void,
 ): Promise<string> {
   const reader = stream.getReader();
@@ -67,10 +47,8 @@ async function captureCommandStderr(
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, { stream: true });
-      if (showProgress) process.stderr.write(chunk);
       captured += chunk;
-      if (showProgress && captured.length > 65_536)
-        captured = captured.slice(-65_536);
+      if (captured.length > 65_536) captured = captured.slice(-65_536);
       onUpdate(captured);
     }
   } finally {
@@ -94,14 +72,9 @@ export async function runComparatorCommand(
   let stderrTail = "";
   const completion = Promise.all([
     child.exited,
-    captureCommandStderr(
-      child.stderr,
-      abort.signal,
-      command[0] === "cargo",
-      (value) => {
-        stderrTail = value;
-      },
-    ),
+    captureCommandStderr(child.stderr, abort.signal, (value) => {
+      stderrTail = value;
+    }),
     readSubprocessOutput(child.stdout, abort.signal, () =>
       terminateProcessTree(child, { force: true }),
     ),
@@ -137,30 +110,28 @@ export async function runComparatorCommand(
   }
 }
 
-export async function provisionIntelligenceComparators(
+export async function provisionGraphifyComparator(
   platform: NodeJS.Platform = process.platform,
   arch = process.arch,
   dependencies: ComparatorProvisionDependencies = {},
-): Promise<{ astBro: string; graphify: string }> {
+): Promise<{ graphify: string }> {
   if (platform !== "darwin" && platform !== "linux" && platform !== "win32")
     throw new Error(`Unsupported comparator platform: ${platform}-${arch}`);
   const findExecutable = dependencies.findExecutable ?? Bun.which;
+  const run = dependencies.run ?? runComparatorCommand;
+  const existing = findExecutable(GRAPHIFY_EXECUTABLE);
+  if (existing) {
+    const version = await run([GRAPHIFY_EXECUTABLE, "--version"]);
+    if (version === `graphify ${GRAPHIFY_VERSION}`)
+      return { graphify: version };
+  }
   const python = findExecutable("python") ?? findExecutable("python3");
   if (!python) throw new Error("Python is required to provision graphify");
-  const run = dependencies.run ?? runComparatorCommand;
-
-  await run(astBroProvisionCommand(platform, arch));
   await run(graphifyProvisionCommand(python));
-
-  const astBro = await run(["ast-bro", "--version"]);
-  if (astBro !== `ast-bro ${AST_BRO_VERSION}`)
-    throw new Error(
-      `Expected ast-bro ${AST_BRO_VERSION}, received ${astBro || "<empty>"}`,
-    );
   const graphify = await run([GRAPHIFY_EXECUTABLE, "--version"]);
   if (graphify !== `graphify ${GRAPHIFY_VERSION}`)
     throw new Error(
       `Expected graphify ${GRAPHIFY_VERSION}, received ${graphify || "<empty>"}`,
     );
-  return { astBro, graphify };
+  return { graphify };
 }

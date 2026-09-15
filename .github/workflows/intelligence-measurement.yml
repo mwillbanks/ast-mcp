@@ -1,0 +1,59 @@
+name: Intelligence measurement
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  graphify-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        id: bun-setup
+        with:
+          bun-version-file: package.json
+      - uses: actions/cache/restore@v6
+        id: bun-cache
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-setup.outputs.bun-version }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.bun-setup.outputs.bun-version }}-
+      - run: bun ci
+      - uses: actions/cache/save@v6
+        if: steps.bun-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ steps.bun-cache.outputs.cache-primary-key }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - uses: actions/cache/restore@v6
+        id: pip-cache
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ runner.arch }}-python-3.13-graphifyy-0.9.53
+          restore-keys: |
+            pip-${{ runner.os }}-${{ runner.arch }}-python-3.13-
+      - name: Provision pinned Graphify
+        run: bun run graphify:provision
+      - uses: actions/cache/save@v6
+        if: steps.pip-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/pip
+          key: ${{ steps.pip-cache.outputs.cache-primary-key }}
+      - name: Measure the same corpus
+        env:
+          AST_MCP_RUN_GRAPHIFY: '1'
+        run: |
+          bun run intelligence:measure > "$RUNNER_TEMP/intelligence-measurement.json"
+          jq -e '.schema == "ast-mcp.intelligence-benchmark.v5" and .comparison.graphify.version == "graphify 0.9.53"' "$RUNNER_TEMP/intelligence-measurement.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: intelligence-graphify-measurement
+          path: ${{ runner.temp }}/intelligence-measurement.json
+          if-no-files-found: error

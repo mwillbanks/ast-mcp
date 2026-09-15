@@ -32,6 +32,7 @@ import {
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
 } from "./runtime/dependencies";
+import { pathWithin } from "./runtime/path-utils";
 import { commandForPlatform } from "./runtime/subprocess";
 import {
   createServicePlan,
@@ -106,7 +107,7 @@ function cliEntryFor(root: string | undefined, _home: string) {
   const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
   if (!root) return entry;
   const relative = path.relative(root, entry);
-  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  if (relative && pathWithin(root, entry))
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
 }

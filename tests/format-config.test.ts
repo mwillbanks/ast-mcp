@@ -181,6 +181,28 @@ test("external formatter glob routing is ordered and unmatched files fall back t
   });
 });
 
+test("external formatter glob matches a directory beginning with two dots", async () => {
+  const root = await project("ast-mcp-format-dot-prefix-");
+  const script = path.join(root, "formatter.mjs");
+  await writeFile(
+    script,
+    'let input = ""; for await (const chunk of process.stdin) input += chunk; process.stdout.write("nested:" + input.toUpperCase());',
+  );
+  await configure(
+    root,
+    formatterToml({
+      args: [script],
+      command: process.execPath,
+      globs: ["..cache/**/*.data"],
+    }),
+  );
+
+  const output = await withConfig(hermeticConfig(root), () =>
+    formatContent(path.join(root, "..cache", "deep", "value.data"), "kept"),
+  );
+  expect(output).toBe("nested:KEPT");
+});
+
 test("external formatter failures and timeouts are actionable", async () => {
   const root = await project("ast-mcp-format-errors-");
   await configure(

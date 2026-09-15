@@ -27,6 +27,7 @@ import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
+import { pathWithin } from "./path-utils";
 import {
   referenceRootForPath,
   resolveWritablePath,
@@ -83,13 +84,7 @@ function ancestorPaths(filePath: string, root: string): string[] {
   const ancestors: string[] = [];
   let directory = path.dirname(filePath);
   while (true) {
-    const relative = path.relative(root, directory);
-    if (
-      directory === root ||
-      relative.startsWith("..") ||
-      path.isAbsolute(relative)
-    )
-      break;
+    if (directory === root || !pathWithin(root, directory)) break;
     ancestors.push(directory);
     directory = path.dirname(directory);
   }

@@ -60,6 +60,12 @@ AST_MCP_HOST_SMOKE_MY_HOST='{"command":["my-host","--non-interactive","run an as
 
 The default timeout is 60 seconds. Set `AST_MCP_HOST_SMOKE_TIMEOUT_MS` to change it for every enabled check, or use `timeoutMs` in one host definition. A configured host failure fails this optional command, while an unconfigured host is always skipped.
 
+### Local Windows proof
+
+On an Apple Silicon Mac with Docker Desktop, run `bash scripts/windows-local.sh probe` to check the pinned Windows x64 Bun startup under Wine. Run `bash scripts/windows-local.sh targeted` for dependency installation, affected Windows tests, native qualification, and the MCP handshake. Run `bash scripts/windows-local.sh full` for the same checks plus the complete test suite without bail. The harness checks a 3 GiB image-and-cache budget before and after each run, including failures, and caps its temporary workspace at 1 GiB in memory. This budget is not a Docker volume quota. Docker BuildKit reuses package layers.
+
+The startup probe is not Windows test acceptance. If Wine cannot run Bun's package manager or tests reliably, prefer a local native Windows VM. When no VM is available, audit cross-platform paths, finish all other local checks, and use GitHub Actions once for final native acceptance. If native Windows disagrees, obtain a local native reproducer before patching again. Do not use GitHub Actions as a Windows diagnostic loop.
+
 ## Pull requests
 
 - Keep changes focused and explain the user-visible or boundary-level behavior.

@@ -1,37 +1,10 @@
 import { expect, test } from "bun:test";
 import {
-  astBroProvisionCommand,
   comparatorCommandTimeout,
   graphifyProvisionCommand,
-  provisionIntelligenceComparators,
+  provisionGraphifyComparator,
   runComparatorCommand,
 } from "../scripts/provision-intelligence-comparators.ts";
-
-test("uses the pinned npm ast-bro package only on supported macOS ARM64", () => {
-  expect(astBroProvisionCommand("darwin", "arm64")).toEqual([
-    "npm",
-    "install",
-    "--global",
-    "@ast-bro/cli@4.2.0",
-  ]);
-});
-
-test("uses the pinned Cargo crate on Linux, Windows, and Intel macOS", () => {
-  for (const [platform, arch] of [
-    ["linux", "x64"],
-    ["win32", "x64"],
-    ["darwin", "x64"],
-  ] as const)
-    expect(astBroProvisionCommand(platform, arch)).toEqual([
-      "cargo",
-      "install",
-      "ast-bro",
-      "--version",
-      "4.2.0",
-      "--locked",
-      "--force",
-    ]);
-});
 
 test("pins the graphifyy distribution through the selected Python interpreter", () => {
   expect(graphifyProvisionCommand("python3")).toEqual([
@@ -44,12 +17,11 @@ test("pins the graphifyy distribution through the selected Python interpreter", 
   ]);
 });
 
-test("gives pinned Cargo builds a bounded cold-build budget", () => {
-  expect(comparatorCommandTimeout(astBroProvisionCommand("win32", "x64"))).toBe(
-    1_500_000,
+test("bounds optional installation and version checks", () => {
+  expect(comparatorCommandTimeout(graphifyProvisionCommand("python3"))).toBe(
+    300_000,
   );
-  expect(comparatorCommandTimeout(["npm", "install", "package"])).toBe(300_000);
-  expect(comparatorCommandTimeout(["ast-bro", "--version"])).toBe(30_000);
+  expect(comparatorCommandTimeout(["graphify", "--version"])).toBe(30_000);
 });
 
 test("reports the project timeout instead of an ambiguous SIGKILL exit", async () => {
@@ -86,23 +58,18 @@ test("runs comparator commands and reports subprocess failures", async () => {
   ).rejects.toThrow("failed with exit 7: fixture failure");
 });
 
-test("provisions and verifies both pinned comparators", async () => {
+test("provisions and verifies pinned Graphify only when absent", async () => {
   const commands: string[][] = [];
-  const result = await provisionIntelligenceComparators("darwin", "arm64", {
+  const result = await provisionGraphifyComparator("darwin", "arm64", {
     findExecutable: (name) => (name === "python" ? "/python" : null),
     run: async (command) => {
       commands.push(command);
-      if (command[0] === "ast-bro") return "ast-bro 4.2.0";
       if (command[0] === "graphify") return "graphify 0.9.53";
       return "";
     },
   });
-  expect(result).toEqual({
-    astBro: "ast-bro 4.2.0",
-    graphify: "graphify 0.9.53",
-  });
+  expect(result).toEqual({ graphify: "graphify 0.9.53" });
   expect(commands).toEqual([
-    ["npm", "install", "--global", "@ast-bro/cli@4.2.0"],
     [
       "/python",
       "-m",
@@ -111,40 +78,68 @@ test("provisions and verifies both pinned comparators", async () => {
       "--disable-pip-version-check",
       "graphifyy==0.9.53",
     ],
-    ["ast-bro", "--version"],
+    ["graphify", "--version"],
+  ]);
+});
+
+test("reuses an exact Graphify version without requiring Python", async () => {
+  const commands: string[][] = [];
+  const result = await provisionGraphifyComparator("linux", "x64", {
+    findExecutable: (name) => (name === "graphify" ? "/graphify" : null),
+    run: async (command) => {
+      commands.push(command);
+      return "graphify 0.9.53";
+    },
+  });
+  expect(result).toEqual({ graphify: "graphify 0.9.53" });
+  expect(commands).toEqual([["graphify", "--version"]]);
+});
+
+test("reinstalls a stale Graphify executable before accepting its version", async () => {
+  const commands: string[][] = [];
+  let installed = false;
+  const result = await provisionGraphifyComparator("linux", "x64", {
+    findExecutable: (name) =>
+      name === "python" ? "/python" : name === "graphify" ? "/graphify" : null,
+    run: async (command) => {
+      commands.push(command);
+      if (command[0] !== "graphify") {
+        installed = true;
+        return "";
+      }
+      return installed ? "graphify 0.9.53" : "graphify 0.9.52";
+    },
+  });
+  expect(result).toEqual({ graphify: "graphify 0.9.53" });
+  expect(commands).toEqual([
+    ["graphify", "--version"],
+    graphifyProvisionCommand("/python"),
     ["graphify", "--version"],
   ]);
 });
 
 test("rejects unsupported hosts and missing Python", async () => {
+  await expect(provisionGraphifyComparator("aix", "ppc64")).rejects.toThrow(
+    "Unsupported comparator platform: aix-ppc64",
+  );
   await expect(
-    provisionIntelligenceComparators("aix", "ppc64"),
-  ).rejects.toThrow("Unsupported comparator platform: aix-ppc64");
-  await expect(
-    provisionIntelligenceComparators("linux", "x64", {
+    provisionGraphifyComparator("linux", "x64", {
       findExecutable: () => null,
     }),
   ).rejects.toThrow("Python is required to provision graphify");
 });
 
-test("rejects comparator version drift", async () => {
+test("rejects Graphify version drift after reinstalling", async () => {
   const findExecutable = () => "/python";
-  await expect(
-    provisionIntelligenceComparators("linux", "x64", {
-      findExecutable,
-      run: async (command) => (command[0] === "ast-bro" ? "ast-bro 4.1.0" : ""),
-    }),
-  ).rejects.toThrow("Expected ast-bro 4.2.0");
   for (const graphify of [
     "graphify 0.9.52",
     "prefix graphify 0.9.53",
     "graphify 0.9.53 suffix",
   ]) {
     await expect(
-      provisionIntelligenceComparators("linux", "x64", {
+      provisionGraphifyComparator("linux", "x64", {
         findExecutable,
         run: async (command) => {
-          if (command[0] === "ast-bro") return "ast-bro 4.2.0";
           if (command[0] === "graphify") return graphify;
           return "";
         },

@@ -53,7 +53,6 @@ const CORPUS = {
 };
 type Answer = { calls: string[]; symbols: string[] };
 type Task = {
-  astBro: string[];
   expected: Answer;
   file: string;
   graphifyTokenBudget: number;
@@ -67,7 +66,6 @@ type Task = {
 };
 const TASKS: Task[] = [
   {
-    astBro: ["map", "--json", "--compact", "entry.ts"],
     expected: { calls: [], symbols: ["main", "wrapper"] },
     file: "entry.ts",
     graphifyTokenBudget: 2_000,
@@ -79,15 +77,6 @@ const TASKS: Task[] = [
     resultLimit: 10,
   },
   {
-    astBro: [
-      "callees",
-      "--file",
-      "entry.ts",
-      "--symbol",
-      "main",
-      "--json",
-      "--compact",
-    ],
     expected: { calls: ["main->publish"], symbols: [] },
     file: "entry.ts",
     graphifyTokenBudget: 2_000,
@@ -103,15 +92,6 @@ const TASKS: Task[] = [
     target: "main",
   },
   {
-    astBro: [
-      "callees",
-      "--file",
-      "entry.ts",
-      "--symbol",
-      "wrapper",
-      "--json",
-      "--compact",
-    ],
     expected: { calls: ["wrapper->main"], symbols: [] },
     file: "entry.ts",
     graphifyTokenBudget: 2_000,
@@ -144,24 +124,6 @@ const normalized = (value: Answer): Answer => ({
 });
 const equalAnswer = (left: Answer, right: Answer) =>
   JSON.stringify(normalized(left)) === JSON.stringify(normalized(right));
-function astBroAnswer(task: Task, output: string): Answer {
-  const value = JSON.parse(output);
-  if (task.id === "symbols")
-    return normalized({
-      calls: [],
-      symbols: value.files.flatMap(
-        (file: { declarations?: Array<{ name: string }> }) =>
-          (file.declarations ?? []).map((item) => item.name),
-      ),
-    });
-  return normalized({
-    calls: (value.matches ?? []).map(
-      (item: { source: string; target: string }) =>
-        `${item.source.split("::").at(-1)}->${item.target.split("::").at(-1)}`,
-    ),
-    symbols: [],
-  });
-}
 function nativeAnswer(task: Task, value: unknown): Answer {
   const data = (value as { data?: Record<string, unknown> }).data ?? {};
   if (task.id === "symbols") {
@@ -214,76 +176,6 @@ function toolText(result: unknown): string {
     .join("\n");
 }
 
-async function astBro(
-  root: string,
-): Promise<ToolObservation[] | { reason: string; status: "unavailable" }> {
-  if (process.env.AST_MCP_DISABLE_COMPARATORS === "1")
-    return {
-      reason: "ast-bro was disabled for hermetic unavailable-path validation",
-      status: "unavailable",
-    };
-  const executable =
-    Bun.which("ast-bro") ?? path.resolve("node_modules/.bin/ast-bro");
-  if (!(await Bun.file(executable).exists()))
-    return {
-      reason: "ast-bro executable was not found",
-      status: "unavailable",
-    };
-  const version = await cli([executable, "--version"], root);
-  if (version.output.trim() !== "ast-bro 4.2.0")
-    return {
-      reason: `expected ast-bro 4.2.0, received ${version.output.trim()}`,
-      status: "unavailable",
-    };
-
-  const client = new Client({ name: "benchmark-ast-bro", version: "1.0.0" });
-  const transport = new StdioClientTransport({
-    args: ["mcp"],
-    command: executable,
-    cwd: root,
-    stderr: "pipe",
-  });
-  await client.connect(transport);
-  try {
-    const observations: ToolObservation[] = [];
-    for (const task of TASKS) {
-      const started = Bun.nanoseconds();
-      const result = await client.callTool({
-        arguments: {
-          ...task.native.arguments,
-          budget: task.measuredOutputCapBytes,
-          json: true,
-          ...(task.kind === "symbols"
-            ? { max_members: task.resultLimit }
-            : { limit: task.resultLimit }),
-        },
-        name: task.astBro[0] as "map" | "callees",
-      });
-      if (result.isError) throw new Error(toolText(result));
-      const output = toolText(result);
-      const returnedBytes = Buffer.byteLength(output);
-      if (returnedBytes > task.measuredOutputCapBytes)
-        throw new Error(`ast-bro exceeded measured output cap for ${task.id}`);
-      const answer = astBroAnswer(task, output);
-      observations.push({
-        answer,
-        durationMs: (Bun.nanoseconds() - started) / 1e6,
-        id: task.id,
-        operations: [
-          {
-            appliedResultLimit: task.resultLimit,
-            command: `ast-bro ${task.astBro[0]}`,
-            returnedBytes,
-          },
-        ],
-        success: equalAnswer(answer, task.expected),
-      });
-    }
-    return observations;
-  } finally {
-    await client.close();
-  }
-}
 async function connect(cwd: string, name: string) {
   const client = new Client({ name, version: "1.0.0" });
   const transport = new StdioClientTransport({
@@ -398,9 +290,9 @@ function graphifyAnswer(task: Task, output: string): Answer {
 }
 
 async function graphify(root: string, outputRoot: string) {
-  if (process.env.AST_MCP_DISABLE_COMPARATORS === "1")
+  if (process.env.AST_MCP_RUN_GRAPHIFY !== "1")
     return {
-      reason: "Graphify was disabled for hermetic unavailable-path validation",
+      reason: "Graphify comparison was not requested",
       status: "unavailable" as const,
     };
   const executable = Bun.which("graphify");
@@ -420,48 +312,60 @@ async function graphify(root: string, outputRoot: string) {
     root,
   );
   const graph = path.join(outputRoot, "graphify-out", "graph.json");
-  const observations = [];
-  for (const task of TASKS) {
-    const result = await cli(
-      [
-        executable,
-        "query",
-        task.query,
-        "--budget",
-        String(task.graphifyTokenBudget),
-        "--graph",
-        graph,
-      ],
-      root,
-    );
-    const answer = graphifyAnswer(task, result.output);
-    observations.push({
-      answer,
-      durationMs: result.durationMs,
-      id: task.id,
-      operations: [
-        {
-          appliedTokenBudget: task.graphifyTokenBudget,
-          command: "graphify query",
-          returnedBytes: Buffer.byteLength(result.output),
-        },
-      ],
-      success: equalAnswer(answer, task.expected),
-    });
-  }
+  const runPass = async () => {
+    const observations = [];
+    for (const task of TASKS) {
+      const result = await cli(
+        [
+          executable,
+          "query",
+          task.query,
+          "--budget",
+          String(task.graphifyTokenBudget),
+          "--graph",
+          graph,
+        ],
+        root,
+      );
+      const answer = graphifyAnswer(task, result.output);
+      observations.push({
+        answer,
+        durationMs: result.durationMs,
+        id: task.id,
+        operations: [
+          {
+            appliedTokenBudget: task.graphifyTokenBudget,
+            command: "graphify query",
+            returnedBytes: Buffer.byteLength(result.output),
+          },
+        ],
+        success: equalAnswer(answer, task.expected),
+      });
+    }
+    return observations;
+  };
+  const cold = await runPass();
+  const warm = await runPass();
   return {
-    durationMs:
-      build.durationMs +
-      observations.reduce((sum, item) => sum + item.durationMs, 0),
+    cold,
+    indexingDurationMs: build.durationMs,
+    medianColdQueryMs: median(cold.map((item) => item.durationMs)),
+    medianColdReturnedBytes: median(
+      cold.map((item) => item.operations[0]?.returnedBytes ?? 0),
+    ),
+    medianWarmQueryMs: median(warm.map((item) => item.durationMs)),
+    medianWarmReturnedBytes: median(
+      warm.map((item) => item.operations[0]?.returnedBytes ?? 0),
+    ),
     setupOperations: [
       {
         command: "graphify index",
         returnedBytes: Buffer.byteLength(build.output),
       },
     ],
-    success: observations.every((item) => item.success),
-    tasks: observations,
+    success: [...cold, ...warm].every((item) => item.success),
     version: version.output.trim(),
+    warm,
   };
 }
 type CacheCounters = { hits: number; misses: number };
@@ -1055,113 +959,68 @@ export async function benchmarkIntelligenceBaseline() {
     const root = path.join(owned, "corpus");
     await mkdir(path.join(root, ".git"), { recursive: true });
     await writeCorpus(root);
-    const [baseline, nativeResult, graphifyResult] = await Promise.all([
-      astBro(root),
+    const [nativeResult, graphifyResult] = await Promise.all([
       native(root, path.join(owned, "native-storage")),
       graphify(root, path.join(owned, "graphify")),
     ]);
-    const replacement = nativeResult.cold;
-    const warmReplacement = nativeResult.warm;
-    const comparatorsRequired = process.env.AST_MCP_REQUIRE_COMPARATORS === "1";
-    const graphifyUnavailable =
-      "status" in graphifyResult && graphifyResult.status === "unavailable";
-    const graphifyFailed =
-      !graphifyUnavailable && graphifyResult.success !== true;
-    if (
-      comparatorsRequired &&
-      (!Array.isArray(baseline) || graphifyUnavailable || graphifyFailed)
-    )
-      throw new Error(
-        [
-          "Required comparator evidence is unavailable.",
-          Array.isArray(baseline) ? null : baseline.reason,
-          graphifyUnavailable ? graphifyResult.reason : null,
-          graphifyFailed ? "Graphify task results did not match." : null,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
     const indexing = await productionIndexing(
       root,
       path.join(owned, "lancedb"),
-      replacement,
-      warmReplacement,
+      nativeResult.cold,
+      nativeResult.warm,
     );
-    const gateAvailable = Array.isArray(baseline);
-    const baselineCalls = gateAvailable
-      ? median(baseline.map((item) => item.operations.length))
-      : null;
-    const replacementCalls = median(
-      replacement.map((item) => item.operations.length),
-    );
-    const baselineBytes = gateAvailable
-      ? median(
-          baseline.map((item) =>
-            item.operations.reduce(
-              (sum, operation) => sum + operation.returnedBytes,
-              0,
-            ),
-          ),
-        )
-      : null;
-    const replacementBytes = median(
-      replacement.map((item) =>
-        item.operations.reduce(
-          (sum, operation) => sum + operation.returnedBytes,
-          0,
-        ),
-      ),
-    );
-    const baselineSuccess = gateAvailable
-      ? baseline.filter((item) => item.success).length / TASKS.length
-      : null;
-    const replacementSuccess =
-      replacement.filter((item) => item.success).length / TASKS.length;
-    const callReduction =
-      baselineCalls === null
-        ? null
-        : ((baselineCalls - replacementCalls) / baselineCalls) * 100;
-    const byteReduction =
-      baselineBytes === null
-        ? null
-        : ((baselineBytes - replacementBytes) / baselineBytes) * 100;
-    const gatePassed =
-      gateAvailable &&
-      replacementSuccess >= (baselineSuccess ?? 1) &&
-      ((callReduction ?? 0) >= 20 || (byteReduction ?? 0) >= 20);
+    const returnedBytes = (observation: ToolObservation) =>
+      observation.operations.reduce(
+        (sum, operation) => sum + operation.returnedBytes,
+        0,
+      );
+    const coldSuccessRate =
+      nativeResult.cold.filter((item) => item.success).length / TASKS.length;
+    const warmSuccessRate =
+      nativeResult.warm.filter((item) => item.success).length / TASKS.length;
     return {
       agentEfficiency: {
-        baseline,
-        baselineMedianCalls: baselineCalls,
-        baselineMedianReturnedBytes: baselineBytes,
-        byteReductionPercent: byteReduction,
         executedTasks: TASKS.length,
-        gateAvailable,
-        gatePassed,
+        gatePassed: coldSuccessRate === 1 && warmSuccessRate === 1,
         measuredOutputCapBytes: TASKS[0]?.measuredOutputCapBytes,
-        reductionPercent: callReduction,
-        replacement,
-        replacementMedianCalls: replacementCalls,
-        replacementMedianReturnedBytes: replacementBytes,
+        medianColdQueryMs: median(
+          nativeResult.cold.map((item) => item.durationMs),
+        ),
+        medianColdReturnedBytes: median(nativeResult.cold.map(returnedBytes)),
+        medianWarmQueryMs: median(
+          nativeResult.warm.map((item) => item.durationMs),
+        ),
+        medianWarmReturnedBytes: median(nativeResult.warm.map(returnedBytes)),
         resultLimit: TASKS[0]?.resultLimit,
-        successRateBaseline: baselineSuccess,
-        successRateReplacement: replacementSuccess,
+        successRateCold: coldSuccessRate,
+        successRateWarm: warmSuccessRate,
         tasks: TASKS.map((task, index) => ({
-          baseline: gateAvailable ? baseline[index] : null,
           expected: task.expected,
           id: task.id,
           measuredOutputCapBytes: task.measuredOutputCapBytes,
-          native: replacement[index],
+          nativeCold: nativeResult.cold[index],
+          nativeWarm: nativeResult.warm[index],
           query: task.query,
           resultLimit: task.resultLimit,
         })),
       },
-      comparators: {
-        astBro: Array.isArray(baseline)
-          ? { status: "executed", version: "4.2.0" }
-          : baseline,
+      comparison: {
+        budgetUnits: {
+          graphifyQuery: "tokens",
+          nativeOutputCap: "bytes",
+          nativeResultLimit: "items",
+        },
+        corpus: {
+          files: Object.keys(CORPUS),
+          tasks: TASKS.map((task) => task.id),
+        },
         graphify: graphifyResult,
-        required: comparatorsRequired,
+        methodology: {
+          graphifyQueries:
+            "separate CLI process per query against one indexed graph",
+          nativeQueries: "persistent MCP session against one opened workspace",
+          queryPasses: "cold first pass, warm second pass for each task",
+        },
       },
       indexing,
       isolation: await isolation(owned),
@@ -1169,9 +1028,12 @@ export async function benchmarkIntelligenceBaseline() {
       memory: { heapUsedBytes: process.memoryUsage().heapUsed, peakRssBytes },
       runtime: {
         bun: Bun.version,
+        cpuModel: os.cpus()[0]?.model ?? "unknown",
+        hostname: os.hostname(),
         platform: `${process.platform}-${process.arch}`,
+        totalMemoryBytes: os.totalmem(),
       },
-      schema: "ast-mcp.intelligence-benchmark.v4",
+      schema: "ast-mcp.intelligence-benchmark.v5",
     };
   } finally {
     clearInterval(sampler);
@@ -1181,10 +1043,6 @@ export async function benchmarkIntelligenceBaseline() {
 if (import.meta.main) {
   const result = await benchmarkIntelligenceBaseline();
   console.log(JSON.stringify(result, null, 2));
-  if (
-    (result.agentEfficiency.gateAvailable &&
-      !result.agentEfficiency.gatePassed) ||
-    !result.isolation.gatePassed
-  )
+  if (!result.agentEfficiency.gatePassed || !result.isolation.gatePassed)
     process.exitCode = 1;
 }

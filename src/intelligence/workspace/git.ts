@@ -1,6 +1,7 @@
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
+import { pathWithin } from "../../runtime/path-utils.ts";
 import { terminateProcessTree } from "../../runtime/subprocess.ts";
 import {
   createRevisionId,
@@ -333,11 +334,7 @@ function repositoryRelativePath(
   absolutePath: string,
 ): string {
   const relative = path.relative(git.checkoutRoot, absolutePath);
-  if (
-    relative === "" ||
-    relative.startsWith("..") ||
-    path.isAbsolute(relative)
-  ) {
+  if (relative === "" || !pathWithin(git.checkoutRoot, absolutePath)) {
     throw new WorkspaceError(
       "workspace_mismatch",
       "Revision path must identify a file inside the selected checkout",

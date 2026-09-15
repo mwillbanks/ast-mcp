@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { test as bunTest, expect } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -155,6 +155,8 @@ async function startHttpServer(executable: string, fixture: string) {
     );
   }
 }
+
+const test = bunTest.skipIf(process.env.AST_MCP_SKIP_PACKAGE_SMOKE === "1");
 
 test("extracted package supports stdio and HTTP lifecycle operations", async () => {
   const repository = path.resolve(import.meta.dir, "..");

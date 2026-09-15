@@ -1,3 +1,3 @@
-import { provisionIntelligenceComparators } from "./provision-intelligence-comparators.ts";
+import { provisionGraphifyComparator } from "./provision-intelligence-comparators.ts";
 
-console.log(JSON.stringify(await provisionIntelligenceComparators(), null, 2));
+console.log(JSON.stringify(await provisionGraphifyComparator(), null, 2));

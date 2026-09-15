@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { withConfig } from "../src/config.ts";
@@ -279,6 +279,28 @@ test("revision file reads reject invalid boundaries and unavailable Git state", 
   await expect(gitWorkingState(staleGit)).rejects.toMatchObject({
     code: "workspace_git_failure",
   });
+});
+
+test("historical Git reads accept directories beginning with two dots", async () => {
+  const root = await temporary("ast-mcp-workspace-dot-prefix-");
+  await git(root, ["init", "-b", "main"]);
+  const filePath = path.join(root, "..cache", "note.txt");
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, "kept\n");
+  await git(root, ["add", "--", "..cache/note.txt"]);
+  await git(root, ["commit", "-m", "add dot-prefixed directory"]);
+  const oid = await git(root, ["rev-parse", "HEAD"]);
+  const workspace = await new WorkspaceRegistry().open({
+    configurationGeneration: 1,
+    directory: root,
+    revision: { kind: "commit", oid },
+  });
+  const content = await readGitRevisionFile(
+    workspace.git,
+    workspace.selectedRevision,
+    path.join(workspace.checkoutRoot, "..cache", "note.txt"),
+  );
+  expect(Buffer.from(content).toString("utf8")).toBe("kept\n");
 });
 
 test("invalid refs and historical selectors on non-Git roots fail closed", async () => {

@@ -50,6 +50,23 @@ test("file_delete verifies hashes and cleans empty ancestors", async () => {
   ]);
 });
 
+test("file_delete cleans empty directories beginning with two dots", async () => {
+  const folder = await temporaryRoot();
+  const filePath = path.join(folder, "..cache", "deeper", "note.txt");
+  const content = "delete me\n";
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content);
+
+  const result = await deleteFilesSafely({
+    [filePath]: { expectedSha256: sha256(content) },
+  });
+
+  expect(result.removedDirectories).toEqual([
+    path.join(await realpath(folder), "..cache"),
+    path.join(await realpath(folder), "..cache", "deeper"),
+  ]);
+});
+
 test("file_delete keeps completed deletion successful when cleanup races", async () => {
   const folder = await temporaryRoot();
   const filePath = path.join(folder, "nested", "note.txt");

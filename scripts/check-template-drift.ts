@@ -50,7 +50,7 @@ async function isIgnored(relative: string): Promise<boolean> {
 const drift: string[] = [];
 for (const mapping of mappings) {
   const relative = path.relative(root, mapping.destination);
-  if (!write && (await isIgnored(relative))) continue;
+  if (!write && (await isIgnored(relative.split(path.sep).join("/")))) continue;
   const [source, destination] = await Promise.all([
     readFile(mapping.source),
     readFile(mapping.destination).catch(() => undefined),

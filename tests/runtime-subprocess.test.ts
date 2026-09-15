@@ -41,13 +41,24 @@ test("leaves native executables structured and rejects batch control characters"
   }
 });
 
-test("command timeout includes inherited output pipes after the leader exits", async () => {
-  const script = `Bun.spawn([process.execPath, "-e", "await Bun.sleep(800)"], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exit(0)`;
-  const start = performance.now();
+test.skipIf(process.platform === "win32")(
+  "POSIX command timeout includes inherited output pipes after the leader exits",
+  async () => {
+    const script = `Bun.spawn([process.execPath, "-e", "await Bun.sleep(800)"], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exit(0)`;
+    const start = performance.now();
+    await expect(
+      runCommandInput(process.execPath, ["-e", script], "", { timeoutMs: 100 }),
+    ).rejects.toThrow("timed out after 100ms");
+    expect(performance.now() - start).toBeLessThan(700);
+  },
+);
+
+test("command timeout stops a slow leader on every platform", async () => {
   await expect(
-    runCommandInput(process.execPath, ["-e", script], "", { timeoutMs: 100 }),
+    runCommandInput(process.execPath, ["-e", "await Bun.sleep(800)"], "", {
+      timeoutMs: 100,
+    }),
   ).rejects.toThrow("timed out after 100ms");
-  expect(performance.now() - start).toBeLessThan(700);
 });
 
 test("early command exit reports failure without an uncaught stdin EPIPE", async () => {

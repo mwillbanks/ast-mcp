@@ -181,21 +181,24 @@ describe("optional live host smoke checks", () => {
     );
   });
 
-  test("times inherited pipes after a smoke command exits", async () => {
-    const script = `Bun.spawn([process.execPath, "-e", "await Bun.sleep(800)"], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exit(0)`;
-    const start = performance.now();
-    await expect(
-      runHostSmokeChecks([
-        {
-          command: [process.execPath, "-e", script],
-          expect: [],
-          name: "descendant",
-          timeoutMs: 100,
-        },
-      ]),
-    ).rejects.toThrow('Host smoke "descendant" exceeded 100ms');
-    expect(performance.now() - start).toBeLessThan(700);
-  });
+  test.skipIf(process.platform === "win32")(
+    "times POSIX inherited pipes after a smoke command exits",
+    async () => {
+      const script = `Bun.spawn([process.execPath, "-e", "await Bun.sleep(800)"], { stdin: "ignore", stdout: "inherit", stderr: "inherit" }); process.exit(0)`;
+      const start = performance.now();
+      await expect(
+        runHostSmokeChecks([
+          {
+            command: [process.execPath, "-e", script],
+            expect: [],
+            name: "descendant",
+            timeoutMs: 100,
+          },
+        ]),
+      ).rejects.toThrow('Host smoke "descendant" exceeded 100ms');
+      expect(performance.now() - start).toBeLessThan(700);
+    },
+  );
 
   test("main skips by default and runs only explicit definitions", async () => {
     await expect(main({})).resolves.toEqual([]);
