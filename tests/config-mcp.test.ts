@@ -36,7 +36,7 @@ test("stdio resolves project TOML from client-advertised roots", async () => {
       arguments: { files: [{ filePath: readable }] },
       name: "file_read",
     });
-    expect(result.isError).not.toBeTrue();
+    if (result.isError) throw new Error(JSON.stringify(result));
     expect(result.content[0]).toMatchObject({
       type: "text",
     });
