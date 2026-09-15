@@ -1,0 +1,26 @@
+name: Windows debug session
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-debug.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-debug:
+    if: github.head_ref == 'codex/feat/native-intelligence'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun ci
+      - name: Authenticated Windows debug shell
+        uses: mxschmitt/action-tmate@v3.24
+        with:
+          limit-access-to-actor: true
