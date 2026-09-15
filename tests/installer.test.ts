@@ -12,7 +12,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
-import { resolveLocalBinaryAlias } from "../templates/skills/ast-mcp/scripts/binary-resolution";
+import {
+  executableNames,
+  resolveLocalBinaryAlias,
+} from "../templates/skills/ast-mcp/scripts/binary-resolution";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -27,7 +30,16 @@ async function executable(
   file: string,
   platform: NodeJS.Platform = process.platform,
 ) {
-  const alias = platform === "win32" ? `${file}.cmd` : file;
+  const windowsName = executableNames(path.basename(file), "win32").find(
+    (name) => name.toLowerCase().endsWith(".cmd"),
+  );
+  const alias =
+    platform === "win32"
+      ? path.join(
+          path.dirname(file),
+          windowsName ?? `${path.basename(file)}.cmd`,
+        )
+      : file;
   await mkdir(path.dirname(alias), { recursive: true });
   await writeFile(
     alias,
