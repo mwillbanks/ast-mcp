@@ -94,7 +94,6 @@ test("supports Windows executable extensions in global package-manager bins", as
   created.push(root);
   const bunInstall = path.join(root, "bun-home");
   const windowsBinary = path.join(bunInstall, "bin/tool.CMD");
-  const posixBinary = path.join(bunInstall, "bin/tool");
   await mkdir(path.dirname(windowsBinary), { recursive: true });
   await writeFile(windowsBinary, "@exit /b 0\r\n");
   const previous = {
@@ -117,21 +116,28 @@ test("supports Windows executable extensions in global package-manager bins", as
         platform: "win32",
       }),
     ).toBe(windowsBinary);
-    await executable(posixBinary);
-    expect(
-      resolveDependencyBinary("tool", "missing-package", {
-        packageBinary: path.join(root, "missing-package-binary"),
-        packageRoot: path.join(root, "package"),
-        pathValue: "",
-        platform: "linux",
-      }),
-    ).toBe(posixBinary);
   } finally {
     for (const [name, value] of Object.entries(previous))
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
   }
 });
+
+test.skipIf(process.platform === "win32")(
+  "requires POSIX execute permission for extensionless global aliases",
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-posix-bin-"));
+    created.push(root);
+    const alias = await executable(path.join(root, "tool"));
+    const options = {
+      globalBinDirectories: [root],
+      platform: "linux" as const,
+    };
+    expect(resolveGlobalBinaryAlias("tool", options)).toBe(alias);
+    await chmod(alias, 0o644);
+    expect(resolveGlobalBinaryAlias("tool", options)).toBeUndefined();
+  },
+);
 
 test("resolves executable paths declared by package metadata", () => {
   expect(

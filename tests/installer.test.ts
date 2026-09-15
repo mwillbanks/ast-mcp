@@ -162,8 +162,9 @@ describe("installer", () => {
     const expected = `./${path.relative(root, resolved).split(path.sep).join("/")}`;
     expect(resolved.toLowerCase()).toBe(alias.toLowerCase());
     expect(expected.toLowerCase()).toEndWith(".cmd");
+    const invocation = commandForPlatform(expected, ["mcp"], "win32");
     const codex = await readFile(path.join(root, ".codex/config.toml"), "utf8");
-    expect(codex).toContain(`command = ${JSON.stringify("cmd.exe")}`);
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
     expect(codex).toContain(`call ${expected} mcp`);
     for (const file of [".mcp.json", ".github/mcp.json"]) {
       const document = JSON.parse(
@@ -171,14 +172,8 @@ describe("installer", () => {
       );
       const definition =
         document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
-      expect(definition.command).toBe("cmd.exe");
-      expect(definition.args).toEqual([
-        "/d",
-        "/v:off",
-        "/s",
-        "/c",
-        `call ${expected} mcp`,
-      ]);
+      expect(definition.command).toBe(invocation.command);
+      expect(definition.args).toEqual(invocation.args);
     }
     for (const file of [
       ".codex/hooks.json",
