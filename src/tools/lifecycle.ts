@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {
@@ -106,7 +105,9 @@ export default function registerLifecycleTools(
                         request.expectedSha256,
                         "file_chattr",
                       );
-                      const content = await readFile(filePath);
+                      const content = Buffer.from(
+                        await Bun.file(filePath).bytes(),
+                      );
                       const actual = sha256(content);
                       if (request.expectedSha256)
                         verifyExpectedHash(request.expectedSha256, actual);

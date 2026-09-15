@@ -4,7 +4,6 @@ import {
   chown,
   lstat,
   readdir,
-  readFile,
   rm,
   rmdir,
   writeFile,
@@ -61,7 +60,7 @@ async function importersFor(filePath: string, root: string): Promise<string[]> {
     const capabilities = await inspectFileCapabilities(candidate);
     if (!capabilities.language || !capabilities.effective.read.includes("ast"))
       continue;
-    const source = await readFile(candidate, "utf8");
+    const source = await Bun.file(candidate).text();
     const facts = parseSource({
       languageId: capabilities.language,
       source,
@@ -244,8 +243,7 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
           sourceContentBase64: snapshot?.content.toString("base64") ?? null,
           sourceGid:
             process.platform === "win32" ? null : (snapshot?.gid ?? null),
-          sourceMode:
-            process.platform === "win32" ? null : (snapshot?.mode ?? null),
+          sourceMode: snapshot?.mode ?? null,
           sourceSha256: snapshot?.sha256 ?? null,
           sourceUid:
             process.platform === "win32" ? null : (snapshot?.uid ?? null),

@@ -14,6 +14,7 @@ import {
 import {
   canonicalizePath,
   canonicalizePathSync,
+  canonicalPathWithin,
   containingRoot,
   effectiveWorkspaceRoot,
   pathWithin,
@@ -31,7 +32,7 @@ async function configuredRoots(): Promise<string[]> {
   return (await currentConfig()).workspace.roots;
 }
 function within(root: string, target: string): boolean {
-  return pathWithin(root, target);
+  return canonicalPathWithin(root, target);
 }
 
 async function workspaceRoots(): Promise<string[]> {
@@ -83,10 +84,8 @@ async function configuredRootForPath(
   filePath: string,
 ): Promise<string | undefined> {
   const canonicalTarget = canonicalizePathSync(filePath);
-  return (await fileOperationRoots()).find(
-    (candidate) =>
-      pathWithin(candidate, filePath) ||
-      pathWithin(canonicalizePathSync(candidate), canonicalTarget),
+  return (await fileOperationRoots()).find((candidate) =>
+    pathWithin(canonicalizePathSync(candidate), canonicalTarget),
   );
 }
 
@@ -287,7 +286,18 @@ async function resolvePath(
   const linkDecision = evaluatePolicy(config, resolved, operation);
   enforcePolicy(config, linkDecision);
   const metadata = await lstat(resolved).catch(() => undefined);
-  if (!metadata?.isSymbolicLink()) return resolved;
+  if (!metadata?.isSymbolicLink()) {
+    if (process.platform !== "win32" || !metadata) return resolved;
+    const canonical = await realpath(resolved);
+    assertWithinBoundary(
+      canonical,
+      roots,
+      allowAnyPath,
+      `Path is outside ${boundary}: ${filePath}`,
+    );
+    enforcePolicy(config, evaluatePolicy(config, canonical, operation));
+    return canonical;
+  }
   return resolvedSymlinkTarget({
     allowAnyPath,
     boundary,

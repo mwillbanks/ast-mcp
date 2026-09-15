@@ -1,4 +1,4 @@
-import { lstat, readFile, readlink, realpath } from "node:fs/promises";
+import { lstat, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
 import { pathWithin } from "../../runtime/path-utils.ts";
@@ -235,7 +235,7 @@ async function intentToAddIdentity(
     return { contentDigest: null, kind: "missing", path: repositoryPath };
   const content = metadata.isSymbolicLink()
     ? await readlink(absolutePath)
-    : await readFile(absolutePath);
+    : await Bun.file(absolutePath).bytes();
   return {
     contentDigest: sha256(content),
     kind: metadata.isSymbolicLink() ? "symlink" : "file",
@@ -455,7 +455,7 @@ async function dirtyEntry(
       : sha256(
           metadata?.isSymbolicLink()
             ? await readlink(absolute)
-            : await readFile(absolute),
+            : await Bun.file(absolute).bytes(),
         );
   return { contentDigest, path: filePath, status };
 }

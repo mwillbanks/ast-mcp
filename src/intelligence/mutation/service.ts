@@ -3,7 +3,6 @@ import {
   chmod,
   chown,
   lstat,
-  readFile,
   rename,
   unlink,
   writeFile,
@@ -11,6 +10,7 @@ import {
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
 import { withFileLocks } from "../../runtime/locks.ts";
+import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import { createIdentity } from "../contracts/common.ts";
 import { LanceIntelligenceStore } from "../storage/store.ts";
 import {
@@ -51,19 +51,30 @@ export function mutationOperationId(input: {
   });
 }
 
+async function assertRecoveryPath(
+  workspace: WorkspaceHandle,
+  filePath: string,
+): Promise<void> {
+  const canonicalRoot = await canonicalizePath(workspace.checkoutRoot);
+  const canonicalTarget = await canonicalizePath(filePath);
+  if (
+    path.relative(canonicalRoot, canonicalTarget) === "" ||
+    !pathWithin(canonicalRoot, canonicalTarget)
+  )
+    throw new Error("mutation_path_outside_workspace");
+}
+
 async function restoreMutationRecord(
   workspace: WorkspaceHandle,
   record: MutationJournalRecord,
 ): Promise<void> {
   for (const file of record.files) {
-    const relative = path.relative(workspace.checkoutRoot, file.filePath);
+    await assertRecoveryPath(workspace, file.filePath);
     if (
-      relative === "" ||
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
+      (file.sourceUid === null) !== (file.sourceGid === null) ||
+      (process.platform === "win32" && file.sourceUid !== null)
     )
-      throw new Error("mutation_path_outside_workspace");
+      throw new Error("mutation_recovery_unsupported_owner");
   }
   await withFileLocks(
     record.files.map((file) => file.filePath),
@@ -71,7 +82,12 @@ async function restoreMutationRecord(
       const fence = async () => {
         for (const lease of leases) await lease.fence();
       };
+      const fencePath = async (filePath: string) => {
+        await fence();
+        await assertRecoveryPath(workspace, filePath);
+      };
       for (const file of record.files) {
+        await assertRecoveryPath(workspace, file.filePath);
         const exists = await lstat(file.filePath).then(
           () => true,
           (error) => {
@@ -82,13 +98,13 @@ async function restoreMutationRecord(
         );
         if (file.sourceContentBase64 === null) {
           if (!exists) continue;
-          const actual = sha256(await readFile(file.filePath));
+          const actual = sha256(await Bun.file(file.filePath).bytes());
           if (
             actual !== file.candidateSha256 &&
             actual !== file.committedSha256
           )
             throw new Error("mutation_recovery_hash_mismatch");
-          await fence();
+          await fencePath(file.filePath);
           await unlink(file.filePath);
           continue;
         }
@@ -96,14 +112,14 @@ async function restoreMutationRecord(
         if (sha256(source) !== file.sourceSha256)
           throw new Error("mutation_recovery_material_mismatch");
         if (exists) {
-          const actual = sha256(await readFile(file.filePath));
+          const actual = sha256(await Bun.file(file.filePath).bytes());
           if (actual === file.sourceSha256) {
             if (file.sourceUid !== null && file.sourceGid !== null) {
-              await fence();
+              await fencePath(file.filePath);
               await chown(file.filePath, file.sourceUid, file.sourceGid);
             }
-            if (process.platform !== "win32" && file.sourceMode !== null) {
-              await fence();
+            if (file.sourceMode !== null) {
+              await fencePath(file.filePath);
               await chmod(file.filePath, file.sourceMode);
             }
             continue;
@@ -118,7 +134,7 @@ async function restoreMutationRecord(
           path.dirname(file.filePath),
           `.${path.basename(file.filePath)}.recovery-${randomUUID()}`,
         );
-        await fence();
+        await fencePath(temporary);
         await writeFile(temporary, source, {
           flag: "wx",
           mode:
@@ -128,20 +144,22 @@ async function restoreMutationRecord(
         });
         try {
           if (file.sourceUid !== null && file.sourceGid !== null) {
-            await fence();
+            await fencePath(temporary);
             await chown(temporary, file.sourceUid, file.sourceGid);
           }
-          if (process.platform !== "win32" && file.sourceMode !== null) {
-            await fence();
+          if (file.sourceMode !== null) {
+            await fencePath(temporary);
             await chmod(temporary, file.sourceMode);
           }
-          await fence();
+          await fencePath(file.filePath);
+          await assertRecoveryPath(workspace, temporary);
           await rename(temporary, file.filePath);
         } finally {
           await unlink(temporary).catch(() => undefined);
         }
       }
       for (const file of record.files) {
+        await assertRecoveryPath(workspace, file.filePath);
         const exists = await lstat(file.filePath).then(
           () => true,
           () => false,
@@ -151,13 +169,14 @@ async function restoreMutationRecord(
         } else {
           if (!exists) throw new Error("mutation_recovery_verification_failed");
           const [actual, metadata] = await Promise.all([
-            readFile(file.filePath).then((content) => sha256(content)),
+            Bun.file(file.filePath)
+              .bytes()
+              .then((content) => sha256(content)),
             lstat(file.filePath),
           ]);
           if (
             actual !== file.sourceSha256 ||
-            (process.platform !== "win32" &&
-              file.sourceMode !== null &&
+            (file.sourceMode !== null &&
               (metadata.mode & 0o7777) !== (file.sourceMode & 0o7777)) ||
             (file.sourceUid !== null && metadata.uid !== file.sourceUid) ||
             (file.sourceGid !== null && metadata.gid !== file.sourceGid)

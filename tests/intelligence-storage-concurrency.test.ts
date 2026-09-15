@@ -197,10 +197,9 @@ describe("LanceDB storage coordination", () => {
     });
 
     const encoded = Buffer.from(JSON.stringify(storage)).toString("base64");
-    const modulePath = new URL(
-      "../src/intelligence/storage/store.ts",
-      import.meta.url,
-    ).pathname;
+    const modulePath = Bun.fileURLToPath(
+      new URL("../src/intelligence/storage/store.ts", import.meta.url),
+    );
     const script = `
       import { LanceIntelligenceStore } from ${JSON.stringify(modulePath)};
       const domain = JSON.parse(Buffer.from(${JSON.stringify(encoded)}, "base64").toString());

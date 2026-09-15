@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { fileV2Schema } from "./config-v2-schema";
 import { replaceFileAtomically } from "./runtime/atomic";
 
@@ -232,5 +232,5 @@ export async function writeConfigSource(
 }
 
 export async function readConfigSource(filePath: string): Promise<string> {
-  return readFile(filePath, "utf8");
+  return Bun.file(filePath).text();
 }

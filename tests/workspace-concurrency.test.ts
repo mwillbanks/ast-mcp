@@ -6,6 +6,7 @@ import {
   realpath,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -13,11 +14,13 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { clearConfigCache, currentConfig, withConfig } from "../src/config.ts";
+import { withFencedFileLocks } from "../src/intelligence/mutation/locks.ts";
 import {
   discoverGitWorkspace,
   WorkspaceRegistry,
   withWorkspaceContext,
 } from "../src/intelligence/workspace/index.ts";
+import { canonicalPathWithin } from "../src/runtime/path-utils.ts";
 import { resolveWritablePath } from "../src/runtime/paths.ts";
 import {
   configuredExecution,
@@ -84,6 +87,44 @@ afterEach(async () => {
     created.splice(0).map((root) => rm(root, { force: true, recursive: true })),
   );
 });
+
+test("canonical containment rejects a link that escapes a lexical root", async () => {
+  const root = await temporary("ast-mcp-canonical-boundary-");
+  const outside = await temporary("ast-mcp-canonical-outside-");
+  const alias = path.join(root, "alias");
+  await symlink(
+    outside,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  expect(
+    canonicalPathWithin(root, path.join(alias, "missing.txt")),
+  ).toBeFalse();
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows case aliases resolve to one native path and one file lock",
+  async () => {
+    const root = await temporary("ast-mcp-windows-path-identity-");
+    const directory = path.join(root, "LongFolder");
+    await mkdir(directory);
+    const file = path.join(directory, "Value.txt");
+    await writeFile(file, "value\n");
+    const [first, second] = await withConfig(hermeticConfig(root), () =>
+      Promise.all([
+        resolveWritablePath(file),
+        resolveWritablePath(file.toUpperCase()),
+      ]),
+    );
+    expect(first.toLowerCase()).toBe(second.toLowerCase());
+    expect(
+      await withFencedFileLocks(
+        [file, file.toUpperCase()],
+        async (leases) => leases.length,
+      ),
+    ).toBe(1);
+  },
+);
 
 test("simultaneous linked-worktree requests read and mutate only their checkout", async () => {
   const parent = await temporary("ast-mcp-workspace-concurrency-");

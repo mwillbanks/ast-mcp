@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
@@ -103,7 +103,7 @@ export async function formatContent(
           timeoutMs: formatter.timeoutMs,
         },
       );
-      return await readFile(staged, "utf8");
+      return await Bun.file(staged).text();
     } finally {
       await removeFormatterStage(staged);
     }
@@ -128,12 +128,12 @@ export async function formatContent(
 }
 
 export async function assertFormattable(filePath: string): Promise<void> {
-  await formatContent(filePath, await readFile(filePath, "utf8"));
+  await formatContent(filePath, await Bun.file(filePath).text());
 }
 
 export async function formatFileAtomically(filePath: string): Promise<void> {
   const metadata = await lstat(filePath);
-  const source = await readFile(filePath, "utf8");
+  const source = await Bun.file(filePath).text();
   const formatted = await formatContent(filePath, source);
   if (formatted !== source)
     await replaceFileAtomically(filePath, formatted, metadata.mode);

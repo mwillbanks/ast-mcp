@@ -1,15 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  link,
-  lstat,
-  open,
-  readdir,
-  readFile,
-  rename,
-  rm,
-} from "node:fs/promises";
+import { link, lstat, open, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
+import { canonicalizePathSync } from "../../runtime/path-utils.ts";
 
 export interface FileLockOptions {
   deadline?: Date | number;
@@ -86,7 +79,7 @@ function exactRecord(value: unknown): LockRecord | null {
 async function readRecord(lock: string): Promise<LockRecord | null> {
   let source: string;
   try {
-    source = await readFile(lock, "utf8");
+    source = await Bun.file(lock).text();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -304,7 +297,7 @@ async function recoverInitializing(
     throw error;
   }
   try {
-    if ((await readFile(tombstone, "utf8")).length !== 0) {
+    if ((await Bun.file(tombstone).text()).length !== 0) {
       await restoreMovedLock(lock, tombstone);
       return false;
     }
@@ -541,8 +534,12 @@ export async function withFencedFileLock<Result>(
   operation: (lease: FileLockLease) => Promise<Result>,
   options: FileLockOptions = {},
 ): Promise<Result> {
-  return withQueue(filePath, options, async () => {
-    const lease = await acquireFileLock(filePath, options);
+  const canonical =
+    process.platform === "win32" ? canonicalizePathSync(filePath) : filePath;
+  const identity =
+    process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  return withQueue(identity, options, async () => {
+    const lease = await acquireFileLock(canonical, options);
     const heartbeatMs = Math.max(
       25,
       Math.floor((options.leaseMs ?? DEFAULT_LEASE_MS) / 3),
@@ -565,9 +562,18 @@ export async function withFencedFileLocks<Result>(
   operation: (leases: readonly FileLockLease[]) => Promise<Result>,
   options: FileLockOptions = {},
 ): Promise<Result> {
-  const sorted = [...new Set(filePaths)]
-    .filter((filePath) => !path.basename(filePath).includes(".ast-mcp.lock"))
-    .sort();
+  const canonicalPaths = new Map<string, string>();
+  for (const filePath of filePaths) {
+    if (path.basename(filePath).includes(".ast-mcp.lock")) continue;
+    const canonical =
+      process.platform === "win32" ? canonicalizePathSync(filePath) : filePath;
+    const identity =
+      process.platform === "win32" ? canonical.toLowerCase() : canonical;
+    canonicalPaths.set(identity, canonical);
+  }
+  const sorted = [...canonicalPaths.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, canonical]) => canonical);
   const leases: FileLockLease[] = [];
   const acquire = async (index: number): Promise<Result> => {
     if (index === sorted.length) return operation(leases);

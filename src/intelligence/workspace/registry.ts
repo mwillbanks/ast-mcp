@@ -1,6 +1,5 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { canonicalizePathSync, pathWithin } from "../../runtime/path-utils.ts";
 import {
   createRepositoryId,
@@ -105,7 +104,9 @@ async function canonicalRoots(roots: string[]): Promise<string[]> {
     ...new Set(
       await Promise.all(
         roots.map(async (root) => {
-          const value = root.startsWith("file:") ? fileURLToPath(root) : root;
+          const value = root.startsWith("file:")
+            ? Bun.fileURLToPath(root)
+            : root;
           return (await existingRealpath(value)) ?? path.resolve(value);
         }),
       ),

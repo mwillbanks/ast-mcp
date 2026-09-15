@@ -13,7 +13,7 @@ This document records the native intelligence qualification baseline and package
 | `web-tree-sitter` | 0.27.0 | MIT | Portable tree-sitter runtime used by packaged parser workers |
 | `@huggingface/transformers` | 4.2.0 | Apache-2.0 | Optional local embedding inference |
 
-The package CI and release validation matrices run on Linux, macOS, and Windows with Bun 1.4.0. Each release target qualifies native dependencies and completes a real MCP stdio initialize, tool-list, and workspace-root handshake. LanceDB declares Node 22 or newer. Bun compatibility therefore remains an application qualification, not an upstream support promise. Transformers.js model execution works under Bun, but compiled Bun binaries remain gated by upstream static native-module and WASM-path issues.
+The package CI and release validation matrices run on Linux, macOS, and Windows with Bun 1.4.2. Each release target qualifies native dependencies and completes a real MCP stdio initialize, tool-list, and workspace-root handshake. LanceDB declares Node 22 or newer. Bun compatibility therefore remains an application qualification, not an upstream support promise. Transformers.js model execution works under Bun, but compiled Bun binaries remain gated by upstream static native-module and WASM-path issues.
 
 The default embedding model is `onnx-community/granite-embedding-30m-english-ONNX`. Set `AST_MCP_EMBEDDING_MODEL` to override it. Ordinary tests do not load or download models. Run `AST_MCP_QUALIFY_EMBEDDINGS=1 bun run intelligence:qualify` for an explicit model qualification.
 

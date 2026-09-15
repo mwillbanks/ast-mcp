@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
@@ -72,7 +72,7 @@ async function parseState(filePath: string, language: string | undefined) {
   const extension = path.extname(filePath).toLowerCase();
   if (documentExtensions.has(extension)) {
     try {
-      parseStructuredDocument(filePath, await readFile(filePath, "utf8"));
+      parseStructuredDocument(filePath, await Bun.file(filePath).text());
       return { errorCount: 0, status: "parseable" as const };
     } catch {
       return { errorCount: 1, status: "invalid" as const };
@@ -83,7 +83,7 @@ async function parseState(filePath: string, language: string | undefined) {
   try {
     const facts = parseSource({
       languageId: language as ParserLanguageId,
-      source: await readFile(filePath, "utf8"),
+      source: await Bun.file(filePath).text(),
     });
     const errorCount = facts.diagnostics.filter(
       (diagnostic) => diagnostic.severity === "error",

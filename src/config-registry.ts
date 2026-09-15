@@ -1,7 +1,6 @@
 import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   clearConfigCache,
   globalConfigPath,
@@ -32,7 +31,7 @@ interface RegistryEntry {
 
 function normalizedClientRoot(value: string): string {
   return path.resolve(
-    value.startsWith("file:") ? fileURLToPath(new URL(value)) : value,
+    value.startsWith("file:") ? Bun.fileURLToPath(new URL(value)) : value,
   );
 }
 

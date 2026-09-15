@@ -35,7 +35,6 @@ export function pathWithin(root: string, target: string): boolean {
 }
 
 export function canonicalPathWithin(root: string, target: string): boolean {
-  if (pathWithin(root, target)) return true;
   try {
     return lexicalPathWithin(
       canonicalizePathSync(root),

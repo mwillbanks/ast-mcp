@@ -1,13 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  cp,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
@@ -153,7 +145,7 @@ type Target = (typeof targets)[number];
 // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
 async function json(file: string): Promise<Record<string, any>> {
   try {
-    const value = Bun.JSONC.parse(await readFile(file, "utf8"));
+    const value = Bun.JSONC.parse(await Bun.file(file).text());
     // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
     return value as Record<string, any>;
   } catch (error) {
@@ -163,7 +155,7 @@ async function json(file: string): Promise<Record<string, any>> {
 }
 async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+  await Bun.write(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 function definition(
   root: string | undefined,
@@ -186,7 +178,9 @@ async function codexMcp(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const old = await readFile(file, "utf8").catch(() => "");
+  const old = await Bun.file(file)
+    .text()
+    .catch(() => "");
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
@@ -196,7 +190,7 @@ async function codexMcp(
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
       : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}\n# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
+  await Bun.write(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
 async function jsonMcp(
   file: string,
@@ -301,14 +295,16 @@ const instructionsPattern =
 async function writeText(file: string, content: string) {
   const normalized = content.trimEnd();
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, normalized ? `${normalized}\n` : "");
+  await Bun.write(file, normalized ? `${normalized}\n` : "");
 }
 
 async function instructions(file: string) {
   const block = (
-    await readFile(path.join(packageRoot, "templates/AGENTS.md"), "utf8")
+    await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
   ).trim();
-  const old = await readFile(file, "utf8").catch(() => "");
+  const old = await Bun.file(file)
+    .text()
+    .catch(() => "");
   const clean = old.replace(instructionsPattern, "").trimEnd();
   await writeText(
     file,
@@ -317,10 +313,12 @@ async function instructions(file: string) {
 }
 
 async function optionalText(file: string) {
-  return readFile(file, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  return Bun.file(file)
+    .text()
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
 }
 
 async function removeInstructions(file: string) {
@@ -377,10 +375,9 @@ async function removeHook(
 }
 
 async function hasLocalInstallation(root: string) {
-  const codex = await readFile(
-    path.join(root, ".codex/config.toml"),
-    "utf8",
-  ).catch(() => "");
+  const codex = await Bun.file(path.join(root, ".codex/config.toml"))
+    .text()
+    .catch(() => "");
   const claude = await json(path.join(root, ".mcp.json"));
   const copilot = await json(path.join(root, ".github/mcp.json"));
   return Boolean(
@@ -418,10 +415,9 @@ async function targetTransport(
 ): Promise<McpTransport | undefined> {
   if (target === "codex") {
     const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
-    const content = await readFile(
-      path.join(base, "config.toml"),
-      "utf8",
-    ).catch(() => "");
+    const content = await Bun.file(path.join(base, "config.toml"))
+      .text()
+      .catch(() => "");
     return codexTransport(content);
   }
   const file = jsonTargetConfig(target, global, root, home);
@@ -501,7 +497,10 @@ async function snapshot(paths: string[]) {
       return;
     }
     if (metadata.isFile())
-      files.set(file, (await readFile(file)).toString("base64"));
+      files.set(
+        file,
+        Buffer.from(await Bun.file(file).bytes()).toString("base64"),
+      );
   };
   await Promise.all(paths.map(visit));
   return files;
@@ -764,10 +763,12 @@ async function ensureInstallerConfig(
   home: string,
 ) {
   const file = installerConfigPath(options, root, home);
-  const existing = await readFile(file, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  const existing = await Bun.file(file)
+    .text()
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
   clearConfigCache();
   await resolveConfig({
     cwd: options.scope === "local" ? root : home,

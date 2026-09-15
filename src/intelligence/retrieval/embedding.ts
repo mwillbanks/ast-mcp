@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   type EmbeddingModelConfig,
@@ -126,7 +126,7 @@ export async function verifyLocalModelArtifacts(
         throw new EmbeddingUnavailableError(
           `embedding_artifact_outside_model_path:${name}`,
         );
-      bytes = await readFile(artifactPath);
+      bytes = await Bun.file(artifactPath).bytes();
     } catch (error) {
       if (
         error instanceof EmbeddingUnavailableError &&
@@ -269,9 +269,9 @@ export async function createPotionStaticSession(
     revision: config.revision,
   });
   const bytes = Buffer.from(
-    await (options.readModel ?? readFile)(
-      resolve(config.localPath, "model.safetensors"),
-    ),
+    await (
+      options.readModel ?? ((filePath: string) => Bun.file(filePath).bytes())
+    )(resolve(config.localPath, "model.safetensors")),
   );
   if (bytes.byteLength < 9)
     throw new EmbeddingUnavailableError("potion_static_tensor_invalid");

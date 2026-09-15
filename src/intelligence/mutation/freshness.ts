@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import {
   createIdentity,
@@ -339,7 +339,7 @@ async function selectedRevisionSources(
   workspace: WorkspaceHandle,
   signal?: AbortSignal,
   readSource: (filePath: string) => Promise<string> = (filePath) =>
-    readFile(filePath, "utf8"),
+    Bun.file(filePath).text(),
 ): Promise<RevisionSourceSelection> {
   if (workspace.selectedRevision.selector.kind === "working") {
     const sources: RepositorySource[] = [];

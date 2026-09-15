@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
 import {
   createIdentity,
@@ -577,11 +577,12 @@ describe("retrieval embedding provider", () => {
   });
 
   test("loads Potion static tensors with pinned tokenizer options", async () => {
+    const localPath = resolve("models/potion");
     const config = EmbeddingModelConfigSchema.parse({
       artifacts: { ...POTION_CODE_BENCHMARK_MODEL.artifacts },
       dimensions: POTION_CODE_BENCHMARK_MODEL.dimensions,
       dtype: POTION_CODE_BENCHMARK_MODEL.dtype,
-      localPath: "/models/potion",
+      localPath,
       modelId: POTION_CODE_BENCHMARK_MODEL.modelId,
       pooling: POTION_CODE_BENCHMARK_MODEL.pooling,
       revision: POTION_CODE_BENCHMARK_MODEL.revision,
@@ -610,11 +611,11 @@ describe("retrieval embedding provider", () => {
     const provider = new PotionStaticEmbeddingProvider(config, (input) =>
       createPotionStaticSession(input, {
         readModel: async (path) => {
-          expect(path).toBe("/models/potion/model.safetensors");
+          expect(path).toBe(join(localPath, "model.safetensors"));
           return model;
         },
         tokenizerFactory: async (modelPath, options) => {
-          expect(modelPath).toBe("/models/potion");
+          expect(modelPath).toBe(localPath);
           tokenizerOptions = options;
           return async () => ({
             attention_mask: { data: [1, 1] },

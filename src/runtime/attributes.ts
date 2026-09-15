@@ -59,15 +59,32 @@ export async function applyFileChattr(
     }
   } catch (error) {
     const restorationErrors: unknown[] = [];
-    try {
-      await beforeChange?.();
-      await chown(filePath, before.chown.uid, before.chown.gid);
-    } catch (restoreError) {
-      restorationErrors.push(restoreError);
+    if (validated.chown && process.platform !== "win32") {
+      try {
+        await beforeChange?.();
+        await chown(filePath, before.chown.uid, before.chown.gid);
+      } catch (restoreError) {
+        restorationErrors.push(restoreError);
+      }
+    }
+    if (validated.chmod !== undefined) {
+      try {
+        await beforeChange?.();
+        await chmod(filePath, before.chmod);
+      } catch (restoreError) {
+        restorationErrors.push(restoreError);
+      }
     }
     try {
-      await beforeChange?.();
-      await chmod(filePath, before.chmod);
+      const restored = await resultingFileChattr(filePath);
+      if (
+        (validated.chmod !== undefined && restored.chmod !== before.chmod) ||
+        (validated.chown &&
+          process.platform !== "win32" &&
+          (restored.chown.uid !== before.chown.uid ||
+            restored.chown.gid !== before.chown.gid))
+      )
+        restorationErrors.push(new Error("File attributes were not restored"));
     } catch (restoreError) {
       restorationErrors.push(restoreError);
     }

@@ -70,8 +70,37 @@ test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  expect(exitCode, stderr).toBe(0);
-  const result = JSON.parse(stdout);
+  let result: ReturnType<typeof JSON.parse>;
+  try {
+    result = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(
+      `Benchmark exited ${exitCode} before producing a JSON report: ${stderr}\nstdout: ${stdout.slice(0, 2_000)}`,
+      { cause: error },
+    );
+  }
+  expect(
+    exitCode,
+    JSON.stringify({
+      agentGate: result.agentEfficiency.gatePassed,
+      failedTasks: result.agentEfficiency.tasks
+        .filter(
+          (task: {
+            nativeCold: { success: boolean };
+            nativeWarm: { success: boolean };
+          }) => !task.nativeCold.success || !task.nativeWarm.success,
+        )
+        .map(
+          (task: { id: string; nativeCold: unknown; nativeWarm: unknown }) => ({
+            id: task.id,
+            nativeCold: task.nativeCold,
+            nativeWarm: task.nativeWarm,
+          }),
+        ),
+      isolation: result.isolation,
+      stderr,
+    }),
+  ).toBe(0);
   expect(result.schema).toBe("ast-mcp.intelligence-benchmark.v5");
   expect(result.agentEfficiency.executedTasks).toBe(3);
   expect(result.agentEfficiency.measuredOutputCapBytes).toBe(2_000);

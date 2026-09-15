@@ -8,6 +8,7 @@ import {
   realpath,
   rm,
   stat,
+  symlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -50,6 +51,7 @@ import {
   withWorkspaceContext,
 } from "../src/intelligence/workspace/index.ts";
 import { patchFiles } from "../src/patch/engine.ts";
+import { applyFileChattr } from "../src/runtime/attributes.ts";
 import { deleteFilesSafely } from "../src/runtime/file-delete.ts";
 import { renameFilesSafely } from "../src/runtime/file-rename.ts";
 import { sha256 } from "../src/runtime/hash.ts";
@@ -306,6 +308,7 @@ describe("guarded patch integration", () => {
     process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
     const file = path.join(root, "notes.txt");
     await writeFile(file, "before\n");
+    const sourceMode = (await stat(file)).mode;
     const lifecycle = new RecordingLifecycle();
     configureMutationLifecycle(lifecycle);
     const result = await patchFiles({
@@ -319,6 +322,7 @@ describe("guarded patch integration", () => {
     expect(lifecycle.events).toEqual(["begin", "commit:notes.txt", "complete"]);
     expect(lifecycle.plans[0]?.files[0]).toMatchObject({
       candidateSha256: sha256("after\n"),
+      sourceMode,
       sourceSha256: sha256("before\n"),
     });
     expect(result.intelligenceRefresh).toBeDefined();
@@ -330,6 +334,7 @@ describe("guarded patch integration", () => {
     process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
     const file = path.join(root, "notes.txt");
     await writeFile(file, "before\n");
+    const originalMode = (await stat(file)).mode & 0o777;
     const lifecycle = new RecordingLifecycle();
     lifecycle.failFailureRecord = true;
     lifecycle.failRefresh = true;
@@ -344,6 +349,7 @@ describe("guarded patch integration", () => {
       }),
     ).rejects.toThrow("refresh failed");
     expect(await readFile(file, "utf8")).toBe("before\n");
+    expect((await stat(file)).mode & 0o777).toBe(originalMode);
     expect(lifecycle.events).toEqual([
       "begin",
       "commit:notes.txt",
@@ -608,6 +614,115 @@ describe("LanceDB mutation journal and freshness", () => {
     await store.shutdownCoordinator();
   });
 
+  test("durable recovery refuses a journal path through an escaping link", async () => {
+    const root = await temporary();
+    const outside = await temporary();
+    await mkdir(path.join(root, ".git"));
+    const alias = path.join(root, "alias");
+    await symlink(
+      outside,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const externalFile = path.join(outside, "created.bin");
+    await writeFile(externalFile, "candidate\n");
+    const workspace = fakeWorkspace(root, "escaping-recovery");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const lifecycle = new LanceMutationLifecycle(store, workspace);
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "escaping-recovery",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256("candidate\n"),
+          filePath: path.join(alias, "created.bin"),
+          sourceContentBase64: null,
+          sourceSha256: null,
+        },
+      ],
+      operationId,
+      tool: "file_write",
+      workspace,
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await expect(lifecycle.recover()).rejects.toThrow(
+      "mutation_recovery_required",
+    );
+    expect(await readFile(externalFile, "utf8")).toBe("candidate\n");
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "recovery-required",
+    );
+    await store.shutdownCoordinator();
+  });
+
+  test.skipIf(process.platform !== "win32")(
+    "Windows durable recovery rejects unsupported owner metadata before changing bytes",
+    async () => {
+      const root = await temporary();
+      await mkdir(path.join(root, ".git"));
+      const file = path.join(root, "value.bin");
+      await writeFile(file, "candidate\n");
+      const workspace = fakeWorkspace(root, "unsupported-owner");
+      const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+      const lifecycle = new LanceMutationLifecycle(store, workspace);
+      const operationId = mutationOperationId({
+        files: [],
+        nonce: "unsupported-owner",
+        storageDomainId: workspace.storageDomain.domainId,
+        workspaceId: workspace.workspaceId,
+      });
+      await lifecycle.journal.begin({
+        files: [
+          {
+            candidateSha256: sha256("candidate\n"),
+            filePath: file,
+            sourceContentBase64: Buffer.from("source\n").toString("base64"),
+            sourceGid: 0,
+            sourceMode: 0o444,
+            sourceSha256: sha256("source\n"),
+            sourceUid: 0,
+          },
+        ],
+        operationId,
+        tool: "file_patch",
+        workspace,
+      });
+      await lifecycle.journal.transition(operationId, "recovery-required");
+      await expect(lifecycle.recover()).rejects.toThrow(
+        "mutation_recovery_required",
+      );
+      expect(await readFile(file, "utf8")).toBe("candidate\n");
+      await store.shutdownCoordinator();
+    },
+  );
+
+  test("mode failure restores attributes without an ownership call", async () => {
+    const root = await temporary();
+    const file = path.join(root, "mode.txt");
+    await writeFile(file, "value\n");
+    const beforeMode = (await stat(file)).mode & 0o777;
+    const chownSpy = spyOn(fsPromises, "chown").mockRejectedValue(
+      new Error("ownership unsupported"),
+    );
+    const chmodSpy = spyOn(fsPromises, "chmod").mockRejectedValueOnce(
+      new Error("mode denied"),
+    );
+    try {
+      await expect(applyFileChattr(file, { chmod: 0o444 })).rejects.toThrow(
+        "mode denied",
+      );
+      expect(chownSpy).not.toHaveBeenCalled();
+      expect((await stat(file)).mode & 0o777).toBe(beforeMode);
+    } finally {
+      chmodSpy.mockRestore();
+      chownSpy.mockRestore();
+    }
+  });
+
   test("lifecycle rejects coordinate drift and persists successful refresh", async () => {
     const root = await temporary();
     await mkdir(path.join(root, ".git"));
@@ -701,7 +816,9 @@ describe("LanceDB mutation journal and freshness", () => {
       directory: root,
       storage: { kind: "explicit", path: storagePath },
     });
-    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain, {
+      leaseDurationMs: 60_000,
+    });
     await writeFile(
       file,
       "export const value = helper();\nfunction helper() { return 2; }\n",
@@ -975,7 +1092,11 @@ describe("mutation recovery edges", () => {
     }
 
     await writeFile(lock, "record");
-    const read = spyOn(fsPromises, "readFile").mockRejectedValueOnce(denied);
+    const read = spyOn(Bun, "file").mockImplementationOnce((() => ({
+      text: async () => {
+        throw denied;
+      },
+    })) as unknown as typeof Bun.file);
     try {
       await expect(acquireFileLock(file)).rejects.toThrow(
         "lock filesystem denied",
@@ -1156,6 +1277,7 @@ describe("mutation recovery edges", () => {
       process.platform !== "win32" &&
       process.getuid !== undefined &&
       process.getgid !== undefined;
+    const sourceMode = process.platform === "win32" ? 0o444 : 0o640;
     const operationId = mutationOperationId({
       files: [],
       nonce: "durable-recovery",
@@ -1169,7 +1291,7 @@ describe("mutation recovery edges", () => {
           filePath: restoredPath,
           sourceContentBase64: source.toString("base64"),
           sourceGid: ownershipSupported ? originalOwner.gid : null,
-          sourceMode: 0o640,
+          sourceMode,
           sourceSha256: sha256(source),
           sourceUid: ownershipSupported ? originalOwner.uid : null,
         },
@@ -1199,8 +1321,9 @@ describe("mutation recovery edges", () => {
     await lifecycle.recover();
     expect(await readFile(restoredPath)).toEqual(source);
     const restoredMetadata = await stat(restoredPath);
-    if (process.platform !== "win32")
-      expect(restoredMetadata.mode & 0o777).toBe(0o640);
+    if (process.platform === "win32")
+      expect(restoredMetadata.mode & 0o222).toBe(0);
+    else expect(restoredMetadata.mode & 0o777).toBe(sourceMode);
     if (ownershipSupported) {
       expect(restoredMetadata.uid).toBe(originalOwner.uid);
       expect(restoredMetadata.gid).toBe(originalOwner.gid);
@@ -1221,7 +1344,7 @@ describe("mutation recovery edges", () => {
           filePath: restoredPath,
           sourceContentBase64: source.toString("base64"),
           sourceGid: ownershipSupported ? originalOwner.gid : null,
-          sourceMode: 0o640,
+          sourceMode,
           sourceSha256: sha256(source),
           sourceUid: ownershipSupported ? originalOwner.uid : null,
         },
@@ -1238,8 +1361,9 @@ describe("mutation recovery edges", () => {
     await lifecycle.journal.transition(partialOperationId, "failed");
     await lifecycle.recover();
     const recoveredAttributes = await stat(restoredPath);
-    if (process.platform !== "win32")
-      expect(recoveredAttributes.mode & 0o777).toBe(0o640);
+    if (process.platform === "win32")
+      expect(recoveredAttributes.mode & 0o222).toBe(0);
+    else expect(recoveredAttributes.mode & 0o777).toBe(sourceMode);
     if (ownershipSupported) {
       expect(recoveredAttributes.uid).toBe(originalOwner.uid);
       expect(recoveredAttributes.gid).toBe(originalOwner.gid);
@@ -1254,6 +1378,7 @@ describe("mutation recovery edges", () => {
       storageDomainId: workspace.storageDomain.domainId,
       workspaceId: workspace.workspaceId,
     });
+    await chmod(restoredPath, 0o600);
     await writeFile(restoredPath, "unrecognized concurrent bytes");
     await lifecycle.journal.begin({
       files: [
@@ -1261,7 +1386,7 @@ describe("mutation recovery edges", () => {
           candidateSha256: sha256(candidate),
           filePath: restoredPath,
           sourceContentBase64: source.toString("base64"),
-          sourceMode: 0o640,
+          sourceMode,
           sourceSha256: sha256(source),
         },
       ],

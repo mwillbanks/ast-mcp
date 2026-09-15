@@ -33,6 +33,7 @@ export function runCommandInput(
       controller.signal,
       stop,
     );
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       const completion = Promise.all([
         child.exited,
@@ -41,7 +42,9 @@ export function runCommandInput(
       ]);
       const completed = await Promise.race([
         completion.then((value) => value),
-        Bun.sleep(timeoutMs).then(() => null),
+        new Promise<null>((resolve) => {
+          deadline = setTimeout(() => resolve(null), timeoutMs);
+        }),
       ]);
       if (!completed) {
         await terminateProcessTree(child, { force: true });
@@ -58,6 +61,8 @@ export function runCommandInput(
       await terminateProcessTree(child, { force: true });
       controller.abort();
       throw error;
+    } finally {
+      clearTimeout(deadline);
     }
   })();
 }

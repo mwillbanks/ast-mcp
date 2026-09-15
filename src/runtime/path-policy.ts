@@ -9,6 +9,7 @@ import { authorizeRequestedDecision } from "./approval";
 import {
   canonicalizePath,
   canonicalizePathSync,
+  canonicalPathWithin,
   effectiveWorkspaceRoot,
   pathWithin,
 } from "./path-utils";
@@ -48,10 +49,7 @@ async function canonicalPolicyPath(targetPath: string): Promise<string> {
 }
 
 function within(root: string, target: string): boolean {
-  return (
-    pathWithin(root, target) ||
-    pathWithin(canonicalizePathSync(root), canonicalizePathSync(target))
-  );
+  return canonicalPathWithin(root, target);
 }
 
 function literalPrefix(glob: string): number {

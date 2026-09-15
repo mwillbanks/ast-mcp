@@ -2,9 +2,9 @@
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="ast-mcp/wine-bun:debian13-1.4.0"
+image="ast-mcp/wine-bun:debian13-1.4.2"
 wine_volume="ast-mcp-wine-debian13"
-bun_volume="ast-mcp-wine-bun-cache-1-4-0"
+bun_volume="ast-mcp-wine-bun-cache-1-4-2"
 disk_limit_bytes=$((3 * 1024 * 1024 * 1024))
 workspace_limit_bytes=$((1024 * 1024 * 1024))
 stage="${1:-full}"

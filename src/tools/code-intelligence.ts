@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -321,7 +320,7 @@ async function sourceFor(
         signal,
       ),
     ).toString("utf8");
-  return readFile(filePath, "utf8");
+  return Bun.file(filePath).text();
 }
 
 function abortError(signal: AbortSignal): Error {

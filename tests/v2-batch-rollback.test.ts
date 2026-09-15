@@ -73,6 +73,7 @@ test("patch and write batches roll back earlier commits after a commit-time sour
   await mkdir(blocked);
   await writeFile(first, "first-before\n");
   await writeFile(second, "second-before\n");
+  const firstMode = (await stat(first)).mode & 0o777;
   const formatter = path.join(root, "formatter.mjs");
   await writeFile(
     formatter,
@@ -117,6 +118,7 @@ test("patch and write batches roll back earlier commits after a commit-time sour
       ),
     ).rejects.toThrow("Stale file context");
     expect(await readFile(first, "utf8")).toBe("first-before\n");
+    expect((await stat(first)).mode & 0o777).toBe(firstMode);
 
     await writeFile(second, "second-before\n");
     await expect(

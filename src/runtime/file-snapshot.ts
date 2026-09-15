@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { sha256File } from "./hash";
 
 export interface FileSnapshot {
@@ -14,7 +14,9 @@ export async function readFileSnapshot(
 ): Promise<FileSnapshot> {
   const [sha256, content, metadata] = await Promise.all([
     sha256File(filePath),
-    readFile(filePath),
+    Bun.file(filePath)
+      .bytes()
+      .then((bytes) => Buffer.from(bytes)),
     lstat(filePath),
   ]);
   return {

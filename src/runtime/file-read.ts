@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 import { currentConfig } from "../config";
 import {
@@ -290,7 +290,7 @@ async function readDocumentAst(
         suggestedNextCall: "file_read",
       },
     );
-  const source = historicalSource ?? (await readFile(resolved, "utf8"));
+  const source = historicalSource ?? (await Bun.file(resolved).text());
   return {
     schema: "ast-mcp.document-read.v1",
     values: selectDocumentValues(
@@ -307,7 +307,7 @@ async function readSourceAst(
   language: string,
   historicalSource?: string,
 ): Promise<unknown> {
-  const source = historicalSource ?? (await readFile(resolved, "utf8"));
+  const source = historicalSource ?? (await Bun.file(resolved).text());
   const facts = parseSource({
     languageId: language as ParserLanguageId,
     source,

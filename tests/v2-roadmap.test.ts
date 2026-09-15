@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -348,7 +349,9 @@ test("approval flow fails closed and supports once, session, and persistent gran
       "utf8",
     );
     expect(persisted).toContain("version = 2");
-    expect(persisted).toContain(decision.canonicalPath);
+    expect(Bun.TOML.parse(persisted)).toMatchObject({
+      paths: [expect.objectContaining({ path: decision.canonicalPath })],
+    });
     expect(persisted).toContain('write = "allow"');
     const readDecision = { ...decision, operation: "read" as const };
     expect(await approve(readDecision, 6, "always_allow")).toBeTrue();
@@ -803,9 +806,10 @@ test("v2 formatting supports selective stdout and adjacent in-place staging", as
     ),
   ).rejects.toThrow();
   expect(await Bun.file(failedParent).exists()).toBeFalse();
-  expect(
-    (await Bun.$`find ${root} -name '.ast-mcp-format-*'`.text()).trim(),
-  ).toBe("");
+  const stagingFiles = (await readdir(root, { recursive: true })).filter(
+    (entry) => path.basename(entry).startsWith(".ast-mcp-format-"),
+  );
+  expect(stagingFiles).toEqual([]);
 });
 
 test("v2 policy resolves specificity, deny ties, exclusions, and protected config", async () => {

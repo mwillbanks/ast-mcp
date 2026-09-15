@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 import {
   EmbeddedSourceMap,
   findStructuralMatches,
@@ -493,7 +494,7 @@ describe("native intelligence parser", () => {
     const bindingPath = nativeBindings[0];
     if (!bindingPath)
       throw new Error("Expected an installed ast-grep native binding");
-    const libraryPath = `${process.cwd()}/${bindingPath}`;
+    const libraryPath = path.resolve(process.cwd(), bindingPath);
     const digest = new Bun.CryptoHasher("sha256");
     digest.update(await Bun.file(libraryPath).arrayBuffer());
     const sha256 = digest.digest("hex");

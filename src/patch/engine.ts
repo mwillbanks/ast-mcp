@@ -3,7 +3,6 @@ import {
   chmod,
   lstat,
   mkdir,
-  readFile,
   rename,
   rmdir,
   unlink,
@@ -49,6 +48,10 @@ import {
   type PatchStrategyMetadata,
   patchStrategyAdapter,
 } from "./strategy";
+
+function readText(filePath: string): Promise<string> {
+  return Bun.file(filePath).text();
+}
 
 export interface PatchRequest {
   aiderBlock?: AiderBlock;
@@ -156,7 +159,7 @@ async function commit(
     const committedChattr = await resultingFileChattr(next);
     const committedSha256 = sha256(formatted);
     if (expectedSha256) {
-      const current = await readFile(filePath, "utf8");
+      const current = await readText(filePath);
       const actual = sha256(current);
       if (actual !== expectedSha256)
         throw new Error(
@@ -329,7 +332,7 @@ async function validatePreviewReceipt(filePath: string, token: string) {
   )
     throw new Error("Preview receipt is stale because configuration changed");
   await resolveWritablePath(filePath);
-  const source = await readFile(filePath, "utf8");
+  const source = await readText(filePath);
   const actual = sha256(source);
   if (actual !== receipt.sourceSha256)
     throw new Error(
@@ -344,7 +347,7 @@ async function createPatchContext(
   filePath: string,
   request: PatchBatchRequest,
 ): Promise<PatchContext> {
-  const original = await readFile(filePath, "utf8");
+  const original = await readText(filePath);
   const actual = sha256(original);
   await requireExpectedHash(request.expectedSha256, "file_patch");
   verifyExpectedHash(request.expectedSha256, actual);
@@ -615,7 +618,7 @@ async function preflightFileWrite(
   request: FileWriteRequest,
 ): Promise<PreparedWrite> {
   validateFileChattr(request.chattr);
-  const existing = await readFile(filePath, "utf8").catch(() => undefined);
+  const existing = await readText(filePath).catch(() => undefined);
   let actual: string | undefined;
   let mode: number | undefined;
   if (existing !== undefined) {
@@ -667,7 +670,7 @@ interface CommittedBatchEntry {
 
 async function optionalContent(filePath: string): Promise<string | undefined> {
   try {
-    return await readFile(filePath, "utf8");
+    return await readText(filePath);
   } catch {
     return undefined;
   }
@@ -732,9 +735,11 @@ async function rollbackFileBatch(
         await commit(
           resolvedPath,
           snapshot.content,
-          snapshot.mode,
+          process.platform === "win32" ? undefined : snapshot.mode,
           undefined,
-          snapshot.chattr,
+          process.platform === "win32"
+            ? { chmod: snapshot.chattr.chmod }
+            : snapshot.chattr,
           true,
           fence,
         );
@@ -788,8 +793,7 @@ async function executePreparedFileBatch<T, Prepared>(
         process.platform === "win32"
           ? null
           : (snapshot?.chattr.chown.gid ?? null),
-      sourceMode:
-        process.platform === "win32" ? null : (snapshot?.mode ?? null),
+      sourceMode: snapshot?.mode ?? null,
       sourceSha256: snapshot ? sha256(snapshot.content) : null,
       sourceUid:
         process.platform === "win32"

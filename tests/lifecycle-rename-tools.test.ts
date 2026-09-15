@@ -4,6 +4,7 @@ import {
   chmod,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -86,7 +87,12 @@ test("lifecycle handlers execute successful and failed requests", async () => {
       }),
     );
     expect(changed.isError).toBeUndefined();
-    expect(changed.content[0]?.text).toContain(attributesPath);
+    const changedFiles = JSON.parse(changed.content[0]?.text ?? "{}").files;
+    const [changedPath] = Object.keys(changedFiles ?? {});
+    expect(path.basename(changedPath ?? "")).toBe("attributes.txt");
+    expect(await realpath(path.dirname(changedPath ?? ""))).toBe(
+      await realpath(root),
+    );
 
     const missingHash = await handler("file_chattr")({
       files: {
@@ -149,7 +155,12 @@ test("lifecycle handlers execute successful and failed requests", async () => {
       }),
     );
     expect(deleted.isError).toBeUndefined();
-    expect(deleted.content[0]?.text).toContain(destination);
+    const deletedFiles = JSON.parse(deleted.content[0]?.text ?? "{}").files;
+    const [deletedPath] = Object.keys(deletedFiles ?? {});
+    expect(path.basename(deletedPath ?? "")).toBe("destination.txt");
+    expect(await realpath(path.dirname(deletedPath ?? ""))).toBe(
+      await realpath(root),
+    );
     const missing = await handler("file_delete")({
       files: {
         [destination]: { expectedSha256: digest("rename") },

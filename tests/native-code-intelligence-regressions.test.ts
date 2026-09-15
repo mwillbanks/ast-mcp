@@ -50,7 +50,7 @@ async function fixture(): Promise<{
   await writeFile(path.join(root, "lib/value.ts"), "export const value = 1;\n");
   await mkdir(path.join(root, "repeated", "value"), { recursive: true });
   await writeFile(
-    path.join(root, "repeated", "value", "literal-*.ts"),
+    path.join(root, "repeated", "value", "literal-star.ts"),
     "export const repeated = 1;\n",
   );
   await mkdir(path.join(root, "leading"));

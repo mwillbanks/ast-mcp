@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 const cache = new Map<string, { fingerprint: string; paths: string[] }>();
@@ -39,14 +39,16 @@ async function resolveGitDir(gitPath: string): Promise<string | undefined> {
   if (!metadata) return undefined;
   if (metadata.isDirectory()) return gitPath;
   if (!metadata.isFile()) return undefined;
-  const source = await readFile(gitPath, "utf8").catch(() => undefined);
+  const source = await Bun.file(gitPath)
+    .text()
+    .catch(() => undefined);
   return source ? gitDirPointer(source, gitPath) : undefined;
 }
 
 async function commonGitDir(gitDir: string): Promise<string> {
-  const source = await readFile(path.join(gitDir, "commondir"), "utf8").catch(
-    () => undefined,
-  );
+  const source = await Bun.file(path.join(gitDir, "commondir"))
+    .text()
+    .catch(() => undefined);
   const value = source?.trim();
   if (!value) return gitDir;
   return path.isAbsolute(value)
@@ -67,9 +69,9 @@ async function gitDirBelongsTo(
   const metadata = await lstat(gitPath).catch(() => undefined);
   if (metadata?.isDirectory()) return sameResolvedPath(gitDir, gitPath);
   if (!metadata?.isFile()) return false;
-  const pointer = await readFile(path.join(gitDir, "gitdir"), "utf8").catch(
-    () => undefined,
-  );
+  const pointer = await Bun.file(path.join(gitDir, "gitdir"))
+    .text()
+    .catch(() => undefined);
   if (!pointer?.trim()) return false;
   return sameResolvedPath(resolvePointer(gitDir, pointer.trim()), gitPath);
 }
@@ -85,7 +87,9 @@ async function sameResolvedPath(left: string, right: string): Promise<boolean> {
 async function worktreeGitFile(
   gitdirFile: string,
 ): Promise<string | undefined> {
-  const source = await readFile(gitdirFile, "utf8").catch(() => undefined);
+  const source = await Bun.file(gitdirFile)
+    .text()
+    .catch(() => undefined);
   const pointer = source?.trim();
   if (!pointer) return undefined;
   const gitFile = resolvePointer(path.dirname(gitdirFile), pointer);
@@ -102,7 +106,9 @@ async function worktreeFromGitdirFile(
   if (!gitFile) return undefined;
   const expectedGitDir = path.dirname(gitdirFile);
   const back = gitDirPointer(
-    (await readFile(gitFile, "utf8").catch(() => undefined)) ?? "",
+    (await Bun.file(gitFile)
+      .text()
+      .catch(() => undefined)) ?? "",
     gitFile,
   );
   if (!back || !(await sameResolvedPath(back, expectedGitDir)))

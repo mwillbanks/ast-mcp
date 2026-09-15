@@ -4,7 +4,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   createFormatterSchema,
@@ -341,7 +340,7 @@ async function validateDprintConfig(filePath: string): Promise<string> {
 function resolveFileUri(value: string) {
   if (!value.startsWith("file:")) return value;
   try {
-    return fileURLToPath(value);
+    return Bun.fileURLToPath(value);
   } catch (error) {
     throw new ConfigurationError(
       `Invalid MCP workspace root "${value}": ${error instanceof Error ? error.message : String(error)}`,

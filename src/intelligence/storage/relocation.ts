@@ -3,7 +3,6 @@ import {
   lstat,
   mkdir,
   readdir,
-  readFile,
   realpath,
   rename,
   rm,
@@ -23,6 +22,7 @@ import {
   win32,
 } from "node:path";
 import * as lancedb from "@lancedb/lancedb";
+import { canonicalizePathSync } from "../../runtime/path-utils.ts";
 import type { LanceTableName } from "../contracts/storage.ts";
 import { StorageError } from "./errors.ts";
 import { ALL_TABLES, assertCompatibleSchema } from "./schemas.ts";
@@ -76,7 +76,11 @@ function windowsPathSyntax(storagePath: string): boolean {
 
 export function storagePathIdentity(storagePath: string): string {
   if (windowsPathSyntax(storagePath)) {
-    const canonical = win32.resolve(storagePath);
+    const canonical = win32.resolve(
+      process.platform === "win32"
+        ? canonicalizePathSync(storagePath)
+        : storagePath,
+    );
     if (/^\\\\\?\\UNC\\/i.test(canonical)) {
       return `\\\\${canonical.slice(8)}`.toLowerCase();
     }
@@ -160,7 +164,15 @@ async function nearestExistingAncestor(path: string): Promise<string> {
   let candidate = path;
   for (;;) {
     try {
-      await stat(candidate);
+      const metadata = await stat(candidate);
+      if (!metadata.isDirectory()) {
+        throw new StorageError(
+          "storage_unavailable",
+          "LanceDB storage path cannot pass through a file",
+          false,
+          { storagePath: path },
+        );
+      }
       return candidate;
     } catch (error) {
       if (
@@ -192,7 +204,7 @@ async function walkFiles(
       continue;
     }
     if (!entry.isFile()) continue;
-    const content = await readFile(absolute);
+    const content = new Uint8Array(await Bun.file(absolute).arrayBuffer());
     files.push({
       path: relative(root, absolute).split(sep).join("/"),
       sha256: createHash("sha256").update(content).digest("hex"),
@@ -298,7 +310,7 @@ export async function copyRelocationSnapshot(
           { path: file.path },
         );
       }
-      const content = await readFile(realSource);
+      const content = new Uint8Array(await Bun.file(realSource).arrayBuffer());
       const sourceHash = createHash("sha256").update(content).digest("hex");
       if (content.byteLength !== file.size || sourceHash !== file.sha256) {
         throw new StorageError(

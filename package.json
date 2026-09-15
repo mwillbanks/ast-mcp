@@ -46,13 +46,13 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@modelcontextprotocol/inspector": "^2.4.0",
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "@types/node": "^26.3.0",
     "fallow": "^3.19.0",
     "typescript": "^7.0.2"
   },
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.2"
   },
   "files": [
     "dist",
@@ -75,7 +75,7 @@
   ],
   "license": "MIT",
   "name": "@mwillbanks/ast-mcp",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"
