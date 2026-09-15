@@ -7,6 +7,7 @@ import {
   globalBinDirectories,
   isExecutable,
   resolveGlobalBinaryAlias,
+  resolveLocalBinaryAlias,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
 
@@ -119,12 +120,27 @@ export interface McpSmokeResult {
   selectedWorkspace: boolean;
 }
 
+export function mcpStdioCommand(
+  binary: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  if (platform === "win32" && /\.(?:cmd|bat)$/iu.test(binary))
+    return [
+      process.env.ComSpec ?? "cmd.exe",
+      "/d",
+      "/s",
+      "/c",
+      `"${binary}" mcp`,
+    ];
+  return [binary, "mcp"];
+}
+
 export async function smokeMcpStdio(
   binary: string,
   root: string,
   timeoutMs = 15_000,
 ): Promise<McpSmokeResult> {
-  const process = Bun.spawn([binary, "mcp"], {
+  const process = Bun.spawn(mcpStdioCommand(binary), {
     cwd: root,
     env: {
       ...Bun.env,
@@ -660,7 +676,7 @@ export async function checkInstall(
   ) {
     const binary =
       options.scope === "local"
-        ? path.join(options.root, "node_modules/.bin/ast-mcp")
+        ? resolveLocalBinaryAlias("ast-mcp", options.root)
         : resolveGlobalBinaryAlias("ast-mcp", {
             globalBinDirectories: globalBinDirectories(
               "ast-mcp",

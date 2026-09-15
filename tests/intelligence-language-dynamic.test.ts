@@ -603,12 +603,14 @@ describe.serial("dynamic language WASM adapters", () => {
   });
 
   test("uses exact UTF-8, UTF-16, Unicode, and CRLF ranges", async () => {
-    const source = await Bun.file(
-      new URL(
-        "./fixtures/intelligence/languages/dynamic/unicode.py",
-        import.meta.url,
-      ),
-    ).text();
+    const source = (
+      await Bun.file(
+        new URL(
+          "./fixtures/intelligence/languages/dynamic/unicode.py",
+          import.meta.url,
+        ),
+      ).text()
+    ).replace(/\r?\n/gu, "\r\n");
     const facts = await analyzeDynamicLanguage({
       languageId: "python",
       source,

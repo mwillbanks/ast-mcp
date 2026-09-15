@@ -12,8 +12,13 @@ export function executableNames(name: string, platform: NodeJS.Platform) {
   if (platform !== "win32") return [name];
   const extensions = (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM")
     .split(";")
-    .filter(Boolean);
-  return [name, ...extensions.map((extension) => `${name}${extension}`)];
+    .filter(Boolean)
+    .map((extension) =>
+      extension.startsWith(".") ? extension : `.${extension}`,
+    );
+  return [
+    ...new Set([...extensions.map((extension) => `${name}${extension}`), name]),
+  ];
 }
 
 export function isExecutable(
@@ -92,6 +97,20 @@ export function executableCandidate(
   platform: NodeJS.Platform,
 ) {
   return candidates.find((candidate) => isExecutable(candidate, platform));
+}
+
+export function resolveLocalBinaryAlias(
+  binaryName: string,
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  return executableCandidate(
+    directoryBinaryCandidates(
+      [path.join(root, "node_modules/.bin")],
+      executableNames(binaryName, platform),
+    ),
+    platform,
+  );
 }
 
 export function resolveGlobalBinaryAlias(

@@ -11,7 +11,12 @@ import os from "node:os";
 import path from "node:path";
 import { install, update } from "../src/installer";
 import {
+  executableNames,
+  resolveLocalBinaryAlias,
+} from "../templates/skills/ast-mcp/scripts/binary-resolution";
+import {
   checkInstall,
+  mcpStdioCommand,
   runCheckInstallCli,
   smokeMcpStdio,
 } from "../templates/skills/ast-mcp/scripts/check-install";
@@ -25,29 +30,130 @@ afterEach(async () => {
   );
 });
 
+type FixtureResponses = Record<string, unknown> | null;
+
+async function mcpFixture(
+  directory: string,
+  name: string,
+  responses: FixtureResponses,
+) {
+  await mkdir(directory, { recursive: true });
+  const script = path.join(directory, `${name}-fixture.ts`);
+  await writeFile(
+    script,
+    `const responses = ${JSON.stringify(responses)} as Record<string, unknown> | null;
+const decoder = new TextDecoder();
+let buffered = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buffered += decoder.decode(chunk, { stream: true });
+  let newline = buffered.indexOf("\\n");
+  while (newline >= 0) {
+    const line = buffered.slice(0, newline).trim();
+    buffered = buffered.slice(newline + 1);
+    if (line && responses) {
+      const request = JSON.parse(line) as { id: unknown; method: string };
+      const result = responses[request.method];
+      if (result !== undefined)
+        console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+    }
+    newline = buffered.indexOf("\\n");
+  }
+}
+`,
+  );
+  const posixAlias = path.join(directory, name);
+  const windowsAlias = path.join(directory, `${name}.cmd`);
+  await writeFile(
+    posixAlias,
+    `#!/usr/bin/env bun\nimport ${JSON.stringify(script)};\n`,
+  );
+  await writeFile(
+    windowsAlias,
+    `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`,
+  );
+  await chmod(posixAlias, 0o755);
+  await chmod(windowsAlias, 0o755);
+  return process.platform === "win32" ? windowsAlias : posixAlias;
+}
+
+function workingResponses(root: string): FixtureResponses {
+  return {
+    initialize: {
+      capabilities: { tools: {} },
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {
+      structuredContent: {
+        data: {
+          workspace: {
+            canonicalRootAnchor: root,
+            checkoutRoot: root,
+            workspaceId:
+              "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        },
+        ok: true,
+      },
+    },
+    "tools/list": {
+      tools: [
+        "graph_diff",
+        "graph_explain",
+        "graph_path",
+        "graph_query",
+        "index",
+        "index_status",
+        "retrieve",
+        "workspace_open",
+        "workspace_status",
+      ].map((name) => ({ name })),
+    },
+  };
+}
+
 async function folders() {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-root-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-home-"));
   created.push(root, home);
-  const globalAlias = path.join(home, ".bun/bin/ast-mcp");
-  const localAlias = path.join(root, "node_modules/.bin/ast-mcp");
-  const smokeServer = `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
-    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
-    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"data":{"workspace":{"canonicalRootAnchor":"${root}","checkoutRoot":"${root}","workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"ok":true}}}' ;;
-  esac
-done
-`;
-  await mkdir(path.dirname(globalAlias), { recursive: true });
-  await mkdir(path.dirname(localAlias), { recursive: true });
-  await writeFile(globalAlias, smokeServer);
-  await writeFile(localAlias, smokeServer);
-  await chmod(globalAlias, 0o755);
-  await chmod(localAlias, 0o755);
+  await mcpFixture(
+    path.join(home, ".bun/bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
+  await mcpFixture(
+    path.join(root, "node_modules/.bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
   return { home, root };
 }
+
+test("resolves native Windows aliases before POSIX shims", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-resolve-"));
+  created.push(root);
+  const directory = path.join(root, "node_modules/.bin");
+  const windowsName = executableNames("ast-mcp", "win32").find((name) =>
+    name.toLowerCase().endsWith(".cmd"),
+  );
+  if (!windowsName) throw new Error("Windows command alias is unavailable");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "ast-mcp"), "posix shim");
+  await writeFile(path.join(directory, windowsName), "windows shim");
+
+  expect(executableNames("ast-mcp", "win32").at(-1)).toBe("ast-mcp");
+  expect(resolveLocalBinaryAlias("ast-mcp", root, "win32")).toBe(
+    path.join(directory, windowsName),
+  );
+  const windowsAlias = path.join(directory, windowsName);
+  expect(mcpStdioCommand(windowsAlias, "win32")).toEqual([
+    process.env.ComSpec ?? "cmd.exe",
+    "/d",
+    "/s",
+    "/c",
+    `"${windowsAlias}" mcp`,
+  ]);
+});
 
 test("checker covers every local host surface", async () => {
   const { home, root } = await folders();
@@ -102,9 +208,6 @@ test("checker covers every global host surface", async () => {
   const configFile = path.join(home, ".codex/config.toml");
   const config = await readFile(configFile, "utf8");
   const windowsAlias = path.join(home, ".bun/bin/ast-mcp.cmd");
-  await mkdir(path.dirname(windowsAlias), { recursive: true });
-  await writeFile(windowsAlias, "#!/bin/sh\nexit 0\n");
-  await chmod(windowsAlias, 0o755);
   await writeFile(
     configFile,
     config.replace(/command = .+/, `command = ${JSON.stringify(windowsAlias)}`),
@@ -175,45 +278,58 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
 test("stdio smoke fails closed for incomplete and unresponsive servers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-smoke-"));
   created.push(root);
-  const incomplete = path.join(root, "incomplete");
-  await writeFile(
-    incomplete,
-    `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
-    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}' ;;
-    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{}}' ;;
-  esac
-done
-`,
-  );
-  await chmod(incomplete, 0o755);
+  const incomplete = await mcpFixture(root, "incomplete", {
+    initialize: {
+      capabilities: {},
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {},
+    "tools/list": { tools: [] },
+  });
   await expect(smokeMcpStdio(incomplete, root, 500)).rejects.toThrow(
     "missing tools",
   );
 
-  const wrongWorkspace = path.join(root, "wrong-workspace");
-  await writeFile(
-    wrongWorkspace,
-    `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
-    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"generate"},{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
-    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"ok":true,"data":{"workspace":{"workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","checkoutRoot":"/wrong","canonicalRootAnchor":"/wrong"}}}}}' ;;
-  esac
-done
-`,
-  );
-  await chmod(wrongWorkspace, 0o755);
+  const wrongWorkspace = await mcpFixture(root, "wrong-workspace", {
+    initialize: {
+      capabilities: {},
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {
+      structuredContent: {
+        data: {
+          workspace: {
+            canonicalRootAnchor: "/wrong",
+            checkoutRoot: "/wrong",
+            workspaceId:
+              "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        },
+        ok: true,
+      },
+    },
+    "tools/list": {
+      tools: [
+        "generate",
+        "graph_diff",
+        "graph_explain",
+        "graph_path",
+        "graph_query",
+        "index",
+        "index_status",
+        "retrieve",
+        "workspace_open",
+        "workspace_status",
+      ].map((name) => ({ name })),
+    },
+  });
   await expect(smokeMcpStdio(wrongWorkspace, root, 500)).rejects.toThrow(
     "did not select the requested workspace",
   );
 
-  const silent = path.join(root, "silent");
-  await writeFile(silent, "#!/bin/sh\nwhile read -r line; do :; done\n");
-  await chmod(silent, 0o755);
+  const silent = await mcpFixture(root, "silent", null);
   await expect(smokeMcpStdio(silent, root, 25)).rejects.toThrow("timed out");
 });
 
