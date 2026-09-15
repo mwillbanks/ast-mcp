@@ -21,6 +21,19 @@ jobs:
       - name: Install dependencies
         run: bun ci
       - name: Authenticated Windows debug shell
+        id: tmate
         uses: mxschmitt/action-tmate@v3.24
         with:
           limit-access-to-actor: true
+          detached: true
+      - name: Save restricted SSH address
+        shell: pwsh
+        run: |
+          $address = '${{ steps.tmate.outputs.ssh-address }}'
+          if ($address -notmatch '^[A-Za-z0-9]+@ssh[.]tmate[.]io$') { throw 'Invalid SSH address' }
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\tmate-address.txt" -Value $address
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-debug-connection
+          path: ${{ runner.temp }}\tmate-address.txt
+          retention-days: 1
