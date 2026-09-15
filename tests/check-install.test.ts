@@ -1,10 +1,12 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -20,7 +22,160 @@ import {
   mcpStdioCommand,
   runCheckInstallCli,
   smokeMcpStdio,
+  stdioArgsMatch,
 } from "../templates/skills/ast-mcp/scripts/check-install";
+
+test("Windows checker matches alias casing without relaxing CMD arguments", () => {
+  const alias = String.raw`C:\Users\RUNNER~1\AppData\ast-mcp.CMD`;
+  const expected = commandForPlatform(alias, ["mcp"], "win32").args;
+  const configured = [...expected];
+  configured[4] = expected[4]?.replace(".CMD", ".cmd") as string;
+  expect(stdioArgsMatch(configured, expected, "win32")).toBeTrue();
+  expect(stdioArgsMatch(configured, expected, "linux")).toBeFalse();
+  expect(
+    stdioArgsMatch(["/d", "/v:on", ...configured.slice(2)], expected, "win32"),
+  ).toBeFalse();
+  expect(
+    stdioArgsMatch(
+      [...configured.slice(0, 4), configured[4]?.replace(" mcp", " MCP")],
+      expected,
+      "win32",
+    ),
+  ).toBeFalse();
+  expect(
+    stdioArgsMatch(
+      [...configured.slice(0, 4), `${configured[4]} & del file`],
+      expected,
+      "win32",
+    ),
+  ).toBeFalse();
+});
+
+test("checker accepts a lowercase Windows batch alias through global discovery", async () => {
+  const { home, root } = await folders();
+  const primaryDirectory = path.join(home, ".bun/bin");
+  const primaryUppercaseAlias = path.join(primaryDirectory, "ast-mcp.CMD");
+  if (
+    !(await stat(primaryUppercaseAlias).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(
+      primaryUppercaseAlias,
+      await readFile(path.join(primaryDirectory, "ast-mcp.cmd")),
+    );
+  await install({
+    home,
+    platform: "win32",
+    root,
+    scope: "global",
+    targets: ["codex"],
+  });
+  const directory = path.join(home, ".bun/install/global/node_modules/.bin");
+  await mcpFixture(directory, "ast-mcp", workingResponses(root));
+  const uppercaseAlias = path.join(directory, "ast-mcp.CMD");
+  if (
+    !(await stat(uppercaseAlias).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(
+      uppercaseAlias,
+      await readFile(path.join(directory, "ast-mcp.cmd")),
+    );
+  const lowercaseAlias = path.join(directory, "ast-mcp.cmd");
+  const invocation = commandForPlatform(lowercaseAlias, ["mcp"], "win32");
+  const file = path.join(home, ".codex/config.toml");
+  const config = await readFile(file, "utf8");
+  await writeFile(
+    file,
+    config
+      .replace(
+        /command = .+/,
+        `command = ${JSON.stringify(invocation.command)}`,
+      )
+      .replace(/args = .+/, `args = ${JSON.stringify(invocation.args)}`),
+  );
+  const script = `process.platform = "win32"; const { checkInstall } = await import(${JSON.stringify(path.resolve(import.meta.dir, "../templates/skills/ast-mcp/scripts/check-install.ts"))}); const result = await checkInstall(["--scope", "global", "--target", "codex", "--root", ${JSON.stringify(root)}], ${JSON.stringify(home)}); console.log(JSON.stringify({ mcp: result.checks.mcp, smokeError: result.smokeError }));`;
+  async function simulatedCheck(comspec?: string) {
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      env: {
+        ...process.env,
+        AST_MCP_CHECK_INSTALL_SKIP_SMOKE: "1",
+        PATHEXT: ".CMD",
+        ...(comspec ? { ComSpec: comspec } : {}),
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    return JSON.parse(stdout) as { mcp: boolean; smokeError: string | null };
+  }
+  const lowercaseIdentity = await stat(lowercaseAlias);
+  const uppercaseIdentity = await stat(uppercaseAlias);
+  if (
+    lowercaseIdentity.dev !== uppercaseIdentity.dev ||
+    lowercaseIdentity.ino !== uppercaseIdentity.ino
+  ) {
+    expect(await simulatedCheck()).toEqual({ mcp: false, smokeError: null });
+    await rm(uppercaseAlias);
+    await link(lowercaseAlias, uppercaseAlias);
+  }
+  expect(await simulatedCheck()).toEqual({ mcp: true, smokeError: null });
+  const matchingConfig = await readFile(file, "utf8");
+  await writeFile(
+    file,
+    matchingConfig.replace(/command = .+/, 'command = "CMD.EXE"'),
+  );
+  expect(await simulatedCheck("cmd.exe")).toEqual({
+    mcp: false,
+    smokeError: null,
+  });
+  await writeFile(file, matchingConfig);
+
+  const lowercaseShell = path.join(directory, "cmd.exe");
+  const uppercaseShell = path.join(directory, "CMD.EXE");
+  await writeFile(lowercaseShell, "lowercase command");
+  if (
+    !(await stat(uppercaseShell).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(uppercaseShell, "uppercase command");
+  await writeFile(
+    file,
+    (await readFile(file, "utf8")).replace(
+      /command = .+/,
+      `command = ${JSON.stringify(lowercaseShell)}`,
+    ),
+  );
+  const lowerShellIdentity = await stat(lowercaseShell);
+  const upperShellIdentity = await stat(uppercaseShell);
+  if (
+    lowerShellIdentity.dev !== upperShellIdentity.dev ||
+    lowerShellIdentity.ino !== upperShellIdentity.ino
+  ) {
+    expect(await simulatedCheck(uppercaseShell)).toEqual({
+      mcp: false,
+      smokeError: null,
+    });
+    await rm(uppercaseShell);
+    await link(lowercaseShell, uppercaseShell);
+  }
+  expect(await simulatedCheck(uppercaseShell)).toEqual({
+    mcp: true,
+    smokeError: null,
+  });
+});
 
 const created: string[] = [];
 afterEach(async () => {

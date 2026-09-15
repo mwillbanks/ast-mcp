@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // biome-ignore-all assist/source/useSortedKeys: Diagnostic output preserves stable user-facing order.
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -316,7 +316,24 @@ async function astMcpEntry(
   return expected.some((candidate) => sameNativePath(configured, candidate));
 }
 
+function samePhysicalPath(left: string, right: string, filesOnly = false) {
+  try {
+    const configured = statSync(left, { bigint: true });
+    const expected = statSync(right, { bigint: true });
+    return (
+      (!filesOnly || (configured.isFile() && expected.isFile())) &&
+      configured.dev !== 0n &&
+      configured.ino !== 0n &&
+      configured.dev === expected.dev &&
+      configured.ino === expected.ino
+    );
+  } catch {
+    return false;
+  }
+}
+
 function sameNativePath(left: string, right: string): boolean {
+  if (process.platform === "win32") return samePhysicalPath(left, right);
   try {
     return (
       path.relative(realpathSync.native(left), realpathSync.native(right)) ===
@@ -431,11 +448,56 @@ async function stdioCommandCurrent(
 
 function sameCommand(left: unknown, right: string) {
   if (typeof left !== "string") return false;
-  if (!path.isAbsolute(left) || !path.isAbsolute(right))
-    return process.platform === "win32"
-      ? left.toLowerCase() === right.toLowerCase()
-      : left === right;
+  if (!path.isAbsolute(left) || !path.isAbsolute(right)) return left === right;
   return sameNativePath(left, right);
+}
+
+function batchAliasPath(commandLine: string) {
+  const match =
+    /^call (?:(?:"([^"\0\r\n%!^]+)")|([A-Za-z0-9_./:\\=-]+)) mcp$/u.exec(
+      commandLine,
+    );
+  return match?.[1] ?? match?.[2];
+}
+
+export function stdioArgsMatch(
+  configured: unknown[],
+  expected: string[],
+  platform: NodeJS.Platform = process.platform,
+) {
+  if (configured.length !== expected.length) return false;
+  return configured.every((argument, index) => {
+    if (argument === expected[index]) return true;
+    if (
+      platform !== "win32" ||
+      index !== expected.length - 1 ||
+      typeof argument !== "string"
+    )
+      return false;
+    const actualPath = batchAliasPath(argument);
+    const expectedPath = batchAliasPath(expected[index] as string);
+    return (
+      actualPath !== undefined &&
+      expectedPath !== undefined &&
+      path.win32.normalize(actualPath).toLowerCase() ===
+        path.win32.normalize(expectedPath).toLowerCase()
+    );
+  });
+}
+
+function sameBatchAliasFile(
+  configuredArgument: unknown,
+  candidate: string,
+  root?: string,
+) {
+  if (typeof configuredArgument !== "string") return false;
+  const configuredAlias = batchAliasPath(configuredArgument);
+  if (!configuredAlias) return false;
+  return samePhysicalPath(
+    root ? path.resolve(root, configuredAlias) : configuredAlias,
+    candidate,
+    true,
+  );
 }
 
 async function matchingStdioBinary(
@@ -458,8 +520,11 @@ async function matchingStdioBinary(
     const expected = commandForPlatform(configured, ["mcp"]);
     if (
       sameCommand(entry.command, expected.command) &&
-      entry.args.length === expected.args.length &&
-      entry.args.every((argument, index) => argument === expected.args[index])
+      stdioArgsMatch(entry.args, expected.args) &&
+      (entry.args.every(
+        (argument, index) => argument === expected.args[index],
+      ) ||
+        sameBatchAliasFile(entry.args.at(-1), binary, root))
     )
       return binary;
   }
