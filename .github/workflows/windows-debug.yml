@@ -44,8 +44,15 @@ jobs:
             'Match Group administrators',
             '    AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys'
           )
-          Set-Content -LiteralPath (Join-Path $sshDirectory 'sshd_config') -Value $config -Encoding ascii
-          if ((Get-Service sshd).Status -ne 'Running') { Start-Service sshd }
+          $configPath = Join-Path $sshDirectory 'sshd_config'
+          Set-Content -LiteralPath $configPath -Value $config -Encoding ascii
+          & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t -f $configPath
+          if ($LASTEXITCODE -ne 0) { throw 'OpenSSH configuration is invalid' }
+          if ((Get-Service sshd).Status -eq 'Running') {
+            Restart-Service sshd -Force
+          } else {
+            Start-Service sshd
+          }
           if (-not (Test-NetConnection -ComputerName localhost -Port 2222 -InformationLevel Quiet)) {
             throw 'OpenSSH did not listen on port 2222'
           }
