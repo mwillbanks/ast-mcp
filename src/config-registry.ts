@@ -10,6 +10,7 @@ import {
   resolveConfig,
 } from "./config";
 import { setApprovalConfigInvalidator } from "./runtime/approval";
+import { canonicalPathWithin } from "./runtime/path-utils";
 
 export interface ConfigSnapshot {
   config?: Readonly<ResolvedConfig>;
@@ -32,16 +33,6 @@ interface RegistryEntry {
 function normalizedClientRoot(value: string): string {
   return path.resolve(
     value.startsWith("file:") ? fileURLToPath(new URL(value)) : value,
-  );
-}
-
-function within(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
   );
 }
 
@@ -75,7 +66,7 @@ function selectedRoots(
   cwd: string,
 ): string[] {
   const matched = clientRoots.filter((root) =>
-    requestPaths.some((requestPath) => within(root, requestPath)),
+    requestPaths.some((requestPath) => canonicalPathWithin(root, requestPath)),
   );
   if (matched.length > 0) return matched;
   return [clientRoots[0] ?? cwd];

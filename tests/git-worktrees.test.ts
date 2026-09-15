@@ -5,6 +5,7 @@ import {
   mkdtemp,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -18,8 +19,10 @@ import {
 import { evaluatePolicy } from "../src/runtime/path-policy";
 import {
   canonicalizePathSync,
+  canonicalPathWithin,
   containingRoot,
   effectiveWorkspaceRoot,
+  pathWithin,
   relativeRootFromPwd,
 } from "../src/runtime/path-utils";
 import {
@@ -390,4 +393,19 @@ test("path helpers canonicalize macOS tmp aliases", async () => {
   } finally {
     await chmod(blocked, 0o755);
   }
+});
+
+test("path containment follows canonical aliases for missing targets", async () => {
+  const root = await temporary("ast-mcp-path-identity-");
+  const target = path.join(root, "target");
+  const alias = path.join(root, "alias");
+  await mkdir(target);
+  await symlink(
+    target,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const missingTarget = path.join(alias, "missing", "value.txt");
+  expect(pathWithin(target, missingTarget)).toBeFalse();
+  expect(canonicalPathWithin(target, missingTarget)).toBeTrue();
 });

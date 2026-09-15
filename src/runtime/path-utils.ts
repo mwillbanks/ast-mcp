@@ -2,11 +2,13 @@ import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 
-export function pathWithin(root: string, target: string): boolean {
+function lexicalPathWithin(root: string, target: string): boolean {
   const relative = path.relative(root, target);
   return (
     relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
+    (!relative.startsWith(`..${path.sep}`) &&
+      relative !== ".." &&
+      !path.isAbsolute(relative))
   );
 }
 
@@ -15,7 +17,7 @@ export function canonicalizePathSync(targetPath: string): string {
   const missing: string[] = [];
   while (true) {
     try {
-      return path.join(realpathSync(existing), ...missing);
+      return path.join(realpathSync.native(existing), ...missing);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         return path.join(existing, ...missing);
@@ -25,6 +27,22 @@ export function canonicalizePathSync(targetPath: string): string {
       missing.unshift(path.basename(existing));
       existing = parent;
     }
+  }
+}
+
+export function pathWithin(root: string, target: string): boolean {
+  return lexicalPathWithin(root, target);
+}
+
+export function canonicalPathWithin(root: string, target: string): boolean {
+  if (pathWithin(root, target)) return true;
+  try {
+    return lexicalPathWithin(
+      canonicalizePathSync(root),
+      canonicalizePathSync(target),
+    );
+  } catch {
+    return false;
   }
 }
 

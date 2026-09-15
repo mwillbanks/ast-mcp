@@ -25,7 +25,7 @@ import {
   clearGitWorktreeCache,
   linkedWorktrees,
 } from "./runtime/git-worktrees";
-import { canonicalizePath } from "./runtime/path-utils";
+import { canonicalizePath, canonicalPathWithin } from "./runtime/path-utils";
 
 export type { WorktreesMode };
 
@@ -332,14 +332,6 @@ async function validateDprintConfig(filePath: string): Promise<string> {
     });
   dprintConfigCache.set(filePath, { fingerprint, promise });
   return promise;
-}
-
-function within(root: string, target: string) {
-  const relative = path.relative(root, target);
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
 }
 
 function resolveFileUri(value: string) {
@@ -869,7 +861,7 @@ function matchedProjectRoots(
     .filter((item) => path.isAbsolute(item))
     .map((item) => path.resolve(item));
   const matched = candidates.filter((root) =>
-    absolute.some((item) => within(root, item)),
+    absolute.some((item) => canonicalPathWithin(root, item)),
   );
   return matched.length ? matched : [candidates[0] as string];
 }
