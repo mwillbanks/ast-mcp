@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   clearConfigCache,
@@ -281,15 +282,21 @@ test("uses client roots and rejects a request crossing conflicting policies", as
   await writeFile(path.join(second, "second.json"), "{}");
 
   const selected = await resolveConfig({
-    clientRoots: [`file://${first}`, `file://${second}`],
+    clientRoots: [pathToFileURL(first).href, pathToFileURL(second).href],
     cwd: os.tmpdir(),
-    env: {},
+    env: {
+      AST_MCP_HTTP_HOST: "client.example",
+      AST_MCP_ROOTS: first,
+    },
     requestPaths: [path.join(second, "value.ts")],
   });
   expect(selected.projectRoot).toBe(second);
+  expect(selected.workspace.roots).toEqual([first, second]);
   expect(selected.trustedRoots).toEqual([
     ...new Set([first, second, await realpath(first), await realpath(second)]),
   ]);
+  expect(selected.http.host).toBe("client.example");
+  expect(selected.sources.environment).toEqual(["AST_MCP_HTTP_HOST"]);
 
   await expect(
     resolveConfig({
@@ -504,7 +511,7 @@ test("queries MCP roots only when the client advertises the capability and refre
       getClientCapabilities: () => ({ roots: {} }),
       listRoots: async () => {
         listRootsCalls += 1;
-        return { roots: [{ uri: `file://${activeRoot}` }] };
+        return { roots: [{ uri: pathToFileURL(activeRoot).href }] };
       },
       setNotificationHandler: (method: string, handler: () => void) => {
         expect(method).toBe("notifications/roots/list_changed");

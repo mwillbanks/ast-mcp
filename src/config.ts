@@ -620,9 +620,12 @@ function environmentSafety(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
 function environmentLayer(
   env: NodeJS.ProcessEnv,
   cwd: string,
+  suppressRootSelectors = false,
 ): { names: string[]; value: InternalConfig } {
   const usage = new EnvironmentUsage();
-  const roots = environmentRoots(env, cwd, usage);
+  const roots = suppressRootSelectors
+    ? undefined
+    : environmentRoots(env, cwd, usage);
   const safety = environmentSafety(env, usage);
   const formatting = environmentFormatting(env, cwd, usage);
   const intelligence = environmentIntelligence(env, usage);
@@ -1317,7 +1320,11 @@ async function resolveForProject(
     projectPath,
     projectRoot,
   );
-  const environment = environmentLayer(env, cwd);
+  const environment = environmentLayer(
+    env,
+    cwd,
+    (options.clientRoots?.length ?? 0) > 0,
+  );
   const layers: ConfigLayer[] = [
     { name: "default", value: defaultInternalConfig(candidates) },
     { name: "global", value: global.value ?? {} },
