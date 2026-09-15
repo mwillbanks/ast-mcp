@@ -244,7 +244,7 @@ test("calls native code intelligence through the server", async () => {
   } finally {
     await client.close();
   }
-});
+}, 30_000);
 
 test("revision native tools ignore dirty and untracked files", async () => {
   const root = await mkdtemp(

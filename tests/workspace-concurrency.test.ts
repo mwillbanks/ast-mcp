@@ -296,9 +296,11 @@ test("workspace_open without client roots uses explicit v2 host authorization", 
   clearConfigCache();
   try {
     const execute = configuredExecution(serverWithoutRoots());
-    expect(
-      await execute({}, async () => (await currentConfig()).projectRoot),
-    ).toBe(await realpath(host));
+    const configuredRoot = await execute(
+      {},
+      async () => (await currentConfig()).projectRoot,
+    );
+    expect(await realpath(configuredRoot)).toBe(await realpath(host));
     await expect(
       execute.openWorkspace?.({ directory: unauthorized }),
     ).rejects.toMatchObject({ code: "path_denied" });

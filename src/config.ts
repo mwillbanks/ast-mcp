@@ -816,10 +816,6 @@ function merge(...layers: InternalConfig[]): InternalConfig {
 async function projectRoots(options: ResolveConfigOptions) {
   const env = options.env ?? process.env;
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const projectCandidates = async (roots: string[]) =>
-    process.platform === "win32"
-      ? Promise.all(roots.map(canonicalConfigurationPath))
-      : roots;
   const withCanonical = async (roots: string[]) => [
     ...new Set([
       ...roots,
@@ -833,14 +829,14 @@ async function projectRoots(options: ResolveConfigOptions) {
   );
   if (clientRoots.length)
     return {
-      candidates: await projectCandidates(clientRoots),
+      candidates: clientRoots,
       trustedRoots: await withCanonical(clientRoots),
     };
 
   if (env.AST_MCP_PROJECT_ROOT) {
     const selected = path.resolve(cwd, env.AST_MCP_PROJECT_ROOT);
     return {
-      candidates: await projectCandidates([selected]),
+      candidates: [selected],
       trustedRoots: await withCanonical([selected]),
     };
   }
@@ -849,13 +845,13 @@ async function projectRoots(options: ResolveConfigOptions) {
   if (legacy?.length) {
     const candidates = legacy.map((item) => path.resolve(cwd, item));
     return {
-      candidates: await projectCandidates(candidates),
+      candidates,
       trustedRoots: await withCanonical([cwd]),
     };
   }
 
   return {
-    candidates: await projectCandidates([cwd]),
+    candidates: [cwd],
     trustedRoots: await withCanonical([cwd]),
   };
 }
