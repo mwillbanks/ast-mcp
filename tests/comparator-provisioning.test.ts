@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   astBroProvisionCommand,
+  comparatorCommandTimeout,
   graphifyProvisionCommand,
   provisionIntelligenceComparators,
   runComparatorCommand,
@@ -41,6 +42,32 @@ test("pins the graphifyy distribution through the selected Python interpreter", 
     "--disable-pip-version-check",
     "graphifyy==0.9.53",
   ]);
+});
+
+test("gives pinned Cargo builds a bounded cold-build budget", () => {
+  expect(comparatorCommandTimeout(astBroProvisionCommand("win32", "x64"))).toBe(
+    1_500_000,
+  );
+  expect(comparatorCommandTimeout(["npm", "install", "package"])).toBe(300_000);
+  expect(comparatorCommandTimeout(["ast-bro", "--version"])).toBe(30_000);
+});
+
+test("reports the project timeout instead of an ambiguous SIGKILL exit", async () => {
+  await expect(
+    runComparatorCommand(
+      [process.execPath, "-e", "setInterval(() => {}, 1_000)"],
+      75,
+    ),
+  ).rejects.toThrow("timed out after 75ms");
+});
+
+test("bounds pipe drains after a command leaves a descendant running", async () => {
+  const script = `const descendant = Bun.spawn([${JSON.stringify(process.execPath)}, "-e", "setTimeout(() => process.exit(0), 3_000)"], { stdin: "ignore", stderr: "inherit", stdout: "inherit" }); descendant.unref(); process.exit(0);`;
+  const started = performance.now();
+  await expect(
+    runComparatorCommand([process.execPath, "-e", script], 75),
+  ).rejects.toThrow("timed out after 75ms");
+  expect(performance.now() - started).toBeLessThan(2_500);
 });
 
 test("runs comparator commands and reports subprocess failures", async () => {
