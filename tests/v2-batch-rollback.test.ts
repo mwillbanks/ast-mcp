@@ -13,6 +13,7 @@ import path from "node:path";
 import { withConfig } from "../src/config";
 import { patchFiles, writeFilesSafely } from "../src/patch/engine";
 import { sha256 } from "../src/runtime/hash";
+import { hermeticConfig } from "./support/hermetic-config";
 
 async function configuredRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -34,13 +35,6 @@ async function configuredRoot(prefix: string): Promise<string> {
   return root;
 }
 
-function options(root: string) {
-  return {
-    cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
-  };
-}
-
 test("batch preflight cleans preview receipts when a later entry fails", async () => {
   const root = await configuredRoot("ast-mcp-preview-cleanup-");
   const first = path.join(root, "first.txt");
@@ -49,7 +43,7 @@ test("batch preflight cleans preview receipts when a later entry fails", async (
   await writeFile(second, "second\n");
   try {
     await expect(
-      withConfig(options(root), () =>
+      withConfig(hermeticConfig(root), () =>
         patchFiles({
           [first]: {
             aiderBlocks: [{ replace: "preview", search: "first" }],
@@ -79,6 +73,11 @@ test("patch and write batches roll back earlier commits after a commit-time sour
   await mkdir(blocked);
   await writeFile(first, "first-before\n");
   await writeFile(second, "second-before\n");
+  const formatter = path.join(root, "formatter.mjs");
+  await writeFile(
+    formatter,
+    'let input = ""; for await (const chunk of process.stdin) input += chunk; await Bun.write(process.argv[2], input); process.stdout.write(input);',
+  );
   await writeFile(
     path.join(root, "ast-mcp.toml"),
     [
@@ -90,8 +89,8 @@ test("patch and write batches roll back earlier commits after a commit-time sour
       'id = "change-source-after-lock"',
       "enabled = true",
       'extensions = [".deny"]',
-      'command = "/usr/bin/tee"',
-      'args = ["{source_file}"]',
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([formatter, "{source_file}"])}`,
       'mode = "stdout"',
       "[[paths]]",
       'id = "workspace"',
@@ -102,7 +101,7 @@ test("patch and write batches roll back earlier commits after a commit-time sour
   );
   try {
     await expect(
-      withConfig(options(root), () =>
+      withConfig(hermeticConfig(root), () =>
         patchFiles({
           [first]: {
             aiderBlocks: [{ replace: "first-after", search: "first-before" }],
@@ -121,7 +120,7 @@ test("patch and write batches roll back earlier commits after a commit-time sour
 
     await writeFile(second, "second-before\n");
     await expect(
-      withConfig(options(root), () =>
+      withConfig(hermeticConfig(root), () =>
         writeFilesSafely({
           [created]: { content: "created\n" },
           [second]: {
@@ -146,7 +145,7 @@ test("write results are finalized before restrictive metadata is committed", asy
   const root = await configuredRoot("ast-mcp-write-finalized-");
   const target = path.join(root, "private.txt");
   try {
-    const result = await withConfig(options(root), () =>
+    const result = await withConfig(hermeticConfig(root), () =>
       writeFilesSafely({
         [target]: { chattr: { chmod: 0 }, content: "private\n" },
       }),

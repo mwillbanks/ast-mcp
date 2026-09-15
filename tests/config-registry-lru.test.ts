@@ -20,7 +20,10 @@ test("configuration registry bounds watchers with least-recently-used eviction",
     const options = (cwd: string) => ({
       clientRoots: [cwd],
       cwd,
-      env: { XDG_CONFIG_HOME: path.join(parent, "xdg") },
+      env: {
+        APPDATA: path.join(parent, "xdg"),
+        XDG_CONFIG_HOME: path.join(parent, "xdg"),
+      },
     });
     const first = await registry.snapshot(options(firstRoot));
     const second = await registry.snapshot(options(secondRoot));
@@ -43,7 +46,10 @@ test("closing during initial reload cannot resurrect registry watchers", async (
     const pending = registry.snapshot({
       clientRoots: [projectRoot],
       cwd: projectRoot,
-      env: { XDG_CONFIG_HOME: path.join(parent, "xdg") },
+      env: {
+        APPDATA: path.join(parent, "xdg"),
+        XDG_CONFIG_HOME: path.join(parent, "xdg"),
+      },
     });
     registry.close();
     await expect(pending).resolves.toMatchObject({ healthy: true });

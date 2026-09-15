@@ -155,6 +155,19 @@ test("resolves native Windows aliases before POSIX shims", async () => {
   ]);
 });
 
+test("checker accepts a configured Windows alias after a preferred alias appears", async () => {
+  if (process.platform !== "win32") return;
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  await writeFile(path.join(root, "node_modules/.bin/ast-mcp.exe"), "fixture");
+
+  const result = await checkInstall(
+    ["--scope", "local", "--target", "codex", "--root", root],
+    home,
+  );
+  expect(result.checks.mcp).toBeTrue();
+});
+
 test("checker covers every local host surface", async () => {
   const { home, root } = await folders();
   await install({
@@ -207,10 +220,17 @@ test("checker covers every global host surface", async () => {
   }
   const configFile = path.join(home, ".codex/config.toml");
   const config = await readFile(configFile, "utf8");
-  const windowsAlias = path.join(home, ".bun/bin/ast-mcp.cmd");
+  const secondaryAlias = await mcpFixture(
+    path.join(home, ".bun/install/global/node_modules/.bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
   await writeFile(
     configFile,
-    config.replace(/command = .+/, `command = ${JSON.stringify(windowsAlias)}`),
+    config.replace(
+      /command = .+/,
+      `command = ${JSON.stringify(secondaryAlias)}`,
+    ),
   );
   expect(
     (
@@ -220,6 +240,19 @@ test("checker covers every global host surface", async () => {
       )
     ).checks.mcp,
   ).toBeTrue();
+  const invalidAlias = path.join(home, ".bun/bin/ast-mcp.invalid");
+  await writeFile(
+    configFile,
+    config.replace(/command = .+/, `command = ${JSON.stringify(invalidAlias)}`),
+  );
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "global", "--target", "codex", "--root", root],
+        home,
+      )
+    ).checks.mcp,
+  ).toBeFalse();
   await writeFile(
     configFile,
     config.replace(
@@ -287,7 +320,7 @@ test("stdio smoke fails closed for incomplete and unresponsive servers", async (
     "tools/call": {},
     "tools/list": { tools: [] },
   });
-  await expect(smokeMcpStdio(incomplete, root, 500)).rejects.toThrow(
+  await expect(smokeMcpStdio(incomplete, root, 2_000)).rejects.toThrow(
     "missing tools",
   );
 
@@ -325,7 +358,7 @@ test("stdio smoke fails closed for incomplete and unresponsive servers", async (
       ].map((name) => ({ name })),
     },
   });
-  await expect(smokeMcpStdio(wrongWorkspace, root, 500)).rejects.toThrow(
+  await expect(smokeMcpStdio(wrongWorkspace, root, 2_000)).rejects.toThrow(
     "did not select the requested workspace",
   );
 

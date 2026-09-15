@@ -102,74 +102,85 @@ function qualificationSchema() {
 
 export async function qualifyStorage(databasePath: string) {
   const database = await lancedb.connect(databasePath);
-  const table = await database.createTable(
-    "qualification",
-    [
-      {
-        generation: 1,
-        id: "baseline",
-        text: "publish stable generation",
-        vector: [1, 0, 0],
-      },
-    ],
-    { mode: "overwrite", schema: qualificationSchema() },
-  );
-  const baselineVersion = await table.version();
-  const tags = await table.tags();
-  await tags.create("baseline", baselineVersion);
-  await table.add([
-    {
-      generation: 2,
-      id: "current",
-      text: "search current revision",
-      vector: [0, 1, 0],
-    },
-    {
-      generation: 2,
-      id: "disposable",
-      text: "remove obsolete revision",
-      vector: [0, 0, 1],
-    },
-  ]);
-  await table.update({
-    values: {
-      generation: 3,
-      text: "search updated revision",
-    },
-    where: "id = 'current'",
-  });
-  await table.delete("id = 'disposable'");
-  const latestVersion = await table.version();
+  try {
+    const table = await database.createTable(
+      "qualification",
+      [
+        {
+          generation: 1,
+          id: "baseline",
+          text: "publish stable generation",
+          vector: [1, 0, 0],
+        },
+      ],
+      { mode: "overwrite", schema: qualificationSchema() },
+    );
+    try {
+      const baselineVersion = await table.version();
+      const tags = await table.tags();
+      await tags.create("baseline", baselineVersion);
+      await table.add([
+        {
+          generation: 2,
+          id: "current",
+          text: "search current revision",
+          vector: [0, 1, 0],
+        },
+        {
+          generation: 2,
+          id: "disposable",
+          text: "remove obsolete revision",
+          vector: [0, 0, 1],
+        },
+      ]);
+      await table.update({
+        values: {
+          generation: 3,
+          text: "search updated revision",
+        },
+        where: "id = 'current'",
+      });
+      await table.delete("id = 'disposable'");
+      const latestVersion = await table.version();
 
-  await table.createIndex("text", {
-    config: lancedb.Index.fts(),
-    replace: true,
-  });
-  const ftsMatches = await table.search("updated").limit(10).toArray();
-  const vectorMatches = await table.search([0.95, 0.05, 0]).limit(1).toArray();
-  const currentCount = await table.countRows();
-  const deletedRemaining = await table.countRows("id = 'disposable'");
-  const updatedRows = await table
-    .query()
-    .where("id = 'current'")
-    .select(["text"])
-    .limit(1)
-    .toArray();
+      await table.createIndex("text", {
+        config: lancedb.Index.fts(),
+        replace: true,
+      });
+      const ftsMatches = await table.search("updated").limit(10).toArray();
+      const vectorMatches = await table
+        .search([0.95, 0.05, 0])
+        .limit(1)
+        .toArray();
+      const currentCount = await table.countRows();
+      const deletedRemaining = await table.countRows("id = 'disposable'");
+      const updatedRows = await table
+        .query()
+        .where("id = 'current'")
+        .select(["text"])
+        .limit(1)
+        .toArray();
 
-  await table.checkout("baseline");
-  const historicalCount = await table.countRows();
-  await table.checkoutLatest();
+      await table.checkout("baseline");
+      const historicalCount = await table.countRows();
+      await table.checkoutLatest();
 
-  return {
-    baselineCount: 1,
-    currentCount,
-    deletedRemaining,
-    ftsMatches: ftsMatches.length,
-    historicalCount,
-    latestVersion,
-    updatedText: String(updatedRows[0]?.text),
-    vectorNearestId: String(vectorMatches[0]?.id),
-  };
+      return {
+        baselineCount: 1,
+        currentCount,
+        deletedRemaining,
+        ftsMatches: ftsMatches.length,
+        historicalCount,
+        latestVersion,
+        updatedText: String(updatedRows[0]?.text),
+        vectorNearestId: String(vectorMatches[0]?.id),
+      };
+    } finally {
+      table.close();
+    }
+  } finally {
+    database.close();
+  }
 }
 
 async function qualifyEmbedding(

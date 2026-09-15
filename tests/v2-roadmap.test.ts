@@ -70,7 +70,10 @@ test("registry keys preserve advertised root priority", async () => {
   try {
     const options = {
       cwd: os.tmpdir(),
-      env: { XDG_CONFIG_HOME: path.join(first, "xdg") },
+      env: {
+        APPDATA: path.join(first, "xdg"),
+        XDG_CONFIG_HOME: path.join(first, "xdg"),
+      },
     };
     expect(
       (await registry.get({ ...options, clientRoots: [first, second] })).http
@@ -141,7 +144,7 @@ test("mixed configuration layers retain v1 compatibility without v2 temp access"
   );
   const mixedProject = await resolveConfig({
     cwd: v1Project,
-    env: { XDG_CONFIG_HOME: v2GlobalHome },
+    env: { APPDATA: v2GlobalHome, XDG_CONFIG_HOME: v2GlobalHome },
   });
   expect(mixedProject.version).toBe(1);
   expect(mixedProject.safety.allowAnyPath).toBeTrue();
@@ -166,7 +169,7 @@ test("mixed configuration layers retain v1 compatibility without v2 temp access"
   );
   const mixedGlobal = await resolveConfig({
     cwd: v2Project,
-    env: { XDG_CONFIG_HOME: v1GlobalHome },
+    env: { APPDATA: v1GlobalHome, XDG_CONFIG_HOME: v1GlobalHome },
   });
   expect(mixedGlobal.version).toBe(1);
   expect(mixedGlobal.safety.allowAnyPath).toBeTrue();
@@ -178,7 +181,10 @@ test("mixed configuration layers retain v1 compatibility without v2 temp access"
   );
   const v2 = await resolveConfig({
     cwd: pureV2,
-    env: { XDG_CONFIG_HOME: path.join(pureV2, "xdg") },
+    env: {
+      APPDATA: path.join(pureV2, "xdg"),
+      XDG_CONFIG_HOME: path.join(pureV2, "xdg"),
+    },
   });
   expect(v2.version).toBe(2);
   expect(v2.safety.allowTempDirectory).toBeFalse();
@@ -311,8 +317,10 @@ test("approval flow fails closed and supports once, session, and persistent gran
     ),
   ).rejects.toMatchObject({ code: "approval_denied" });
 
+  const previousAppData = process.env.APPDATA;
   const previousXdg = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = path.join(root, "global");
+  process.env.APPDATA = process.env.XDG_CONFIG_HOME;
   const registryOptions = {
     cwd: root,
     env: { ...process.env },
@@ -373,6 +381,8 @@ test("approval flow fails closed and supports once, session, and persistent gran
     expect(await readFile(lockPath, "utf8")).toBe("locked");
     await rm(lockPath);
   } finally {
+    if (previousAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previousAppData;
     if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = previousXdg;
   }
@@ -387,7 +397,10 @@ test("preview receipts bind session, current mode, and bounded candidates", asyn
   await writeFile(file, "before");
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
   const scope = (sessionId: string) =>
     ({ context: { mcpReq: {}, sessionId }, tool: "file_patch" }) as never;
@@ -430,7 +443,8 @@ test("preview receipts bind session, current mode, and bounded candidates", asyn
       }),
     );
     expect(await readFile(file, "utf8")).toBe("after");
-    expect((await lstat(file)).mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32")
+      expect((await lstat(file)).mode & 0o777).toBe(0o640);
     await expect(
       withApprovalContext(scope("preview-session"), () =>
         patchFiles({
@@ -512,7 +526,13 @@ test("aider failures return structured recovery evidence", async () => {
   const file = path.join(root, "value.txt");
   await writeFile(file, "alpha");
   await withConfig(
-    { cwd: root, env: { XDG_CONFIG_HOME: path.join(root, "xdg") } },
+    {
+      cwd: root,
+      env: {
+        APPDATA: path.join(root, "xdg"),
+        XDG_CONFIG_HOME: path.join(root, "xdg"),
+      },
+    },
     async () => {
       await expect(
         patchFiles({
@@ -616,7 +636,8 @@ test("migrates v1 source without discarding comments or legacy behavior", async 
   const backup = await writeMigratedConfig(file, preview.source);
   expect(backup).toBe(`${file}.v1.bak`);
   expect(await readFile(backup as string, "utf8")).toBe(source);
-  expect((await lstat(file)).mode & 0o777).toBe(0o640);
+  if (process.platform !== "win32")
+    expect((await lstat(file)).mode & 0o777).toBe(0o640);
   expect((await resolveConfig({ cwd: root, env: {} })).version).toBe(2);
 
   const current = migrateConfigSource(await readFile(file, "utf8"), file);
@@ -666,7 +687,8 @@ test("migration restores source mode after umask-filtered staging", async () => 
   } finally {
     process.umask(previousUmask);
   }
-  expect((await lstat(file)).mode & 0o777).toBe(0o666);
+  if (process.platform !== "win32")
+    expect((await lstat(file)).mode & 0o777).toBe(0o666);
 });
 
 test("migrated external roots reach the v2 policy engine", async () => {
@@ -690,7 +712,10 @@ test("migrated external roots reach the v2 policy engine", async () => {
   await writeFile(file, migration.source);
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
   expect((await resolveConfig(options)).workspace.roots).toContain(external);
   await expect(
@@ -739,7 +764,10 @@ test("v2 formatting supports selective stdout and adjacent in-place staging", as
   );
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
   expect(
     await withConfig(options, () =>
@@ -804,7 +832,10 @@ test("v2 policy resolves specificity, deny ties, exclusions, and protected confi
   );
   const config = await resolveConfig({
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   });
   const canonicalRoot = await realpath(root);
   expect(
@@ -883,7 +914,10 @@ test("policy specificity counts only include patterns matching the target", asyn
   );
   const config = await resolveConfig({
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   });
   expect(
     evaluatePolicy(
@@ -920,7 +954,10 @@ test("policy checks preserve symlink identity and deny unpermitted links", async
   await symlink(target, link);
   const config = await resolveConfig({
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   });
   expect(await evaluatePolicyForCheck(config, link, "read")).toMatchObject({
     canonicalPath: path.join(await realpath(root), "link.txt"),
@@ -960,7 +997,10 @@ test("v2 endpoint policies permit cross-root rename and isolate exact-file scans
       "",
     ].join("\n"),
   );
-  const options = { cwd: root, env: { XDG_CONFIG_HOME: xdg } };
+  const options = {
+    cwd: root,
+    env: { APPDATA: xdg, XDG_CONFIG_HOME: xdg },
+  };
   await withConfig(options, () =>
     renameFilesSafely({
       [source]: { destination, expectedSha256: sourceHash },
@@ -980,7 +1020,10 @@ test("resident registry reloads create, invalid change, recovery, and deletion",
   const registry = new ConfigRegistry(5, 20);
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
   try {
     const initial = await registry.snapshot(options);

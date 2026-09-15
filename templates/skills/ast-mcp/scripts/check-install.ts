@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
 // biome-ignore-all assist/source/useSortedKeys: Diagnostic output preserves stable user-facing order.
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  directoryBinaryCandidates,
+  executableNames,
   globalBinDirectories,
   isExecutable,
   resolveGlobalBinaryAlias,
@@ -271,25 +274,26 @@ async function astMcpEntry(
   home = os.homedir(),
 ): Promise<boolean> {
   if (typeof entry !== "string") return false;
-  const normalized = entry.replaceAll("\\", "/");
-  if (root) return normalized === "./node_modules/.bin/ast-mcp";
-  if (
-    ![
-      "ast-mcp",
-      "ast-mcp.bat",
-      "ast-mcp.cmd",
-      "ast-mcp.com",
-      "ast-mcp.exe",
-    ].includes(path.basename(normalized).toLowerCase())
-  )
-    return false;
-  const directory = path.dirname(path.resolve(entry));
-  const recognized = globalBinDirectories(
-    "ast-mcp",
-    process.platform,
-    home,
-  ).some((candidate) => path.resolve(candidate) === directory);
-  return recognized && isExecutable(entry);
+  const directories = root
+    ? [path.join(root, "node_modules/.bin")]
+    : globalBinDirectories("ast-mcp", process.platform, home);
+  const expected = directoryBinaryCandidates(
+    directories,
+    executableNames("ast-mcp", process.platform),
+  ).filter((candidate) => isExecutable(candidate, process.platform));
+  const configured = root ? path.resolve(root, entry) : path.resolve(entry);
+  return expected.some((candidate) => sameNativePath(configured, candidate));
+}
+
+function sameNativePath(left: string, right: string): boolean {
+  try {
+    return (
+      path.relative(realpathSync.native(left), realpathSync.native(right)) ===
+      ""
+    );
+  } catch {
+    return path.relative(path.resolve(left), path.resolve(right)) === "";
+  }
 }
 
 async function expectedReference(

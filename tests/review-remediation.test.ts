@@ -161,9 +161,7 @@ test("HTTP expires idle sessions deterministically", async () => {
 });
 
 test("transcript scoring rejects failed, duplicate, and mismatched evidence", async () => {
-  const directory = await mkdtemp(
-    path.join(process.env.TMPDIR ?? "/tmp", "ast-mcp-score-"),
-  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-score-"));
   const sessionPath = path.join(directory, "session.jsonl");
 
   try {
@@ -252,7 +250,7 @@ test("transcript scoring rejects failed, duplicate, and mismatched evidence", as
 
 test("transcript efficiency counts selectors, checks, and JSON run mutations", async () => {
   const directory = await mkdtemp(
-    path.join(process.env.TMPDIR ?? "/tmp", "ast-mcp-score-metrics-"),
+    path.join(os.tmpdir(), "ast-mcp-score-metrics-"),
   );
   const sessionPath = path.join(directory, "session.jsonl");
   const call = (callId: string, name: string, input: unknown) =>
@@ -357,9 +355,7 @@ test("stdio reports input and protocol-response errors", async () => {
 });
 
 test("transcript scoring requires named filesystem result evidence", async () => {
-  const directory = await mkdtemp(
-    path.join(process.env.TMPDIR ?? "/tmp", "ast-mcp-files-"),
-  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-files-"));
   const sessionPath = path.join(directory, "session.jsonl");
   const call = {
     payload: {
@@ -440,9 +436,7 @@ test("transcript scoring requires named filesystem result evidence", async () =>
 });
 
 test("transcript scoring aggregates eval batches and rejects integrity failures", async () => {
-  const directory = await mkdtemp(
-    path.join(process.env.TMPDIR ?? "/tmp", "ast-mcp-integrity-"),
-  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-integrity-"));
   const sessionPath = path.join(directory, "session.jsonl");
   const execCall = (callId: string, input: string) => ({
     payload: {
@@ -617,6 +611,7 @@ test("live hook denies env wrapper commands", async () => {
       cwd: root,
       env: {
         ...process.env,
+        APPDATA: path.join(root, ".config"),
         AST_MCP_PROJECT_ROOT: root,
         XDG_CONFIG_HOME: path.join(root, ".config"),
       },

@@ -12,6 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
+import { resolveLocalBinaryAlias } from "../templates/skills/ast-mcp/scripts/binary-resolution";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -22,11 +23,18 @@ afterEach(async () => {
   );
 });
 
-async function executable(file: string) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, "#!/bin/sh\nexit 0\n");
-  await chmod(file, 0o755);
-  return file;
+async function executable(
+  file: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const alias = platform === "win32" ? `${file}.cmd` : file;
+  await mkdir(path.dirname(alias), { recursive: true });
+  await writeFile(
+    alias,
+    platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+  );
+  await chmod(alias, 0o755);
+  return alias;
 }
 
 describe("installer", () => {
@@ -110,11 +118,50 @@ describe("installer", () => {
     }
   });
 
+  test("writes the native Windows alias for every local host", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-win-local-"));
+    created.push(root);
+    const alias = await executable(
+      path.join(root, "node_modules/.bin/ast-mcp"),
+      "win32",
+    );
+
+    await install({
+      platform: "win32",
+      root,
+      scope: "local",
+      targets: ["codex", "claude", "copilot"],
+    });
+
+    const resolved = resolveLocalBinaryAlias("ast-mcp", root, "win32");
+    if (!resolved) throw new Error("Windows command alias was not resolved");
+    const expected = `./${path.relative(root, resolved).split(path.sep).join("/")}`;
+    expect(resolved.toLowerCase()).toBe(alias.toLowerCase());
+    expect(expected.toLowerCase()).toEndWith(".cmd");
+    expect(
+      await readFile(path.join(root, ".codex/config.toml"), "utf8"),
+    ).toContain(`command = ${JSON.stringify(expected)}`);
+    for (const file of [".mcp.json", ".github/mcp.json"]) {
+      const document = JSON.parse(
+        await readFile(path.join(root, file), "utf8"),
+      );
+      const definition =
+        document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
+      expect(definition.command).toBe(expected);
+    }
+    for (const file of [
+      ".codex/hooks.json",
+      ".claude/settings.json",
+      ".github/hooks/ast-mcp.json",
+    ])
+      expect(await readFile(path.join(root, file), "utf8")).toContain(expected);
+  });
+
   test("installs global target locations", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
     created.push(root, home);
-    await executable(path.join(home, ".bun/bin/ast-mcp"));
+    const alias = await executable(path.join(home, ".bun/bin/ast-mcp"));
     await install({
       home,
       root,
@@ -132,10 +179,10 @@ describe("installer", () => {
     ).mcpServers["ast-mcp"];
     expect(globalCopilot.type).toBe("local");
     expect(globalCopilot.args).toEqual(["mcp"]);
-    expect(globalCopilot.command).toEndWith("/.bun/bin/ast-mcp");
+    expect(globalCopilot.command).toBe(alias);
     expect(
       await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-    ).toContain("/.bun/bin/ast-mcp");
+    ).toContain(JSON.stringify(alias));
   });
   test("writes Bun, npm, pnpm, and Yarn global manager aliases", async () => {
     for (const manager of ["bun", "npm", "pnpm", "yarn"]) {

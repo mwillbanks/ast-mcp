@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AbsolutePathSchema,
   assertReaderPinsGeneration,
   CapabilityClaimSchema,
   ChunkArtifactInputSchema,
@@ -61,6 +62,23 @@ const identity = (namespace: string, value: string) =>
   createIdentity(namespace, { value });
 const now = "2026-09-10T12:00:00.000Z";
 const later = "2026-09-10T12:05:00.000Z";
+
+test("path contracts recognize portable absolute path forms", () => {
+  for (const absolute of [
+    "/var/lib/ast-mcp",
+    "C:\\workspace\\source.ts",
+    "\\\\server\\share\\source.ts",
+    "\\\\?\\C:\\workspace\\source.ts",
+  ]) {
+    expect(AbsolutePathSchema.parse(absolute)).toBe(absolute);
+    expect(() => RepositoryRelativePathSchema.parse(absolute)).toThrow(
+      /relative/i,
+    );
+  }
+  expect(RepositoryRelativePathSchema.parse("src/source.ts")).toBe(
+    "src/source.ts",
+  );
+});
 
 const range = {
   end: { column: 9, line: 0 },

@@ -48,18 +48,26 @@ test("storage placement uses one domain path per canonical repository anchor", a
   const repository = path.join(root, "group", "repository");
   await mkdir(repository, { recursive: true });
 
-  const global = resolveStorageDomain(repository, { kind: "global" }, { home });
-  const local = resolveStorageDomain(repository, { kind: "local" }, { home });
+  const global = resolveStorageDomain(
+    repository,
+    { kind: "global" },
+    { env: {}, home },
+  );
+  const local = resolveStorageDomain(
+    repository,
+    { kind: "local" },
+    { env: {}, home },
+  );
   const parent = resolveStorageDomain(
     repository,
     { kind: "parent", levels: 1 },
-    { home },
+    { env: {}, home },
   );
   const explicitPath = path.join(root, "explicit");
   const explicit = resolveStorageDomain(
     repository,
     { kind: "explicit", path: explicitPath },
-    { home },
+    { env: {}, home },
   );
 
   expect(global.storagePath).toBe(
@@ -362,7 +370,11 @@ test("symlink aliases canonicalize and non-Git roots remain usable", async () =>
   const repository = path.join(root, "repository");
   const alias = path.join(root, "alias");
   await mkdir(repository);
-  await symlink(repository, alias, "dir");
+  await symlink(
+    repository,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   const registry = new WorkspaceRegistry();
   const [direct, linked] = await Promise.all([
     registry.open({ configurationGeneration: 1, directory: repository }),

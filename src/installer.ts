@@ -30,6 +30,7 @@ import { isManagedHook } from "./managed-hook";
 import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
+  resolveLocalBinaryAlias,
 } from "./runtime/dependencies";
 import {
   createServicePlan,
@@ -77,9 +78,12 @@ function configuredCliEntry(
   root: string,
   home: string,
 ) {
-  if (options.scope === "local")
-    return path.join(root, "node_modules/.bin/ast-mcp");
   const platform = options.platform ?? process.platform;
+  if (options.scope === "local")
+    return (
+      resolveLocalBinaryAlias("ast-mcp", root, platform) ??
+      path.join(root, "node_modules/.bin/ast-mcp")
+    );
   const directories =
     options.globalBinDirectories ??
     globalBinDirectories("ast-mcp", platform, home);

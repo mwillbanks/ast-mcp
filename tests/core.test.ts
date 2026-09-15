@@ -55,18 +55,19 @@ test("detects AST languages and hashes deterministically", async () => {
   expect(await primaryRoot()).toBe(process.cwd());
 });
 test("falls back to the lexical working directory when it cannot be resolved", async () => {
-  const cwd = spyOn(process, "cwd").mockReturnValue("/tmp/ast-mcp-missing-cwd");
+  const missingCwd = path.resolve("/tmp/ast-mcp-missing-cwd");
+  const cwd = spyOn(process, "cwd").mockReturnValue(missingCwd);
   try {
-    expect(await primaryRoot()).toBe("/tmp/ast-mcp-missing-cwd");
+    expect(await primaryRoot()).toBe(missingCwd);
   } finally {
     cwd.mockRestore();
   }
 });
 
 test("reports formatter subprocess failures", async () => {
-  await expect(runCommandInput("/usr/bin/false", [], "input")).rejects.toThrow(
-    "failed",
-  );
+  await expect(
+    runCommandInput(process.execPath, ["-e", "process.exit(1)"], "input"),
+  ).rejects.toThrow("failed");
 });
 test("tolerates a missing configured root when another root allows the path", async () => {
   const previous = process.env.AST_MCP_ROOTS;

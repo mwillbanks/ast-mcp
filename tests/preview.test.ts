@@ -125,7 +125,10 @@ test("file_patch preview skips formatters until commit", async () => {
   );
   const options = {
     cwd: folder,
-    env: { XDG_CONFIG_HOME: path.join(folder, "xdg") },
+    env: {
+      APPDATA: path.join(folder, "xdg"),
+      XDG_CONFIG_HOME: path.join(folder, "xdg"),
+    },
   };
   try {
     await withConfig(options, async () => {

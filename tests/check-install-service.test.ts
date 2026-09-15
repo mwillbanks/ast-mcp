@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install } from "../src/installer";
@@ -24,6 +31,13 @@ test("diagnoses the platform-native managed HTTP service", async () => {
   if (process.platform !== "darwin" && process.platform !== "linux") return;
   const root = await temporary("ast-mcp-check-service-root-");
   const home = await temporary("ast-mcp-check-service-home-");
+  const localAlias = path.join(root, "node_modules/.bin/ast-mcp");
+  await mkdir(path.dirname(localAlias), { recursive: true });
+  await writeFile(
+    localAlias,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"))} "$@"\n`,
+  );
+  await chmod(localAlias, 0o755);
   await install({
     home,
     host: "127.0.0.1",

@@ -87,6 +87,7 @@
   "scripts": {
     "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test",
+    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test:coverage",
     "comparators:provision": "bun run scripts/provision-intelligence-comparators-cli.ts",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",
@@ -111,6 +112,7 @@
     "templates:check": "bun run scripts/check-template-drift.ts",
     "templates:sync": "bun run scripts/check-template-drift.ts --write",
     "test": "bun test --bail --max-concurrency=1 --timeout=30000",
+    "test:coverage": "bun test --coverage --bail --max-concurrency=1 --timeout=30000",
     "tools:check": "bun run scripts/verify-tools.ts",
     "typecheck": "bunx tsc --noEmit"
   },

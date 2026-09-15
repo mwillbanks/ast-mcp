@@ -125,7 +125,8 @@ test("lifecycle handlers execute successful and failed requests", async () => {
       },
     });
     expect(rolledBack.isError).toBeTrue();
-    expect((await stat(rollbackPath)).mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32")
+      expect((await stat(rollbackPath)).mode & 0o777).toBe(0o640);
 
     const source = path.join(root, "source.txt");
     const destination = path.join(root, "destination.txt");

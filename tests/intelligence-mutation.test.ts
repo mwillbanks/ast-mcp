@@ -433,7 +433,8 @@ describe("destructive mutation lifecycle", () => {
     ).rejects.toThrow("refresh failed");
     expect(await readFile(file, "utf8")).toBe("value\n");
     const restoredMetadata = await stat(file);
-    expect(restoredMetadata.mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32")
+      expect(restoredMetadata.mode & 0o777).toBe(0o640);
     if (process.platform !== "win32") {
       expect(restoredMetadata.uid).toBe(originalMetadata.uid);
       expect(restoredMetadata.gid).toBe(originalMetadata.gid);
@@ -838,13 +839,31 @@ describe("LanceDB mutation journal and freshness", () => {
 
   test("aborting revision discovery kills a non-terminating Git process", async () => {
     const root = await temporary("ast-mcp-abort-git-");
-    const bin = path.join(root, "bin");
-    await mkdir(bin);
-    const fakeGit = path.join(bin, "git");
-    await writeFile(fakeGit, "#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n");
-    await chmod(fakeGit, 0o755);
     const originalPath = process.env.PATH;
-    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+    const originalSpawn = Bun.spawn;
+    if (process.platform === "win32") {
+      let finish!: (code: number) => void;
+      const exited = new Promise<number>((resolve) => {
+        finish = resolve;
+      });
+      const child = {
+        exited,
+        kill: () => finish(137),
+        stderr: new Blob().stream(),
+        stdout: new Blob().stream(),
+      };
+      Bun.spawn = (() => child) as unknown as typeof Bun.spawn;
+    } else {
+      const bin = path.join(root, "bin");
+      await mkdir(bin);
+      const fakeGit = path.join(bin, "git");
+      await writeFile(
+        fakeGit,
+        "#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n",
+      );
+      await chmod(fakeGit, 0o755);
+      process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ""}`;
+    }
     const base = fakeWorkspace(root, "abort-git");
     const workspace = {
       ...base,
@@ -870,6 +889,7 @@ describe("LanceDB mutation journal and freshness", () => {
       expect(performance.now() - startedAt).toBeLessThan(1_000);
       expect(await store.count("publications")).toBe(0);
     } finally {
+      Bun.spawn = originalSpawn;
       process.env.PATH = originalPath;
       await store.shutdownCoordinator();
     }
@@ -1177,7 +1197,8 @@ describe("mutation recovery edges", () => {
     await lifecycle.recover();
     expect(await readFile(restoredPath)).toEqual(source);
     const restoredMetadata = await stat(restoredPath);
-    expect(restoredMetadata.mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32")
+      expect(restoredMetadata.mode & 0o777).toBe(0o640);
     if (ownershipSupported) {
       expect(restoredMetadata.uid).toBe(originalOwner.uid);
       expect(restoredMetadata.gid).toBe(originalOwner.gid);
@@ -1215,7 +1236,8 @@ describe("mutation recovery edges", () => {
     await lifecycle.journal.transition(partialOperationId, "failed");
     await lifecycle.recover();
     const recoveredAttributes = await stat(restoredPath);
-    expect(recoveredAttributes.mode & 0o777).toBe(0o640);
+    if (process.platform !== "win32")
+      expect(recoveredAttributes.mode & 0o777).toBe(0o640);
     if (ownershipSupported) {
       expect(recoveredAttributes.uid).toBe(originalOwner.uid);
       expect(recoveredAttributes.gid).toBe(originalOwner.gid);

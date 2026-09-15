@@ -199,6 +199,69 @@ function availablePort(): number {
   return port;
 }
 
+function launchHttpServer(executable: string, fixture: string, port: number) {
+  return Bun.spawn(
+    [
+      process.execPath,
+      executable,
+      "mcp",
+      "--transport",
+      "http",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+    ],
+    { cwd: fixture, stderr: "pipe", stdout: "pipe" },
+  );
+}
+
+async function stopHttpServer(
+  server: ReturnType<typeof launchHttpServer>,
+): Promise<void> {
+  if (server.exitCode === null) server.kill("SIGTERM");
+  const stopped = await Promise.race([
+    server.exited.then(() => true),
+    Bun.sleep(5_000).then(() => false),
+  ]);
+  if (!stopped && server.exitCode === null) server.kill("SIGKILL");
+  await server.exited;
+}
+
+async function startHttpServer(executable: string, fixture: string) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const port = availablePort();
+    const server = launchHttpServer(executable, fixture, port);
+    const serverStdout: string[] = [];
+    const serverStderr: string[] = [];
+    const stdoutDrain = drainOutput(server.stdout, serverStdout);
+    const stderrDrain = drainOutput(server.stderr, serverStderr);
+    const diagnostics = () => capturedDiagnostics(serverStdout, serverStderr);
+    try {
+      const client = await connectHttpClient(
+        new URL(`http://127.0.0.1:${port}/mcp`),
+        () => server.exitCode,
+        diagnostics,
+      );
+      return {
+        client,
+        diagnostics,
+        stop: async () => {
+          await stopHttpServer(server);
+          await Promise.all([stdoutDrain, stderrDrain]);
+        },
+      };
+    } catch (error) {
+      await stopHttpServer(server);
+      await Promise.all([stdoutDrain, stderrDrain]);
+      if (attempt < 5 && /EADDRINUSE|address.*in use/i.test(diagnostics()))
+        continue;
+      throw error;
+    }
+  }
+  throw new Error("Packaged HTTP server exhausted address-in-use retries");
+}
+
 test("extracted package supports stdio and HTTP lifecycle operations", async () => {
   const repository = path.resolve(import.meta.dir, "..");
   const owned = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-package-smoke-"));
@@ -269,53 +332,27 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       await stdio.close();
     }
 
-    const port = availablePort();
-    const server = Bun.spawn(
-      [
-        process.execPath,
-        executable,
-        "mcp",
-        "--transport",
-        "http",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
-      { cwd: fixture, stderr: "pipe", stdout: "pipe" },
-    );
-    const serverStdout: string[] = [];
-    const serverStderr: string[] = [];
-    const stdoutDrain = drainOutput(server.stdout, serverStdout);
-    const stderrDrain = drainOutput(server.stderr, serverStderr);
+    const httpServer = await startHttpServer(executable, fixture);
     try {
-      const url = new URL(`http://127.0.0.1:${port}/mcp`);
-      const http = await connectHttpClient(
-        url,
-        () => server.exitCode,
-        () => capturedDiagnostics(serverStdout, serverStderr),
-      );
       try {
         try {
           await exercisePackage(
-            http,
+            httpServer.client,
             fixture,
             path.join(owned, "http-storage"),
             "http.txt",
           );
         } catch (error) {
           throw new Error(
-            `Packaged HTTP lifecycle failed with server exit code ${String(server.exitCode)}: ${String(error)}\n${capturedDiagnostics(serverStdout, serverStderr)}`,
+            `Packaged HTTP lifecycle failed: ${String(error)}\n${httpServer.diagnostics()}`,
             { cause: error },
           );
         }
       } finally {
-        await http.close();
+        await httpServer.client.close();
       }
     } finally {
-      if (server.exitCode === null) server.kill("SIGTERM");
-      await server.exited;
-      await Promise.all([stdoutDrain, stderrDrain]);
+      await httpServer.stop();
     }
   } finally {
     await rm(owned, { force: true, recursive: true });

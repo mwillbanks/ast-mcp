@@ -47,6 +47,7 @@ test("configuration tools expose health, policy, and bounded document selectors"
       {
         cwd: root,
         env: {
+          APPDATA: path.join(root, "xdg"),
           AST_MCP_ROOTS: root,
           XDG_CONFIG_HOME: path.join(root, "xdg"),
         },
@@ -104,17 +105,19 @@ test("configuration tools expose health, policy, and bounded document selectors"
       ],
     });
     expect(policy.isError).not.toBeTrue();
-    const target = path.join(root, "target.json");
-    const link = path.join(root, "link.json");
-    await writeFile(target, '{"value":1}');
-    await symlink(target, link);
-    const linkPolicy = await (registered.get("policy_check") as ToolHandler)({
-      checks: [{ operation: "read", path: link }],
-    });
-    expect(linkPolicy.structuredContent).toMatchObject({
-      data: { decisions: [{ policy: "deny" }] },
-      ok: true,
-    });
+    if (process.platform !== "win32") {
+      const target = path.join(root, "target.json");
+      const link = path.join(root, "link.json");
+      await writeFile(target, '{"value":1}');
+      await symlink(target, link);
+      const linkPolicy = await (registered.get("policy_check") as ToolHandler)({
+        checks: [{ operation: "read", path: link }],
+      });
+      expect(linkPolicy.structuredContent).toMatchObject({
+        data: { decisions: [{ policy: "deny" }] },
+        ok: true,
+      });
+    }
     expect(
       (
         (
@@ -174,7 +177,11 @@ test("configuration tools expose health, policy, and bounded document selectors"
           result.structuredContent as {
             data: {
               values: Array<{
-                location: { column?: number; line?: number; selector: string };
+                location: {
+                  column?: number;
+                  line?: number;
+                  selector: string;
+                };
               }>;
             };
           }

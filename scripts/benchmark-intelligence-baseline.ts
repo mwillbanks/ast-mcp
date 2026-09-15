@@ -311,14 +311,20 @@ function requiredToolData<T extends Record<string, unknown>>(
   return data;
 }
 
-async function native(root: string): Promise<{
+async function native(
+  root: string,
+  storagePath: string,
+): Promise<{
   cold: ToolObservation[];
   warm: ToolObservation[];
 }> {
   const client = await connect(root, "benchmark-native");
   try {
     const opened = await client.callTool({
-      arguments: { directory: root },
+      arguments: {
+        directory: root,
+        storage: { kind: "explicit", path: storagePath },
+      },
       name: "workspace_open",
     });
     const workspaceId = openedWorkspaceId(opened.structuredContent);
@@ -1033,7 +1039,7 @@ export async function benchmarkIntelligenceBaseline() {
     await writeCorpus(root);
     const [baseline, nativeResult, graphifyResult] = await Promise.all([
       astBro(root),
-      native(root),
+      native(root, path.join(owned, "native-storage")),
       graphify(root, path.join(owned, "graphify")),
     ]);
     const replacement = nativeResult.cold;

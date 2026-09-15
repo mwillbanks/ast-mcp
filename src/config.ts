@@ -1,7 +1,7 @@
 // biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
 // biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { realpath, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,7 +25,11 @@ import {
   clearGitWorktreeCache,
   linkedWorktrees,
 } from "./runtime/git-worktrees";
-import { canonicalizePath, canonicalPathWithin } from "./runtime/path-utils";
+import {
+  canonicalizePath,
+  canonicalizePathSync,
+  canonicalPathWithin,
+} from "./runtime/path-utils";
 
 export type { WorktreesMode };
 
@@ -1233,12 +1237,12 @@ function resolutionCacheKey(args: {
 }
 
 async function sameResolvedPath(left: string, right: string): Promise<boolean> {
-  if (path.resolve(left) === path.resolve(right)) return true;
-  try {
-    return (await realpath(left)) === (await realpath(right));
-  } catch {
-    return false;
-  }
+  if (path.relative(path.resolve(left), path.resolve(right)) === "")
+    return true;
+  return (
+    path.relative(canonicalizePathSync(left), canonicalizePathSync(right)) ===
+    ""
+  );
 }
 
 async function appendUniqueRoots(

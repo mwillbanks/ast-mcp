@@ -85,7 +85,11 @@ jobs:
         run: bun ci
       - name: Provision pinned benchmark comparators
         run: bun run comparators:provision
+      - name: Verify package with coverage
+        if: runner.os == 'Linux'
+        run: bun run check:coverage
       - name: Verify package
+        if: runner.os != 'Linux'
         run: bun run check
       - name: Qualify native dependencies
         env:

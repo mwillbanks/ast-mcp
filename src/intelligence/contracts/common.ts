@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 
 export const INTELLIGENCE_SCHEMA_VERSION = "ast-mcp.intelligence.v1" as const;
@@ -43,28 +44,18 @@ export const ReaderPinIdSchema = namespacedIdentitySchema("reader-pin");
 export const SearchHitIdSchema = namespacedIdentitySchema("search-hit");
 
 export const NonEmptyStringSchema = z.string().trim().min(1);
+function isAbsolutePath(value: string): boolean {
+  return path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+}
 export const AbsolutePathSchema = z
   .string()
-  .refine(
-    (value) => value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value),
-    "Path must be absolute",
-  );
+  .refine(isAbsolutePath, "Path must be absolute");
 export const RepositoryRelativePathSchema = z
   .string()
   .min(1)
-  .refine(
-    (value) => {
-      const drivePrefix =
-        value.length >= 3 &&
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".includes(
-          value[0] ?? "",
-        ) &&
-        value[1] === ":" &&
-        (value[2] === "/" || value.charCodeAt(2) === 92);
-      return !value.startsWith("/") && !drivePrefix;
-    },
-    { message: "Repository path must be relative" },
-  )
+  .refine((value) => !isAbsolutePath(value), {
+    message: "Repository path must be relative",
+  })
   .refine(
     (value) =>
       !value.includes(String.fromCharCode(92)) &&

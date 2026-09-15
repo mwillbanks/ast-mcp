@@ -629,36 +629,39 @@ describe("LanceDB storage recovery and retention", () => {
       code: "ENOTDIR",
     });
 
-    const symlinkRoot = await mkdtemp(
-      join(tmpdir(), "ast-mcp-relocation-symlink-"),
-    );
-    const regularFile = join(symlinkRoot, "regular");
-    await writeFile(regularFile, "content");
-    const symlinkPath = join(symlinkRoot, "link");
-    await symlink(regularFile, symlinkPath);
-    expect(await snapshotStorageDirectory(symlinkRoot)).toHaveLength(1);
-    const symlinkDestinationParent = await mkdtemp(
-      join(tmpdir(), "ast-mcp-relocation-symlink-destination-"),
-    );
-    const symlinkPreview = await store.relocationPreview(
-      join(symlinkDestinationParent, "unused"),
-    );
-    await expect(
-      copyRelocationSnapshot({
-        ...symlinkPreview,
-        destinationPath: join(symlinkDestinationParent, "store"),
-        files: [
-          {
-            path: "link",
-            sha256: createHash("sha256").update("content").digest("hex"),
-            size: 7,
-          },
-        ],
-        sourcePath: symlinkRoot,
-        totalBytes: 7,
-      }),
-    ).rejects.toMatchObject({ code: "relocation_verification_failed" });
-    expect(await readdir(symlinkDestinationParent)).toEqual([]);
+    if (process.platform !== "win32") {
+      const symlinkRoot = await mkdtemp(
+        join(tmpdir(), "ast-mcp-relocation-symlink-"),
+      );
+      const regularFile = join(symlinkRoot, "regular");
+      await writeFile(regularFile, "content");
+      const symlinkPath = join(symlinkRoot, "link");
+      await symlink(regularFile, symlinkPath);
+      expect(await snapshotStorageDirectory(symlinkRoot)).toHaveLength(1);
+      const symlinkDestinationParent = await mkdtemp(
+        join(tmpdir(), "ast-mcp-relocation-symlink-destination-"),
+      );
+      const symlinkPreview = await store.relocationPreview(
+        join(symlinkDestinationParent, "unused"),
+      );
+      await expect(
+        copyRelocationSnapshot({
+          ...symlinkPreview,
+          destinationPath: join(symlinkDestinationParent, "store"),
+          files: [
+            {
+              path: "link",
+              sha256: createHash("sha256").update("content").digest("hex"),
+              size: 7,
+            },
+          ],
+          sourcePath: symlinkRoot,
+          totalBytes: 7,
+        }),
+      ).rejects.toMatchObject({ code: "relocation_verification_failed" });
+      expect(await readdir(symlinkDestinationParent)).toEqual([]);
+    }
+
     expect(() =>
       validateRelocationCoordinates(storage.storagePath, storage.storagePath),
     ).toThrow("must be disjoint");

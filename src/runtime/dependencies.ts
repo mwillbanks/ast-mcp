@@ -7,10 +7,15 @@ import {
   executableNames,
   globalBinDirectories,
   resolveGlobalBinaryAlias,
+  resolveLocalBinaryAlias,
 } from "../../templates/skills/ast-mcp/scripts/binary-resolution";
 import { currentConfig } from "../config";
 
-export { globalBinDirectories, resolveGlobalBinaryAlias };
+export {
+  globalBinDirectories,
+  resolveGlobalBinaryAlias,
+  resolveLocalBinaryAlias,
+};
 
 const PACKAGE_ROOT = path.resolve(
   import.meta.dir,

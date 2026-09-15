@@ -667,23 +667,30 @@ describe("retrieval embedding provider", () => {
       }),
     ).rejects.toThrow("invalid_artifact_name");
 
-    const outsideRoot = await mkdtemp(join(tmpdir(), "ast-mcp-model-outside-"));
-    const outsideArtifact = join(outsideRoot, "outside.json");
-    await writeFile(outsideArtifact, "{}");
-    await symlink(outsideArtifact, join(root, "link.json"));
-    await expect(
-      verifyLocalModelArtifacts({
-        ...config,
-        artifacts: { "link.json": `sha256:${sha}` },
-      }),
-    ).rejects.toThrow("embedding_artifact_outside_model_path");
+    if (process.platform !== "win32") {
+      const outsideRoot = await mkdtemp(
+        join(tmpdir(), "ast-mcp-model-outside-"),
+      );
+      const outsideArtifact = join(outsideRoot, "outside.json");
+      await writeFile(outsideArtifact, "{}");
+      await symlink(outsideArtifact, join(root, "link.json"));
+      await expect(
+        verifyLocalModelArtifacts({
+          ...config,
+          artifacts: { "link.json": `sha256:${sha}` },
+        }),
+      ).rejects.toThrow("embedding_artifact_outside_model_path");
+    }
 
     await writeFile(join(root, "config.json"), "bad");
     await expect(verifyLocalModelArtifacts(config)).rejects.toThrow(
       "embedding_artifact_corrupt",
     );
     await expect(
-      verifyLocalModelArtifacts({ ...config, artifacts: { gone: "sha256:a" } }),
+      verifyLocalModelArtifacts({
+        ...config,
+        artifacts: { gone: "sha256:a" },
+      }),
     ).rejects.toThrow("embedding_artifact_missing");
   });
 

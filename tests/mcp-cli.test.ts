@@ -6,7 +6,7 @@ const children: Bun.Subprocess[] = [];
 afterEach(async () => {
   await Promise.all(
     children.splice(0).map(async (child) => {
-      child.kill("SIGTERM");
+      if (child.exitCode === null) child.kill();
       await child.exited;
     }),
   );
@@ -65,6 +65,8 @@ test("starts Streamable HTTP through the stable mcp subcommand", async () => {
     }
   }
   expect(response?.status).toBe(400);
-  child.kill("SIGTERM");
-  expect(await child.exited).toBe(0);
+  if (child.exitCode === null)
+    child.kill(process.platform === "win32" ? undefined : "SIGTERM");
+  const exitCode = await child.exited;
+  if (process.platform !== "win32") expect(exitCode).toBe(0);
 });

@@ -1,7 +1,7 @@
 [test]
 preload = ["./tests/support/hermetic-suite.ts"]
 onlyFailures = true
-coverage = true
+coverage = false
 coverageThreshold = 0.95
 coverageSkipTestFiles = true
 # Bun applies thresholds per file and miscounts scorer callback functions.
