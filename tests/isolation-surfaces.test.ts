@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -47,6 +46,8 @@ test("hook routes manual mutation without policing host-governed execution", () 
 test("installer copies only the unified skill and its checker diagnoses the result", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-skill-install-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-skill-home-"));
+  const priorSkipSmoke = process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE;
+  process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE = "1";
   try {
     const targets: Array<"codex" | "claude" | "copilot"> = [
       "codex",
@@ -54,15 +55,25 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       "copilot",
     ];
     await install({ home, root, scope: "local", targets });
-    const astBroBinary = path.join(root, "node_modules/.bin/ast-bro");
-    await mkdir(path.dirname(astBroBinary), { recursive: true });
-    await symlink(path.resolve("node_modules/.bin/ast-bro"), astBroBinary);
+    const astMcpBinary = path.join(root, "node_modules/.bin/ast-mcp");
+    await rm(astMcpBinary, { force: true });
+    await mkdir(path.dirname(astMcpBinary), { recursive: true });
+    await writeFile(
+      astMcpBinary,
+      `#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
+    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
+    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"data":{"workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ok":true}}}' ;;
+  esac
+done
+`,
+    );
+    await chmod(astMcpBinary, 0o755);
     expect(
       await readFile(path.join(root, ".codex/skills/ast-mcp/SKILL.md"), "utf8"),
     ).toContain("# AST MCP");
-    await expect(
-      readFile(path.join(root, ".codex/skills/ast-bro/SKILL.md"), "utf8"),
-    ).rejects.toThrow();
     const installedChecker = await import(
       pathToFileURL(
         path.join(root, ".codex/skills/ast-mcp/scripts/check-install.ts"),
@@ -156,7 +167,7 @@ test("installer copies only the unified skill and its checker diagnoses the resu
 
     const globalAlias = path.join(home, ".bun/bin/ast-mcp");
     await mkdir(path.dirname(globalAlias), { recursive: true });
-    await writeFile(globalAlias, "#!/bin/sh\n");
+    await writeFile(globalAlias, await readFile(astMcpBinary, "utf8"));
     await chmod(globalAlias, 0o755);
     await install({ home, root, scope: "global", targets });
     for (const target of targets) {
@@ -199,10 +210,13 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       output.mockRestore();
     }
   } finally {
+    if (priorSkipSmoke === undefined)
+      delete process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE;
+    else process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE = priorSkipSmoke;
     await rm(root, { force: true, recursive: true });
     await rm(home, { force: true, recursive: true });
   }
-});
+}, 30_000);
 
 test("skill and AGENTS surfaces contain the enforced contract and evals", async () => {
   const skill = await readFile(

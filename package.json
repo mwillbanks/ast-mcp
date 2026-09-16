@@ -7,25 +7,52 @@
     "url": "https://github.com/mwillbanks/ast-mcp/issues"
   },
   "dependencies": {
-    "@ast-bro/cli": "4.2.0",
+    "@ast-grep/lang-bash": "0.0.8",
+    "@ast-grep/lang-c": "0.0.6",
+    "@ast-grep/lang-cpp": "0.0.6",
+    "@ast-grep/lang-csharp": "0.0.6",
+    "@ast-grep/lang-dart": "0.0.7",
+    "@ast-grep/lang-elixir": "0.0.7",
+    "@ast-grep/lang-go": "0.0.6",
+    "@ast-grep/lang-java": "0.0.7",
+    "@ast-grep/lang-kotlin": "0.0.7",
+    "@ast-grep/lang-lua": "0.0.7",
+    "@ast-grep/lang-markdown": "0.0.6",
+    "@ast-grep/lang-php": "0.0.7",
+    "@ast-grep/lang-python": "0.0.6",
+    "@ast-grep/lang-ruby": "0.0.7",
+    "@ast-grep/lang-rust": "0.0.7",
+    "@ast-grep/lang-scala": "0.0.7",
+    "@ast-grep/lang-sql": "0.0.8",
+    "@ast-grep/lang-swift": "0.0.8",
+    "@ast-grep/lang-toml": "0.0.9",
+    "@ast-grep/lang-yaml": "0.0.6",
+    "@ast-grep/napi": "0.45.3",
+    "@huggingface/transformers": "4.2.0",
+    "@lancedb/lancedb": "0.38.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
+    "apache-arrow": "18.1.0",
     "diff-match-patch-ts": "^2.0.0",
     "dprint": "0.56.1",
+    "parse5": "8.0.1",
+    "tree-sitter-wasm": "1.1.8",
+    "typescript-strada": "npm:@typescript/typescript6@6.0.2",
     "unbash": "^4.0.10",
+    "web-tree-sitter": "0.27.0",
     "zod": "^4.4.3"
   },
-  "description": "Zero-trust MCP file writes, AST edits, ast-bro intelligence, hooks, and agent skills",
+  "description": "Zero-trust MCP file writes, native code intelligence, graph retrieval, hooks, and agent skills",
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@modelcontextprotocol/inspector": "^2.4.0",
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "@types/node": "^26.3.0",
     "fallow": "^3.19.0",
     "typescript": "^7.0.2"
   },
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.2"
   },
   "files": [
     "dist",
@@ -48,7 +75,7 @@
   ],
   "license": "MIT",
   "name": "@mwillbanks/ast-mcp",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"
@@ -58,10 +85,9 @@
     "url": "git+https://github.com/mwillbanks/ast-mcp.git"
   },
   "scripts": {
-    "ast-bro:schemas": "bun run scripts/sync-ast-bro-tools.ts --write",
-    "ast-bro:schemas:check": "bun run scripts/sync-ast-bro-tools.ts",
     "build": "bun run scripts/build.ts",
     "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test",
+    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run test:coverage",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",
     "evals:check": "bun run templates/skills/ast-mcp/evals/validate.ts",
@@ -71,8 +97,11 @@
     "fallow:health": "fallow health",
     "format": "biome check . --write --unsafe --reporter concise --error-on-warnings",
     "format:check": "biome check . --reporter concise --error-on-warnings",
+    "graphify:provision": "bun run scripts/provision-intelligence-comparators-cli.ts",
     "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
     "inspect:http": "bunx @modelcontextprotocol/inspector",
+    "intelligence:measure": "bun run scripts/benchmark-intelligence-baseline.ts",
+    "intelligence:qualify": "bun run scripts/qualify-intelligence-deps.ts",
     "lint": "biome check . --reporter concise --error-on-warnings",
     "prepack": "bun run build",
     "prose:check": "bun run scripts/check-prose-cli.ts",
@@ -83,12 +112,12 @@
     "templates:check": "bun run scripts/check-template-drift.ts",
     "templates:sync": "bun run scripts/check-template-drift.ts --write",
     "test": "bun test --bail --max-concurrency=1 --timeout=30000",
-    "tools:check": "bun run scripts/verify-tools.ts && bun run ast-bro:schemas:check",
+    "test:coverage": "bun test --coverage --bail --max-concurrency=1 --timeout=30000",
+    "tools:check": "bun run scripts/verify-tools.ts",
     "typecheck": "bunx tsc --noEmit"
   },
   "sideEffects": false,
   "trustedDependencies": [
-    "@ast-bro/cli",
     "dprint"
   ],
   "type": "module",

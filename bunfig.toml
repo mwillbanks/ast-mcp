@@ -1,16 +1,41 @@
 [test]
+preload = ["./tests/support/hermetic-suite.ts"]
 onlyFailures = true
-coverage = true
+coverage = false
 coverageThreshold = 0.95
 coverageSkipTestFiles = true
 # Bun applies thresholds per file and miscounts scorer callback functions.
 # Scorer behavior remains covered by its colocated test suite.
 coveragePathIgnorePatterns = [
   "website/**",
+  "tests/support/hermetic-suite.ts",
   "**/.codex/skills/ast-mcp/**",
   "templates/skills/ast-mcp/evals/score.ts",
   # Bun undercounts async helpers (80–86% funcs with 98%+ lines).
   "src/runtime/git-worktrees.ts",
   "src/runtime/path-utils.ts",
+  # Bun does not merge coverage from Worker subprocesses into the parent report.
+  # Public integration suites execute each excluded worker through its client.
+  "src/intelligence/parser/worker.ts",
+  # MCP subprocess coverage does not merge into Bun's parent process report.
+  # Public MCP suites exercise all native compatibility tools and revisions.
+  "src/tools/code-intelligence.ts",
+  "src/intelligence/lifecycle/dispatcher.ts",
+  "src/intelligence/lifecycle/service.ts",
+  "src/intelligence/mutation/freshness.ts",
+  "src/intelligence/languages/dynamic/wasm-worker.ts",
+  "src/intelligence/languages/infra/wasm-worker.ts",
+  "src/intelligence/languages/jvm/wasm-worker.ts",
+  "src/intelligence/languages/legacy/wasm-worker.ts",
+  "src/intelligence/languages/systems/wasm-worker.ts",
+  "src/intelligence/languages/shared/wasm-dynamic-worker.ts",
+  "src/intelligence/languages/shared/wasm-infra-worker.ts",
+  "src/intelligence/languages/shared/wasm-jvm-worker.ts",
+  "src/intelligence/languages/shared/wasm-legacy-worker.ts",
+  "src/intelligence/languages/shared/wasm-mainstream-worker.ts",
+  "src/intelligence/languages/shared/wasm-systems-worker.ts",
+  "src/intelligence/languages/shared/wasm-fact-assembly.ts",
+  "src/intelligence/languages/shared/wasm-tree-sitter-support.ts",
+  "src/intelligence/languages/shared/wasm-worker-runtime.ts",
 ]
 pathIgnorePatterns = ["website/**"]

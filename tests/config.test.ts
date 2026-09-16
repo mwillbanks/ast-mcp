@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import {
   clearConfigCache,
@@ -10,6 +11,7 @@ import {
   globalConfigPath,
   resolveConfig,
 } from "../src/config";
+import { DEFAULT_EMBEDDING_MODEL } from "../src/intelligence/retrieval/types.ts";
 import { configuredExecution, localExecution } from "../src/tools/configured";
 
 const created: string[] = [];
@@ -51,6 +53,21 @@ test("resolves defaults and platform global paths", async () => {
     sessionSweepIntervalMs: 60_000,
     sessionTimeoutMs: 1_800_000,
   });
+  expect(config.intelligence).toMatchObject({
+    federation: { enabled: false },
+    generation: { enabled: false, provider: null },
+    retrieval: {
+      embedding: {
+        artifacts: DEFAULT_EMBEDDING_MODEL.artifacts,
+        dimensions: 384,
+        dtype: "q8",
+        modelId: "onnx-community/granite-embedding-30m-english-ONNX",
+        pooling: "mean",
+      },
+      semantic: false,
+    },
+    storage: { placement: { kind: "global" } },
+  });
   expect(config.provenance["http.port"]).toBe("default");
   expect(
     globalConfigPath({
@@ -59,6 +76,72 @@ test("resolves defaults and platform global paths", async () => {
       platform: "win32",
     }),
   ).toBe(path.join(root, "home", "AppData/Roaming/ast-mcp/ast-mcp.toml"));
+});
+
+test("validates and resolves intelligence placement, retrieval, and generation", async () => {
+  const root = await project("ast-mcp-config-intelligence-");
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    `version = 2
+
+[intelligence.storage.placement]
+kind = "parent"
+levels = 2
+
+[intelligence.federation]
+enabled = true
+
+[intelligence.retrieval]
+semantic = true
+
+[intelligence.retrieval.embedding]
+model_id = "example/model"
+revision = "pinned"
+dimensions = 256
+dtype = "fp16"
+pooling = "cls"
+workers = 2
+
+[intelligence.generation]
+enabled = true
+
+[intelligence.generation.provider]
+kind = "mcp"
+server_id = "host"
+model = "example-generator"
+`,
+  );
+  const config = await resolveConfig({ cwd: root, env: {} });
+  expect(config.intelligence).toMatchObject({
+    federation: { enabled: true },
+    generation: {
+      enabled: true,
+      provider: { kind: "mcp", model: "example-generator", serverId: "host" },
+    },
+    retrieval: {
+      embedding: {
+        artifacts: {},
+        dimensions: 256,
+        dtype: "fp16",
+        modelId: "example/model",
+        pooling: "cls",
+        revision: "pinned",
+        workers: 2,
+      },
+      semantic: true,
+    },
+    storage: { placement: { kind: "parent", levels: 2 } },
+  });
+});
+
+test("accepts the legacy ast-bro dependency in strict v2 configuration", async () => {
+  const root = await project("ast-mcp-config-legacy-dependency-");
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    'version = 2\n[dependencies]\nast_bro_binary = "./bin/ast-bro"\n',
+  );
+  const config = await resolveConfig({ cwd: root, env: {} });
+  expect(config.dependencies.astBroBinary).toBe(path.join(root, "bin/ast-bro"));
 });
 
 test("deep merges global, project, and environment layers with provenance", async () => {
@@ -97,8 +180,6 @@ port = 5000
 [safety]
 allow_external_roots = false
 
-[dependencies]
-ast_bro_binary = "./bin/ast-bro"
 `,
   );
 
@@ -119,7 +200,6 @@ ast_bro_binary = "./bin/ast-bro"
   expect(config.formatting.dprintConfig).toBe(
     path.join(globalFile, "../global-dprint.json"),
   );
-  expect(config.dependencies.astBroBinary).toBe(path.join(root, "bin/ast-bro"));
   expect(config.provenance).toMatchObject({
     "formatting.dprint_config": "global",
     "http.host": "environment",
@@ -202,14 +282,23 @@ test("uses client roots and rejects a request crossing conflicting policies", as
   await writeFile(path.join(second, "second.json"), "{}");
 
   const selected = await resolveConfig({
-    clientRoots: [`file://${first}`, `file://${second}`],
+    clientRoots: [pathToFileURL(first).href, pathToFileURL(second).href],
     cwd: os.tmpdir(),
-    env: {},
+    env: {
+      AST_MCP_HTTP_HOST: "client.example",
+      AST_MCP_ROOTS: first,
+    },
     requestPaths: [path.join(second, "value.ts")],
   });
   expect(selected.projectRoot).toBe(second);
+  expect(selected.workspace.roots).toEqual([first, second]);
   expect(selected.trustedRoots).toEqual([
     ...new Set([first, second, await realpath(first), await realpath(second)]),
+  ]);
+  expect(selected.http.host).toBe("client.example");
+  expect(selected.sources.environment).toEqual([
+    "AST_MCP_ROOTS",
+    "AST_MCP_HTTP_HOST",
   ]);
 
   await expect(
@@ -364,6 +453,39 @@ test("runs local tool operations inside the active configuration", async () => {
   expect(config.projectRoot).toBe(process.cwd());
 });
 
+test("wires negotiated MCP sampling with request context", async () => {
+  let receivedContext: unknown;
+  let capabilities: Record<string, unknown> = {};
+  const server = {
+    server: {
+      createMessage: async (_request: unknown, context: unknown) => {
+        receivedContext = context;
+        return { content: { text: "{}" }, model: "test", role: "assistant" };
+      },
+      getClientCapabilities: () => capabilities,
+      setNotificationHandler: () => {},
+    },
+  } as unknown as McpServer;
+  const execution = configuredExecution(server);
+  expect(
+    execution.generationDependencies?.mcpClients?.host?.capabilities?.sampling,
+  ).toBeUndefined();
+  capabilities = { sampling: {} };
+  const signal = new AbortController().signal;
+  await execution.generationDependencies?.mcpClients?.host?.createMessage(
+    {
+      maxTokens: 10,
+      messages: [{ content: { text: "test", type: "text" }, role: "user" }],
+      modelPreferences: { hints: [{ name: "test" }] },
+    },
+    { signal },
+  );
+  expect(receivedContext).toEqual({ signal });
+  expect(
+    execution.generationDependencies?.mcpClients?.host?.capabilities?.sampling,
+  ).toEqual({});
+});
+
 test("queries MCP roots only when the client advertises the capability and refreshes on notification", async () => {
   let unsupportedListCalled = false;
   const unsupported = {
@@ -392,7 +514,7 @@ test("queries MCP roots only when the client advertises the capability and refre
       getClientCapabilities: () => ({ roots: {} }),
       listRoots: async () => {
         listRootsCalls += 1;
-        return { roots: [{ uri: `file://${activeRoot}` }] };
+        return { roots: [{ uri: pathToFileURL(activeRoot).href }] };
       },
       setNotificationHandler: (method: string, handler: () => void) => {
         expect(method).toBe("notifications/roots/list_changed");

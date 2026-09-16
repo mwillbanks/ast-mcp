@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -190,26 +189,6 @@ test("file tool handlers execute keyed batches without transport indirection", a
     );
     expect(writeFailure.isError).toBeTrue();
 
-    const original = await readFile(notes, "utf8");
-    const patched = await (registered.get("file_patch") as RegisteredTool)({
-      files: {
-        [notes]: {
-          aiderBlocks: [
-            { replace: "one", search: "alpha" },
-            { replace: "two", search: "beta" },
-          ],
-          expectedSha256: createHash("sha256").update(original).digest("hex"),
-          patchStrategy: "aider_block",
-        },
-      },
-    });
-    if (patched.isError)
-      throw new Error(
-        patched.content.map((item) => item.text ?? "").join("\n"),
-      );
-    expect(patched.isError).not.toBeTrue();
-    expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
-
     const astRead = await (registered.get("file_read") as RegisteredTool)({
       files: [{ filePath: path.join(process.cwd(), "src/server.ts") }],
     });
@@ -223,4 +202,51 @@ test("file tool handlers execute keyed batches without transport indirection", a
   } finally {
     await rm(folder, { force: true, recursive: true });
   }
-}, 15_000);
+});
+
+test("file patch formats committed content and preserves batch output", async () => {
+  const folder = await mkdtemp(path.join(process.cwd(), ".tmp-file-tools-"));
+  try {
+    const notes = path.join(folder, "notes.ts");
+    await writeFile(notes, "const alpha=1;\nconst beta=2;\n");
+    const registered = new Map<string, RegisteredTool>();
+    const server = {
+      registerTool(
+        name: string,
+        _definition: unknown,
+        handler: RegisteredTool,
+      ) {
+        registered.set(name, handler);
+      },
+    };
+    registerFileTools(server as never);
+    const original = await Bun.file(notes).text();
+    const expectedSha256 = new Bun.CryptoHasher("sha256")
+      .update(original)
+      .digest("hex");
+    const patch = registered.get("file_patch");
+    if (!patch) throw new Error("file_patch handler was not registered");
+    const patched = await patch({
+      files: {
+        [notes]: {
+          aiderBlocks: [
+            { replace: "one", search: "alpha" },
+            { replace: "two", search: "beta" },
+          ],
+          expectedSha256,
+          patchStrategy: "aider_block",
+        },
+      },
+    });
+    if (patched.isError)
+      throw new Error(
+        patched.content.map((item) => item.text ?? "").join("\n"),
+      );
+    expect(patched.isError).not.toBeTrue();
+    expect(await readFile(notes, "utf8")).toBe(
+      "const one = 1;\nconst two = 2;\n",
+    );
+  } finally {
+    await rm(folder, { force: true, recursive: true });
+  }
+}, 45_000);

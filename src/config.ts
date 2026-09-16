@@ -1,8 +1,9 @@
+// biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
+// biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { realpath, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   createFormatterSchema,
@@ -18,11 +19,16 @@ import {
   type PathRuleV2,
 } from "./config-v2-schema";
 import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
+import { DEFAULT_EMBEDDING_MODEL } from "./intelligence/retrieval/types.ts";
 import {
   clearGitWorktreeCache,
   linkedWorktrees,
 } from "./runtime/git-worktrees";
-import { canonicalizePath } from "./runtime/path-utils";
+import {
+  canonicalizePath,
+  canonicalizePathSync,
+  canonicalPathWithin,
+} from "./runtime/path-utils";
 
 export type { WorktreesMode };
 
@@ -89,6 +95,39 @@ export interface ResolvedConfig {
     }>;
   };
   generation: number;
+  intelligence: {
+    federation: { enabled: boolean };
+    generation: {
+      enabled: boolean;
+      provider:
+        | { apiKeyEnv?: string; endpoint: string; kind: "http"; model: string }
+        | { kind: "mcp"; model: string; serverId: string }
+        | null;
+    };
+    retrieval: {
+      embedding: {
+        artifacts: Record<string, string>;
+        batchSize: number;
+        device: "auto" | "cpu" | "gpu" | "wasm" | "webgpu";
+        dimensions: number;
+        dtype: "fp32" | "fp16" | "q8" | "q4";
+        localPath: string | null;
+        maxQueue: number;
+        modelId: string;
+        pooling: "mean" | "cls";
+        revision: string;
+        workers: number;
+      };
+      semantic: boolean;
+    };
+    storage: {
+      placement:
+        | { kind: "global" }
+        | { kind: "local" }
+        | { kind: "parent"; levels: number }
+        | { kind: "explicit"; path: string };
+    };
+  };
   http: {
     host: string;
     port: number;
@@ -134,6 +173,9 @@ export interface ResolveConfigOptions {
   home?: string;
   platform?: NodeJS.Platform;
   requestPaths?: string[];
+  revisionId?: string;
+  storageDomainId?: string;
+  workspaceId?: string;
 }
 
 interface LoadedLayer {
@@ -167,6 +209,43 @@ interface InternalConfig {
       mode?: "stdout" | "in_place";
       timeout_ms?: number;
     }>;
+  };
+  intelligence?: {
+    federation?: { enabled?: boolean };
+    generation?: {
+      enabled?: boolean;
+      provider?:
+        | {
+            api_key_env?: string;
+            endpoint: string;
+            kind: "http";
+            model: string;
+          }
+        | { kind: "mcp"; model: string; server_id?: string }
+        | null;
+    };
+    retrieval?: {
+      embedding?: {
+        batch_size?: number;
+        device?: "auto" | "cpu" | "gpu" | "wasm" | "webgpu";
+        dimensions?: number;
+        dtype?: "fp32" | "fp16" | "q8" | "q4";
+        local_path?: string | null;
+        max_queue?: number;
+        model_id?: string;
+        pooling?: "mean" | "cls";
+        revision?: string;
+        workers?: number;
+      };
+      semantic?: boolean;
+    };
+    storage?: {
+      placement?:
+        | { kind: "global" }
+        | { kind: "local" }
+        | { kind: "parent"; levels: number }
+        | { kind: "explicit"; path: string };
+    };
   };
   http?: {
     host?: string;
@@ -258,18 +337,10 @@ async function validateDprintConfig(filePath: string): Promise<string> {
   return promise;
 }
 
-function within(root: string, target: string) {
-  const relative = path.relative(root, target);
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-}
-
 function resolveFileUri(value: string) {
   if (!value.startsWith("file:")) return value;
   try {
-    return fileURLToPath(value);
+    return Bun.fileURLToPath(value);
   } catch (error) {
     throw new ConfigurationError(
       `Invalid MCP workspace root "${value}": ${error instanceof Error ? error.message : String(error)}`,
@@ -462,10 +533,24 @@ function environmentDependencies(
   env: NodeJS.ProcessEnv,
   usage: EnvironmentUsage,
 ) {
-  const astBroBinary = usage.use("AST_BRO_BINARY", env.AST_BRO_BINARY);
   const dprintBinary = usage.use("DPRINT_BINARY", env.DPRINT_BINARY);
-  return astBroBinary || dprintBinary
-    ? { ast_bro_binary: astBroBinary, dprint_binary: dprintBinary }
+  return dprintBinary ? { dprint_binary: dprintBinary } : undefined;
+}
+
+function environmentIntelligence(
+  env: NodeJS.ProcessEnv,
+  usage: EnvironmentUsage,
+): InternalConfig["intelligence"] {
+  const modelId = usage.use(
+    "AST_MCP_EMBEDDING_MODEL",
+    env.AST_MCP_EMBEDDING_MODEL,
+  );
+  if (modelId !== undefined && !modelId.trim())
+    throw new ConfigurationError(
+      "Environment variable AST_MCP_EMBEDDING_MODEL must not be empty",
+    );
+  return modelId
+    ? { retrieval: { embedding: { model_id: modelId.trim() } } }
     : undefined;
 }
 
@@ -530,11 +615,14 @@ function environmentSafety(env: NodeJS.ProcessEnv, usage: EnvironmentUsage) {
 function environmentLayer(
   env: NodeJS.ProcessEnv,
   cwd: string,
+  suppressRootSelectors = false,
 ): { names: string[]; value: InternalConfig } {
   const usage = new EnvironmentUsage();
-  const roots = environmentRoots(env, cwd, usage);
+  const environmentRootsValue = environmentRoots(env, cwd, usage);
+  const roots = suppressRootSelectors ? undefined : environmentRootsValue;
   const safety = environmentSafety(env, usage);
   const formatting = environmentFormatting(env, cwd, usage);
+  const intelligence = environmentIntelligence(env, usage);
   const dependencies = environmentDependencies(env, usage);
   const http = environmentHttp(env, usage);
   return {
@@ -543,6 +631,7 @@ function environmentLayer(
       dependencies,
       formatting,
       http,
+      intelligence,
       safety,
       workspace: roots ? { roots } : undefined,
     },
@@ -573,6 +662,12 @@ const leaves = [
   "formatting.formatters",
   "dependencies.ast_bro_binary",
   "dependencies.dprint_binary",
+  "intelligence.federation.enabled",
+  "intelligence.generation.enabled",
+  "intelligence.generation.provider",
+  "intelligence.retrieval.embedding",
+  "intelligence.retrieval.semantic",
+  "intelligence.storage.placement",
   "http.host",
   "http.port",
   "http.session_timeout_ms",
@@ -597,6 +692,7 @@ const mergeSections = [
   "files",
   "formatting",
   "dependencies",
+  "intelligence",
   "http",
   "mcp",
 ] as const;
@@ -636,6 +732,27 @@ function mergeFileMethods(
   };
 }
 
+function mergeIntelligence(
+  result: InternalConfig,
+  incoming: InternalConfig["intelligence"],
+  previous: InternalConfig["intelligence"],
+): void {
+  if (!incoming) return;
+  result.intelligence = {
+    federation: { ...previous?.federation, ...incoming.federation },
+    generation: { ...previous?.generation, ...incoming.generation },
+    retrieval: {
+      ...previous?.retrieval,
+      ...incoming.retrieval,
+      embedding: {
+        ...previous?.retrieval?.embedding,
+        ...incoming.retrieval?.embedding,
+      },
+    },
+    storage: { ...previous?.storage, ...incoming.storage },
+  };
+}
+
 function mergeMcpConfiguration(
   result: InternalConfig,
   incoming: InternalConfig["mcp"],
@@ -660,6 +777,7 @@ function mergeSection(
   const previousHook = result.safety?.hook;
   const previousFiles = result.files;
   const previousMcp = result.mcp;
+  const previousIntelligence = result.intelligence;
   result[section] = {
     ...(result[section] as object | undefined),
     ...definedProperties(incoming),
@@ -671,6 +789,12 @@ function mergeSection(
       result,
       incoming as InternalConfig["files"],
       previousFiles,
+    );
+  if (section === "intelligence")
+    mergeIntelligence(
+      result,
+      incoming as InternalConfig["intelligence"],
+      previousIntelligence,
     );
   if (section === "mcp")
     mergeMcpConfiguration(
@@ -740,7 +864,7 @@ function matchedProjectRoots(
     .filter((item) => path.isAbsolute(item))
     .map((item) => path.resolve(item));
   const matched = candidates.filter((root) =>
-    absolute.some((item) => within(root, item)),
+    absolute.some((item) => canonicalPathWithin(root, item)),
   );
   return matched.length ? matched : [candidates[0] as string];
 }
@@ -752,6 +876,26 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       dprint_config: packageDprintConfig(),
       enabled: true,
       formatters: [],
+    },
+    intelligence: {
+      federation: { enabled: false },
+      generation: { enabled: false, provider: null },
+      retrieval: {
+        embedding: {
+          batch_size: 8,
+          device: "cpu",
+          dimensions: 384,
+          dtype: "q8",
+          local_path: null,
+          max_queue: 256,
+          model_id: "onnx-community/granite-embedding-30m-english-ONNX",
+          pooling: "mean",
+          revision: "a141ffafe5810d8ee499de14086b5259527ed6ff",
+          workers: 1,
+        },
+        semantic: false,
+      },
+      storage: { placement: { kind: "global" } },
     },
     http: {
       host: "127.0.0.1",
@@ -822,6 +966,68 @@ function resolvedFiles(value: InternalConfig): ResolvedConfig["files"] {
       strategies: value.files?.patch?.strategies ?? ["ast", "aider_block"],
     },
     read: { modes: value.files?.read?.modes ?? ["ast", "text"] },
+  };
+}
+
+function resolvedIntelligence(
+  value: InternalConfig,
+): ResolvedConfig["intelligence"] {
+  const embedding = value.intelligence?.retrieval?.embedding;
+  const provider = value.intelligence?.generation?.provider;
+  return {
+    federation: { enabled: value.intelligence?.federation?.enabled ?? false },
+    generation: {
+      enabled: value.intelligence?.generation?.enabled ?? false,
+      provider:
+        provider?.kind === "http"
+          ? {
+              apiKeyEnv: provider.api_key_env,
+              endpoint: provider.endpoint,
+              kind: "http",
+              model: provider.model,
+            }
+          : provider?.kind === "mcp"
+            ? {
+                kind: "mcp",
+                model: provider.model,
+                serverId: provider.server_id ?? "host",
+              }
+            : null,
+    },
+    retrieval: {
+      embedding: {
+        artifacts:
+          (embedding?.model_id ?? DEFAULT_EMBEDDING_MODEL.modelId) ===
+            DEFAULT_EMBEDDING_MODEL.modelId &&
+          (embedding?.revision ?? DEFAULT_EMBEDDING_MODEL.revision) ===
+            DEFAULT_EMBEDDING_MODEL.revision &&
+          (embedding?.dimensions ?? DEFAULT_EMBEDDING_MODEL.dimensions) ===
+            DEFAULT_EMBEDDING_MODEL.dimensions &&
+          (embedding?.dtype ?? DEFAULT_EMBEDDING_MODEL.dtype) ===
+            DEFAULT_EMBEDDING_MODEL.dtype &&
+          (embedding?.pooling ?? DEFAULT_EMBEDDING_MODEL.pooling) ===
+            DEFAULT_EMBEDDING_MODEL.pooling
+            ? { ...DEFAULT_EMBEDDING_MODEL.artifacts }
+            : {},
+        batchSize: embedding?.batch_size ?? 8,
+        device: embedding?.device ?? "cpu",
+        dimensions: embedding?.dimensions ?? 384,
+        dtype: embedding?.dtype ?? "q8",
+        localPath: embedding?.local_path ?? null,
+        maxQueue: embedding?.max_queue ?? 256,
+        modelId:
+          embedding?.model_id ??
+          "onnx-community/granite-embedding-30m-english-ONNX",
+        pooling: embedding?.pooling ?? "mean",
+        revision:
+          embedding?.revision ?? "a141ffafe5810d8ee499de14086b5259527ed6ff",
+        workers: embedding?.workers ?? 1,
+      },
+      semantic: value.intelligence?.retrieval?.semantic ?? false,
+    },
+    storage: {
+      placement: value.intelligence?.storage?.placement ?? { kind: "global" },
+    },
   };
 }
 
@@ -951,6 +1157,7 @@ function resolvedConfiguration(args: {
     files: resolvedFiles(value),
     formatting: resolvedFormatting(value, dprintConfig),
     generation: 0,
+    intelligence: resolvedIntelligence(value),
     http: resolvedHttp(value),
     mcp: resolvedMcp(value),
     paths: resolvedPathEntries([
@@ -1009,7 +1216,10 @@ function resolutionCacheKey(args: {
   globalPath: string;
   projectPath: string | undefined;
   projectRoot: string;
+  revisionId: string | undefined;
+  storageDomainId: string | undefined;
   trustedRoots: string[];
+  workspaceId: string | undefined;
 }) {
   return JSON.stringify({
     candidates: args.candidates,
@@ -1018,17 +1228,20 @@ function resolutionCacheKey(args: {
     globalPath: args.globalPath,
     projectPath: args.projectPath,
     projectRoot: args.projectRoot,
+    revisionId: args.revisionId,
+    storageDomainId: args.storageDomainId,
     trustedRoots: args.trustedRoots,
+    workspaceId: args.workspaceId,
   });
 }
 
 async function sameResolvedPath(left: string, right: string): Promise<boolean> {
-  if (path.resolve(left) === path.resolve(right)) return true;
-  try {
-    return (await realpath(left)) === (await realpath(right));
-  } catch {
-    return false;
-  }
+  if (path.relative(path.resolve(left), path.resolve(right)) === "")
+    return true;
+  return (
+    path.relative(canonicalizePathSync(left), canonicalizePathSync(right)) ===
+    ""
+  );
 }
 
 async function appendUniqueRoots(
@@ -1101,7 +1314,11 @@ async function resolveForProject(
     projectPath,
     projectRoot,
   );
-  const environment = environmentLayer(env, cwd);
+  const environment = environmentLayer(
+    env,
+    cwd,
+    (options.clientRoots?.length ?? 0) > 0,
+  );
   const layers: ConfigLayer[] = [
     { name: "default", value: defaultInternalConfig(candidates) },
     { name: "global", value: global.value ?? {} },
@@ -1122,7 +1339,10 @@ async function resolveForProject(
     globalPath,
     projectPath,
     projectRoot,
+    revisionId: options.revisionId,
+    storageDomainId: options.storageDomainId,
     trustedRoots,
+    workspaceId: options.workspaceId,
   });
   const linked = await discoveredLinkedWorktrees(
     projectRoot,

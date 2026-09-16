@@ -1,38 +1,14 @@
 import { expect, test } from "bun:test";
+import { spawnLiveProcess } from "./support/live-process";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-async function readJsonLine(
-  reader: {
-    read(): Promise<{ done: boolean; value?: Uint8Array<ArrayBufferLike> }>;
-  },
-  buffered: { value: string },
-) {
-  while (!buffered.value.includes("\n")) {
-    const next = await reader.read();
-    if (next.done) throw new Error("stdio server closed before a response");
-    buffered.value += decoder.decode(next.value, { stream: true });
-  }
-
-  const newline = buffered.value.indexOf("\n");
-  const line = buffered.value.slice(0, newline);
-  buffered.value = buffered.value.slice(newline + 1);
-  return JSON.parse(line) as { id?: number; result?: unknown };
-}
-
 test("stdio batch suppresses notification responses and preserves request IDs", async () => {
-  const child = Bun.spawn(["bun", "run", "src/index.ts"], {
+  const child = spawnLiveProcess(process.execPath, ["run", "src/index.ts"], {
     cwd: process.cwd(),
-    stderr: "pipe",
-    stdin: "pipe",
-    stdout: "pipe",
   });
-  const reader = child.stdout.getReader();
-  const buffered = { value: "" };
 
   try {
-    child.stdin.write(
+    child.process.stdin.write(
       encoder.encode(
         `${JSON.stringify({
           id: 1,
@@ -47,10 +23,13 @@ test("stdio batch suppresses notification responses and preserves request IDs", 
       ),
     );
 
-    const initialized = await readJsonLine(reader, buffered);
+    const initialized = JSON.parse(await child.readStdoutLine()) as {
+      id?: number;
+      result?: unknown;
+    };
     expect(initialized.id).toBe(1);
 
-    child.stdin.write(
+    child.process.stdin.write(
       encoder.encode(
         `${JSON.stringify([
           {
@@ -65,9 +44,9 @@ test("stdio batch suppresses notification responses and preserves request IDs", 
     );
 
     const responses = [
-      await readJsonLine(reader, buffered),
-      await readJsonLine(reader, buffered),
-    ];
+      JSON.parse(await child.readStdoutLine()),
+      JSON.parse(await child.readStdoutLine()),
+    ] as Array<{ id?: number; result?: unknown }>;
     expect(
       responses.map((response) => (response as { id?: unknown }).id).sort(),
     ).toEqual([2, null]);
@@ -83,7 +62,6 @@ test("stdio batch suppresses notification responses and preserves request IDs", 
       responses.find((response) => response.id === 2)?.result,
     ).toBeTruthy();
   } finally {
-    child.kill();
-    await child.exited;
+    await child.stop();
   }
 });

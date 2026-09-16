@@ -1,0 +1,1102 @@
+{
+  "cases": {
+    "astro.astro": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 135,
+            "start": 121
+          },
+          {
+            "callee": "mount",
+            "end": 192,
+            "start": 185
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 142,
+            "exportedName": "AstroService",
+            "localName": "AstroService",
+            "source": null,
+            "start": 39
+          },
+          {
+            "end": 193,
+            "exportedName": "hydrate",
+            "localName": "hydrate",
+            "source": null,
+            "start": 156
+          }
+        ],
+        "implementations": [
+          {
+            "end": 97,
+            "start": 89,
+            "targetName": "Runnable"
+          }
+        ],
+        "imports": [
+          {
+            "end": 38,
+            "importedName": "render",
+            "localName": "render",
+            "source": "./render",
+            "start": 4
+          }
+        ],
+        "inheritance": [
+          {
+            "end": 77,
+            "start": 73,
+            "targetName": "Base"
+          }
+        ],
+        "references": [
+          {
+            "end": 19,
+            "name": "render",
+            "role": "read",
+            "start": 13
+          },
+          {
+            "end": 64,
+            "name": "AstroService",
+            "role": "type",
+            "start": 52
+          },
+          {
+            "end": 77,
+            "name": "Base",
+            "role": "read",
+            "start": 73
+          },
+          {
+            "end": 97,
+            "name": "Runnable",
+            "role": "type",
+            "start": 89
+          },
+          {
+            "end": 105,
+            "name": "run",
+            "role": "read",
+            "start": 102
+          },
+          {
+            "end": 127,
+            "name": "render",
+            "role": "read",
+            "start": 121
+          },
+          {
+            "end": 176,
+            "name": "hydrate",
+            "role": "write",
+            "start": 169
+          },
+          {
+            "end": 190,
+            "name": "mount",
+            "role": "read",
+            "start": 185
+          }
+        ],
+        "symbols": [
+          {
+            "end": 142,
+            "kind": "class",
+            "name": "AstroService",
+            "start": 46
+          },
+          {
+            "end": 140,
+            "kind": "method",
+            "name": "run",
+            "start": 102
+          },
+          {
+            "end": 192,
+            "kind": "variable",
+            "name": "hydrate",
+            "start": 169
+          }
+        ]
+      },
+      "languageId": "astro",
+      "regions": [
+        {
+          "end": 142,
+          "languageId": "typescript",
+          "start": 4
+        },
+        {
+          "end": 194,
+          "languageId": "javascript",
+          "start": 155
+        }
+      ]
+    },
+    "blade.blade.php": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 105,
+            "start": 91
+          },
+          {
+            "callee": "render",
+            "end": 140,
+            "start": 127
+          }
+        ],
+        "diagnostics": [],
+        "exports": [],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 39,
+            "importedName": "render",
+            "localName": "render",
+            "source": "./render",
+            "start": 5
+          }
+        ],
+        "inheritance": [],
+        "references": [
+          {
+            "end": 20,
+            "name": "render",
+            "role": "read",
+            "start": 14
+          },
+          {
+            "end": 58,
+            "name": "BladeService",
+            "role": "read",
+            "start": 46
+          },
+          {
+            "end": 71,
+            "name": "Base",
+            "role": "read",
+            "start": 67
+          },
+          {
+            "end": 79,
+            "name": "run",
+            "role": "read",
+            "start": 76
+          },
+          {
+            "end": 97,
+            "name": "render",
+            "role": "read",
+            "start": 91
+          },
+          {
+            "end": 133,
+            "name": "render",
+            "role": "read",
+            "start": 127
+          },
+          {
+            "end": 139,
+            "name": "title",
+            "role": "read",
+            "start": 134
+          }
+        ],
+        "symbols": [
+          {
+            "end": 110,
+            "kind": "class",
+            "name": "BladeService",
+            "start": 40
+          },
+          {
+            "end": 108,
+            "kind": "method",
+            "name": "run",
+            "start": 76
+          }
+        ]
+      },
+      "languageId": "blade",
+      "regions": [
+        {
+          "end": 111,
+          "languageId": "javascript",
+          "start": 4
+        },
+        {
+          "end": 141,
+          "languageId": "javascript",
+          "start": 126
+        }
+      ]
+    },
+    "ejs.ejs": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 103,
+            "start": 91
+          },
+          {
+            "callee": "render",
+            "end": 129,
+            "start": 116
+          }
+        ],
+        "diagnostics": [],
+        "exports": [],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 37,
+            "importedName": "render",
+            "localName": "render",
+            "source": "./render",
+            "start": 3
+          }
+        ],
+        "inheritance": [],
+        "references": [
+          {
+            "end": 18,
+            "name": "render",
+            "role": "read",
+            "start": 12
+          },
+          {
+            "end": 60,
+            "name": "EjsService",
+            "role": "read",
+            "start": 50
+          },
+          {
+            "end": 73,
+            "name": "Base",
+            "role": "read",
+            "start": 69
+          },
+          {
+            "end": 79,
+            "name": "run",
+            "role": "read",
+            "start": 76
+          },
+          {
+            "end": 97,
+            "name": "render",
+            "role": "read",
+            "start": 91
+          },
+          {
+            "end": 122,
+            "name": "render",
+            "role": "read",
+            "start": 116
+          },
+          {
+            "end": 128,
+            "name": "title",
+            "role": "read",
+            "start": 123
+          }
+        ],
+        "symbols": [
+          {
+            "end": 108,
+            "kind": "class",
+            "name": "EjsService",
+            "start": 44
+          },
+          {
+            "end": 106,
+            "kind": "method",
+            "name": "run",
+            "start": 76
+          }
+        ]
+      },
+      "languageId": "ejs",
+      "regions": [
+        {
+          "end": 38,
+          "languageId": "javascript",
+          "start": 2
+        },
+        {
+          "end": 109,
+          "languageId": "javascript",
+          "start": 43
+        },
+        {
+          "end": 130,
+          "languageId": "javascript",
+          "start": 115
+        }
+      ]
+    },
+    "javascript.js": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "emit",
+            "end": 123,
+            "start": 112
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 130,
+            "exportedName": "CaféService",
+            "localName": "CaféService",
+            "source": null,
+            "start": 44
+          },
+          {
+            "end": 178,
+            "exportedName": "factory",
+            "localName": "factory",
+            "source": null,
+            "start": 131
+          }
+        ],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 43,
+            "importedName": "Base",
+            "localName": "Parent",
+            "source": "./base.js",
+            "start": 0
+          }
+        ],
+        "inheritance": [
+          {
+            "end": 83,
+            "start": 77,
+            "targetName": "Parent"
+          }
+        ],
+        "references": [
+          {
+            "end": 13,
+            "name": "Base",
+            "role": "read",
+            "start": 9
+          },
+          {
+            "end": 23,
+            "name": "Parent",
+            "role": "read",
+            "start": 17
+          },
+          {
+            "end": 68,
+            "name": "CaféService",
+            "role": "type",
+            "start": 57
+          },
+          {
+            "end": 83,
+            "name": "Parent",
+            "role": "read",
+            "start": 77
+          },
+          {
+            "end": 91,
+            "name": "run",
+            "role": "read",
+            "start": 88
+          },
+          {
+            "end": 97,
+            "name": "value",
+            "role": "write",
+            "start": 92
+          },
+          {
+            "end": 116,
+            "name": "emit",
+            "role": "read",
+            "start": 112
+          },
+          {
+            "end": 122,
+            "name": "value",
+            "role": "read",
+            "start": 117
+          },
+          {
+            "end": 151,
+            "name": "factory",
+            "role": "write",
+            "start": 144
+          },
+          {
+            "end": 175,
+            "name": "CaféService",
+            "role": "read",
+            "start": 164
+          }
+        ],
+        "symbols": [
+          {
+            "end": 130,
+            "kind": "class",
+            "name": "CaféService",
+            "start": 51
+          },
+          {
+            "end": 128,
+            "kind": "method",
+            "name": "run",
+            "start": 88
+          },
+          {
+            "end": 177,
+            "kind": "variable",
+            "name": "factory",
+            "start": 144
+          }
+        ]
+      },
+      "languageId": "javascript",
+      "regions": []
+    },
+    "jsx.jsx": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 106,
+            "start": 84
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 109,
+            "exportedName": "JsxView",
+            "localName": "JsxView",
+            "source": null,
+            "start": 38
+          }
+        ],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 37,
+            "importedName": "render",
+            "localName": "render",
+            "source": "./render.js",
+            "start": 0
+          }
+        ],
+        "inheritance": [],
+        "references": [
+          {
+            "end": 15,
+            "name": "render",
+            "role": "read",
+            "start": 9
+          },
+          {
+            "end": 61,
+            "name": "JsxView",
+            "role": "read",
+            "start": 54
+          },
+          {
+            "end": 90,
+            "name": "render",
+            "role": "read",
+            "start": 84
+          },
+          {
+            "end": 93,
+            "name": "p",
+            "role": "read",
+            "start": 92
+          },
+          {
+            "end": 100,
+            "name": "label",
+            "role": "read",
+            "start": 95
+          },
+          {
+            "end": 104,
+            "name": "p",
+            "role": "read",
+            "start": 103
+          }
+        ],
+        "symbols": [
+          {
+            "end": 109,
+            "kind": "function",
+            "name": "JsxView",
+            "start": 45
+          }
+        ]
+      },
+      "languageId": "jsx",
+      "regions": []
+    },
+    "razor.cshtml": {
+      "facts": {
+        "calls": [],
+        "diagnostics": [
+          {
+            "code": "missing-node",
+            "end": 2,
+            "severity": "warning",
+            "start": 0
+          }
+        ],
+        "exports": [],
+        "implementations": [],
+        "imports": [],
+        "inheritance": [],
+        "references": [],
+        "symbols": []
+      },
+      "languageId": "razor",
+      "regions": []
+    },
+    "svelte.svelte": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "tick",
+            "end": 124,
+            "start": 118
+          },
+          {
+            "callee": "update",
+            "end": 145,
+            "start": 137
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 152,
+            "exportedName": "SvelteService",
+            "localName": "SvelteService",
+            "source": null,
+            "start": 50
+          }
+        ],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 49,
+            "importedName": "tick",
+            "localName": "tick",
+            "source": "svelte",
+            "start": 19
+          }
+        ],
+        "inheritance": [
+          {
+            "end": 89,
+            "start": 85,
+            "targetName": "Base"
+          }
+        ],
+        "references": [
+          {
+            "end": 32,
+            "name": "tick",
+            "role": "read",
+            "start": 28
+          },
+          {
+            "end": 76,
+            "name": "SvelteService",
+            "role": "type",
+            "start": 63
+          },
+          {
+            "end": 89,
+            "name": "Base",
+            "role": "read",
+            "start": 85
+          },
+          {
+            "end": 103,
+            "name": "run",
+            "role": "read",
+            "start": 100
+          },
+          {
+            "end": 122,
+            "name": "tick",
+            "role": "read",
+            "start": 118
+          },
+          {
+            "end": 143,
+            "name": "update",
+            "role": "read",
+            "start": 137
+          }
+        ],
+        "symbols": [
+          {
+            "end": 152,
+            "kind": "class",
+            "name": "SvelteService",
+            "start": 57
+          },
+          {
+            "end": 150,
+            "kind": "method",
+            "name": "run",
+            "start": 94
+          }
+        ]
+      },
+      "languageId": "svelte",
+      "regions": [
+        {
+          "end": 153,
+          "languageId": "typescript",
+          "start": 18
+        }
+      ]
+    },
+    "tsx.tsx": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 172,
+            "start": 150
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 96,
+            "exportedName": "Props",
+            "localName": "Props",
+            "source": null,
+            "start": 53
+          },
+          {
+            "end": 175,
+            "exportedName": "TsxView",
+            "localName": "TsxView",
+            "source": null,
+            "start": 97
+          }
+        ],
+        "implementations": [],
+        "imports": [
+          {
+            "end": 52,
+            "importedName": "render",
+            "localName": "render",
+            "source": "./render.js",
+            "start": 15
+          }
+        ],
+        "inheritance": [],
+        "references": [
+          {
+            "end": 30,
+            "name": "render",
+            "role": "read",
+            "start": 24
+          },
+          {
+            "end": 75,
+            "name": "Props",
+            "role": "type",
+            "start": 70
+          },
+          {
+            "end": 85,
+            "name": "label",
+            "role": "read",
+            "start": 80
+          },
+          {
+            "end": 120,
+            "name": "TsxView",
+            "role": "read",
+            "start": 113
+          },
+          {
+            "end": 137,
+            "name": "Props",
+            "role": "type",
+            "start": 132
+          },
+          {
+            "end": 156,
+            "name": "render",
+            "role": "read",
+            "start": 150
+          },
+          {
+            "end": 159,
+            "name": "p",
+            "role": "read",
+            "start": 158
+          },
+          {
+            "end": 166,
+            "name": "label",
+            "role": "read",
+            "start": 161
+          },
+          {
+            "end": 170,
+            "name": "p",
+            "role": "read",
+            "start": 169
+          }
+        ],
+        "symbols": [
+          {
+            "end": 96,
+            "kind": "interface",
+            "name": "Props",
+            "start": 60
+          },
+          {
+            "end": 175,
+            "kind": "function",
+            "name": "TsxView",
+            "start": 104
+          }
+        ]
+      },
+      "languageId": "tsx",
+      "regions": []
+    },
+    "typescript.ts": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "send",
+            "end": 277,
+            "start": 266
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 153,
+            "exportedName": "Named",
+            "localName": "Named",
+            "source": null,
+            "start": 111
+          },
+          {
+            "end": 284,
+            "exportedName": "Service",
+            "localName": "Service",
+            "source": null,
+            "start": 154
+          },
+          {
+            "end": 322,
+            "exportedName": "DefaultService",
+            "localName": "Service",
+            "source": null,
+            "start": 285
+          }
+        ],
+        "implementations": [
+          {
+            "end": 207,
+            "start": 199,
+            "targetName": "Runnable"
+          },
+          {
+            "end": 214,
+            "start": 209,
+            "targetName": "Named"
+          }
+        ],
+        "imports": [
+          {
+            "end": 43,
+            "importedName": "emit",
+            "localName": "send",
+            "source": "./client.ts",
+            "start": 0
+          },
+          {
+            "end": 87,
+            "importedName": "Runnable",
+            "localName": "Runnable",
+            "source": "./types.ts",
+            "start": 44
+          }
+        ],
+        "inheritance": [
+          {
+            "end": 187,
+            "start": 183,
+            "targetName": "Base"
+          }
+        ],
+        "references": [
+          {
+            "end": 13,
+            "name": "emit",
+            "role": "read",
+            "start": 9
+          },
+          {
+            "end": 21,
+            "name": "send",
+            "role": "read",
+            "start": 17
+          },
+          {
+            "end": 66,
+            "name": "Runnable",
+            "role": "read",
+            "start": 58
+          },
+          {
+            "end": 107,
+            "name": "Base",
+            "role": "type",
+            "start": 103
+          },
+          {
+            "end": 133,
+            "name": "Named",
+            "role": "type",
+            "start": 128
+          },
+          {
+            "end": 142,
+            "name": "name",
+            "role": "read",
+            "start": 138
+          },
+          {
+            "end": 174,
+            "name": "Service",
+            "role": "type",
+            "start": 167
+          },
+          {
+            "end": 187,
+            "name": "Base",
+            "role": "read",
+            "start": 183
+          },
+          {
+            "end": 207,
+            "name": "Runnable",
+            "role": "type",
+            "start": 199
+          },
+          {
+            "end": 214,
+            "name": "Named",
+            "role": "type",
+            "start": 209
+          },
+          {
+            "end": 223,
+            "name": "name",
+            "role": "read",
+            "start": 219
+          },
+          {
+            "end": 237,
+            "name": "run",
+            "role": "read",
+            "start": 234
+          },
+          {
+            "end": 243,
+            "name": "value",
+            "role": "write",
+            "start": 238
+          },
+          {
+            "end": 270,
+            "name": "send",
+            "role": "read",
+            "start": 266
+          },
+          {
+            "end": 276,
+            "name": "value",
+            "role": "read",
+            "start": 271
+          },
+          {
+            "end": 301,
+            "name": "Service",
+            "role": "read",
+            "start": 294
+          },
+          {
+            "end": 319,
+            "name": "DefaultService",
+            "role": "read",
+            "start": 305
+          }
+        ],
+        "symbols": [
+          {
+            "end": 110,
+            "kind": "class",
+            "name": "Base",
+            "start": 97
+          },
+          {
+            "end": 153,
+            "kind": "interface",
+            "name": "Named",
+            "start": 118
+          },
+          {
+            "end": 284,
+            "kind": "class",
+            "name": "Service",
+            "start": 161
+          },
+          {
+            "end": 282,
+            "kind": "method",
+            "name": "run",
+            "start": 234
+          }
+        ]
+      },
+      "languageId": "typescript",
+      "regions": []
+    },
+    "vue.vue": {
+      "facts": {
+        "calls": [
+          {
+            "callee": "render",
+            "end": 205,
+            "start": 193
+          }
+        ],
+        "diagnostics": [],
+        "exports": [
+          {
+            "end": 212,
+            "exportedName": "VueService",
+            "localName": "VueService",
+            "source": null,
+            "start": 113
+          }
+        ],
+        "implementations": [
+          {
+            "end": 169,
+            "start": 161,
+            "targetName": "Runnable"
+          }
+        ],
+        "imports": [
+          {
+            "end": 112,
+            "importedName": "Base",
+            "localName": "Base",
+            "source": "./base",
+            "start": 82
+          }
+        ],
+        "inheritance": [
+          {
+            "end": 149,
+            "start": 145,
+            "targetName": "Base"
+          }
+        ],
+        "references": [
+          {
+            "end": 95,
+            "name": "Base",
+            "role": "read",
+            "start": 91
+          },
+          {
+            "end": 136,
+            "name": "VueService",
+            "role": "type",
+            "start": 126
+          },
+          {
+            "end": 149,
+            "name": "Base",
+            "role": "read",
+            "start": 145
+          },
+          {
+            "end": 169,
+            "name": "Runnable",
+            "role": "type",
+            "start": 161
+          },
+          {
+            "end": 177,
+            "name": "run",
+            "role": "read",
+            "start": 174
+          },
+          {
+            "end": 199,
+            "name": "render",
+            "role": "read",
+            "start": 193
+          }
+        ],
+        "symbols": [
+          {
+            "end": 212,
+            "kind": "class",
+            "name": "VueService",
+            "start": 120
+          },
+          {
+            "end": 210,
+            "kind": "method",
+            "name": "run",
+            "start": 174
+          }
+        ]
+      },
+      "languageId": "vue",
+      "regions": [
+        {
+          "end": 213,
+          "languageId": "typescript",
+          "start": 81
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+    "tool": "graphify"
+  }
+}

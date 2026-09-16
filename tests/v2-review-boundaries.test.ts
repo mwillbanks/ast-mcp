@@ -45,7 +45,8 @@ async function temporaryRoot(prefix: string) {
 }
 
 function isolatedEnvironment(root: string): NodeJS.ProcessEnv {
-  return { XDG_CONFIG_HOME: path.join(root, ".xdg") };
+  const configHome = path.join(root, ".xdg");
+  return { APPDATA: configHome, XDG_CONFIG_HOME: configHome };
 }
 
 type ToolResult = {
@@ -90,6 +91,7 @@ test("legacy AST_MCP_ROOTS registry keys follow the matched project root", async
   ]);
   const registry = new ConfigRegistry(5, 20);
   const env = {
+    APPDATA: path.join(container, ".xdg"),
     AST_MCP_ROOTS: [first, second].join(path.delimiter),
     XDG_CONFIG_HOME: path.join(container, ".xdg"),
   };

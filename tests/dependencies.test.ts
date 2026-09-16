@@ -3,8 +3,6 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  AST_BRO_BINARY,
-  assertAstBroAvailable,
   resolveDependencyBinary,
   resolveGlobalBinaryAlias,
 } from "../src/runtime/dependencies";
@@ -96,7 +94,6 @@ test("supports Windows executable extensions in global package-manager bins", as
   created.push(root);
   const bunInstall = path.join(root, "bun-home");
   const windowsBinary = path.join(bunInstall, "bin/tool.CMD");
-  const posixBinary = path.join(bunInstall, "bin/tool");
   await mkdir(path.dirname(windowsBinary), { recursive: true });
   await writeFile(windowsBinary, "@exit /b 0\r\n");
   const previous = {
@@ -119,15 +116,6 @@ test("supports Windows executable extensions in global package-manager bins", as
         platform: "win32",
       }),
     ).toBe(windowsBinary);
-    await executable(posixBinary);
-    expect(
-      resolveDependencyBinary("tool", "missing-package", {
-        packageBinary: path.join(root, "missing-package-binary"),
-        packageRoot: path.join(root, "package"),
-        pathValue: "",
-        platform: "linux",
-      }),
-    ).toBe(posixBinary);
   } finally {
     for (const [name, value] of Object.entries(previous))
       if (value === undefined) delete process.env[name];
@@ -135,14 +123,23 @@ test("supports Windows executable extensions in global package-manager bins", as
   }
 });
 
+test.skipIf(process.platform === "win32")(
+  "requires POSIX execute permission for extensionless global aliases",
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-posix-bin-"));
+    created.push(root);
+    const alias = await executable(path.join(root, "tool"));
+    const options = {
+      globalBinDirectories: [root],
+      platform: "linux" as const,
+    };
+    expect(resolveGlobalBinaryAlias("tool", options)).toBe(alias);
+    await chmod(alias, 0o644);
+    expect(resolveGlobalBinaryAlias("tool", options)).toBeUndefined();
+  },
+);
+
 test("resolves executable paths declared by package metadata", () => {
-  expect(
-    resolveDependencyBinary("ast-bro", "@ast-bro/cli", {
-      globalBinDirectories: [],
-      packageRoot: path.join(os.tmpdir(), "missing-package-root"),
-      pathValue: "",
-    }),
-  ).toContain(path.join("@ast-bro", "cli", "bin", "ast-bro.js"));
   expect(
     resolveDependencyBinary("dprint", "dprint", {
       globalBinDirectories: [],
@@ -150,17 +147,4 @@ test("resolves executable paths declared by package metadata", () => {
       pathValue: "",
     }),
   ).toContain(path.join("dprint", "bin.cjs"));
-});
-
-test("validates ast-bro versions and reports platform recovery", () => {
-  expect(() => assertAstBroAvailable(AST_BRO_BINARY)).not.toThrow();
-  expect(() =>
-    assertAstBroAvailable(process.execPath, "darwin", "arm64"),
-  ).toThrow("bun pm trust @ast-bro/cli");
-  expect(() =>
-    assertAstBroAvailable("/missing/ast-bro.exe", "win32", "x64"),
-  ).toThrow("$HOME\\.cargo\\bin\\ast-bro.exe");
-  expect(() =>
-    assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-  ).toThrow("No precompiled ast-bro 4.2.0 binary");
 });

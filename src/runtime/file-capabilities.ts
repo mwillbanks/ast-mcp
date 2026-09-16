@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import path from "node:path";
-import { astErrorCount } from "../ast-bro/capability";
 import { currentConfig, type ResolvedConfig } from "../config";
+import {
+  type ParserLanguageId,
+  parseSource,
+} from "../intelligence/parser/index.ts";
 import { detectAstLanguage } from "../patch/languages";
 import { parseStructuredDocument } from "./document-inspection";
 import { resolveWritablePath } from "./paths";
@@ -70,7 +72,7 @@ async function parseState(filePath: string, language: string | undefined) {
   const extension = path.extname(filePath).toLowerCase();
   if (documentExtensions.has(extension)) {
     try {
-      parseStructuredDocument(filePath, await readFile(filePath, "utf8"));
+      parseStructuredDocument(filePath, await Bun.file(filePath).text());
       return { errorCount: 0, status: "parseable" as const };
     } catch {
       return { errorCount: 1, status: "invalid" as const };
@@ -78,12 +80,21 @@ async function parseState(filePath: string, language: string | undefined) {
   }
   if (!language)
     return { errorCount: undefined, status: "unsupported" as const };
-  const errorCount = await astErrorCount(filePath, language);
-  return errorCount === undefined
-    ? { errorCount, status: "unsupported" as const }
-    : errorCount === 0
-      ? { errorCount, status: "parseable" as const }
-      : { errorCount, status: "invalid" as const };
+  try {
+    const facts = parseSource({
+      languageId: language as ParserLanguageId,
+      source: await Bun.file(filePath).text(),
+    });
+    const errorCount = facts.diagnostics.filter(
+      (diagnostic) => diagnostic.severity === "error",
+    ).length;
+    return {
+      errorCount,
+      status: errorCount === 0 ? ("parseable" as const) : ("invalid" as const),
+    };
+  } catch {
+    return { errorCount: undefined, status: "unsupported" as const };
+  }
 }
 
 async function capabilityParseState(
@@ -194,12 +205,6 @@ export async function inspectFileCapabilitiesSafely(filePaths: string[]) {
   );
 }
 
-function candidatePath(filePath: string): string {
-  const extension = path.extname(filePath);
-  const stem = extension ? filePath.slice(0, -extension.length) : filePath;
-  return `${stem}.ast-mcp-validate-${process.pid}-${randomUUID()}${extension}`;
-}
-
 export async function validateStructuredCandidate(
   capabilities: FileCapabilities,
   candidate: string,
@@ -219,32 +224,30 @@ export async function validateStructuredCandidate(
   }
   if (!capabilities.language || capabilities.kind !== "source") return;
   if (capabilities.parseErrorCount === undefined) return;
-  const temporary = candidatePath(capabilities.filePath);
+  let candidateErrors: number;
   try {
-    await writeFile(temporary, candidate, { encoding: "utf8", flag: "wx" });
-    const candidateErrors = await astErrorCount(
-      temporary,
-      capabilities.language,
-    );
-    if (
-      candidateErrors === undefined ||
-      (capabilities.parseErrorCount !== undefined &&
-        candidateErrors > capabilities.parseErrorCount)
-    )
-      throw Object.assign(
-        new Error("Patch candidate increases structural parse errors"),
-        {
-          code: "candidate_parse_error",
-          details: {
-            before: capabilities.parseErrorCount,
-            candidate: candidateErrors,
-          },
-          retryable: true,
-        },
-      );
-  } finally {
-    try {
-      await unlink(temporary);
-    } catch {}
+    candidateErrors = parseSource({
+      languageId: capabilities.language as ParserLanguageId,
+      source: candidate,
+    }).diagnostics.filter(
+      (diagnostic) => diagnostic.severity === "error",
+    ).length;
+  } catch {
+    candidateErrors = Number.POSITIVE_INFINITY;
   }
+  if (
+    capabilities.parseErrorCount !== undefined &&
+    candidateErrors > capabilities.parseErrorCount
+  )
+    throw Object.assign(
+      new Error("Patch candidate increases structural parse errors"),
+      {
+        code: "candidate_parse_error",
+        details: {
+          before: capabilities.parseErrorCount,
+          candidate: candidateErrors,
+        },
+        retryable: true,
+      },
+    );
 }

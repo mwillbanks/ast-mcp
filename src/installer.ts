@@ -1,13 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import {
-  cp,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
@@ -28,11 +20,12 @@ import {
 } from "./installer-transport";
 import { isManagedHook } from "./managed-hook";
 import {
-  AST_BRO_BINARY,
-  assertAstBroAvailable,
   globalBinDirectories,
   resolveGlobalBinaryAlias,
+  resolveLocalBinaryAlias,
 } from "./runtime/dependencies";
+import { pathWithin } from "./runtime/path-utils";
+import { commandForPlatform } from "./runtime/subprocess";
 import {
   createServicePlan,
   installService,
@@ -43,7 +36,10 @@ import {
 
 const packageRoot = path.resolve(import.meta.dir, "..");
 const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
-const installerRuntime = new AsyncLocalStorage<{ cliEntry: string }>();
+const installerRuntime = new AsyncLocalStorage<{
+  cliEntry: string;
+  platform: NodeJS.Platform;
+}>();
 function stableGlobalCliEntry(
   value: string | undefined,
   directories: string[],
@@ -79,9 +75,12 @@ function configuredCliEntry(
   root: string,
   home: string,
 ) {
-  if (options.scope === "local")
-    return path.join(root, "node_modules/.bin/ast-mcp");
   const platform = options.platform ?? process.platform;
+  if (options.scope === "local")
+    return (
+      resolveLocalBinaryAlias("ast-mcp", root, platform) ??
+      path.join(root, "node_modules/.bin/ast-mcp")
+    );
   const directories =
     options.globalBinDirectories ??
     globalBinDirectories("ast-mcp", platform, home);
@@ -100,9 +99,44 @@ function cliEntryFor(root: string | undefined, _home: string) {
   const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
   if (!root) return entry;
   const relative = path.relative(root, entry);
-  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  if (relative && pathWithin(root, entry))
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
+}
+
+function displayCommandPart(value: string, platform: NodeJS.Platform) {
+  if (/^[A-Za-z0-9_./:\\=-]+$/u.test(value)) return value;
+  if (platform === "win32") return `"${value.replaceAll('"', '""')}"`;
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function manualHttpLaunchCommand(
+  cliCommand: string,
+  root: string,
+  endpoint: HttpEndpoint,
+  platform: NodeJS.Platform,
+) {
+  const parts = [
+    cliCommand,
+    "mcp",
+    "--transport",
+    "http",
+    "--host",
+    endpoint.host,
+    "--port",
+    String(endpoint.port),
+  ];
+  if (
+    platform === "win32" &&
+    [root, ...parts].some((part) => /[%!^"]/u.test(part))
+  )
+    throw new Error(
+      "Windows manual HTTP launch paths and arguments cannot contain CMD expansion characters or quotes",
+    );
+  const launch = parts
+    .map((part) => displayCommandPart(part, platform))
+    .join(" ");
+  return `${platform === "win32" ? "cd /d" : "cd"} ${displayCommandPart(root, platform)} && ${launch}`;
 }
 const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
@@ -111,7 +145,9 @@ type Target = (typeof targets)[number];
 // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
 async function json(file: string): Promise<Record<string, any>> {
   try {
-    return JSON.parse(await readFile(file, "utf8"));
+    const value = Bun.JSONC.parse(await Bun.file(file).text());
+    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+    return value as Record<string, any>;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     throw error;
@@ -119,20 +155,8 @@ async function json(file: string): Promise<Record<string, any>> {
 }
 async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+  await Bun.write(file, `${JSON.stringify(value, null, 2)}\n`);
 }
-async function installerAstBroBinary(options: InstallOptions) {
-  const root = path.resolve(options.root);
-  const config = await resolveConfig({
-    cwd: root,
-    env: installerConfigEnvironment(options),
-    home: options.home,
-  });
-  return (
-    options.astBroBinary ?? config.dependencies.astBroBinary ?? AST_BRO_BINARY
-  );
-}
-
 function definition(
   root: string | undefined,
   home: string,
@@ -140,7 +164,12 @@ function definition(
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
-  return { args: ["mcp"], command: cliEntryFor(root, home) };
+  const invocation = commandForPlatform(
+    cliEntryFor(root, home),
+    ["mcp"],
+    installerRuntime.getStore()?.platform,
+  );
+  return { args: invocation.args, command: invocation.command };
 }
 async function codexMcp(
   file: string,
@@ -149,16 +178,19 @@ async function codexMcp(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const old = await readFile(file, "utf8").catch(() => "");
+  const old = await Bun.file(file)
+    .text()
+    .catch(() => "");
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
+  const stdio = definition(root, home, "stdio");
   const block =
     transport === "http"
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(cliEntryFor(root, home))}\nargs = ["mcp"]\n# ast-mcp:end`;
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}\n# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
+  await Bun.write(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
 async function jsonMcp(
   file: string,
@@ -238,7 +270,6 @@ async function skills(folder: string) {
   await rm(destination, { force: true, recursive: true });
   await mkdir(folder, { recursive: true });
   await cp(path.join(packageRoot, "templates/skills", "ast-mcp"), destination, {
-    filter: (source) => path.basename(source) !== ".ast-bro",
     force: true,
     recursive: true,
   });
@@ -264,14 +295,16 @@ const instructionsPattern =
 async function writeText(file: string, content: string) {
   const normalized = content.trimEnd();
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, normalized ? `${normalized}\n` : "");
+  await Bun.write(file, normalized ? `${normalized}\n` : "");
 }
 
 async function instructions(file: string) {
   const block = (
-    await readFile(path.join(packageRoot, "templates/AGENTS.md"), "utf8")
+    await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
   ).trim();
-  const old = await readFile(file, "utf8").catch(() => "");
+  const old = await Bun.file(file)
+    .text()
+    .catch(() => "");
   const clean = old.replace(instructionsPattern, "").trimEnd();
   await writeText(
     file,
@@ -280,10 +313,12 @@ async function instructions(file: string) {
 }
 
 async function optionalText(file: string) {
-  return readFile(file, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  return Bun.file(file)
+    .text()
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
 }
 
 async function removeInstructions(file: string) {
@@ -340,10 +375,9 @@ async function removeHook(
 }
 
 async function hasLocalInstallation(root: string) {
-  const codex = await readFile(
-    path.join(root, ".codex/config.toml"),
-    "utf8",
-  ).catch(() => "");
+  const codex = await Bun.file(path.join(root, ".codex/config.toml"))
+    .text()
+    .catch(() => "");
   const claude = await json(path.join(root, ".mcp.json"));
   const copilot = await json(path.join(root, ".github/mcp.json"));
   return Boolean(
@@ -354,7 +388,6 @@ async function hasLocalInstallation(root: string) {
 }
 
 export interface InstallOptions {
-  astBroBinary?: string;
   cliEntry?: string;
   deprecatedRoot?: boolean;
   globalBinDirectories?: string[];
@@ -382,10 +415,9 @@ async function targetTransport(
 ): Promise<McpTransport | undefined> {
   if (target === "codex") {
     const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
-    const content = await readFile(
-      path.join(base, "config.toml"),
-      "utf8",
-    ).catch(() => "");
+    const content = await Bun.file(path.join(base, "config.toml"))
+      .text()
+      .catch(() => "");
     return codexTransport(content);
   }
   const file = jsonTargetConfig(target, global, root, home);
@@ -457,7 +489,6 @@ function targetPaths(
 async function snapshot(paths: string[]) {
   const files = new Map<string, string>();
   const visit = async (file: string): Promise<void> => {
-    if (path.basename(file) === ".ast-bro") return;
     const metadata = await lstat(file).catch(() => undefined);
     if (!metadata) return;
     if (metadata.isDirectory()) {
@@ -466,7 +497,10 @@ async function snapshot(paths: string[]) {
       return;
     }
     if (metadata.isFile())
-      files.set(file, (await readFile(file)).toString("base64"));
+      files.set(
+        file,
+        Buffer.from(await Bun.file(file).bytes()).toString("base64"),
+      );
   };
   await Promise.all(paths.map(visit));
   return files;
@@ -729,10 +763,12 @@ async function ensureInstallerConfig(
   home: string,
 ) {
   const file = installerConfigPath(options, root, home);
-  const existing = await readFile(file, "utf8").catch((error) => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  });
+  const existing = await Bun.file(file)
+    .text()
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    });
   clearConfigCache();
   await resolveConfig({
     cwd: options.scope === "local" ? root : home,
@@ -840,7 +876,10 @@ async function reconcile(
   const home = options.home ?? os.homedir();
   const global = options.scope === "global";
   return installerRuntime.run(
-    { cliEntry: configuredCliEntry(options, root, home) },
+    {
+      cliEntry: configuredCliEntry(options, root, home),
+      platform: options.platform ?? process.platform,
+    },
     async () => {
       const transport = await selectedTransport(options, operation);
       validateReconcileOptions(options, transport);
@@ -865,7 +904,6 @@ async function reconcile(
         });
         await preflightService(serviceConfiguration(options, endpoint));
       }
-      assertAstBroAvailable(await installerAstBroBinary(options));
       await ensureInstallerConfig(options, root, home);
       const endpoint = await reconcileEndpoint(options, transport, root, home);
       for (const target of options.targets)
@@ -987,7 +1025,10 @@ export async function uninstall(options: InstallOptions) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   return installerRuntime.run(
-    { cliEntry: configuredCliEntry(options, root, home) },
+    {
+      cliEntry: configuredCliEntry(options, root, home),
+      platform: options.platform ?? process.platform,
+    },
     async () => {
       const global = options.scope === "global";
       const paths = options.targets.flatMap((target) =>
@@ -1014,10 +1055,25 @@ export async function runInstallerCli(
     process.stderr.write(
       "ast-mcp: --root is deprecated; run this command from the project root.\n",
     );
-  const operationHandlers = { install, uninstall, update };
-  const changed = await operationHandlers[operation](options);
   const root = path.resolve(options.root);
   const global = options.scope === "global";
+  const manualHttp =
+    operation !== "uninstall" &&
+    options.service !== true &&
+    (await selectedTransport(options, operation)) === "http";
+  if (
+    (options.platform ?? process.platform) === "win32" &&
+    manualHttp &&
+    [
+      root,
+      configuredCliEntry(options, root, options.home ?? os.homedir()),
+    ].some((part) => /[%!^"]/u.test(part))
+  )
+    throw new Error(
+      "Windows manual HTTP launch project path cannot contain CMD expansion characters or quotes",
+    );
+  const operationHandlers = { install, uninstall, update };
+  const changed = await operationHandlers[operation](options);
   const effectiveTransport =
     operation === "uninstall"
       ? (options.transport ?? "stdio")
@@ -1044,7 +1100,7 @@ export async function runInstallerCli(
       ? createServicePlan(serviceConfiguration(options, endpoint))
       : undefined;
   const manualStart =
-    endpoint && options.service !== true
+    endpoint && options.service !== true && operation !== "uninstall"
       ? installerRuntime.run(
           {
             cliEntry: configuredCliEntry(
@@ -1052,9 +1108,15 @@ export async function runInstallerCli(
               root,
               options.home ?? os.homedir(),
             ),
+            platform: options.platform ?? process.platform,
           },
           () =>
-            `${global ? "" : `cd ${JSON.stringify(root)} && `}${JSON.stringify(cliEntryFor(global ? undefined : root, options.home ?? os.homedir()))} mcp --transport http --host ${JSON.stringify(endpoint.host)} --port ${endpoint.port}`,
+            manualHttpLaunchCommand(
+              configuredCliEntry(options, root, options.home ?? os.homedir()),
+              root,
+              endpoint,
+              options.platform ?? process.platform,
+            ),
         )
       : undefined;
   const result = {

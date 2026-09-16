@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import type { HttpEndpoint } from "./installer-transport";
@@ -196,7 +196,7 @@ export async function installService(options: ServiceOptions) {
     await mkdir(path.join(options.home, ".local/state/ast-mcp"), {
       recursive: true,
     });
-  await writeFile(plan.file, plan.content);
+  await Bun.write(plan.file, plan.content);
   for (let index = 0; index < plan.installCommands.length; index += 1)
     await runner(
       plan.installCommands[index],

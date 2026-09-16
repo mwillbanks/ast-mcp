@@ -112,11 +112,15 @@ async function sessionRequest(request: Request) {
     : createSession(request);
 }
 
-function handleMcpRequest(request: Request) {
+function handleMcpRequest(
+  request: Request,
+  server: Pick<Bun.Server<unknown>, "timeout">,
+) {
   const url = new URL(request.url);
-  return url.pathname === "/mcp"
-    ? sessionRequest(request)
-    : new Response("Not found", { status: 404 });
+  if (url.pathname !== "/mcp")
+    return new Response("Not found", { status: 404 });
+  server.timeout(request, 0);
+  return sessionRequest(request);
 }
 
 async function shutdownHttpServer(httpServer: ReturnType<typeof serve>) {

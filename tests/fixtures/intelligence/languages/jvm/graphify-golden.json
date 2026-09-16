@@ -1,0 +1,706 @@
+{
+  "languages": {
+    "apex": {
+      "calls": [
+        {
+          "callee": "emit",
+          "range": [122, 142]
+        }
+      ],
+      "diagnostics": [
+        {
+          "code": "missing-node",
+          "range": [39, 39]
+        }
+      ],
+      "exports": [
+        {
+          "exportedName": "run",
+          "localName": "run",
+          "range": [114, 117]
+        }
+      ],
+      "implementations": [
+        {
+          "range": [89, 97],
+          "targetName": "Runnable"
+        }
+      ],
+      "imports": [
+        {
+          "importedName": "Events",
+          "localName": "demo.Events",
+          "range": [0, 19],
+          "source": "demo.Events"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [66, 77],
+          "targetName": "BaseService"
+        }
+      ],
+      "partial": true,
+      "references": [
+        {
+          "name": "demo",
+          "range": [7, 11],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [12, 18],
+          "role": "read"
+        },
+        {
+          "name": "ApexService",
+          "range": [46, 57],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [66, 77],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [89, 97],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [114, 117],
+          "role": "write"
+        },
+        {
+          "name": "Events",
+          "range": [122, 128],
+          "role": "read"
+        },
+        {
+          "name": "emit",
+          "range": [129, 133],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [46, 57],
+          "kind": "class",
+          "name": "ApexService",
+          "range": [40, 147]
+        },
+        {
+          "declarationRange": [114, 117],
+          "kind": "method",
+          "name": "run",
+          "range": [102, 145]
+        }
+      ]
+    },
+    "csharp": {
+      "calls": [
+        {
+          "callee": "Events.Emit",
+          "range": [120, 139]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "CSharpService",
+          "localName": "CSharpService",
+          "range": [57, 70]
+        },
+        {
+          "exportedName": "Run",
+          "localName": "Run",
+          "range": [112, 115]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "importedName": "Events",
+          "localName": "Events",
+          "range": [0, 27],
+          "source": "Demo.Events"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [73, 84],
+          "targetName": "BaseService"
+        },
+        {
+          "range": [86, 95],
+          "targetName": "IRunnable"
+        }
+      ],
+      "partial": false,
+      "references": [
+        {
+          "name": "Events",
+          "range": [6, 12],
+          "role": "write"
+        },
+        {
+          "name": "Demo",
+          "range": [15, 19],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [20, 26],
+          "role": "read"
+        },
+        {
+          "name": "Demo",
+          "range": [38, 42],
+          "role": "read"
+        },
+        {
+          "name": "CSharpService",
+          "range": [57, 70],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [73, 84],
+          "role": "read"
+        },
+        {
+          "name": "IRunnable",
+          "range": [86, 95],
+          "role": "read"
+        },
+        {
+          "name": "Run",
+          "range": [112, 115],
+          "role": "write"
+        },
+        {
+          "name": "Events",
+          "range": [120, 126],
+          "role": "read"
+        },
+        {
+          "name": "Emit",
+          "range": [127, 131],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [57, 70],
+          "kind": "class",
+          "name": "CSharpService",
+          "range": [44, 144]
+        },
+        {
+          "declarationRange": [112, 115],
+          "kind": "method",
+          "name": "Run",
+          "range": [100, 142]
+        }
+      ]
+    },
+    "groovy": {
+      "calls": [
+        {
+          "callee": "Events.emit",
+          "range": [132, 152]
+        }
+      ],
+      "diagnostics": [
+        {
+          "code": "parse-error",
+          "range": [89, 108]
+        }
+      ],
+      "exports": [
+        {
+          "exportedName": "GroovyService",
+          "localName": "GroovyService",
+          "range": [55, 68]
+        },
+        {
+          "exportedName": "run",
+          "localName": "run",
+          "range": [124, 127]
+        }
+      ],
+      "implementations": [],
+      "imports": [
+        {
+          "importedName": "Events",
+          "localName": "Events",
+          "range": [13, 41],
+          "source": "demo.Events"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [77, 88],
+          "targetName": "BaseService"
+        }
+      ],
+      "partial": true,
+      "references": [
+        {
+          "name": "demo",
+          "range": [8, 12],
+          "role": "read"
+        },
+        {
+          "name": "demo",
+          "range": [20, 24],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [25, 31],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [35, 41],
+          "role": "write"
+        },
+        {
+          "name": "GroovyService",
+          "range": [55, 68],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [77, 88],
+          "role": "read"
+        },
+        {
+          "name": "implements",
+          "range": [89, 99],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [100, 108],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [124, 127],
+          "role": "write"
+        },
+        {
+          "name": "Events",
+          "range": [132, 138],
+          "role": "read"
+        },
+        {
+          "name": "emit",
+          "range": [139, 143],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [55, 68],
+          "kind": "class",
+          "name": "GroovyService",
+          "range": [42, 156]
+        },
+        {
+          "declarationRange": [124, 127],
+          "kind": "function",
+          "name": "run",
+          "range": [113, 154]
+        }
+      ]
+    },
+    "java": {
+      "calls": [
+        {
+          "callee": "emit",
+          "range": [174, 186]
+        },
+        {
+          "callee": "helper",
+          "range": [188, 196]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "CaféService",
+          "localName": "CaféService",
+          "range": [82, 94]
+        },
+        {
+          "exportedName": "run",
+          "localName": "run",
+          "range": [166, 169]
+        }
+      ],
+      "implementations": [
+        {
+          "range": [126, 134],
+          "targetName": "Runnable"
+        },
+        {
+          "range": [136, 149],
+          "targetName": "AutoCloseable"
+        }
+      ],
+      "imports": [
+        {
+          "importedName": "List",
+          "localName": "java.util.List",
+          "range": [14, 36],
+          "source": "java.util.List"
+        },
+        {
+          "importedName": "emit",
+          "localName": "demo.Events.emit",
+          "range": [37, 68],
+          "source": "demo.Events.emit"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [103, 114],
+          "targetName": "BaseService"
+        }
+      ],
+      "partial": false,
+      "references": [
+        {
+          "name": "demo",
+          "range": [8, 12],
+          "role": "read"
+        },
+        {
+          "name": "java",
+          "range": [21, 25],
+          "role": "read"
+        },
+        {
+          "name": "util",
+          "range": [26, 30],
+          "role": "read"
+        },
+        {
+          "name": "List",
+          "range": [31, 35],
+          "role": "read"
+        },
+        {
+          "name": "demo",
+          "range": [51, 55],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [56, 62],
+          "role": "read"
+        },
+        {
+          "name": "emit",
+          "range": [63, 67],
+          "role": "read"
+        },
+        {
+          "name": "CaféService",
+          "range": [82, 94],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [103, 114],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [126, 134],
+          "role": "read"
+        },
+        {
+          "name": "AutoCloseable",
+          "range": [136, 149],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [166, 169],
+          "role": "write"
+        },
+        {
+          "name": "emit",
+          "range": [174, 178],
+          "role": "read"
+        },
+        {
+          "name": "helper",
+          "range": [188, 194],
+          "role": "read"
+        },
+        {
+          "name": "helper",
+          "range": [215, 221],
+          "role": "write"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [82, 94],
+          "kind": "class",
+          "name": "CaféService",
+          "range": [69, 228]
+        },
+        {
+          "declarationRange": [166, 169],
+          "kind": "method",
+          "name": "run",
+          "range": [154, 199]
+        },
+        {
+          "declarationRange": [215, 221],
+          "kind": "method",
+          "name": "helper",
+          "range": [202, 226]
+        }
+      ]
+    },
+    "kotlin": {
+      "calls": [
+        {
+          "callee": "send",
+          "range": [123, 136]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "KotlinService",
+          "localName": "KotlinService",
+          "range": [58, 71]
+        },
+        {
+          "exportedName": "run",
+          "localName": "run",
+          "range": [115, 118]
+        }
+      ],
+      "implementations": [
+        {
+          "range": [91, 99],
+          "targetName": "Runnable"
+        }
+      ],
+      "imports": [
+        {
+          "importedName": "emit",
+          "localName": "send",
+          "range": [13, 44],
+          "source": "demo.Events.emit"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [76, 87],
+          "targetName": "BaseService"
+        }
+      ],
+      "partial": false,
+      "references": [
+        {
+          "name": "demo",
+          "range": [8, 12],
+          "role": "read"
+        },
+        {
+          "name": "demo.Events.emit",
+          "range": [20, 36],
+          "role": "read"
+        },
+        {
+          "name": "demo",
+          "range": [20, 24],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [25, 31],
+          "role": "read"
+        },
+        {
+          "name": "emit",
+          "range": [32, 36],
+          "role": "read"
+        },
+        {
+          "name": "send",
+          "range": [40, 44],
+          "role": "write"
+        },
+        {
+          "name": "KotlinService",
+          "range": [58, 71],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [76, 87],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [91, 99],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [115, 118],
+          "role": "write"
+        },
+        {
+          "name": "send",
+          "range": [123, 127],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [58, 71],
+          "kind": "class",
+          "name": "KotlinService",
+          "range": [45, 140]
+        },
+        {
+          "declarationRange": [115, 118],
+          "kind": "function",
+          "name": "run",
+          "range": [104, 138]
+        }
+      ]
+    },
+    "scala": {
+      "calls": [
+        {
+          "callee": "send",
+          "range": [122, 134]
+        }
+      ],
+      "diagnostics": [],
+      "exports": [
+        {
+          "exportedName": "ScalaService",
+          "localName": "ScalaService",
+          "range": [53, 65]
+        },
+        {
+          "exportedName": "run",
+          "localName": "run",
+          "range": [108, 111]
+        }
+      ],
+      "implementations": [
+        {
+          "range": [91, 99],
+          "targetName": "Runnable"
+        }
+      ],
+      "imports": [
+        {
+          "importedName": "emit",
+          "localName": "send",
+          "range": [13, 46],
+          "source": "demo.Events"
+        }
+      ],
+      "inheritance": [
+        {
+          "range": [74, 85],
+          "targetName": "BaseService"
+        }
+      ],
+      "partial": false,
+      "references": [
+        {
+          "name": "demo",
+          "range": [8, 12],
+          "role": "read"
+        },
+        {
+          "name": "demo",
+          "range": [20, 24],
+          "role": "read"
+        },
+        {
+          "name": "Events",
+          "range": [25, 31],
+          "role": "read"
+        },
+        {
+          "name": "emit",
+          "range": [33, 37],
+          "role": "read"
+        },
+        {
+          "name": "send",
+          "range": [41, 45],
+          "role": "write"
+        },
+        {
+          "name": "ScalaService",
+          "range": [53, 65],
+          "role": "write"
+        },
+        {
+          "name": "BaseService",
+          "range": [74, 85],
+          "role": "read"
+        },
+        {
+          "name": "Runnable",
+          "range": [91, 99],
+          "role": "read"
+        },
+        {
+          "name": "run",
+          "range": [108, 111],
+          "role": "write"
+        },
+        {
+          "name": "Unit",
+          "range": [115, 119],
+          "role": "read"
+        },
+        {
+          "name": "send",
+          "range": [122, 126],
+          "role": "read"
+        }
+      ],
+      "symbols": [
+        {
+          "declarationRange": [53, 65],
+          "kind": "class",
+          "name": "ScalaService",
+          "range": [47, 136]
+        },
+        {
+          "declarationRange": [108, 111],
+          "kind": "function",
+          "name": "run",
+          "range": [104, 134]
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "project": "graphify",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+    "scope": "JVM fixture parity: complete extracted fact, reference, diagnostic, and byte-range sets"
+  }
+}

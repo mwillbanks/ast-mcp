@@ -194,7 +194,13 @@ function pathCandidates(input: string) {
       if (value[1]) candidates.push(value[1]);
     }
   }
-  return candidates;
+  return candidates.map((candidate) => {
+    try {
+      return JSON.parse(`"${candidate}"`) as string;
+    } catch {
+      return candidate;
+    }
+  });
 }
 
 function escapedPath(candidate: string, roots: string[]) {

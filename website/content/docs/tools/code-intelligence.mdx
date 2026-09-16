@@ -4,7 +4,7 @@ description: Choose the smallest AST-aware tool that answers the question.
 icon: ScanSearch
 ---
 
-ast-mcp exposes ast-bro tools directly. There is no generic proxy and no need to retrieve entire source files just to understand structure.
+ast-mcp exposes native intelligence tools directly. There is no generic proxy and no need to retrieve entire source files just to understand structure.
 
 ## Learn the shape
 
@@ -16,7 +16,7 @@ ast-mcp exposes ast-bro tools directly. There is no generic proxy and no need to
 | `surface` | The public API after re-export resolution                        |
 | `context` | One symbol plus nearby callers and callees within a token budget |
 
-`show` accepts file, directory, and glob targets plus an optional `limit`. Its JSON response is exclusively `ast-bro.show.v2`, with `files[]`, `files_scanned`, `total`, `shown`, `truncated`, coverage details, and Markdown `frontmatter` symbols. ast-mcp validates a glob's fixed prefix and every match before execution. Authorized zero-match globs return an empty v2 response.
+`show` accepts file, directory, and glob targets plus an optional `limit`. Its JSON response is exclusively `ast-mcp.show.v1`, with `files[]`, `files_scanned`, `total`, `shown`, `truncated`, coverage details, and Markdown `frontmatter` symbols. ast-mcp validates a glob's fixed prefix and every match before execution. Authorized zero-match globs return an empty v2 response.
 
 ## Find behavior
 
@@ -43,4 +43,4 @@ ast-mcp exposes ast-bro tools directly. There is no generic proxy and no need to
 
 Search omits `rewrite`. A dry-run includes `rewrite` and leaves `write` false. Direct `write: true` is an exceptional lower-level escape hatch; normal edits belong in guarded `file_patch` batches.
 
-The pinned ast-bro version rewrites the first match per file, so every rule must be narrowed to one reviewed match.
+Native structural writes require a fresh hash and an explicit expected match count for every reviewed rule.

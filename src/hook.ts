@@ -42,6 +42,8 @@ const shellTools = new Set([
   "terminal",
   "exec_command",
   "functions.exec_command",
+  "cmd",
+  "cmd.exe",
   "powershell",
   "pwsh",
 ]);
@@ -106,8 +108,11 @@ function executorDecision(
   return undefined;
 }
 
-function shellDecision(command: string | undefined): HookDecision {
-  return command && shellMutates(command)
+function shellDecision(
+  command: string | undefined,
+  dialect: "cmd" | "posix" | "powershell",
+): HookDecision {
+  return command && shellMutates(command, dialect)
     ? deniedMutation()
     : { denied: false };
 }
@@ -124,7 +129,16 @@ function commandDecision(
     shellTools.has(identity.normalizedName) ||
     shellTools.has(identity.shortName);
   if (!executor && !shell) return { denied: false };
-  return shellDecision(command);
+  const dialect = [identity.normalizedName, identity.shortName].some(
+    (name) => name === "powershell" || name === "pwsh",
+  )
+    ? "powershell"
+    : [identity.normalizedName, identity.shortName].some(
+          (name) => name === "cmd" || name === "cmd.exe",
+        )
+      ? "cmd"
+      : "posix";
+  return shellDecision(command, dialect);
 }
 export function evaluateHook(
   event: Record<string, unknown>,

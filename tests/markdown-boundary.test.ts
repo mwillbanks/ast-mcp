@@ -20,7 +20,7 @@ afterEach(async () => {
   );
 });
 
-test("Markdown supports agent-selected reads and guarded Aider rewrites", async () => {
+test("Markdown uses AST auto reads and guarded Aider rewrites", async () => {
   const folder = await mkdtemp(
     path.join(repositoryRoot, ".tmp-markdown-boundary-"),
   );

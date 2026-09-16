@@ -4,6 +4,7 @@ import {
   installProcessSignalHandlers,
   PROCESS_SIGNALS,
   type ProcessSignal,
+  processSignals,
   type SignalHost,
 } from "../src/runtime/signals";
 
@@ -49,9 +50,10 @@ test("installs and disposes all process signal listeners", async () => {
   }, host);
 
   expect([...host.listeners.keys()]).toEqual([...PROCESS_SIGNALS]);
-  host.trigger("SIGTERM");
+  const signal = PROCESS_SIGNALS[0] as ProcessSignal;
+  host.trigger(signal);
   await flushPromises();
-  expect(received).toEqual(["SIGTERM"]);
+  expect(received).toEqual([signal]);
   expect(host.exits).toEqual([0]);
 
   dispose();
@@ -66,11 +68,12 @@ test("reports failed cleanup and exits unsuccessfully", async () => {
     throw new Error("cleanup failed");
   }, host);
 
-  host.trigger("SIGHUP");
+  const signal = PROCESS_SIGNALS.at(-1) as ProcessSignal;
+  host.trigger(signal);
   await flushPromises();
 
   expect(host.messages).toEqual([
-    "ast-mcp shutdown failed after SIGHUP: cleanup failed\n",
+    `ast-mcp shutdown failed after ${signal}: cleanup failed\n`,
   ]);
   expect(host.exits).toEqual([1]);
 });
@@ -79,8 +82,13 @@ test("a repeated signal forces exit while cleanup is pending", () => {
   const host = new FakeSignalHost();
   installProcessSignalHandlers(() => new Promise(() => undefined), host);
 
-  host.trigger("SIGINT");
-  host.trigger("SIGTERM");
+  host.trigger(PROCESS_SIGNALS[0] as ProcessSignal);
+  host.trigger(PROCESS_SIGNALS[1] as ProcessSignal);
 
   expect(host.exits).toEqual([1]);
+});
+
+test("selects signals supported by each operating system", () => {
+  expect(processSignals("win32")).toEqual(["SIGINT", "SIGBREAK"]);
+  expect(processSignals("linux")).toEqual(["SIGTERM", "SIGINT", "SIGHUP"]);
 });

@@ -34,13 +34,7 @@ Shell commands are limited to read-only inspection that ast-mcp cannot provide a
 
 Use ast-mcp intelligence tools as the primary repository search surface: `digest`, `map`, `show`, `search`, `find_related`, `callers`, `callees`, `trace`, `impact`, and bounded `run`. Do not invoke `ast-grep` directly; ast-mcp owns structural search and rewrites. `sed` is prohibited for repository reads and edits. `rg` is a fallback only for exact literals, identifiers, non-AST formats, or discovery that ast-mcp cannot provide; do not use it as the primary search route. External transcript/session analysis, Git metadata, repository-defined validation, and live runtime reproduction remain permitted exceptions.
 
-## Efficient tool execution
-
-- Batch paths, symbols, selectors, and declared files in one call whenever supported.
-- Run independent read-only calls in the same model turn or host executor and return their results together.
-- Keep inspect, preview, hash, and overlapping mutations sequential. Never parallelize dependent or overlapping writes.
-- Call `config_status` before the first mutation when configuration health, formatting, policy, or generation is uncertain; use `policy_check` for side-effect-free authorization preflight and `document_query` for structured manifests.
-- Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Never rewrite the whole file. Host approval is required by default; `[mcp.configuration]` changes always require approval. Successful writes reload the in-process snapshot immediately.
+Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Never rewrite the whole file. Host approval is required by default; `[mcp.configuration]` changes always require approval. Successful writes reload the in-process snapshot immediately.
 
 ## Required write workflow
 

@@ -1,3 +1,9 @@
+import {
+  commandForPlatform,
+  readSubprocessOutput,
+  terminateProcessTree,
+} from "./runtime/subprocess";
+
 const HOST_SMOKE_PREFIX = "AST_MCP_HOST_SMOKE_";
 const HOST_SMOKE_TIMEOUT = `${HOST_SMOKE_PREFIX}TIMEOUT_MS`;
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -110,27 +116,38 @@ export function configuredHostSmokeChecks(
 async function spawnHostSmoke(
   check: HostSmokeCheck,
 ): Promise<HostSmokeCommandResult> {
-  const child = Bun.spawn(check.command, {
+  const [command, ...args] = check.command;
+  const invocation = commandForPlatform(command, args);
+  const child = Bun.spawn([invocation.command, ...invocation.args], {
     cwd: process.cwd(),
+    detached: process.platform !== "win32",
     env: process.env,
     stderr: "pipe",
     stdin: "ignore",
     stdout: "pipe",
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill();
-  }, check.timeoutMs);
+  const controller = new AbortController();
+  const stop = () => terminateProcessTree(child);
+  const stdout = readSubprocessOutput(child.stdout, controller.signal, stop);
+  const stderr = readSubprocessOutput(child.stderr, controller.signal, stop);
   try {
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
+    const completion = Promise.all([child.exited, stdout, stderr]);
+    const completed = await Promise.race([
+      completion,
+      Bun.sleep(check.timeoutMs).then(() => null),
     ]);
-    return { exitCode, output: `${stdout}\n${stderr}`, timedOut };
-  } finally {
-    clearTimeout(timer);
+    if (!completed) {
+      await terminateProcessTree(child, { force: true });
+      controller.abort();
+      return { exitCode: child.exitCode ?? -1, output: "", timedOut: true };
+    }
+    const [exitCode, stdoutText, stderrText] = completed;
+    return { exitCode, output: `${stdoutText}\n${stderrText}` };
+  } catch (error) {
+    await terminateProcessTree(child, { force: true });
+    controller.abort();
+    throw error;
   }
 }
 

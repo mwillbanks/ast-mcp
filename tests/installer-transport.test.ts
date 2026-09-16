@@ -104,7 +104,14 @@ describe("installer HTTP transport", () => {
     expect(config).toContain("# retained");
     expect(config).toContain("port = 4567");
 
-    await update({ root, scope: "local", targets: ["codex"] });
+    const previousRoots = process.env.AST_MCP_ROOTS;
+    process.env.AST_MCP_ROOTS = process.cwd();
+    try {
+      await update({ root, scope: "local", targets: ["codex"] });
+    } finally {
+      if (previousRoots === undefined) delete process.env.AST_MCP_ROOTS;
+      else process.env.AST_MCP_ROOTS = previousRoots;
+    }
     expect(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
     ).toContain('url = "http://127.0.0.1:4567/mcp"');
@@ -160,7 +167,10 @@ describe("installer HTTP transport", () => {
     const unit = await readFile(plan.file, "utf8");
     expect(unit).toContain('--transport" "http');
     expect(unit).not.toContain(process.execPath);
-    expect(unit).toContain(`AST_MCP_PROJECT_ROOT=${root}`);
+    const environment = unit.match(/^Environment="(.*)"$/m)?.[1];
+    expect(environment?.replaceAll("\\\\", "\\")).toBe(
+      `AST_MCP_PROJECT_ROOT=${root}`,
+    );
     expect(commands.some((command) => command.includes("enable"))).toBeTrue();
 
     await update({ ...options, service: false });

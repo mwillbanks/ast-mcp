@@ -58,7 +58,10 @@ test("AST execution root follows the project selected by an absolute request", a
     {
       clientRoots: [first, second],
       cwd: os.tmpdir(),
-      env: { XDG_CONFIG_HOME: path.join(first, "xdg") },
+      env: {
+        APPDATA: path.join(first, "xdg"),
+        XDG_CONFIG_HOME: path.join(first, "xdg"),
+      },
       requestPaths: [path.join(second, "src/value.ts")],
     },
     async () => {
@@ -86,14 +89,21 @@ test("explicit workspace roots anchor AST execution and policy checks", async ()
   );
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
   const config = await resolveConfig(options);
   await withConfig(options, async () => {
     expect(await primaryRoot()).toBe(await realpath(nested));
   });
   expect(
-    await evaluatePolicyForCheck(config, "src/value.ts", "read"),
+    await evaluatePolicyForCheck(
+      config,
+      path.join(nested, "src/value.ts"),
+      "read",
+    ),
   ).toMatchObject({
     canonicalPath: path.join(await realpath(nested), "src/value.ts"),
     policy: "allow",
@@ -122,7 +132,7 @@ test("recursive reads require complete selector coverage outside the baseline", 
   );
   const config = await resolveConfig({
     cwd: root,
-    env: { XDG_CONFIG_HOME: globalHome },
+    env: { APPDATA: globalHome, XDG_CONFIG_HOME: globalHome },
   });
   expect(() => assertReadableTree(config, canonicalExternal)).toThrow(
     /not fully covered/,
@@ -149,7 +159,10 @@ test("recursive read preflight honors exclusions that cover a subtree", async ()
   );
   const config = await resolveConfig({
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   });
   expect(() =>
     assertReadableTree(config, path.join(root, "excluded")),
@@ -164,7 +177,10 @@ test("patch and write batches preflight all hashes before the first commit", asy
   await writeFile(second, "second-before\n");
   const options = {
     cwd: root,
-    env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+    env: {
+      APPDATA: path.join(root, "xdg"),
+      XDG_CONFIG_HOME: path.join(root, "xdg"),
+    },
   };
 
   await expect(
@@ -232,7 +248,10 @@ test("file_chattr validates the complete batch before changing metadata", async 
     withConfig(
       {
         cwd: root,
-        env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+        env: {
+          APPDATA: path.join(root, "xdg"),
+          XDG_CONFIG_HOME: path.join(root, "xdg"),
+        },
       },
       operation,
     );
@@ -252,5 +271,6 @@ test("file_chattr validates the complete batch before changing metadata", async 
     },
   });
   expect(result.isError).toBeTrue();
-  expect((await stat(first)).mode & 0o777).toBe(0o640);
+  if (process.platform !== "win32")
+    expect((await stat(first)).mode & 0o777).toBe(0o640);
 });

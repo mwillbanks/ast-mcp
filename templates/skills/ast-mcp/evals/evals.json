@@ -1063,7 +1063,7 @@
         "Starts exploration with the matching tool."
       ],
       "category": "positive",
-      "expected_output": "Names file_hash, bounded file_read, file_write, file_patch, and direct ast-bro tools, then starts with the matching route.",
+      "expected_output": "Names file_hash, bounded file_read, file_write, file_patch, and direct native intelligence tools, then starts with the matching route.",
       "files": [],
       "forbidden_tools": [],
       "id": 67,
@@ -1479,6 +1479,438 @@
       "required_tools": ["config_paths"],
       "surface": "config_paths",
       "variant": "core-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses workspace_open with an absolute directory.",
+        "Returns canonical workspace, repository, revision, configuration, and storage identities.",
+        "Does not mutate process routing state."
+      ],
+      "category": "positive",
+      "expected_output": "Opens the linked worktree and returns its validated request workspace handle.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 190,
+      "prompt": "Open /workspace/repo-feature as the request workspace before reading relative paths.",
+      "required_tools": ["workspace_open"],
+      "surface": "workspace_open",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses an explicit branch revision and parent storage placement.",
+        "Reports the resolved immutable commit identity.",
+        "Reports that the selected historical revision is read-only."
+      ],
+      "category": "variant",
+      "expected_output": "Opens the workspace at the resolved branch revision with parent-scoped storage.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 191,
+      "prompt": "Open /workspace/repo at branch feature/api and place its intelligence index under the parent folder.",
+      "required_tools": ["workspace_open"],
+      "surface": "workspace_open",
+      "variant": "revision-and-storage"
+    },
+    {
+      "assertions": [
+        "Uses workspace_status for an already opened workspace.",
+        "Does not reopen or replace the workspace handle.",
+        "Performs no mutation."
+      ],
+      "category": "negative",
+      "expected_output": "Inspects the existing workspace without calling workspace_open.",
+      "files": [],
+      "forbidden_tools": ["workspace_open"],
+      "id": 192,
+      "prompt": "Report the Git and revision status for the workspace that is already open.",
+      "required_tools": ["workspace_status"],
+      "surface": "workspace_open",
+      "variant": "status-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses workspace_status without a workspaceId for the current session workspace.",
+        "Reports Git, revision, storage, and working-state identities.",
+        "Performs no mutation."
+      ],
+      "category": "positive",
+      "expected_output": "Returns the current session workspace and working-state status.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 193,
+      "prompt": "Show the current request workspace, revision, and dirty working-state status.",
+      "required_tools": ["workspace_status"],
+      "surface": "workspace_status",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses the explicit workspaceId.",
+        "Reports the matching canonical checkout and storage domain.",
+        "Does not change the active request workspace."
+      ],
+      "category": "variant",
+      "expected_output": "Returns status for the selected validated workspace handle.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 194,
+      "prompt": "Inspect status for workspace:abc123 without changing request routing.",
+      "required_tools": ["workspace_status"],
+      "surface": "workspace_status",
+      "variant": "explicit-handle"
+    },
+    {
+      "assertions": [
+        "Uses workspace_open to create a workspace handle for the directory.",
+        "Does not query status before the workspace exists.",
+        "Requires an absolute directory."
+      ],
+      "category": "negative",
+      "expected_output": "Opens the requested directory before any status lookup.",
+      "files": [],
+      "forbidden_tools": ["workspace_status"],
+      "id": 195,
+      "prompt": "Create a workspace handle for /workspace/new-checkout.",
+      "required_tools": ["workspace_open"],
+      "surface": "workspace_status",
+      "variant": "open-near-miss"
+    },
+    {
+      "assertions": [
+        "Uses graph_query with workspaceId.",
+        "Supplies bounded graph budgets.",
+        "Reports coverage and pagination."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through graph_query with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 196,
+      "prompt": "Query the selected workspace graph from one node.",
+      "required_tools": ["graph_query"],
+      "surface": "graph_query",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Selects the components operation.",
+        "Uses an explicit workspaceId.",
+        "Reports truncation metadata."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through graph_query with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 197,
+      "prompt": "Find strongly connected components in the selected graph.",
+      "required_tools": ["graph_query"],
+      "surface": "graph_query",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Does not invent a workspaceId.",
+        "Calls workspace_open first.",
+        "Does not run graph_query before selection."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through graph_query with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["graph_query"],
+      "id": 198,
+      "prompt": "Find a graph node without opening its checkout.",
+      "required_tools": ["workspace_open"],
+      "surface": "graph_query",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses graph_path with both node IDs.",
+        "Uses an explicit workspaceId.",
+        "Reports bounded coverage."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through graph_path with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 199,
+      "prompt": "Find an evidence-backed path between two graph nodes.",
+      "required_tools": ["graph_path"],
+      "surface": "graph_path",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Selects reverse direction.",
+        "Supplies bounded budgets.",
+        "Reports no path deterministically."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through graph_path with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 200,
+      "prompt": "Find a reverse dependency path with strict budgets.",
+      "required_tools": ["graph_path"],
+      "surface": "graph_path",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Uses search for free-form text.",
+        "Does not call graph_path.",
+        "Keeps the search repository scoped."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through graph_path with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["graph_path"],
+      "id": 201,
+      "prompt": "Search free-form repository text for a phrase.",
+      "required_tools": ["workspace_open"],
+      "surface": "graph_path",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses graph_explain with nodeId.",
+        "Uses an explicit workspaceId.",
+        "Follows pagination metadata."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through graph_explain with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 202,
+      "prompt": "Explain one graph node with source evidence.",
+      "required_tools": ["graph_explain"],
+      "surface": "graph_explain",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Passes the returned cursor.",
+        "Keeps the same workspaceId.",
+        "Avoids repeating prior pages."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through graph_explain with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 203,
+      "prompt": "Fetch the next explanation page for a graph node.",
+      "required_tools": ["graph_explain"],
+      "surface": "graph_explain",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Uses show for source extraction.",
+        "Does not call graph_explain.",
+        "Returns bounded source."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through graph_explain with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["graph_explain"],
+      "id": 204,
+      "prompt": "Read the full source body of a known symbol.",
+      "required_tools": ["workspace_open"],
+      "surface": "graph_explain",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses graph_diff with base and target scopes.",
+        "Supplies both generation IDs.",
+        "Keeps repositories equal."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through graph_diff with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 205,
+      "prompt": "Compare indexed graphs for two worktree revisions.",
+      "required_tools": ["graph_diff"],
+      "surface": "graph_diff",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Sets federation true.",
+        "Supplies two workspace IDs.",
+        "Reports both repository identities."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through graph_diff with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 206,
+      "prompt": "Compare indexed graphs across two repositories explicitly.",
+      "required_tools": ["graph_diff"],
+      "surface": "graph_diff",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Does not silently federate.",
+        "Reports an actionable federation requirement.",
+        "Does not return a partial diff."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through graph_diff with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["graph_diff"],
+      "id": 207,
+      "prompt": "Compare repositories without enabling federation.",
+      "required_tools": ["workspace_open"],
+      "surface": "graph_diff",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses index_status with workspaceId.",
+        "Reports generation and freshness.",
+        "Reports LanceDB storage placement."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through index_status with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 208,
+      "prompt": "Inspect the selected worktree intelligence index.",
+      "required_tools": ["index_status"],
+      "surface": "index_status",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses index with verify action.",
+        "Keeps the same workspaceId.",
+        "Reports revision agreement."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through index_status with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 209,
+      "prompt": "Verify the index after refreshing a worktree.",
+      "required_tools": ["index_status"],
+      "surface": "index_status",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Calls workspace_open first.",
+        "Does not invent a workspaceId.",
+        "Does not run index before selection."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through index_status with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["index_status"],
+      "id": 210,
+      "prompt": "Build an index for a checkout that is not open.",
+      "required_tools": ["workspace_open"],
+      "surface": "index_status",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses retrieve with workspaceId.",
+        "Sets a bounded query.",
+        "Reports revision-scoped evidence."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through retrieve with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 211,
+      "prompt": "Retrieve implementation evidence for a symbol in the open worktree.",
+      "required_tools": ["retrieve"],
+      "surface": "retrieve",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses retrieve with documentation intent.",
+        "Requests semantic ranking explicitly.",
+        "Preserves workspace scope."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through retrieve with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 212,
+      "prompt": "Retrieve documentation context with semantic ranking enabled.",
+      "required_tools": ["retrieve"],
+      "surface": "retrieve",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Uses file_hash before mutation.",
+        "Does not use retrieve as a writer.",
+        "Commits through file_patch."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through retrieve with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["retrieve"],
+      "id": 213,
+      "prompt": "Rewrite a function using retrieval results.",
+      "required_tools": ["file_hash", "file_patch"],
+      "surface": "retrieve",
+      "variant": "near-miss"
+    },
+    {
+      "assertions": [
+        "Uses generate with explicit evidence.",
+        "Supplies allowed artifact IDs.",
+        "Preserves citation ranges."
+      ],
+      "category": "positive",
+      "expected_output": "Routes the request through generate with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 214,
+      "prompt": "Generate a cited answer from selected indexed evidence.",
+      "required_tools": ["generate"],
+      "surface": "generate",
+      "variant": "primary"
+    },
+    {
+      "assertions": [
+        "Uses generate after retrieval.",
+        "Uses configured provider selection.",
+        "Keeps evidence revision scoped."
+      ],
+      "category": "variant",
+      "expected_output": "Routes the request through generate with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": [],
+      "id": 215,
+      "prompt": "Generate an answer through the configured MCP sampling provider.",
+      "required_tools": ["generate"],
+      "surface": "generate",
+      "variant": "bounded-variant"
+    },
+    {
+      "assertions": [
+        "Does not call generate.",
+        "Explains that evidence is required.",
+        "Does not invent citations."
+      ],
+      "category": "negative",
+      "expected_output": "Routes the request through generate with explicit workspace scope.",
+      "files": [],
+      "forbidden_tools": ["generate"],
+      "id": 216,
+      "prompt": "Generate an answer without any indexed evidence.",
+      "required_tools": ["index_status"],
+      "surface": "generate",
+      "variant": "near-miss"
     }
   ],
   "mcp_tools": [
@@ -1495,6 +1927,7 @@
     "file_patch",
     "file_read",
     "file_write",
+    "generate",
     "map",
     "digest",
     "show",
@@ -1504,16 +1937,24 @@
     "reverse_deps",
     "cycles",
     "graph",
+    "graph_diff",
+    "graph_explain",
+    "graph_path",
+    "graph_query",
     "search",
     "find_related",
     "index",
+    "index_status",
     "callers",
     "callees",
     "trace",
     "impact",
     "context",
     "run",
-    "squeeze"
+    "retrieve",
+    "squeeze",
+    "workspace_open",
+    "workspace_status"
   ],
   "skill_name": "ast-mcp",
   "special_surfaces": ["skill", "transport"]

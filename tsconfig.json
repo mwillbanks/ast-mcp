@@ -23,6 +23,9 @@
     "scripts/check-prose.ts",
     "scripts/check-prose-cli.ts",
     "scripts/check-template-drift.ts",
+    "scripts/provision-intelligence-comparators.ts",
+    "scripts/provision-intelligence-comparators-cli.ts",
+    "scripts/test-shard.ts",
     "templates/skills/ast-mcp/scripts/**/*"
   ]
 }

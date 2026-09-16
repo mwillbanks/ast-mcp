@@ -2,19 +2,10 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function availablePort() {
-  const probe = Bun.serve({
-    fetch: () => new Response("probe"),
-    port: 0,
-  });
-  const port = probe.port;
-  probe.stop(true);
-  return port;
 }
 
 test("live HTTP batch carries file tools and suppresses notifications", async () => {
@@ -30,47 +21,36 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
     writeFile(notes, notesContent),
   ]);
 
-  const port = availablePort();
-  const processHandle = Bun.spawn(
-    [process.execPath, path.resolve(root, "src/http-entry.ts")],
-    {
-      cwd: root,
-      env: { ...process.env, PORT: String(port) },
-      stderr: "pipe",
-      stdout: "pipe",
-    },
+  const server = await spawnHttpMcpProcess(
+    process.execPath,
+    [path.resolve(root, "bin/ast-mcp.ts"), "mcp"],
+    { cwd: root },
   );
 
   try {
-    const url = `http://127.0.0.1:${port}/mcp`;
-    let initialized: Response | undefined;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      initialized = await fetch(url, {
-        body: JSON.stringify({
-          id: 1,
-          jsonrpc: "2.0",
-          method: "initialize",
-          params: {
-            capabilities: {},
-            clientInfo: { name: "http-batch-tools-test", version: "1.0.0" },
-            protocolVersion: "2025-06-18",
-          },
-        }),
-        headers: {
-          accept: "application/json, text/event-stream",
-          "content-type": "application/json",
+    const initialized = await fetch(server.url, {
+      body: JSON.stringify({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "http-batch-tools-test", version: "1.0.0" },
+          protocolVersion: "2025-06-18",
         },
-        method: "POST",
-      }).catch(() => undefined);
-      if (initialized) break;
-      await Bun.sleep(25);
-    }
+      }),
+      headers: {
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
 
-    expect(initialized?.status).toBe(200);
-    const sessionId = initialized?.headers.get("mcp-session-id");
+    expect(initialized.status).toBe(200);
+    const sessionId = initialized.headers.get("mcp-session-id");
     expect(sessionId).toBeTruthy();
 
-    const response = await fetch(url, {
+    const response = await fetch(server.url, {
       body: JSON.stringify([
         {
           jsonrpc: "2.0",
@@ -150,8 +130,7 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
     expect(await readFile(created, "utf8")).toBe("created\n");
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
   } finally {
-    if (processHandle.exitCode === null) processHandle.kill("SIGTERM");
-    await processHandle.exited;
+    await server.stop();
     await rm(folder, { force: true, recursive: true });
   }
 });

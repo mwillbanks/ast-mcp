@@ -14,7 +14,10 @@ test("registry watches every ancestor searched for project configuration", async
     await mkdir(nested, { recursive: true });
     const options = {
       cwd: nested,
-      env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+      env: {
+        APPDATA: path.join(root, "xdg"),
+        XDG_CONFIG_HOME: path.join(root, "xdg"),
+      },
     };
     expect((await registry.snapshot(options)).config?.version).toBe(1);
 

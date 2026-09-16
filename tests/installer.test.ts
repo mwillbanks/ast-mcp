@@ -12,7 +12,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
-import { assertAstBroAvailable } from "../src/runtime/dependencies";
+import { commandForPlatform } from "../src/runtime/subprocess";
+import {
+  executableNames,
+  isExecutable,
+  resolveLocalBinaryAlias,
+} from "../templates/skills/ast-mcp/scripts/binary-resolution";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -23,14 +28,40 @@ afterEach(async () => {
   );
 });
 
-async function executable(file: string) {
-  await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, "#!/bin/sh\nexit 0\n");
-  await chmod(file, 0o755);
-  return file;
+async function executable(
+  file: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const windowsName = executableNames(path.basename(file), "win32").find(
+    (name) => name.toLowerCase().endsWith(".cmd"),
+  );
+  const alias =
+    platform === "win32"
+      ? path.join(
+          path.dirname(file),
+          windowsName ?? `${path.basename(file)}.cmd`,
+        )
+      : file;
+  await mkdir(path.dirname(alias), { recursive: true });
+  await writeFile(
+    alias,
+    platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+  );
+  await chmod(alias, 0o755);
+  return alias;
 }
 
 describe("installer", () => {
+  test("rejects directories as executable aliases", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-directory-alias-"),
+    );
+    created.push(root);
+    const alias = path.join(root, "node_modules/.bin/ast-mcp");
+    await mkdir(alias, { recursive: true });
+    expect(isExecutable(alias)).toBeFalse();
+  });
+
   test("installs every local host idempotently", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-install-"));
     created.push(root);
@@ -83,21 +114,6 @@ describe("installer", () => {
     const agents = await readFile(path.join(root, "AGENTS.md"), "utf8");
     expect(agents.match(/ast-mcp:begin/g)).toHaveLength(1);
   });
-  test("ast-bro preflight failure leaves project configuration unchanged", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-preflight-"));
-    created.push(root);
-    await expect(
-      install({
-        astBroBinary: path.join(root, "missing-ast-bro"),
-        root,
-        scope: "local",
-        targets: ["codex"],
-      }),
-    ).rejects.toThrow("ast-bro 4.2.0 is required");
-    await expect(access(path.join(root, "ast-mcp.toml"))).rejects.toThrow();
-    await expect(access(path.join(root, ".codex"))).rejects.toThrow();
-  });
-
   test("ignores package-internal local executables and writes the stable alias", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
     created.push(root);
@@ -126,11 +142,52 @@ describe("installer", () => {
     }
   });
 
+  test("writes the native Windows alias for every local host", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-win-local-"));
+    created.push(root);
+    const alias = await executable(
+      path.join(root, "node_modules/.bin/ast-mcp"),
+      "win32",
+    );
+
+    await install({
+      platform: "win32",
+      root,
+      scope: "local",
+      targets: ["codex", "claude", "copilot"],
+    });
+
+    const resolved = resolveLocalBinaryAlias("ast-mcp", root, "win32");
+    if (!resolved) throw new Error("Windows command alias was not resolved");
+    const expected = `./${path.relative(root, resolved).split(path.sep).join("/")}`;
+    expect(resolved.toLowerCase()).toBe(alias.toLowerCase());
+    expect(expected.toLowerCase()).toEndWith(".cmd");
+    const invocation = commandForPlatform(expected, ["mcp"], "win32");
+    const codex = await readFile(path.join(root, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
+    expect(codex).toContain(`call ${expected} mcp`);
+    for (const file of [".mcp.json", ".github/mcp.json"]) {
+      const document = JSON.parse(
+        await readFile(path.join(root, file), "utf8"),
+      );
+      const definition =
+        document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
+      expect(definition.command).toBe(invocation.command);
+      expect(definition.args).toEqual(invocation.args);
+    }
+    for (const file of [
+      ".codex/hooks.json",
+      ".claude/settings.json",
+      ".github/hooks/ast-mcp.json",
+    ])
+      expect(await readFile(path.join(root, file), "utf8")).toContain(expected);
+  });
+
   test("installs global target locations", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
     created.push(root, home);
-    await executable(path.join(home, ".bun/bin/ast-mcp"));
+    const alias = await executable(path.join(home, ".bun/bin/ast-mcp"));
     await install({
       home,
       root,
@@ -147,11 +204,44 @@ describe("installer", () => {
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];
     expect(globalCopilot.type).toBe("local");
-    expect(globalCopilot.args).toEqual(["mcp"]);
-    expect(globalCopilot.command).toEndWith("/.bun/bin/ast-mcp");
-    expect(
-      await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-    ).toContain("/.bun/bin/ast-mcp");
+    const invocation = commandForPlatform(alias, ["mcp"]);
+    expect(globalCopilot.args).toEqual(invocation.args);
+    expect(globalCopilot.command).toBe(invocation.command);
+    const codex = await readFile(path.join(home, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
+    expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
+  });
+  test("writes global Windows host commands for a spaced native alias", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp windows & root-"),
+    );
+    const home = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp windows & home-"),
+    );
+    created.push(root, home);
+    const alias = await executable(
+      path.join(home, ".bun/bin/ast-mcp"),
+      "win32",
+    );
+    await install({
+      home,
+      platform: "win32",
+      root,
+      scope: "global",
+      targets: ["codex", "claude", "copilot"],
+    });
+    const invocation = commandForPlatform(alias, ["mcp"], "win32");
+    expect(invocation.args.at(-1)).toBe(`call "${alias}" mcp`);
+    const copilot = JSON.parse(
+      await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
+    ).mcpServers["ast-mcp"];
+    expect(copilot).toMatchObject({
+      args: invocation.args,
+      command: invocation.command,
+    });
+    const codex = await readFile(path.join(home, ".codex/config.toml"), "utf8");
+    expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
+    expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
   });
   test("writes Bun, npm, pnpm, and Yarn global manager aliases", async () => {
     for (const manager of ["bun", "npm", "pnpm", "yarn"]) {
@@ -172,9 +262,15 @@ describe("installer", () => {
         scope: "global",
         targets: ["codex"],
       });
-      expect(
-        await readFile(path.join(home, ".codex/config.toml"), "utf8"),
-      ).toContain(JSON.stringify(alias));
+      const invocation = commandForPlatform(alias, ["mcp"]);
+      const codex = await readFile(
+        path.join(home, ".codex/config.toml"),
+        "utf8",
+      );
+      expect(codex).toContain(
+        `command = ${JSON.stringify(invocation.command)}`,
+      );
+      expect(codex).toContain(`args = ${JSON.stringify(invocation.args)}`);
     }
   });
 
@@ -255,35 +351,6 @@ describe("installer", () => {
     await expect(
       runInstallerCli(["install", "--target=invalid"]),
     ).rejects.toThrow('Invalid target "invalid"');
-  });
-
-  test("fails before configuring a host when ast-bro is unavailable", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-missing-tool-"));
-    created.push(root);
-    const options = {
-      astBroBinary: path.join(root, "missing-ast-bro"),
-      root,
-      scope: "local" as const,
-      targets: ["codex" as const],
-    };
-    for (const operation of [install, update])
-      await expect(operation(options)).rejects.toThrow(
-        "cargo install ast-bro --version 4.2.0 --locked",
-      );
-    await expect(
-      access(path.join(root, ".codex/config.toml")),
-    ).rejects.toThrow();
-  });
-
-  test("provides platform-specific ast-bro environment commands", () => {
-    expect(() =>
-      assertAstBroAvailable("/missing/ast-bro", "linux", "x64"),
-    ).toThrow('>> "$HOME/.profile"');
-    expect(() =>
-      assertAstBroAvailable("C:\\missing\\ast-bro.exe", "win32", "x64"),
-    ).toThrow(
-      '[Environment]::SetEnvironmentVariable("AST_BRO_BINARY", "$HOME\\.cargo\\bin\\ast-bro.exe", "User")',
-    );
   });
 
   test("update replaces every managed surface and preserves surrounding guidance", async () => {

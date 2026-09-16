@@ -100,8 +100,13 @@ test("file_rename reports probe failures and probe cleanup failures", async () =
   const destination = path.join(root, "destination.txt");
   await writeFile(source, "source\n");
 
-  const link = spyOn(fsPromises, "link").mockRejectedValueOnce(
-    new Error("link unavailable"),
+  const actualLink = fsPromises.link.bind(fsPromises);
+  const link = spyOn(fsPromises, "link").mockImplementation(
+    async (existingPath, newPath) => {
+      if (newPath.toString().includes(".ast-mcp-rename-probe-"))
+        throw new Error("link unavailable");
+      await actualLink(existingPath, newPath);
+    },
   );
   try {
     await expect(
@@ -113,8 +118,13 @@ test("file_rename reports probe failures and probe cleanup failures", async () =
     link.mockRestore();
   }
 
-  const unlink = spyOn(fsPromises, "unlink").mockRejectedValueOnce(
-    new Error("probe cleanup failed"),
+  const actualUnlink = fsPromises.unlink.bind(fsPromises);
+  const unlink = spyOn(fsPromises, "unlink").mockImplementation(
+    async (filePath) => {
+      if (filePath.toString().includes(".ast-mcp-rename-probe-"))
+        throw new Error("probe cleanup failed");
+      await actualUnlink(filePath);
+    },
   );
   try {
     await expect(

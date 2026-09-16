@@ -170,42 +170,47 @@ test("hash enforcement can be disabled while supplied stale hashes still fail", 
   expect(await Bun.file(deletePath).exists()).toBe(false);
 });
 
-test("symlink following is opt-in and remains root bounded", async () => {
-  const root = await project(
-    "ast-mcp-safety-symlink-",
-    "version = 1\n[formatting]\nenabled = false\n",
-  );
-  const target = path.join(root, "target.txt");
-  const link = path.join(root, "link.txt");
-  await writeFile(target, "target");
-  await symlink(target, link);
-  await expect(
-    withConfig({ cwd: root, env: {} }, () => resolveWritablePath(link)),
-  ).rejects.toThrow(/Symbolic-link targets are not permitted/);
+test.skipIf(process.platform === "win32")(
+  "symlink following is opt-in and remains root bounded",
+  async () => {
+    const root = await project(
+      "ast-mcp-safety-symlink-",
+      "version = 1\n[formatting]\nenabled = false\n",
+    );
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    await writeFile(target, "target");
+    await symlink(target, link);
+    await expect(
+      withConfig({ cwd: root, env: {} }, () => resolveWritablePath(link)),
+    ).rejects.toThrow(/Symbolic-link targets are not permitted/);
 
-  await writeFile(
-    path.join(root, "ast-mcp.toml"),
-    "version = 1\n[formatting]\nenabled = false\n[safety]\nallow_temp_directory = false\nfollow_symlinks = true\nrequire_hash = false\n",
-  );
-  clearConfigCache();
-  await withConfig({ cwd: root, env: {} }, async () => {
-    expect(await resolveWritablePath(link)).toBe(await realpath(target));
-    await writeFileSafely({ content: "updated", filePath: link });
-  });
-  expect(await readFile(target, "utf8")).toBe("updated");
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      "version = 1\n[formatting]\nenabled = false\n[safety]\nallow_temp_directory = false\nfollow_symlinks = true\nrequire_hash = false\n",
+    );
+    clearConfigCache();
+    await withConfig({ cwd: root, env: {} }, async () => {
+      expect(await resolveWritablePath(link)).toBe(await realpath(target));
+      await writeFileSafely({ content: "updated", filePath: link });
+    });
+    expect(await readFile(target, "utf8")).toBe("updated");
 
-  const outside = await mkdtemp(
-    path.join(os.tmpdir(), "ast-mcp-safety-outside-"),
-  );
-  created.push(outside);
-  const outsideTarget = path.join(outside, "outside.txt");
-  const outsideLink = path.join(root, "outside-link.txt");
-  await writeFile(outsideTarget, "outside");
-  await symlink(outsideTarget, outsideLink);
-  await expect(
-    withConfig({ cwd: root, env: {} }, () => resolveWritablePath(outsideLink)),
-  ).rejects.toThrow(/outside configured file-operation roots/);
-});
+    const outside = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-safety-outside-"),
+    );
+    created.push(outside);
+    const outsideTarget = path.join(outside, "outside.txt");
+    const outsideLink = path.join(root, "outside-link.txt");
+    await writeFile(outsideTarget, "outside");
+    await symlink(outsideTarget, outsideLink);
+    await expect(
+      withConfig({ cwd: root, env: {} }, () =>
+        resolveWritablePath(outsideLink),
+      ),
+    ).rejects.toThrow(/outside configured file-operation roots/);
+  },
+);
 
 test("hook policy can disable, allow, and block tools with block precedence", async () => {
   const event = { tool_input: {}, tool_name: "apply_patch" };

@@ -67,11 +67,26 @@ test("file_read batches bounded slices with a streaming whole-file hash", async 
 test("file_read lets the agent select AST or text mode", async () => {
   const folder = await temporaryFolder();
   const filePath = path.join(folder, "value.ts");
-  await writeFile(filePath, "export const value = 1;\n");
+  await writeFile(
+    filePath,
+    "export const value = 1;\nexport function helper() { return value; }\n",
+  );
 
   const automatic = await readFileSafely({ filePath });
   expect(automatic.resolvedMode).toBe("ast");
   expect(automatic.ast).toBeDefined();
+
+  const selected = await readFileSafely({
+    filePath,
+    mode: "ast",
+    symbols: ["value", "missing"],
+  });
+  expect(selected.ast).toMatchObject({
+    schema: "ast-mcp.source-read.v1",
+    unmatched: ["missing"],
+  });
+  expect(JSON.stringify(selected.ast)).toContain("value = 1");
+  expect(JSON.stringify(selected.ast)).not.toContain("function helper");
 
   const text = await readFileSafely({ filePath, mode: "text" });
   expect(text.resolvedMode).toBe("text");

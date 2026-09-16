@@ -34,13 +34,25 @@ const wrappers = new Set([
   "chrt",
 ]);
 
+export type ShellDialect = "cmd" | "posix" | "powershell";
+
+function commandName(value = "") {
+  return (
+    value
+      .split(/[\\/]/)
+      .at(-1)
+      ?.toLowerCase()
+      .replace(/\.(?:bat|cmd|exe|ps1)$/i, "") ?? ""
+  );
+}
+
 function executable(command: Command) {
   const values = [command.name, ...command.suffix].map(
     (word) => word?.value ?? "",
   );
   let index = 0;
-  while (wrappers.has(values[index]?.split("/").at(-1)?.toLowerCase() ?? "")) {
-    const wrapper = values[index++].split("/").at(-1)?.toLowerCase();
+  while (wrappers.has(commandName(values[index]))) {
+    const wrapper = commandName(values[index++]);
     while (values[index]?.startsWith("-")) {
       const option = values[index++];
       if (
@@ -78,7 +90,7 @@ function executable(command: Command) {
   }
   return {
     args: values.slice(index + 1),
-    name: values[index]?.split("/").at(-1)?.toLowerCase() ?? "",
+    name: commandName(values[index]),
   };
 }
 
@@ -115,19 +127,230 @@ function inlineMutates(source: string) {
   );
 }
 
-function payloadAfter(args: string[], flags: string[]) {
-  const index = args.findIndex(
-    (arg) =>
-      flags.includes(arg) || flags.some((flag) => arg.startsWith(`${flag}=`)),
-  );
+function payloadAfter(
+  args: string[],
+  flags: string[],
+  caseInsensitive = false,
+) {
+  const expected = caseInsensitive
+    ? flags.map((flag) => flag.toLowerCase())
+    : flags;
+  const index = args.findIndex((arg) => {
+    const candidate = caseInsensitive ? arg.toLowerCase() : arg;
+    return (
+      expected.includes(candidate) ||
+      expected.some((flag) => candidate.startsWith(`${flag}=`))
+    );
+  });
   if (index < 0) return undefined;
   const argument = args[index];
   const separator = argument.indexOf("=");
   return separator >= 0 ? argument.slice(separator + 1) : args[index + 1];
 }
 
+const cmdMutators = new Set([
+  "attrib",
+  "copy",
+  "del",
+  "erase",
+  "fsutil",
+  "md",
+  "mkdir",
+  "mklink",
+  "move",
+  "rd",
+  "ren",
+  "rename",
+  "replace",
+  "rmdir",
+  "robocopy",
+  "sc",
+  "xcopy",
+]);
+
+const powershellMutators = new Set([
+  "add-content",
+  "clear-item",
+  "clear-itemproperty",
+  "clear-content",
+  "copy",
+  "copy-item",
+  "cp",
+  "cpi",
+  "del",
+  "erase",
+  "md",
+  "mi",
+  "mkdir",
+  "move",
+  "move-item",
+  "mv",
+  "new-item",
+  "ni",
+  "out-file",
+  "rd",
+  "remove-item",
+  "remove-itemproperty",
+  "ren",
+  "rename",
+  "rename-item",
+  "rename-itemproperty",
+  "ri",
+  "rm",
+  "rni",
+  "rmdir",
+  "sc",
+  "set-acl",
+  "set-content",
+  "set-item",
+  "set-itemproperty",
+  "si",
+  "sp",
+  "tee",
+  "tee-object",
+  "xcopy",
+]);
+
+interface WindowsSegment {
+  redirected: boolean;
+  source: string;
+}
+
+function windowsSegments(source: string): WindowsSegment[] {
+  const segments: WindowsSegment[] = [];
+  let current = "";
+  let quote = "";
+  let redirected = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] as string;
+    if (quote) {
+      current += character;
+      if ((character === "`" || character === "^") && index + 1 < source.length)
+        current += source[++index];
+      else if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if ((character === "`" || character === "^") && index + 1 < source.length) {
+      current += character + source[++index];
+      continue;
+    }
+    if (character === ">") {
+      if (
+        !/^>?\s*(?:\$null|nul|&\d)(?=$|\s|[;&|])/i.test(source.slice(index + 1))
+      )
+        redirected = true;
+      current += character;
+      continue;
+    }
+    if (/[;&|{}\r\n]/.test(character)) {
+      if (current.trim()) segments.push({ redirected, source: current });
+      current = "";
+      redirected = false;
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) segments.push({ redirected, source: current });
+  return segments;
+}
+
+function windowsTokens(source: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote = "";
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] as string;
+    if (quote) {
+      if ((character === "`" || character === "^") && index + 1 < source.length)
+        current += source[++index];
+      else if (character === quote) quote = "";
+      else current += character;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if ((character === "`" || character === "^") && index + 1 < source.length) {
+      current += source[++index];
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (current) tokens.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current) tokens.push(current);
+  return tokens;
+}
+
+function windowsSegmentMutates(
+  source: string,
+  dialect: Exclude<ShellDialect, "posix">,
+): boolean {
+  const tokens = windowsTokens(source);
+  while (/^(?:&|@|\()$/.test(tokens[0] ?? "")) tokens.shift();
+  const name = commandName(tokens[0]);
+  if (!name) return false;
+  const mutators = dialect === "powershell" ? powershellMutators : cmdMutators;
+  if (mutators.has(name)) return true;
+  if (name === "call")
+    return windowsSegmentMutates(tokens.slice(1).join(" "), "cmd");
+  if (name === "invoke-expression" || name === "iex")
+    return windowsShellMutates(tokens.slice(1).join(" "), "powershell");
+  if (name === "powershell" || name === "pwsh") {
+    if (
+      tokens
+        .slice(1)
+        .some((token) =>
+          /^-(?:e|ec|en|enc|enco|encod|encode|encodedcommand)$/i.test(token),
+        )
+    )
+      return true;
+    const payload = payloadAfter(tokens.slice(1), ["-c", "-command"], true);
+    return payload ? windowsShellMutates(payload, "powershell") : false;
+  }
+  if (name === "cmd") {
+    const payload = payloadAfter(tokens.slice(1), ["/c", "/k"], true);
+    return payload ? windowsShellMutates(payload, "cmd") : false;
+  }
+  if (name === "if" || name === "for")
+    return tokens.slice(1).some((token, index) => {
+      const candidate = commandName(token.replace(/^[@&(]+/, ""));
+      return (
+        mutators.has(candidate) ||
+        (["do", "else"].includes(candidate) &&
+          windowsSegmentMutates(tokens.slice(index + 2).join(" "), dialect))
+      );
+    });
+  return false;
+}
+
+function windowsShellMutates(
+  source: string,
+  dialect: Exclude<ShellDialect, "posix">,
+): boolean {
+  if (
+    /\[(?:system\.)?io\.(?:file|directory)\]\s*::\s*(?:appendalltext|copy|create|createdirectory|createhardlink|createsymboliclink|delete|move|openwrite|replace|setattributes|writeallbytes|writealllines|writealltext)\s*\(/i.test(
+      source,
+    )
+  )
+    return true;
+  return windowsSegments(source).some(
+    (segment) =>
+      segment.redirected || windowsSegmentMutates(segment.source, dialect),
+  );
+}
+
 function commandMutates(command: Command) {
-  const original = command.name?.value.split("/").at(-1)?.toLowerCase() ?? "";
+  const original = commandName(command.name?.value);
   const originalArgs = command.suffix.map((word) => word.value);
   if (
     original === "command" &&
@@ -169,9 +392,14 @@ function commandMutates(command: Command) {
   ) {
     const grouped = args.findIndex((arg) => /^-[A-Za-z]*c[A-Za-z]*$/.test(arg));
     const payload =
-      payloadAfter(args, ["-c", "--command", "-Command"]) ??
+      payloadAfter(args, ["-c", "--command", "-command"], true) ??
       (grouped >= 0 ? args[grouped + 1] : undefined);
-    return payload ? shellMutates(payload) : false;
+    return payload
+      ? shellMutates(
+          payload,
+          name === "pwsh" || name === "powershell" ? "powershell" : "posix",
+        )
+      : false;
   }
   if (/^(?:node|python\d*(?:\.\d+)*|ruby|perl|php|bun|deno)$/.test(name)) {
     const flags = name.startsWith("python") ? ["-c"] : ["-e", "--eval"];
@@ -199,8 +427,9 @@ function visit(value: unknown): boolean {
   return Object.values(value).some(visit);
 }
 
-export function shellMutates(source: string) {
+export function shellMutates(source: string, dialect: ShellDialect = "posix") {
   if (source.length > 100_000) return false;
+  if (dialect !== "posix" && windowsShellMutates(source, dialect)) return true;
   try {
     const script = parse(source);
     return script.errors?.length ? false : visit(script);

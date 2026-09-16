@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import registerLifecycleTools from "../src/tools/lifecycle";
@@ -79,7 +87,20 @@ test("lifecycle handlers execute successful and failed requests", async () => {
       }),
     );
     expect(changed.isError).toBeUndefined();
-    expect(changed.content[0]?.text).toContain(attributesPath);
+    const changedFiles = JSON.parse(changed.content[0]?.text ?? "{}").files;
+    const [changedPath] = Object.keys(changedFiles ?? {});
+    expect(path.basename(changedPath ?? "")).toBe("attributes.txt");
+    expect(await realpath(path.dirname(changedPath ?? ""))).toBe(
+      await realpath(root),
+    );
+
+    const missingHash = await handler("file_chattr")({
+      files: {
+        [attributesPath]: { chattr: { chmod: 0o600 } },
+      },
+    });
+    expect(missingHash.isError).toBeTrue();
+    expect(missingHash.content[0]?.text).toContain("expectedSha256");
 
     const stale = await handler("file_chattr")({
       files: {
@@ -91,6 +112,27 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     });
     expect(stale.isError).toBeTrue();
     expect(stale.content[0]?.text).toContain("Stale file context");
+
+    const rollbackPath = path.join(root, "rollback.txt");
+    const invalidOwnerPath = path.join(root, "invalid-owner.txt");
+    await writeFile(rollbackPath, "rollback");
+    await writeFile(invalidOwnerPath, "invalid-owner");
+    await chmod(rollbackPath, 0o640);
+    const rolledBack = await handler("file_chattr")({
+      files: {
+        [rollbackPath]: {
+          chattr: { chmod: 0o600 },
+          expectedSha256: digest("rollback"),
+        },
+        [invalidOwnerPath]: {
+          chattr: { chown: { gid: 0, uid: 2 ** 32 } },
+          expectedSha256: digest("invalid-owner"),
+        },
+      },
+    });
+    expect(rolledBack.isError).toBeTrue();
+    if (process.platform !== "win32")
+      expect((await stat(rollbackPath)).mode & 0o777).toBe(0o640);
 
     const source = path.join(root, "source.txt");
     const destination = path.join(root, "destination.txt");
@@ -113,7 +155,12 @@ test("lifecycle handlers execute successful and failed requests", async () => {
       }),
     );
     expect(deleted.isError).toBeUndefined();
-    expect(deleted.content[0]?.text).toContain(destination);
+    const deletedFiles = JSON.parse(deleted.content[0]?.text ?? "{}").files;
+    const [deletedPath] = Object.keys(deletedFiles ?? {});
+    expect(path.basename(deletedPath ?? "")).toBe("destination.txt");
+    expect(await realpath(path.dirname(deletedPath ?? ""))).toBe(
+      await realpath(root),
+    );
     const missing = await handler("file_delete")({
       files: {
         [destination]: { expectedSha256: digest("rename") },

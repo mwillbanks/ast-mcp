@@ -1,12 +1,17 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { patchFiles, writeFilesSafely } from "../src/patch/engine";
 
 const folders: string[] = [];
-process.env.AST_MCP_ROOTS = process.cwd();
-process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+const originalRoots = process.env.AST_MCP_ROOTS;
+const originalExternalRoots = process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS;
+
+beforeEach(() => {
+  process.env.AST_MCP_ROOTS = process.cwd();
+  process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
+});
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -18,6 +23,11 @@ afterEach(async () => {
       .splice(0)
       .map((folder) => rm(folder, { force: true, recursive: true })),
   );
+  if (originalRoots === undefined) delete process.env.AST_MCP_ROOTS;
+  else process.env.AST_MCP_ROOTS = originalRoots;
+  if (originalExternalRoots === undefined)
+    delete process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS;
+  else process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = originalExternalRoots;
 });
 
 test("patchFiles applies ordered aider blocks to one file under one guard", async () => {

@@ -36,4 +36,4 @@ Hosts typically start a project-local MCP server against the primary checkout. L
 - `request`: the same remapping applies, but paths inside a sibling worktree require approval unless an explicit rule already denies them.
 - `ignore`: sibling worktrees stay outside the baseline unless an absolute `[[paths]]` rule covers them.
 
-`projectRoot` remains the config-bearing checkout. Intelligence calls that target an absolute worktree path use that worktree as the ast-bro root. Relative paths resolve against `PWD` when it is a linked worktree.
+`projectRoot` remains the config-bearing checkout. Intelligence calls that target an absolute worktree path use that worktree as the native intelligence root. Relative paths resolve against `PWD` when it is a linked worktree.

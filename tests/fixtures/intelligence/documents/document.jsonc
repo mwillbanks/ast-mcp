@@ -1,0 +1,8 @@
+{
+  // retained comment
+  "name": "café",
+  "nested": {
+    "count": 2,
+    "enabled": true
+  }
+}

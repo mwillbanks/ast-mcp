@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
+// biome-ignore-all assist/source/useSortedKeys: Diagnostic output preserves stable user-facing order.
+import { realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  commandForPlatform,
   directoryBinaryCandidates,
-  executableCandidate,
   executableNames,
   globalBinDirectories,
   isExecutable,
-  resolveGlobalBinaryAlias,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
 
@@ -103,7 +104,200 @@ function parse(args: string[]): CheckOptions {
 
 const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
-const astBroVersion = "4.2.0";
+const expectedIntelligenceTools = [
+  "graph_diff",
+  "graph_explain",
+  "graph_path",
+  "graph_query",
+  "index",
+  "index_status",
+  "retrieve",
+  "workspace_open",
+  "workspace_status",
+] as const;
+
+export interface McpSmokeResult {
+  exposedTools: string[];
+  initialized: boolean;
+  selectedWorkspace: boolean;
+}
+
+export function mcpStdioCommand(
+  binary: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const invocation = commandForPlatform(binary, ["mcp"], platform);
+  return [invocation.command, ...invocation.args];
+}
+
+async function terminateMcpProcess(
+  processHandle: ReturnType<typeof Bun.spawn>,
+) {
+  if (processHandle.exitCode !== null) return;
+  if (process.platform === "win32") {
+    try {
+      const taskkill = Bun.spawn(
+        ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
+        { stderr: "ignore", stdin: "ignore", stdout: "ignore" },
+      );
+      await Promise.race([taskkill.exited, Bun.sleep(500)]);
+      if (taskkill.exitCode === null) taskkill.kill();
+    } catch {
+      processHandle.kill();
+    }
+  } else {
+    try {
+      process.kill(-processHandle.pid, "SIGTERM");
+    } catch {
+      processHandle.kill("SIGTERM");
+    }
+  }
+  const stopped = await Promise.race([
+    processHandle.exited.then(() => true),
+    Bun.sleep(500).then(() => false),
+  ]);
+  if (!stopped && processHandle.exitCode === null) {
+    if (process.platform !== "win32") {
+      try {
+        process.kill(-processHandle.pid, "SIGKILL");
+      } catch {
+        processHandle.kill("SIGKILL");
+      }
+    } else processHandle.kill("SIGKILL");
+  }
+  await Promise.race([processHandle.exited, Bun.sleep(500)]);
+}
+
+export async function smokeMcpStdio(
+  binary: string,
+  root: string,
+  timeoutMs = 15_000,
+): Promise<McpSmokeResult> {
+  const invocation = commandForPlatform(binary, ["mcp"]);
+  const process = Bun.spawn([invocation.command, ...invocation.args], {
+    cwd: root,
+    detached: globalThis.process.platform !== "win32",
+    env: {
+      ...Bun.env,
+      AST_MCP_PROJECT_ROOT: root,
+      AST_MCP_ROOTS: root,
+    },
+    stderr: "pipe",
+    stdin: "pipe",
+    stdout: "pipe",
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
+  const stderrDrain = new Response(process.stderr).text().catch(() => "");
+  const deadline = Date.now() + timeoutMs;
+  const responses = new Map<number, Record<string, unknown>>();
+  const reader = process.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  const send = async (message: Record<string, unknown>) => {
+    process.stdin.write(`${JSON.stringify(message)}\n`);
+    await process.stdin.flush();
+  };
+  await send({
+    id: 1,
+    jsonrpc: "2.0",
+    method: "initialize",
+    params: {
+      capabilities: {},
+      clientInfo: { name: "ast-mcp-check-install", version: "1" },
+      protocolVersion: "2025-06-18",
+    },
+  });
+  const readUntil = async (id: number): Promise<Record<string, unknown>> => {
+    while (!responses.has(id)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("MCP smoke timed out");
+      const chunk = await Promise.race([
+        reader.read(),
+        Bun.sleep(remaining).then(() => {
+          throw new Error("MCP smoke timed out");
+        }),
+      ]);
+      if (chunk.done) throw new Error("MCP smoke ended before responding");
+      buffered += decoder.decode(chunk.value, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const value = JSON.parse(line) as Record<string, unknown>;
+        if (typeof value.id === "number") responses.set(value.id, value);
+      }
+    }
+    return responses.get(id) as Record<string, unknown>;
+  };
+  try {
+    const initialize = await readUntil(1);
+    if (!initialize.result) throw new Error("MCP initialize failed");
+    await send({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+      params: {},
+    });
+    await send({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
+    await send({
+      id: 3,
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { arguments: { directory: root }, name: "workspace_open" },
+    });
+    const listed = await readUntil(2);
+    const opened = await readUntil(3);
+    const result = listed.result as
+      | { tools?: Array<{ name?: unknown }> }
+      | undefined;
+    const exposedTools = (result?.tools ?? [])
+      .map((tool) => tool.name)
+      .filter((name): name is string => typeof name === "string")
+      .sort();
+    const missing = expectedIntelligenceTools.filter(
+      (name) => !exposedTools.includes(name),
+    );
+    if (missing.length)
+      throw new Error(`MCP smoke is missing tools: ${missing.join(", ")}`);
+    const openedResult = opened.result as
+      | {
+          structuredContent?: {
+            data?: {
+              workspace?: {
+                canonicalRootAnchor?: unknown;
+                checkoutRoot?: unknown;
+                workspaceId?: unknown;
+              };
+            };
+            ok?: unknown;
+          };
+        }
+      | undefined;
+    const openedWorkspace = openedResult?.structuredContent?.data?.workspace;
+    const expectedRoot = path.resolve(root);
+    const selectedWorkspace =
+      !opened.error &&
+      openedResult?.structuredContent?.ok === true &&
+      typeof openedWorkspace?.workspaceId === "string" &&
+      openedWorkspace.workspaceId.startsWith("workspace:v1:") &&
+      typeof openedWorkspace.checkoutRoot === "string" &&
+      sameNativePath(openedWorkspace.checkoutRoot, expectedRoot) &&
+      typeof openedWorkspace.canonicalRootAnchor === "string" &&
+      sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
+    if (!selectedWorkspace)
+      throw new Error("MCP smoke did not select the requested workspace");
+    return { exposedTools, initialized: true, selectedWorkspace };
+  } finally {
+    process.stdin.end();
+    const exited = await Promise.race([
+      process.exited.then(() => true),
+      Bun.sleep(500).then(() => false),
+    ]);
+    if (!exited) {
+      await terminateMcpProcess(process);
+    }
+    await Promise.race([stderrDrain, Bun.sleep(500)]);
+  }
+}
 
 async function astMcpEntry(
   entry: unknown,
@@ -111,67 +305,43 @@ async function astMcpEntry(
   home = os.homedir(),
 ): Promise<boolean> {
   if (typeof entry !== "string") return false;
-  const normalized = entry.replaceAll("\\", "/");
-  if (root) return normalized === "./node_modules/.bin/ast-mcp";
-  if (
-    ![
-      "ast-mcp",
-      "ast-mcp.bat",
-      "ast-mcp.cmd",
-      "ast-mcp.com",
-      "ast-mcp.exe",
-    ].includes(path.basename(normalized).toLowerCase())
-  )
-    return false;
-  const directory = path.dirname(path.resolve(entry));
-  const recognized = globalBinDirectories(
-    "ast-mcp",
-    process.platform,
-    home,
-  ).some((candidate) => path.resolve(candidate) === directory);
-  return recognized && isExecutable(entry);
+  const directories = root
+    ? [path.join(root, "node_modules/.bin")]
+    : globalBinDirectories("ast-mcp", process.platform, home);
+  const expected = directoryBinaryCandidates(
+    directories,
+    executableNames("ast-mcp", process.platform),
+  ).filter((candidate) => isExecutable(candidate, process.platform));
+  const configured = root ? path.resolve(root, entry) : path.resolve(entry);
+  return expected.some((candidate) => sameNativePath(configured, candidate));
 }
 
-async function astBroVersionCurrent(binary: string) {
-  if (!isExecutable(binary)) return false;
-  const result = Bun.spawnSync([binary, "--version"], {
-    stderr: "ignore",
-    stdout: "pipe",
-  });
-  return (
-    result.exitCode === 0 &&
-    result.stdout.toString().trim() === `ast-bro ${astBroVersion}`
-  );
-}
-
-async function astBroCurrent(options: CheckOptions, home: string) {
-  if (process.env.AST_BRO_BINARY)
-    return astBroVersionCurrent(process.env.AST_BRO_BINARY);
-  const localBinDirectory = path.join(options.root, "node_modules/.bin");
-  if (options.scope === "local") {
-    const projectBinary = executableCandidate(
-      directoryBinaryCandidates(
-        [localBinDirectory],
-        executableNames("ast-bro", process.platform),
-      ),
-      process.platform,
+function samePhysicalPath(left: string, right: string, filesOnly = false) {
+  try {
+    const configured = statSync(left, { bigint: true });
+    const expected = statSync(right, { bigint: true });
+    return (
+      (!filesOnly || (configured.isFile() && expected.isFile())) &&
+      configured.dev !== 0n &&
+      configured.ino !== 0n &&
+      configured.dev === expected.dev &&
+      configured.ino === expected.ino
     );
-    return projectBinary ? astBroVersionCurrent(projectBinary) : false;
+  } catch {
+    return false;
   }
-  const bundled = path.resolve(
-    import.meta.dir,
-    "../../../../node_modules/.bin/ast-bro",
-  );
-  if (isExecutable(bundled)) return astBroVersionCurrent(bundled);
-  const globalBinary = resolveGlobalBinaryAlias("ast-bro", {
-    globalBinDirectories: globalBinDirectories(
-      "ast-bro",
-      process.platform,
-      home,
-    ),
-    platform: process.platform,
-  });
-  return globalBinary ? astBroVersionCurrent(globalBinary) : false;
+}
+
+function sameNativePath(left: string, right: string): boolean {
+  if (process.platform === "win32") return samePhysicalPath(left, right);
+  try {
+    return (
+      path.relative(realpathSync.native(left), realpathSync.native(right)) ===
+      ""
+    );
+  } catch {
+    return path.relative(path.resolve(left), path.resolve(right)) === "";
+  }
 }
 
 async function expectedReference(
@@ -218,11 +388,13 @@ async function hookCurrent(
   root: string | undefined,
   home: string,
 ) {
-  const config = JSON.parse(
+  const config = Bun.JSONC.parse(
     await readFile(configFile, "utf8").catch(() => "{}"),
   );
-  const entries = Array.isArray(config.hooks?.[event])
-    ? config.hooks[event]
+  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+  const hostConfig = config as Record<string, any>;
+  const entries = Array.isArray(hostConfig.hooks?.[event])
+    ? hostConfig.hooks[event]
     : [];
   const commands =
     event === "preToolUse"
@@ -271,12 +443,92 @@ async function stdioCommandCurrent(
   root?: string,
   home = os.homedir(),
 ) {
-  return (
-    (await astMcpEntry(entry?.command, root, home)) &&
-    Array.isArray(entry?.args) &&
-    entry.args.length === 1 &&
-    entry.args[0] === "mcp"
+  return (await matchingStdioBinary(entry, root, home)) !== undefined;
+}
+
+function sameCommand(left: unknown, right: string) {
+  if (typeof left !== "string") return false;
+  if (!path.isAbsolute(left) || !path.isAbsolute(right)) return left === right;
+  return sameNativePath(left, right);
+}
+
+function batchAliasPath(commandLine: string) {
+  const match =
+    /^call (?:(?:"([^"\0\r\n%!^]+)")|([A-Za-z0-9_./:\\=-]+)) mcp$/u.exec(
+      commandLine,
+    );
+  return match?.[1] ?? match?.[2];
+}
+
+export function stdioArgsMatch(
+  configured: unknown[],
+  expected: string[],
+  platform: NodeJS.Platform = process.platform,
+) {
+  if (configured.length !== expected.length) return false;
+  return configured.every((argument, index) => {
+    if (argument === expected[index]) return true;
+    if (
+      platform !== "win32" ||
+      index !== expected.length - 1 ||
+      typeof argument !== "string"
+    )
+      return false;
+    const actualPath = batchAliasPath(argument);
+    const expectedPath = batchAliasPath(expected[index] as string);
+    return (
+      actualPath !== undefined &&
+      expectedPath !== undefined &&
+      path.win32.normalize(actualPath).toLowerCase() ===
+        path.win32.normalize(expectedPath).toLowerCase()
+    );
+  });
+}
+
+function sameBatchAliasFile(
+  configuredArgument: unknown,
+  candidate: string,
+  root?: string,
+) {
+  if (typeof configuredArgument !== "string") return false;
+  const configuredAlias = batchAliasPath(configuredArgument);
+  if (!configuredAlias) return false;
+  return samePhysicalPath(
+    root ? path.resolve(root, configuredAlias) : configuredAlias,
+    candidate,
+    true,
   );
+}
+
+async function matchingStdioBinary(
+  entry: McpEntry | undefined,
+  root?: string,
+  home = os.homedir(),
+) {
+  if (!entry || !Array.isArray(entry.args)) return undefined;
+  const directories = root
+    ? [path.join(root, "node_modules/.bin")]
+    : globalBinDirectories("ast-mcp", process.platform, home);
+  const binaries = directoryBinaryCandidates(
+    directories,
+    executableNames("ast-mcp", process.platform),
+  ).filter((candidate) => isExecutable(candidate, process.platform));
+  for (const binary of binaries) {
+    const configured = root
+      ? `./${path.relative(root, binary).split(path.sep).join("/")}`
+      : binary;
+    const expected = commandForPlatform(configured, ["mcp"]);
+    if (
+      sameCommand(entry.command, expected.command) &&
+      stdioArgsMatch(entry.args, expected.args) &&
+      (entry.args.every(
+        (argument, index) => argument === expected.args[index],
+      ) ||
+        sameBatchAliasFile(entry.args.at(-1), binary, root))
+    )
+      return binary;
+  }
+  return undefined;
 }
 
 function entryTypeCurrent(
@@ -320,8 +572,10 @@ async function jsonMcpCurrent(
   url?: string,
   home = os.homedir(),
 ) {
-  const value = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
-  const entry: McpEntry | undefined = value[section]?.["ast-mcp"];
+  const value = Bun.JSONC.parse(await readFile(file, "utf8").catch(() => "{}"));
+  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+  const hostConfig = value as Record<string, any>;
+  const entry: McpEntry | undefined = hostConfig[section]?.["ast-mcp"];
   return transport === "http"
     ? httpJsonMcpCurrent(entry, type, url)
     : stdioJsonMcpCurrent(entry, root, type, home);
@@ -340,11 +594,16 @@ async function codexStdioMcpCurrent(
   home: string,
 ) {
   const command = block.match(/command = (".*")/);
+  const args = block.match(/^args = (\[.*\])$/m);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
-    !block.includes('args = ["mcp"]') ||
     !command ||
-    !(await astMcpEntry(JSON.parse(command[1]), root, home))
+    !args ||
+    !(await stdioCommandCurrent(
+      { args: JSON.parse(args[1]), command: JSON.parse(command[1]) },
+      root,
+      home,
+    ))
   )
     return false;
   return !block.includes("AST_MCP_PROJECT_ROOT") && !block.includes("env =");
@@ -487,6 +746,46 @@ function targetChecks(options: CheckOptions, home: string, global: boolean) {
   if (options.target === "claude") return claudeChecks(options, home, global);
   return copilotChecks(options, home, global);
 }
+
+async function configuredStdioCommand(
+  options: CheckOptions,
+  home: string,
+  global: boolean,
+): Promise<string | undefined> {
+  let entry: McpEntry | undefined;
+  if (options.target === "codex") {
+    const base = global
+      ? path.join(home, ".codex")
+      : path.join(options.root, ".codex");
+    const content = await readFile(
+      path.join(base, "config.toml"),
+      "utf8",
+    ).catch(() => "");
+    const block =
+      content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
+    const command = block.match(/command = (".*")/)?.[1];
+    const args = block.match(/^args = (\[.*\])$/m)?.[1];
+    if (command && args)
+      entry = { args: JSON.parse(args), command: JSON.parse(command) };
+  } else {
+    const file =
+      options.target === "claude"
+        ? global
+          ? path.join(home, ".claude.json")
+          : path.join(options.root, ".mcp.json")
+        : global
+          ? path.join(home, ".copilot/mcp-config.json")
+          : path.join(options.root, ".github/mcp.json");
+    const value = Bun.JSONC.parse(
+      await readFile(file, "utf8").catch(() => "{}"),
+    );
+    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
+    const hostConfig = value as Record<string, any>;
+    entry = hostConfig.mcpServers?.["ast-mcp"];
+  }
+  return matchingStdioBinary(entry, global ? undefined : options.root, home);
+}
+
 function serviceFile(options: CheckOptions, home: string) {
   const digest = new Bun.CryptoHasher("sha256")
     .update(path.resolve(options.root))
@@ -527,9 +826,7 @@ async function serviceCurrent(options: CheckOptions, home: string) {
 }
 function installOperation(checks: InstallChecks) {
   if (Object.values(checks).every(Boolean)) return "none" as const;
-  const managedSurfaces = Object.entries(checks)
-    .filter(([name]) => name !== "astBro")
-    .map(([, current]) => current);
+  const managedSurfaces = Object.values(checks);
   return managedSurfaces.some(Boolean)
     ? ("update" as const)
     : ("install" as const);
@@ -544,11 +841,11 @@ function installCommands(options: CheckOptions, global: boolean) {
     : `./node_modules/.bin/ast-mcp update ${suffix}`;
   return {
     installCommand: global
-      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
-      : `bun add --dev @mwillbanks/ast-mcp @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
+      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
+      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
     repairCommand: global
-      ? `bun add --global --trust @ast-bro/cli@${astBroVersion} && ${updateCommand}`
-      : `bun add --dev @ast-bro/cli@${astBroVersion} && bun pm trust @ast-bro/cli && ${updateCommand}`,
+      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ${updateCommand}`
+      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ${updateCommand}`,
     uninstallCommand: global
       ? `ast-mcp uninstall ${suffix}`
       : `./node_modules/.bin/ast-mcp uninstall ${suffix}`,
@@ -562,26 +859,52 @@ export async function checkInstall(
   const options = parse(args);
   const global = options.scope === "global";
   const checks = await targetChecks(options, home, global);
-  checks.astBro = await astBroCurrent(options, home);
+  let smoke: McpSmokeResult | null = null;
+  let smokeError: string | null = null;
+  if (
+    checks.mcp &&
+    options.transport === "stdio" &&
+    process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE !== "1"
+  ) {
+    const binary = await configuredStdioCommand(options, home, global);
+    if (binary) {
+      try {
+        smoke = await smokeMcpStdio(binary, options.root);
+      } catch (error) {
+        smokeError = error instanceof Error ? error.message : String(error);
+        checks.mcp = false;
+      }
+    } else {
+      smokeError = "No platform-compatible ast-mcp executable was found";
+      checks.mcp = false;
+    }
+  }
   if (options.service) checks.service = await serviceCurrent(options, home);
   const installed = Object.values(checks).every(Boolean);
   const operation = installOperation(checks);
   const commands = installCommands(options, global);
   return {
     checks,
+    intelligence: {
+      engine: "lancedb",
+      federationDefault: false,
+      generationDefault: false,
+      placementDefault: "global",
+      retrievalSemanticDefault: false,
+    },
     installCommand: commands.installCommand,
     installed,
     needsUpdate: operation === "update",
     operation,
     recommendedCommand:
-      !checks.astBro && operation !== "install"
-        ? commands.repairCommand
-        : operation === "update"
-          ? commands.updateCommand
-          : operation === "install"
-            ? commands.installCommand
-            : undefined,
+      operation === "update"
+        ? commands.updateCommand
+        : operation === "install"
+          ? commands.installCommand
+          : undefined,
     repairCommand: commands.repairCommand,
+    smoke,
+    smokeError,
     uninstallCommand: commands.uninstallCommand,
     updateCommand: commands.updateCommand,
     ...options,

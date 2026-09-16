@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
@@ -168,7 +168,7 @@ export async function resolveInstallerEndpoint(
   ) {
     let current = "";
     try {
-      current = await readFile(configFile, "utf8");
+      current = await Bun.file(configFile).text();
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -177,10 +177,12 @@ export async function resolveInstallerEndpoint(
       port: options.port,
     });
     await mkdir(path.dirname(configFile), { recursive: true });
-    await writeFile(configFile, updated);
+    await Bun.write(configFile, updated);
     clearConfigCache();
   }
   const config = await resolveConfig({
+    clientRoots:
+      options.scope === "local" ? [path.resolve(options.root)] : undefined,
     cwd: options.scope === "local" ? options.root : options.home,
     env: options.env,
     home: options.home,

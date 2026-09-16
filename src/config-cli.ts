@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { globalConfigPath, resolveConfig } from "./config";
 import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
@@ -168,7 +167,7 @@ async function runMigration(
   if (options.check && options.write)
     throw new ConfigurationUsageError("--check and --write cannot be combined");
   const target = migrationTarget(options);
-  const migration = migrateConfigSource(await readFile(target, "utf8"), target);
+  const migration = migrateConfigSource(await Bun.file(target).text(), target);
   const backupPath = await migrationBackup(options, migration, target);
   write(
     `${JSON.stringify(

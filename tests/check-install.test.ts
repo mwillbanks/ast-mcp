@@ -1,20 +1,181 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
   rm,
-  symlink,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { install, update } from "../src/installer";
 import {
+  commandForPlatform,
+  executableNames,
+  resolveLocalBinaryAlias,
+} from "../templates/skills/ast-mcp/scripts/binary-resolution";
+import {
   checkInstall,
+  mcpStdioCommand,
   runCheckInstallCli,
+  smokeMcpStdio,
+  stdioArgsMatch,
 } from "../templates/skills/ast-mcp/scripts/check-install";
+
+test("Windows checker matches alias casing without relaxing CMD arguments", () => {
+  const alias = String.raw`C:\Users\RUNNER~1\AppData\ast-mcp.CMD`;
+  const expected = commandForPlatform(alias, ["mcp"], "win32").args;
+  const configured = [...expected];
+  configured[4] = expected[4]?.replace(".CMD", ".cmd") as string;
+  expect(stdioArgsMatch(configured, expected, "win32")).toBeTrue();
+  expect(stdioArgsMatch(configured, expected, "linux")).toBeFalse();
+  expect(
+    stdioArgsMatch(["/d", "/v:on", ...configured.slice(2)], expected, "win32"),
+  ).toBeFalse();
+  expect(
+    stdioArgsMatch(
+      [...configured.slice(0, 4), configured[4]?.replace(" mcp", " MCP")],
+      expected,
+      "win32",
+    ),
+  ).toBeFalse();
+  expect(
+    stdioArgsMatch(
+      [...configured.slice(0, 4), `${configured[4]} & del file`],
+      expected,
+      "win32",
+    ),
+  ).toBeFalse();
+});
+
+test("checker accepts a lowercase Windows batch alias through global discovery", async () => {
+  const { home, root } = await folders();
+  const primaryDirectory = path.join(home, ".bun/bin");
+  const primaryUppercaseAlias = path.join(primaryDirectory, "ast-mcp.CMD");
+  if (
+    !(await stat(primaryUppercaseAlias).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(
+      primaryUppercaseAlias,
+      await readFile(path.join(primaryDirectory, "ast-mcp.cmd")),
+    );
+  await install({
+    home,
+    platform: "win32",
+    root,
+    scope: "global",
+    targets: ["codex"],
+  });
+  const directory = path.join(home, ".bun/install/global/node_modules/.bin");
+  await mcpFixture(directory, "ast-mcp", workingResponses(root));
+  const uppercaseAlias = path.join(directory, "ast-mcp.CMD");
+  if (
+    !(await stat(uppercaseAlias).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(
+      uppercaseAlias,
+      await readFile(path.join(directory, "ast-mcp.cmd")),
+    );
+  const lowercaseAlias = path.join(directory, "ast-mcp.cmd");
+  const invocation = commandForPlatform(lowercaseAlias, ["mcp"], "win32");
+  const file = path.join(home, ".codex/config.toml");
+  const config = await readFile(file, "utf8");
+  await writeFile(
+    file,
+    config
+      .replace(
+        /command = .+/,
+        `command = ${JSON.stringify(invocation.command)}`,
+      )
+      .replace(/args = .+/, `args = ${JSON.stringify(invocation.args)}`),
+  );
+  const script = `process.platform = "win32"; const { checkInstall } = await import(${JSON.stringify(path.resolve(import.meta.dir, "../templates/skills/ast-mcp/scripts/check-install.ts"))}); const result = await checkInstall(["--scope", "global", "--target", "codex", "--root", ${JSON.stringify(root)}], ${JSON.stringify(home)}); console.log(JSON.stringify({ mcp: result.checks.mcp, smokeError: result.smokeError }));`;
+  async function simulatedCheck(comspec?: string) {
+    const child = Bun.spawn([process.execPath, "-e", script], {
+      env: {
+        ...process.env,
+        AST_MCP_CHECK_INSTALL_SKIP_SMOKE: "1",
+        PATHEXT: ".CMD",
+        ...(comspec ? { ComSpec: comspec } : {}),
+      },
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
+    return JSON.parse(stdout) as { mcp: boolean; smokeError: string | null };
+  }
+  const lowercaseIdentity = await stat(lowercaseAlias);
+  const uppercaseIdentity = await stat(uppercaseAlias);
+  if (
+    lowercaseIdentity.dev !== uppercaseIdentity.dev ||
+    lowercaseIdentity.ino !== uppercaseIdentity.ino
+  ) {
+    expect(await simulatedCheck()).toEqual({ mcp: false, smokeError: null });
+    await rm(uppercaseAlias);
+    await link(lowercaseAlias, uppercaseAlias);
+  }
+  expect(await simulatedCheck()).toEqual({ mcp: true, smokeError: null });
+  const matchingConfig = await readFile(file, "utf8");
+  await writeFile(
+    file,
+    matchingConfig.replace(/command = .+/, 'command = "CMD.EXE"'),
+  );
+  expect(await simulatedCheck("cmd.exe")).toEqual({
+    mcp: false,
+    smokeError: null,
+  });
+  await writeFile(file, matchingConfig);
+
+  const lowercaseShell = path.join(directory, "cmd.exe");
+  const uppercaseShell = path.join(directory, "CMD.EXE");
+  await writeFile(lowercaseShell, "lowercase command");
+  if (
+    !(await stat(uppercaseShell).then(
+      () => true,
+      () => false,
+    ))
+  )
+    await writeFile(uppercaseShell, "uppercase command");
+  await writeFile(
+    file,
+    (await readFile(file, "utf8")).replace(
+      /command = .+/,
+      `command = ${JSON.stringify(lowercaseShell)}`,
+    ),
+  );
+  const lowerShellIdentity = await stat(lowercaseShell);
+  const upperShellIdentity = await stat(uppercaseShell);
+  if (
+    lowerShellIdentity.dev !== upperShellIdentity.dev ||
+    lowerShellIdentity.ino !== upperShellIdentity.ino
+  ) {
+    expect(await simulatedCheck(uppercaseShell)).toEqual({
+      mcp: false,
+      smokeError: null,
+    });
+    await rm(uppercaseShell);
+    await link(lowercaseShell, uppercaseShell);
+  }
+  expect(await simulatedCheck(uppercaseShell)).toEqual({
+    mcp: true,
+    smokeError: null,
+  });
+});
 
 const created: string[] = [];
 afterEach(async () => {
@@ -25,19 +186,146 @@ afterEach(async () => {
   );
 });
 
+type FixtureResponses = Record<string, unknown> | null;
+
+async function mcpFixture(
+  directory: string,
+  name: string,
+  responses: FixtureResponses,
+) {
+  await mkdir(directory, { recursive: true });
+  const script = path.join(directory, `${name}-fixture.ts`);
+  await writeFile(
+    script,
+    `const responses = ${JSON.stringify(responses)} as Record<string, unknown> | null;
+const decoder = new TextDecoder();
+let buffered = "";
+for await (const chunk of Bun.stdin.stream()) {
+  buffered += decoder.decode(chunk, { stream: true });
+  let newline = buffered.indexOf("\\n");
+  while (newline >= 0) {
+    const line = buffered.slice(0, newline).trim();
+    buffered = buffered.slice(newline + 1);
+    if (line && responses) {
+      const request = JSON.parse(line) as { id: unknown; method: string };
+      const result = responses[request.method];
+      if (result !== undefined)
+        console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+    }
+    newline = buffered.indexOf("\\n");
+  }
+}
+`,
+  );
+  const posixAlias = path.join(directory, name);
+  const windowsAlias = path.join(directory, `${name}.cmd`);
+  await writeFile(
+    posixAlias,
+    `#!/usr/bin/env bun\nimport ${JSON.stringify(script)};\n`,
+  );
+  await writeFile(
+    windowsAlias,
+    `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`,
+  );
+  await chmod(posixAlias, 0o755);
+  await chmod(windowsAlias, 0o755);
+  return process.platform === "win32" ? windowsAlias : posixAlias;
+}
+
+function workingResponses(root: string): FixtureResponses {
+  return {
+    initialize: {
+      capabilities: { tools: {} },
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {
+      structuredContent: {
+        data: {
+          workspace: {
+            canonicalRootAnchor: root,
+            checkoutRoot: root,
+            workspaceId:
+              "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        },
+        ok: true,
+      },
+    },
+    "tools/list": {
+      tools: [
+        "graph_diff",
+        "graph_explain",
+        "graph_path",
+        "graph_query",
+        "index",
+        "index_status",
+        "retrieve",
+        "workspace_open",
+        "workspace_status",
+      ].map((name) => ({ name })),
+    },
+  };
+}
+
 async function folders() {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-root-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-home-"));
   created.push(root, home);
-  const globalAlias = path.join(home, ".bun/bin/ast-mcp");
-  await mkdir(path.dirname(globalAlias), { recursive: true });
-  await writeFile(globalAlias, "#!/bin/sh\n");
-  await chmod(globalAlias, 0o755);
-  const binary = path.join(root, "node_modules/.bin/ast-bro");
-  await mkdir(path.dirname(binary), { recursive: true });
-  await symlink(path.resolve("node_modules/.bin/ast-bro"), binary);
+  await mcpFixture(
+    path.join(home, ".bun/bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
+  await mcpFixture(
+    path.join(root, "node_modules/.bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
   return { home, root };
 }
+
+test("resolves native Windows aliases before POSIX shims", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp resolve & alias-"),
+  );
+  created.push(root);
+  const directory = path.join(root, "node_modules/.bin");
+  const windowsName = executableNames("ast-mcp", "win32").find((name) =>
+    name.toLowerCase().endsWith(".cmd"),
+  );
+  if (!windowsName) throw new Error("Windows command alias is unavailable");
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "ast-mcp"), "posix shim");
+  await writeFile(path.join(directory, windowsName), "windows shim");
+
+  expect(executableNames("ast-mcp", "win32").at(-1)).toBe("ast-mcp");
+  expect(resolveLocalBinaryAlias("ast-mcp", root, "win32")).toBe(
+    path.join(directory, windowsName),
+  );
+  const windowsAlias = path.join(directory, windowsName);
+  expect(mcpStdioCommand(windowsAlias, "win32")).toEqual([
+    process.env.ComSpec ?? "cmd.exe",
+    "/d",
+    "/v:off",
+    "/s",
+    "/c",
+    `call "${windowsAlias}" mcp`,
+  ]);
+});
+
+test("checker accepts a configured Windows alias after a preferred alias appears", async () => {
+  if (process.platform !== "win32") return;
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  await writeFile(path.join(root, "node_modules/.bin/ast-mcp.exe"), "fixture");
+
+  const result = await checkInstall(
+    ["--scope", "local", "--target", "codex", "--root", root],
+    home,
+  );
+  expect(result.checks.mcp).toBeTrue();
+});
 
 test("checker covers every local host surface", async () => {
   const { home, root } = await folders();
@@ -53,7 +341,7 @@ test("checker covers every local host surface", async () => {
       home,
     );
 
-    expect(result.installed).toBeTrue();
+    expect(result).toMatchObject({ installed: true, smokeError: null });
   }
   const configFile = path.join(root, ".mcp.json");
   const config = JSON.parse(await readFile(configFile, "utf8"));
@@ -67,6 +355,29 @@ test("checker covers every local host surface", async () => {
       )
     ).installed,
   ).toBeFalse();
+});
+
+test("checker reads JSONC host configuration without external parsers", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["claude"] });
+  const file = path.join(root, ".mcp.json");
+  const config = JSON.parse(await readFile(file, "utf8"));
+  await writeFile(
+    file,
+    `{
+      // Host-owned comments and trailing commas remain valid input.
+      "mcpServers": ${JSON.stringify(config.mcpServers)},
+    }\n`,
+  );
+
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "local", "--target", "claude", "--root", root],
+        home,
+      )
+    ).installed,
+  ).toBeTrue();
 });
 
 test("checker covers every global host surface", async () => {
@@ -83,23 +394,32 @@ test("checker covers every global host surface", async () => {
       home,
     );
 
-    expect(result.installed).toBeTrue();
+    expect(result).toMatchObject({ installed: true, smokeError: null });
     expect(result.installCommand).not.toContain("--root");
-    expect(result.installCommand).toContain(
-      "--trust @ast-bro/cli@4.2.0 dprint",
-    );
+    expect(result.installCommand).toContain("--trust dprint");
     expect(result.updateCommand).toStartWith("ast-mcp update");
     expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
   const configFile = path.join(home, ".codex/config.toml");
   const config = await readFile(configFile, "utf8");
-  const windowsAlias = path.join(home, ".bun/bin/ast-mcp.cmd");
-  await mkdir(path.dirname(windowsAlias), { recursive: true });
-  await writeFile(windowsAlias, "#!/bin/sh\nexit 0\n");
-  await chmod(windowsAlias, 0o755);
+  const secondaryAlias = await mcpFixture(
+    path.join(home, ".bun/install/global/node_modules/.bin"),
+    "ast-mcp",
+    workingResponses(root),
+  );
+  const secondaryCommand = commandForPlatform(
+    secondaryAlias,
+    ["mcp"],
+    process.platform,
+  );
   await writeFile(
     configFile,
-    config.replace(/command = .+/, `command = ${JSON.stringify(windowsAlias)}`),
+    config
+      .replace(
+        /command = .+/,
+        `command = ${JSON.stringify(secondaryCommand.command)}`,
+      )
+      .replace(/args = .+/, `args = ${JSON.stringify(secondaryCommand.args)}`),
   );
   expect(
     (
@@ -109,6 +429,19 @@ test("checker covers every global host surface", async () => {
       )
     ).checks.mcp,
   ).toBeTrue();
+  const invalidAlias = path.join(home, ".bun/bin/ast-mcp.invalid");
+  await writeFile(
+    configFile,
+    config.replace(/command = .+/, `command = ${JSON.stringify(invalidAlias)}`),
+  );
+  expect(
+    (
+      await checkInstall(
+        ["--scope", "global", "--target", "codex", "--root", root],
+        home,
+      )
+    ).checks.mcp,
+  ).toBeFalse();
   await writeFile(
     configFile,
     config.replace(
@@ -124,7 +457,7 @@ test("checker covers every global host surface", async () => {
       )
     ).checks.mcp,
   ).toBeFalse();
-});
+}, 30_000);
 
 test("checker rejects invalid arguments and CLI emits JSON", async () => {
   await expect(checkInstall(["--unknown"])).rejects.toThrow("Unknown argument");
@@ -139,8 +472,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
-  expect(missing.installCommand).toContain("@ast-bro/cli@4.2.0");
-  expect(missing.installCommand).toContain("bun pm trust @ast-bro/cli dprint");
+  expect(missing.installCommand).toContain("bun pm trust dprint");
   expect(missing.installCommand).toContain(
     "./node_modules/.bin/ast-mcp install",
   );
@@ -165,29 +497,81 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   }
 });
 
-test("checker flags a stale configured ast-bro binary", async () => {
-  const { home, root } = await folders();
-  await install({ home, root, scope: "local", targets: ["codex"] });
-  const binary = path.join(root, "node_modules/.bin/ast-bro");
-  await rm(binary);
-  await writeFile(binary, "#!/bin/sh\nprintf 'ast-bro 4.1.0\\n'\n");
-  await chmod(binary, 0o755);
-  const configuredAstBroBinary = process.env.AST_BRO_BINARY;
-  delete process.env.AST_BRO_BINARY;
-  let result: Awaited<ReturnType<typeof checkInstall>>;
-  try {
-    result = await checkInstall(
-      ["--scope", "local", "--target", "codex", "--root", root],
-      home,
-    );
-  } finally {
-    if (configuredAstBroBinary === undefined) delete process.env.AST_BRO_BINARY;
-    else process.env.AST_BRO_BINARY = configuredAstBroBinary;
-  }
-  expect(result.checks.astBro).toBeFalse();
-  expect(result.installed).toBeFalse();
-  expect(result.needsUpdate).toBeTrue();
-  expect(result.recommendedCommand).toContain("@ast-bro/cli@4.2.0");
+test("stdio smoke fails closed for incomplete and unresponsive servers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-smoke-"));
+  created.push(root);
+  const incomplete = await mcpFixture(root, "incomplete", {
+    initialize: {
+      capabilities: {},
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {},
+    "tools/list": { tools: [] },
+  });
+  await expect(smokeMcpStdio(incomplete, root, 2_000)).rejects.toThrow(
+    "missing tools",
+  );
+
+  const wrongWorkspace = await mcpFixture(root, "wrong-workspace", {
+    initialize: {
+      capabilities: {},
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/call": {
+      structuredContent: {
+        data: {
+          workspace: {
+            canonicalRootAnchor: "/wrong",
+            checkoutRoot: "/wrong",
+            workspaceId:
+              "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          },
+        },
+        ok: true,
+      },
+    },
+    "tools/list": {
+      tools: [
+        "generate",
+        "graph_diff",
+        "graph_explain",
+        "graph_path",
+        "graph_query",
+        "index",
+        "index_status",
+        "retrieve",
+        "workspace_open",
+        "workspace_status",
+      ].map((name) => ({ name })),
+    },
+  });
+  await expect(smokeMcpStdio(wrongWorkspace, root, 2_000)).rejects.toThrow(
+    "did not select the requested workspace",
+  );
+
+  const silent = await mcpFixture(root, "silent", null);
+  await expect(smokeMcpStdio(silent, root, 25)).rejects.toThrow("timed out");
+});
+
+test("checker validates HTTP and service option combinations", async () => {
+  await expect(
+    checkInstall(["--transport", "stdio", "--service"]),
+  ).rejects.toThrow("--service requires");
+  await expect(checkInstall(["--port", "0"])).rejects.toThrow("Invalid --port");
+  const result = await checkInstall([
+    "--transport",
+    "http",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "4567",
+    "--target",
+    "copilot",
+  ]);
+  expect(result.url).toBe("http://127.0.0.1:4567/mcp");
+  expect(result.transport).toBe("http");
 });
 
 test("checker detects stale managed guidance and hook payloads", async () => {

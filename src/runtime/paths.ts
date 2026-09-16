@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { currentConfig } from "../config";
 import {
+  assertWorkspaceWritable,
+  currentWorkspace,
+} from "../intelligence/workspace/index.ts";
+import {
   assertPolicy,
   evaluatePolicy,
   type PathOperation,
@@ -10,10 +14,10 @@ import {
 import {
   canonicalizePath,
   canonicalizePathSync,
+  canonicalPathWithin,
   containingRoot,
   effectiveWorkspaceRoot,
   pathWithin,
-  relativeRootFromPwd,
 } from "./path-utils";
 
 async function realpathOrSelf(filePath: string): Promise<string> {
@@ -28,10 +32,12 @@ async function configuredRoots(): Promise<string[]> {
   return (await currentConfig()).workspace.roots;
 }
 function within(root: string, target: string): boolean {
-  return pathWithin(root, target);
+  return canonicalPathWithin(root, target);
 }
 
 async function workspaceRoots(): Promise<string[]> {
+  const selected = currentWorkspace();
+  if (selected) return [selected.checkoutRoot];
   const config = await currentConfig();
   const roots = await Promise.all(
     (await configuredRoots()).map(realpathOrSelf),
@@ -57,6 +63,8 @@ async function workspaceRoots(): Promise<string[]> {
 }
 
 async function fileOperationRoots(): Promise<string[]> {
+  const selected = currentWorkspace();
+  if (selected) return [selected.checkoutRoot];
   const config = await currentConfig();
   const roots = await workspaceRoots();
   const policyRoots = (config.paths ?? []).map((rule) => rule.path);
@@ -76,16 +84,33 @@ async function configuredRootForPath(
   filePath: string,
 ): Promise<string | undefined> {
   const canonicalTarget = canonicalizePathSync(filePath);
-  return (await fileOperationRoots()).find(
-    (candidate) =>
-      pathWithin(candidate, filePath) ||
-      pathWithin(canonicalizePathSync(candidate), canonicalTarget),
+  return (await fileOperationRoots()).find((candidate) =>
+    pathWithin(canonicalizePathSync(candidate), canonicalTarget),
   );
 }
 
 export async function intelligenceRoot(
   requestPaths: string[] = [],
 ): Promise<string> {
+  const selected = currentWorkspace();
+  if (selected) {
+    const mismatched = requestPaths.filter(path.isAbsolute).some((item) => {
+      const resolved = path.resolve(item);
+      return (
+        !within(selected.checkoutRoot, resolved) &&
+        !within(selected.checkoutRoot, canonicalizePathSync(resolved))
+      );
+    });
+    if (mismatched)
+      throw Object.assign(
+        new Error("Absolute paths must belong to the selected workspace"),
+        {
+          code: "workspace_mismatch",
+          retryable: false,
+        },
+      );
+    return selected.checkoutRoot;
+  }
   const roots = await workspaceRoots();
   const matched = [
     ...new Set(
@@ -96,7 +121,18 @@ export async function intelligenceRoot(
     ),
   ];
   if (matched.length === 1) return matched[0] as string;
-  return relativeRootFromPwd(roots) ?? (roots[0] as string);
+  if (roots.length > 1)
+    throw Object.assign(
+      new Error(
+        "Relative paths require an explicit workspace when multiple roots are configured",
+      ),
+      {
+        code: "workspace_ambiguous",
+        retryable: true,
+        suggestedNextCall: "workspace_open",
+      },
+    );
+  return roots[0] as string;
 }
 
 export async function referenceRootForPath(
@@ -118,6 +154,14 @@ export async function referenceRootForPath(
 export async function rootForPath(filePath: string): Promise<string> {
   const root = await configuredRootForPath(filePath);
   if (root) return root;
+  if (currentWorkspace())
+    throw Object.assign(
+      new Error(`Path is outside the selected workspace: ${filePath}`),
+      {
+        code: "workspace_mismatch",
+        retryable: false,
+      },
+    );
   if ((await currentConfig()).safety.allowAnyPath)
     return path.dirname(filePath);
   throw new Error(
@@ -219,10 +263,19 @@ async function resolvePath(
   operation: PathOperation,
 ): Promise<string> {
   const config = await currentConfig();
-  const base =
-    path.isAbsolute(filePath) || !relativeRootFromPwd(roots)
-      ? (roots[0] as string)
-      : (relativeRootFromPwd(roots) as string);
+  const selected = currentWorkspace();
+  if (!selected && !path.isAbsolute(filePath) && roots.length > 1)
+    throw Object.assign(
+      new Error(
+        "Relative paths require an explicit workspace when multiple roots are configured",
+      ),
+      {
+        code: "workspace_ambiguous",
+        retryable: true,
+        suggestedNextCall: "workspace_open",
+      },
+    );
+  const base = selected?.checkoutRoot ?? (roots[0] as string);
   const resolved = await canonicalCandidate(filePath, base);
   assertWithinBoundary(
     resolved,
@@ -233,7 +286,18 @@ async function resolvePath(
   const linkDecision = evaluatePolicy(config, resolved, operation);
   enforcePolicy(config, linkDecision);
   const metadata = await lstat(resolved).catch(() => undefined);
-  if (!metadata?.isSymbolicLink()) return resolved;
+  if (!metadata?.isSymbolicLink()) {
+    if (process.platform !== "win32" || !metadata) return resolved;
+    const canonical = await realpath(resolved);
+    assertWithinBoundary(
+      canonical,
+      roots,
+      allowAnyPath,
+      `Path is outside ${boundary}: ${filePath}`,
+    );
+    enforcePolicy(config, evaluatePolicy(config, canonical, operation));
+    return canonical;
+  }
   return resolvedSymlinkTarget({
     allowAnyPath,
     boundary,
@@ -250,11 +314,12 @@ export async function resolveWritablePath(
   filePath: string,
   operation: PathOperation = "write",
 ): Promise<string> {
+  if (operation !== "read") assertWorkspaceWritable();
   const config = await currentConfig();
   return resolvePath(
     filePath,
     await fileOperationRoots(),
-    config.safety.allowAnyPath,
+    config.safety.allowAnyPath && !currentWorkspace(),
     "configured file-operation roots and paths rules",
     operation,
   );

@@ -1,0 +1,22 @@
+{
+  "checksums": {
+    "c.c": "9ec5d83b3cc94b7e316dadc64e54c298a66d9fcd6b6ab3a0d2d000723bc4c213",
+    "cpp.cpp": "ee341a274e10502c096dfb53211e6aed23f5eee85c290757f3533653acf9a822",
+    "dart.dart": "2916e15fa5e28cb068bfe826267a043cc53bb2fde9c3342a2782e1bad4025466",
+    "go.go": "77f8ecd28ba1f94a8e0d770e6f03e86a519cfc013dd054142cd46add488f6c1d",
+    "graphify-golden.json": "33ec3ff6715319990d54fee6b4d5af842443fd32748716a33ce1d69b169a3291",
+    "objc.m": "317f6f34420decca746f5df65801ccc3c5720f524bda8d13f30b4f05472d74cb",
+    "rust.rs": "a25874dde6cdb9b0089c192c968c391f1c9b090c9971519a08d955f742b8ae4f",
+    "swift.swift": "f8179ccd31fb03cc82d796ffb8da3dc786c181d38cd530b9522c1275ea5489e3",
+    "zig.zig": "62f808ee8a561dc6884af07ee11750dcceb4f498c5cf431aa66d57d437ba3375"
+  },
+  "reproduction": {
+    "command": "git clone https://github.com/Graphify-Labs/graphify && git -C graphify checkout 3f82bf7f837a07fb0f7668fbdbd5662801906942",
+    "mapping": "Normalize systems-language syntax facts, references, diagnostics, and exact byte ranges into graphify-golden.json."
+  },
+  "schemaVersion": "ast-mcp.graphify-provenance.v1",
+  "source": {
+    "repository": "https://github.com/Graphify-Labs/graphify",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+  }
+}

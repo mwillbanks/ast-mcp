@@ -38,7 +38,7 @@ test("public file tools execute declared read, hash, write, and patch batches", 
       },
       name: "file_write",
     });
-    expect(written.isError).not.toBeTrue();
+    expect(written.isError, JSON.stringify(written.content)).not.toBeTrue();
 
     const read = await client.callTool({
       arguments: {

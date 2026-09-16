@@ -56,7 +56,7 @@ test("recursive reads preserve Bun glob and exclusion semantics", async () => {
   );
   const config = await resolveConfig({
     cwd: project,
-    env: { XDG_CONFIG_HOME: globalHome },
+    env: { APPDATA: globalHome, XDG_CONFIG_HOME: globalHome },
   });
   expect(() =>
     assertReadableTree(
@@ -127,7 +127,10 @@ test("disjoint configured roots remain the effective workspace", async () => {
   );
   const options = {
     cwd: project,
-    env: { XDG_CONFIG_HOME: path.join(project, "xdg") },
+    env: {
+      APPDATA: path.join(project, "xdg"),
+      XDG_CONFIG_HOME: path.join(project, "xdg"),
+    },
   };
   const config = await resolveConfig(options);
   await withConfig(options, async () => {

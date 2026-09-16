@@ -28,7 +28,7 @@ test("validates and applies shared file chattr", async () => {
       }),
     ).toThrow("server process owner");
     const chattr = await applyFileChattr(filePath, { chmod: 0o600 });
-    expect(chattr.chmod).toBe(0o600);
+    expect(chattr.chmod).toBe(process.platform === "win32" ? 0o666 : 0o600);
     expect(await resultingFileChattr(filePath)).toEqual(chattr);
     expect(await readFile(filePath, "utf8")).toBe("content");
   } finally {
@@ -39,6 +39,19 @@ test("restores prior attributes after a metadata failure", async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-attributes-"));
   const filePath = path.join(folder, "note.txt");
   await writeFile(filePath, "content");
+  if (process.platform === "win32") {
+    try {
+      await expect(
+        applyFileChattr(filePath, {
+          chmod: 0o600,
+          chown: { gid: 0, uid: 0 },
+        }),
+      ).rejects.toThrow("server process owner");
+    } finally {
+      await rm(folder, { force: true, recursive: true });
+    }
+    return;
+  }
   const chown = spyOn(fsPromises, "chown").mockRejectedValue(
     new Error("chown denied"),
   );
@@ -46,12 +59,13 @@ test("restores prior attributes after a metadata failure", async () => {
     new Error("chmod denied"),
   );
   try {
-    await expect(
-      applyFileChattr(filePath, {
-        chmod: 0o600,
-        chown: { gid: process.getgid?.() ?? 0, uid: process.getuid?.() ?? 0 },
-      }),
-    ).rejects.toThrow("chown denied");
+    const failure = await applyFileChattr(filePath, {
+      chmod: 0o600,
+      chown: { gid: process.getgid?.() ?? 0, uid: process.getuid?.() ?? 0 },
+    }).catch((error) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toContain("rollback was incomplete");
+    expect(failure.errors).toHaveLength(3);
   } finally {
     chown.mockRestore();
     chmod.mockRestore();

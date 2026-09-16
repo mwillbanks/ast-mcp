@@ -101,3 +101,86 @@ test("embedded command fields use the same routing heuristic", () => {
     expect(skillEmbeddedShellMutates(source)).toBeFalse();
   }
 });
+
+const windowsMutationCases: Array<{
+  command: string;
+  dialect: "cmd" | "powershell";
+}> = [
+  {
+    command: '[IO.File]::WriteAllText("file", "value")',
+    dialect: "powershell",
+  },
+  {
+    command: '[System.IO.Directory]::CreateDirectory("directory")',
+    dialect: "powershell",
+  },
+  { command: "ni file -ItemType File", dialect: "powershell" },
+  { command: "New-Item file -ItemType File", dialect: "powershell" },
+  { command: "del file", dialect: "powershell" },
+  { command: "Remove-Item file", dialect: "powershell" },
+  { command: "sc file value", dialect: "powershell" },
+  { command: "Set-Content file value", dialect: "powershell" },
+  { command: "'value' | sc file", dialect: "powershell" },
+  { command: "Write-Output value > file", dialect: "powershell" },
+  { command: "Write-Output value >> file", dialect: "powershell" },
+  { command: "Get-Item file; Remove-Item file", dialect: "powershell" },
+  {
+    command: 'powershell.exe -NoProfile -COMMAND "Remove-Item file"',
+    dialect: "powershell",
+  },
+  { command: "powershell -EncodedCommand ZABlAGwA", dialect: "powershell" },
+  { command: "pwsh -c '& { ni file }'", dialect: "powershell" },
+  { command: "iex 'Set-Content file value'", dialect: "powershell" },
+  {
+    command: "Microsoft.PowerShell.Management\\Remove-Item file",
+    dialect: "powershell",
+  },
+  { command: "Remove-Item 'unterminated", dialect: "powershell" },
+  { command: "del file", dialect: "cmd" },
+  { command: "erase file", dialect: "cmd" },
+  { command: "copy source target", dialect: "cmd" },
+  { command: "move source target", dialect: "cmd" },
+  { command: "ren source target", dialect: "cmd" },
+  { command: "mkdir directory", dialect: "cmd" },
+  { command: "rmdir directory", dialect: "cmd" },
+  { command: "xcopy source target", dialect: "cmd" },
+  { command: "robocopy source target", dialect: "cmd" },
+  { command: "mklink target source", dialect: "cmd" },
+  { command: "sc create service binPath= program.exe", dialect: "cmd" },
+  { command: "echo value>file", dialect: "cmd" },
+  { command: "echo value>>file", dialect: "cmd" },
+  { command: "dir & del file", dialect: "cmd" },
+  { command: 'cmd.exe /C "del file"', dialect: "cmd" },
+  { command: "if exist file del file", dialect: "cmd" },
+  { command: "for %f in (*) do del %f", dialect: "cmd" },
+  { command: "call del file", dialect: "cmd" },
+  { command: 'del "unterminated', dialect: "cmd" },
+];
+
+for (const { command, dialect } of windowsMutationCases) {
+  test(`${dialect} policy routes mutation: ${command}`, () => {
+    expect(shellMutates(command, dialect)).toBeTrue();
+    expect(skillShellMutates(command, dialect)).toBeTrue();
+  });
+}
+
+for (const { command, dialect } of [
+  { command: "Get-Content file", dialect: "powershell" as const },
+  { command: "Get-Command Remove-Item", dialect: "powershell" as const },
+  {
+    command: 'Write-Output "Remove-Item file > target"',
+    dialect: "powershell" as const,
+  },
+  { command: "Write-Output value 2>$null", dialect: "powershell" as const },
+  { command: "Test-Path file", dialect: "powershell" as const },
+  { command: "type file", dialect: "cmd" as const },
+  { command: "echo del", dialect: "cmd" as const },
+  { command: 'echo "value > target"', dialect: "cmd" as const },
+  { command: "dir 2>nul", dialect: "cmd" as const },
+  { command: "dir 2>&1", dialect: "cmd" as const },
+]) {
+  test(`${dialect} policy permits read-only command: ${command}`, () => {
+    expect(shellMutates(command, dialect)).toBeFalse();
+    expect(skillShellMutates(command, dialect)).toBeFalse();
+  });
+}

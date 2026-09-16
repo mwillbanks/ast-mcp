@@ -31,7 +31,10 @@ test("AST batch preflight preserves bounded match locations before commit", asyn
     const result = await withConfig(
       {
         cwd: root,
-        env: { XDG_CONFIG_HOME: path.join(root, "xdg") },
+        env: {
+          APPDATA: path.join(root, "xdg"),
+          XDG_CONFIG_HOME: path.join(root, "xdg"),
+        },
       },
       () =>
         patchFiles({

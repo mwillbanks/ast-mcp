@@ -38,7 +38,7 @@ test("file_patch preview uses the normal AST and Aider contract without committi
     )[source];
     expect(astPreview.preview).toBeTrue();
     expect(astPreview.changed).toBeTrue();
-    expect(astPreview.diff).toContain("+const value = 2;");
+    expect(astPreview.diff).toContain("+const value = 2");
     expect(await readFile(source, "utf8")).toBe(sourceContent);
 
     const notes = path.join(folder, "notes.md");
@@ -125,7 +125,10 @@ test("file_patch preview skips formatters until commit", async () => {
   );
   const options = {
     cwd: folder,
-    env: { XDG_CONFIG_HOME: path.join(folder, "xdg") },
+    env: {
+      APPDATA: path.join(folder, "xdg"),
+      XDG_CONFIG_HOME: path.join(folder, "xdg"),
+    },
   };
   try {
     await withConfig(options, async () => {
@@ -149,9 +152,20 @@ test("file_patch preview skips formatters until commit", async () => {
       expect(result.sha256).toBe(sha256("hi world\n"));
       expect(await readFile(notes, "utf8")).toBe(notesContent);
       expect(await formatStages(folder)).toEqual([]);
+      await expect(
+        patchFiles({
+          [notes]: {
+            expectedSha256: "0".repeat(64),
+            previewReceipt: result.previewReceipt as string,
+          },
+        }),
+      ).rejects.toThrow("Stale file context");
 
       const committed = await patchFiles({
-        [notes]: { previewReceipt: result.previewReceipt as string },
+        [notes]: {
+          expectedSha256: sha256(notesContent),
+          previewReceipt: result.previewReceipt as string,
+        },
       });
       const committedResult = (
         committed.files as Record<string, Record<string, unknown>>
@@ -204,7 +218,7 @@ test("file_patch preview skips formatters until commit", async () => {
       const astResult = (
         astPreview.files as Record<string, Record<string, unknown>>
       )[source];
-      expect(String(astResult.diff)).toContain("+const value = 2;");
+      expect(String(astResult.diff)).toContain("+const value = 2");
       expect(String(astResult.diff)).not.toContain("formatted");
       expect(await readFile(source, "utf8")).toBe(sourceContent);
       expect(await formatStages(folder)).toEqual([]);

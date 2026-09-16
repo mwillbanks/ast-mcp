@@ -4,9 +4,9 @@ Thanks for helping improve ast-mcp. Changes should preserve its core promise: re
 
 ## Prerequisites
 
-- Bun 1.3 or newer
+- Bun 1.4.2 or newer
 - Node.js 22.19 or newer when running MCP Inspector commands
-- the pinned `ast-bro` and `dprint` binaries installed by `bun install`
+- the pinned `dprint` binary and native intelligence dependencies installed by `bun install`
 - a checkout with no unrelated changes in files you plan to edit
 
 Install dependencies:
@@ -59,6 +59,29 @@ AST_MCP_HOST_SMOKE_MY_HOST='{"command":["my-host","--non-interactive","run an as
 ```
 
 The default timeout is 60 seconds. Set `AST_MCP_HOST_SMOKE_TIMEOUT_MS` to change it for every enabled check, or use `timeoutMs` in one host definition. A configured host failure fails this optional command, while an unconfigured host is always skipped.
+
+### Native Windows proof
+
+Use a local Windows VM when one is available. If storage prevents that, create one temporary, isolated Windows debug workflow and connect to its runner before changing Windows code. The key-only OpenSSH and Bore workflow used for PR #18 is recorded at commit `f39a5d1` (`.github/workflows/windows-debug.yml`). Restrict it to the intended PR and actor. Fetch only that actor's registered GitHub SSH keys, disable password authentication, validate `sshd_config`, and restart `sshd` before exposing port 2222. Verify the pinned Bore ZIP SHA-256 before starting the tunnel. Delete the temporary workflow after native proof; do not make shell access a release gate.
+
+Windows Actions runners can expose the profile through an 8.3 alias. The caller's path spelling must remain native for config values and formatter arguments. Resolve aliases separately when checking authorization, containment, and locks. Use this command prompt recipe in the PR checkout with Bun 1.4.2 and dependencies installed:
+
+```cmd
+set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
+for %I in ("%USERPROFILE%") do @set "TEMP=%~sI\AppData\Local\Temp"
+set "TMP=%TEMP%"
+bun --version
+set AST_MCP_SKIP_PACKAGE_SMOKE=1
+bun test --max-concurrency=1 --timeout=30000 tests/config.test.ts tests/config-cli.test.ts tests/format-config.test.ts tests/git-worktrees.test.ts tests/workspace-concurrency.test.ts
+bun scripts/test-shard.ts --shard 0 --shards 3
+bun scripts/test-shard.ts --shard 1 --shards 3
+bun scripts/test-shard.ts --shard 2 --shards 3
+bun test --dots --max-concurrency=1 --timeout=30000
+bun run intelligence:qualify
+bun test tests/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+```
+
+An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from `%USERPROFILE%` and checks its version. Run tests without `--bail` during diagnosis so every failure appears. The multi-call native MCP test has a 30-second budget because a healthy Windows run can approach Bun's default five seconds. Use `git fetch` and an isolated worktree to test a pushed fix on the same runner. Use SSH keepalives for long suites. If SSH disconnects, inspect `tasklist` for an orphaned Bun suite and stop only its exact PID before restarting. Run one Windows suite at a time. Cancel automatically triggered package CI runs during diagnosis. Remove the debug workflow and run required Actions checks once after native proof. If Actions still disagree, return to a native reproducer before patching.
 
 ## Pull requests
 

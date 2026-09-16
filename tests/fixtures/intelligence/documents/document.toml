@@ -1,0 +1,3 @@
+title = "Café"
+[package]
+name = "@scope/package"

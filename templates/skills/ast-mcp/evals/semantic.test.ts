@@ -175,6 +175,7 @@ const evaluation = {
 };
 
 test("rename evaluator accepts root-relative runtime results", () => {
+  const root = path.join(os.tmpdir(), "ast-mcp-root");
   const errors = verifyEvaluation(
     evaluation,
     [
@@ -193,18 +194,19 @@ test("rename evaluator accepts root-relative runtime results", () => {
     ],
     JSON.stringify({
       files: {
-        "/tmp/ast-mcp-root/source.txt": {
-          destinationPath: "/tmp/ast-mcp-root/renamed.txt",
+        [path.join(root, "source.txt")]: {
+          destinationPath: path.join(root, "renamed.txt"),
           renamed: true,
         },
       },
     }),
-    ["/tmp/ast-mcp-root"],
+    [root],
   );
   expect(errors).toEqual([]);
 });
 
 test("rename evaluator rejects incomplete per-file results", () => {
+  const root = path.join(os.tmpdir(), "ast-mcp-root");
   const errors = verifyEvaluation(
     evaluation,
     [
@@ -212,12 +214,12 @@ test("rename evaluator rejects incomplete per-file results", () => {
         index: 0,
         input: JSON.stringify({
           files: {
-            "/tmp/ast-mcp-root/one.txt": {
-              destination: "/tmp/ast-mcp-root/one-new.txt",
+            [path.join(root, "one.txt")]: {
+              destination: path.join(root, "one-new.txt"),
               expectedSha256: "hash",
             },
-            "/tmp/ast-mcp-root/two.txt": {
-              destination: "/tmp/ast-mcp-root/two-new.txt",
+            [path.join(root, "two.txt")]: {
+              destination: path.join(root, "two-new.txt"),
               expectedSha256: "hash",
             },
           },
@@ -227,13 +229,13 @@ test("rename evaluator rejects incomplete per-file results", () => {
     ],
     JSON.stringify({
       files: {
-        "/tmp/ast-mcp-root/one.txt": {
-          destinationPath: "/tmp/ast-mcp-root/wrong.txt",
+        [path.join(root, "one.txt")]: {
+          destinationPath: path.join(root, "wrong.txt"),
           renamed: true,
         },
       },
     }),
-    ["/tmp/ast-mcp-root"],
+    [root],
   );
   expect(
     errors.some((error) => error.includes("assertion not proven")),

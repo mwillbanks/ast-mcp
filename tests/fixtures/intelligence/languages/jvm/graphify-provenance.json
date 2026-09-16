@@ -1,0 +1,20 @@
+{
+  "checksums": {
+    "apex.cls": "21ef68bbd38dc7e55cfec451c5237d54e3cf3850da21f12d9d468479a2a8ed8f",
+    "csharp.cs": "ab7fa53de192923a2d489cddc97e07dae9c301e7d19aa2da761f42e84e7c8cd7",
+    "graphify-golden.json": "15cc8fe0c02f7dca8025db9f0fda8583a0e858a46693af00fa07c5b813fbc819",
+    "groovy.groovy": "dbb070e55f005f0ce63006320191e2c2033e7ba9999314deb9167c3afd2673a7",
+    "java.java": "2bc647aa86df3ff0611a4f9d0b5559be0ff298d28a953a2dd8da55afd29827d5",
+    "kotlin.kt": "85e5a249bde9e52346e766769c5b73e0585e89bad7bfdbf0fad01f3b48b81723",
+    "scala.scala": "cb1952ed90555f24af613bde4a4c0e9f5ea745840828e5aad94a55aa0ebc8163"
+  },
+  "reproduction": {
+    "command": "git clone https://github.com/Graphify-Labs/graphify && git -C graphify checkout 3f82bf7f837a07fb0f7668fbdbd5662801906942",
+    "mapping": "Normalize Graphify JVM fixture facts into graphify-golden.json using names, roles, diagnostics, and byte ranges."
+  },
+  "schemaVersion": "ast-mcp.graphify-provenance.v1",
+  "source": {
+    "repository": "https://github.com/Graphify-Labs/graphify",
+    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+  }
+}

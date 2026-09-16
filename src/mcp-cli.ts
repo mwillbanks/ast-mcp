@@ -38,8 +38,9 @@ function normalizedMcpTokens(args: string[]) {
 function parsedPort(raw: string) {
   if (!/^\d+$/.test(raw))
     throw mcpUsageError(
-      `Invalid HTTP port "${raw}"; expected an integer from 1 through 65535`,
+      `Invalid HTTP port "${raw}"; expected an integer from 0 through 65535`,
     );
+  if (raw === "0") return 0;
   return validateHttpPort(Number(raw));
 }
 

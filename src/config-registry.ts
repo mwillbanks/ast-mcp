@@ -1,7 +1,6 @@
 import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   clearConfigCache,
   globalConfigPath,
@@ -10,6 +9,7 @@ import {
   resolveConfig,
 } from "./config";
 import { setApprovalConfigInvalidator } from "./runtime/approval";
+import { canonicalPathWithin } from "./runtime/path-utils";
 
 export interface ConfigSnapshot {
   config?: Readonly<ResolvedConfig>;
@@ -31,17 +31,7 @@ interface RegistryEntry {
 
 function normalizedClientRoot(value: string): string {
   return path.resolve(
-    value.startsWith("file:") ? fileURLToPath(new URL(value)) : value,
-  );
-}
-
-function within(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
+    value.startsWith("file:") ? Bun.fileURLToPath(new URL(value)) : value,
   );
 }
 
@@ -56,7 +46,7 @@ function environmentFingerprint(environment: NodeJS.ProcessEnv) {
     "AST_MCP_ALLOW_EXTERNAL_ROOTS",
     "AST_MCP_ALLOW_TEMP_DIRECTORY",
     "AST_MCP_DPRINT_CONFIG",
-    "AST_BRO_BINARY",
+    "AST_MCP_EMBEDDING_MODEL",
     "DPRINT_BINARY",
     "AST_MCP_HTTP_HOST",
     "PORT",
@@ -75,7 +65,7 @@ function selectedRoots(
   cwd: string,
 ): string[] {
   const matched = clientRoots.filter((root) =>
-    requestPaths.some((requestPath) => within(root, requestPath)),
+    requestPaths.some((requestPath) => canonicalPathWithin(root, requestPath)),
   );
   if (matched.length > 0) return matched;
   return [clientRoots[0] ?? cwd];
@@ -108,7 +98,10 @@ function keyFor(options: ResolveConfigOptions): string {
     env: environmentFingerprint(env),
     home: options.home,
     platform: options.platform,
+    revisionId: options.revisionId,
     selectedRoots: selectedRoots(selectionRoots, requestPaths, cwd),
+    storageDomainId: options.storageDomainId,
+    workspaceId: options.workspaceId,
   });
 }
 

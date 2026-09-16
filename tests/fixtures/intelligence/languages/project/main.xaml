@@ -1,0 +1,1 @@
+<Application x:Class="Demo.App"><ResourceDictionary Source="Themes/Colors.xaml" /></Application>

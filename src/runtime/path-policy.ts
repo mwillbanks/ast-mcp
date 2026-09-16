@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import type { ResolvedConfig } from "../config";
 import type { PathPolicy } from "../config-v2-schema";
+import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { authorizeRequestedDecision } from "./approval";
 import {
   canonicalizePath,
   canonicalizePathSync,
+  canonicalPathWithin,
   effectiveWorkspaceRoot,
   pathWithin,
-  relativeRootFromPwd,
 } from "./path-utils";
 
 export type PathOperation = "read" | "write" | "delete";
@@ -48,10 +49,7 @@ async function canonicalPolicyPath(targetPath: string): Promise<string> {
 }
 
 function within(root: string, target: string): boolean {
-  return (
-    pathWithin(root, target) ||
-    pathWithin(canonicalizePathSync(root), canonicalizePathSync(target))
-  );
+  return canonicalPathWithin(root, target);
 }
 
 function literalPrefix(glob: string): number {
@@ -88,11 +86,13 @@ function protectedConfiguration(
   target: string,
   platform: NodeJS.Platform,
 ): boolean {
-  const normalizedTarget = platform === "win32" ? target.toLowerCase() : target;
+  const canonicalTarget = canonicalizePathSync(target);
+  const normalizedTarget =
+    platform === "win32" ? canonicalTarget.toLowerCase() : canonicalTarget;
   return [config.sources.global, config.sources.project]
     .filter((item): item is string => Boolean(item))
     .some((item) => {
-      const candidate = path.resolve(item);
+      const candidate = canonicalizePathSync(item);
       return (
         (platform === "win32" ? candidate.toLowerCase() : candidate) ===
         normalizedTarget
@@ -289,8 +289,20 @@ export async function evaluatePolicyForCheck(
   const workspaceRoots = await Promise.all(
     config.workspace.roots.map(canonicalizePath),
   );
+  const selected = currentWorkspace();
+  if (!selected && !path.isAbsolute(targetPath) && workspaceRoots.length > 1)
+    throw Object.assign(
+      new Error(
+        "Relative paths require an explicit workspace when multiple roots are configured",
+      ),
+      {
+        code: "workspace_ambiguous",
+        retryable: true,
+        suggestedNextCall: "workspace_open",
+      },
+    );
   const base =
-    relativeRootFromPwd(workspaceRoots) ??
+    selected?.checkoutRoot ??
     effectiveWorkspaceRoot(
       await canonicalizePath(config.projectRoot),
       workspaceRoots,

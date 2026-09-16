@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
 import { formatContent, formatFileAtomically } from "../src/runtime/format";
+import { hermeticConfig } from "./support/hermetic-config";
 
 const created: string[] = [];
 
@@ -68,9 +69,9 @@ test("resolves relative and absolute custom dprint configurations", async () => 
     'version = 1\n[formatting]\ndprint_config = "./config/dprint.json"\n',
   );
 
-  const resolved = await resolveConfig({ cwd: relativeRoot, env: {} });
+  const resolved = await resolveConfig(hermeticConfig(relativeRoot));
   expect(resolved.formatting.dprintConfig).toBe(relativeConfig);
-  const formatted = await withConfig({ cwd: relativeRoot, env: {} }, () =>
+  const formatted = await withConfig(hermeticConfig(relativeRoot), () =>
     formatContent(path.join(relativeRoot, "value.json"), '{"a":1}'),
   );
   expect(formatted).toBe('{ "a": 1 }\n');
@@ -81,8 +82,7 @@ test("resolves relative and absolute custom dprint configurations", async () => 
     `version = 1\n[formatting]\ndprint_config = ${JSON.stringify(relativeConfig)}\n`,
   );
   expect(
-    (await resolveConfig({ cwd: absoluteRoot, env: {} })).formatting
-      .dprintConfig,
+    (await resolveConfig(hermeticConfig(absoluteRoot))).formatting.dprintConfig,
   ).toBe(relativeConfig);
 });
 
@@ -92,7 +92,7 @@ test("reports missing and invalid custom dprint configurations", async () => {
     root,
     'version = 1\n[formatting]\ndprint_config = "./missing.json"\n',
   );
-  await expect(resolveConfig({ cwd: root, env: {} })).rejects.toThrow(
+  await expect(resolveConfig(hermeticConfig(root))).rejects.toThrow(
     /formatting\.dprint_config.*does not exist/,
   );
 
@@ -101,7 +101,7 @@ test("reports missing and invalid custom dprint configurations", async () => {
     root,
     'version = 1\n[formatting]\ndprint_config = "./broken.json"\n',
   );
-  await expect(resolveConfig({ cwd: root, env: {} })).rejects.toThrow(
+  await expect(resolveConfig(hermeticConfig(root))).rejects.toThrow(
     /Invalid dprint configuration.*broken\.json/,
   );
 });
@@ -114,7 +114,9 @@ test("disabled formatting skips dprint and atomic rewrites", async () => {
   await configure(root, "version = 1\n[formatting]\nenabled = false\n");
 
   await withConfig(
-    { cwd: root, env: { DPRINT_BINARY: path.join(root, "missing-dprint") } },
+    hermeticConfig(root, {
+      DPRINT_BINARY: path.join(root, "missing-dprint"),
+    }),
     async () => {
       expect(await formatContent(filePath, content)).toBe(content);
       await formatFileAtomically(filePath);
@@ -139,7 +141,7 @@ test("external formatters match extensions and receive placeholders without a sh
     }),
   );
 
-  const output = await withConfig({ cwd: root, env: {} }, () =>
+  const output = await withConfig(hermeticConfig(root), () =>
     formatContent(path.join(root, "notes.TXT"), "hello"),
   );
   expect(output).toBe(`${path.join(root, "notes.TXT")}|${root}|HELLO`);
@@ -169,7 +171,7 @@ test("external formatter glob routing is ordered and unmatched files fall back t
     ].join("\n"),
   );
 
-  await withConfig({ cwd: root, env: {} }, async () => {
+  await withConfig(hermeticConfig(root), async () => {
     expect(
       await formatContent(path.join(root, "generated", "x.data"), "value"),
     ).toBe("first:value");
@@ -177,6 +179,28 @@ test("external formatter glob routing is ordered and unmatched files fall back t
       '{ "a": 1 }\n',
     );
   });
+});
+
+test("external formatter glob matches a directory beginning with two dots", async () => {
+  const root = await project("ast-mcp-format-dot-prefix-");
+  const script = path.join(root, "formatter.mjs");
+  await writeFile(
+    script,
+    'let input = ""; for await (const chunk of process.stdin) input += chunk; process.stdout.write("nested:" + input.toUpperCase());',
+  );
+  await configure(
+    root,
+    formatterToml({
+      args: [script],
+      command: process.execPath,
+      globs: ["..cache/**/*.data"],
+    }),
+  );
+
+  const output = await withConfig(hermeticConfig(root), () =>
+    formatContent(path.join(root, "..cache", "deep", "value.data"), "kept"),
+  );
+  expect(output).toBe("nested:KEPT");
 });
 
 test("external formatter failures and timeouts are actionable", async () => {
@@ -190,7 +214,7 @@ test("external formatter failures and timeouts are actionable", async () => {
     }),
   );
   await expect(
-    withConfig({ cwd: root, env: {} }, () =>
+    withConfig(hermeticConfig(root), () =>
       formatContent(path.join(root, "value.txt"), "value"),
     ),
   ).rejects.toThrow(/formatter exploded/);
@@ -208,7 +232,7 @@ test("external formatter failures and timeouts are actionable", async () => {
     }),
   );
   await expect(
-    withConfig({ cwd: root, env: {} }, () =>
+    withConfig(hermeticConfig(root), () =>
       formatContent(path.join(root, "value.txt"), "value"),
     ),
   ).rejects.toThrow(/timed out after 20ms/);

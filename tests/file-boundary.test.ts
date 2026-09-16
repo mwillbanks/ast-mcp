@@ -47,16 +47,22 @@ test("file_write cannot replace an AST-capable existing file", async () => {
   ).rejects.toThrow("file_patch");
 });
 
-test("external roots require an explicit opt-in and anchor relative paths", async () => {
+test("external roots require opt-in and explicit path selection", async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-external-root-"));
+  await writeFile(
+    path.join(folder, "ast-mcp.toml"),
+    "version = 1\n[formatting]\nenabled = false\n",
+  );
   process.env.AST_MCP_ROOTS = folder;
   delete process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS;
   await expect(readFileSafely({ filePath: "missing.md" })).rejects.toThrow(
     "AST_MCP_ALLOW_EXTERNAL_ROOTS=1",
   );
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
-  await writeFileSafely({ content: "created\n", filePath: "created.md" });
-  expect(await readFile(path.join(folder, "created.md"), "utf8")).toContain(
-    "created",
-  );
+  await expect(
+    writeFileSafely({ content: "created\n", filePath: "created.md" }),
+  ).rejects.toMatchObject({ code: "workspace_ambiguous" });
+  const selectedPath = path.join(folder, "created.md");
+  await writeFileSafely({ content: "created\n", filePath: selectedPath });
+  expect(await readFile(selectedPath, "utf8")).toContain("created");
 });

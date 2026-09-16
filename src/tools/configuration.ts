@@ -1,3 +1,4 @@
+// biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
@@ -10,11 +11,17 @@ import {
   toolOutputSchema,
   toolSuccess,
 } from "../helpers/mcp-schema";
+import {
+  RevisionSelectorSchema,
+  WorkspaceIdSchema,
+} from "../intelligence/contracts/index.ts";
+import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { applyConfigCore, applyConfigPaths } from "../runtime/config-write";
 import {
   parseStructuredDocument,
   selectDocumentValue,
 } from "../runtime/document-inspection";
+import { readWorkspaceRevisionBytes } from "../runtime/file-read.ts";
 import { sha256 } from "../runtime/hash";
 import { evaluatePolicyForCheck } from "../runtime/path-policy";
 import { resolveWorkspacePath } from "../runtime/paths";
@@ -212,7 +219,10 @@ const DOCUMENT_SOURCE_LIMIT = 1024 * 1024;
 function documentTooLarge(): Error {
   return Object.assign(
     new Error("document_query source exceeds the 1 MiB limit"),
-    { code: "document_too_large", retryable: false },
+    {
+      code: "document_too_large",
+      retryable: false,
+    },
   );
 }
 
@@ -277,6 +287,7 @@ function statusPayload(
     generation: snapshot.generation,
     healthy: snapshot.healthy,
     loadedAt: snapshot.loadedAt,
+    selectedWorkspace: currentWorkspace() ?? null,
   };
   const config = snapshot.config;
   if (!config) return base;
@@ -308,9 +319,20 @@ function statusPayload(
 
 async function configStatus(server: McpServer) {
   try {
-    const clientRoots = await statusClientRoots(server);
+    const workspace = currentWorkspace();
+    const clientRoots = workspace
+      ? [workspace.checkoutRoot]
+      : await statusClientRoots(server);
     return toolSuccess(
-      statusPayload(await configRegistry.snapshot({ clientRoots })),
+      statusPayload(
+        await configRegistry.snapshot({
+          clientRoots,
+          cwd: workspace?.checkoutRoot,
+          revisionId: workspace?.selectedRevision.revisionId,
+          storageDomainId: workspace?.storageDomain.domainId,
+          workspaceId: workspace?.workspaceId,
+        }),
+      ),
     );
   } catch (error) {
     return toolFailure(error);
@@ -332,11 +354,27 @@ export default function registerConfigurationTools(
       },
       description:
         "Returns the redacted effective configuration, source provenance, generation, formatter selection order, and health-relevant metadata.",
-      inputSchema: z.object({}).strict(),
+      inputSchema: z
+        .object({
+          revision: RevisionSelectorSchema.optional(),
+          workspaceId: WorkspaceIdSchema.optional(),
+        })
+        .strict(),
       outputSchema: toolOutputSchema,
       title: "Inspect Effective AST MCP Configuration",
     },
-    async () => configStatus(server),
+    async ({ revision, workspaceId }, context) => {
+      try {
+        return await execute(
+          { revision, workspaceId },
+          () => configStatus(server),
+          context,
+          "config_status",
+        );
+      } catch (error) {
+        return toolFailure(error);
+      }
+    },
   );
 
   server.registerTool(
@@ -363,15 +401,17 @@ export default function registerConfigurationTools(
             )
             .min(1)
             .max(50),
+          revision: RevisionSelectorSchema.optional(),
+          workspaceId: WorkspaceIdSchema.optional(),
         })
         .strict(),
       outputSchema: toolOutputSchema,
       title: "Check Path Authorization Policy",
     },
-    async ({ checks }) => {
+    async ({ checks, revision, workspaceId }) => {
       try {
         return toolSuccess(
-          await execute({ checks }, async () => {
+          await execute({ checks, revision, workspaceId }, async () => {
             const config = await currentConfig();
             return {
               decisions: await Promise.all(
@@ -402,20 +442,25 @@ export default function registerConfigurationTools(
       inputSchema: z
         .object({
           filePath: z.string().min(1),
+          revision: RevisionSelectorSchema.optional(),
           selectors: z.array(z.string()).min(1).max(100),
+          workspaceId: WorkspaceIdSchema.optional(),
         })
         .strict(),
       outputSchema: toolOutputSchema,
       title: "Query Structured Documents",
     },
-    async ({ filePath, selectors }, context) => {
+    async ({ filePath, revision, selectors, workspaceId }, context) => {
       try {
         return toolSuccess(
           await execute(
-            { filePath },
+            { filePath, revision, workspaceId },
             async () => {
               const resolved = await resolveWorkspacePath(filePath);
-              const bytes = await readBoundedDocument(resolved);
+              const historical = await readWorkspaceRevisionBytes(resolved);
+              const bytes = historical
+                ? Buffer.from(historical)
+                : await readBoundedDocument(resolved);
               const source = bytes.toString("utf8");
               const document = parseStructuredDocument(resolved, source);
               const values = selectors.map((selector) => ({
@@ -479,12 +524,11 @@ export default function registerConfigurationTools(
         readOnlyHint: false,
       },
       description:
-        "Updates grouped core ast-mcp.toml sections (workspace, safety, files, formatting, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
+        "Updates grouped core ast-mcp.toml sections (workspace, safety, files, formatting, intelligence, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
       inputSchema: z
         .object({
           dependencies: z
             .object({
-              ast_bro_binary: z.string().min(1).optional(),
               dprint_binary: z.string().min(1).optional(),
             })
             .strict()
@@ -528,6 +572,48 @@ export default function registerConfigurationTools(
               dprint_config: z.string().min(1).optional(),
               enabled: z.boolean().optional(),
               fallback: z.enum(["preserve", "dprint", "reject"]).optional(),
+            })
+            .strict()
+            .optional(),
+          intelligence: z
+            .object({
+              federation: z
+                .object({ enabled: z.boolean().optional() })
+                .strict()
+                .optional(),
+              generation: z
+                .object({
+                  enabled: z.boolean().optional(),
+                  provider: z
+                    .record(
+                      z.string(),
+                      z.union([z.string(), z.number(), z.boolean()]),
+                    )
+                    .nullable()
+                    .optional(),
+                })
+                .strict()
+                .optional(),
+              retrieval: z
+                .object({
+                  embedding: z
+                    .record(
+                      z.string(),
+                      z.union([z.string(), z.number(), z.boolean()]),
+                    )
+                    .optional(),
+                  semantic: z.boolean().optional(),
+                })
+                .strict()
+                .optional(),
+              storage: z
+                .object({
+                  placement: z
+                    .record(z.string(), z.union([z.string(), z.number()]))
+                    .optional(),
+                })
+                .strict()
+                .optional(),
             })
             .strict()
             .optional(),

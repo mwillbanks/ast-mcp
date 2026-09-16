@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
@@ -8,6 +9,31 @@ import { canonicalizePathSync, containingRoot, pathWithin } from "./path-utils";
 import { runCommandInput } from "./process-input";
 
 const dprint = configuredDprintBinary;
+
+export function dprintCacheDirectory(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
+  const paths = platform === "win32" ? path.win32 : path.posix;
+  if (env.DPRINT_CACHE_DIR) return paths.resolve(env.DPRINT_CACHE_DIR);
+  if (platform === "win32")
+    return paths.join(
+      env.LOCALAPPDATA ?? paths.join(home, "AppData", "Local"),
+      "dprint",
+    );
+  if (platform === "darwin")
+    return paths.join(home, "Library", "Caches", "dprint");
+  return paths.join(env.XDG_CACHE_HOME ?? paths.join(home, ".cache"), "dprint");
+}
+
+async function dprintEnvironment(): Promise<
+  Record<string, string | undefined>
+> {
+  const cache = dprintCacheDirectory();
+  await mkdir(cache, { recursive: true });
+  return { ...process.env, DPRINT_CACHE_DIR: cache };
+}
 function formatterRoot(config: ResolvedConfig, filePath: string) {
   const project = config.projectRoot;
   if (
@@ -25,7 +51,7 @@ function formatterRoot(config: ResolvedConfig, filePath: string) {
 function formatterPath(config: ResolvedConfig, filePath: string) {
   const root = formatterRoot(config, filePath);
   const relative = path.relative(root, filePath);
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+  return relative && pathWithin(root, filePath)
     ? relative.split(path.sep).join("/")
     : path.basename(filePath);
 }
@@ -103,7 +129,7 @@ export async function formatContent(
           timeoutMs: formatter.timeoutMs,
         },
       );
-      return await readFile(staged, "utf8");
+      return await Bun.file(staged).text();
     } finally {
       await removeFormatterStage(staged);
     }
@@ -122,18 +148,18 @@ export async function formatContent(
       formatterPath(config, filePath),
     ],
     content,
-    { cwd: formatterRoot(config, filePath) },
+    { cwd: formatterRoot(config, filePath), env: await dprintEnvironment() },
   );
   return result.stdout;
 }
 
 export async function assertFormattable(filePath: string): Promise<void> {
-  await formatContent(filePath, await readFile(filePath, "utf8"));
+  await formatContent(filePath, await Bun.file(filePath).text());
 }
 
 export async function formatFileAtomically(filePath: string): Promise<void> {
   const metadata = await lstat(filePath);
-  const source = await readFile(filePath, "utf8");
+  const source = await Bun.file(filePath).text();
   const formatted = await formatContent(filePath, source);
   if (formatted !== source)
     await replaceFileAtomically(filePath, formatted, metadata.mode);

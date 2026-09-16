@@ -8,6 +8,7 @@ permissions: {}
 jobs:
   release:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
@@ -20,10 +21,48 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  publish:
+  validate:
     needs: release
     if: ${{ needs.release.outputs.release_created == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/cache/restore@v6
+        id: bun_cache
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
+      - run: bun ci
+      - uses: actions/cache/save@v6
+        if: steps.bun_cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
+      - name: Qualify native dependencies
+        env:
+          AST_MCP_QUALIFY_EMBEDDINGS: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: bun run intelligence:qualify
+      - name: Mandatory CLI MCP stdio handshake
+        run: bun test tests/mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
+      - name: Mandatory native MCP stdio initialize, tools, and workspace handshake
+        run: bun test tests/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+
+  publish:
+    needs: [release, validate]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -41,27 +80,21 @@ jobs:
           package-manager-cache: false
       - name: Use npm with trusted publishing support
         run: npm install --global npm@11.17.0
+      - uses: actions/cache/restore@v6
+        id: bun_cache
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
       - run: bun ci
-      - name: Restore ast-bro binary
-        id: ast-bro-cache
-        uses: actions/cache/restore@v6
+      - uses: actions/cache/save@v6
+        if: steps.bun_cache.outputs.cache-hit != 'true'
         with:
-          path: ~/.cache/ast-bro/4.2.0
-          key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
-      - name: Install ast-bro for Linux
-        if: steps.ast-bro-cache.outputs.cache-hit != 'true'
-        run: |
-          cargo install ast-bro --version 4.2.0 --locked --root "$HOME/.cache/ast-bro/4.2.0"
-      - name: Save ast-bro binary
-        if: steps.ast-bro-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: ~/.cache/ast-bro/4.2.0
-          key: ast-bro-v2-4.2.0-${{ runner.os }}-${{ runner.arch }}
-      - name: Configure ast-bro
-        run: echo "AST_BRO_BINARY=$HOME/.cache/ast-bro/4.2.0/bin/ast-bro" >> "$GITHUB_ENV"
-      - run: bun run check
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
+      - name: Verify tagged package and build extracted distribution
+        env:
+          AST_MCP_SKIP_PACKAGE_SMOKE: "0"
+        run: bun run check
       - run: bun run skill:check
       - run: bun run evals:check
-      - run: bun run build
       - run: npm publish --access public --provenance --ignore-scripts
