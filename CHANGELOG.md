@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.4.0...ast-mcp-v0.5.0) (2026-09-17)
+
+
+### Features
+
+* add native intelligence engine ([#18](https://github.com/mwillbanks/ast-mcp/issues/18)) ([9a278dc](https://github.com/mwillbanks/ast-mcp/commit/9a278dc268cabf1e42abdec8bf7c1ca8b9f80364))
+
 ## [0.4.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.3.0...ast-mcp-v0.4.0) (2026-08-27)
 
 
