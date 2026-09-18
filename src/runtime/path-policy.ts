@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import type { ResolvedConfig } from "../config";
 import type { PathPolicy } from "../config-v2-schema";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";

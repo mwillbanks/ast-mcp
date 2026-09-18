@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { currentConfig, type ResolvedConfig } from "../config";
 import { replaceFileAtomically } from "./atomic";
 import { configuredDprintBinary } from "./dependencies";

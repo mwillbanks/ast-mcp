@@ -46,7 +46,7 @@ VITE_BASE_PATH=/ast-mcp/ bun run --cwd website build
 bun pm pack --dry-run
 ```
 
-The formatter command intentionally applies Biome's safe and unsafe fixes and treats every remaining warning as a failure.
+The formatter command applies Oxfmt deterministically. Oxlint treats every warning as a failure.
 
 ### Optional live host smoke checks
 

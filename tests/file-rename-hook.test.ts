@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { evaluateHook } from "../src/hook";
 
 test("hook blocks direct rename tools and nested rename calls", () => {

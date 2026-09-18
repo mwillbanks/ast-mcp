@@ -5,8 +5,8 @@ import type {
 } from "../../contracts/language.ts";
 import { LanguageCapabilitySchema } from "../../contracts/language.ts";
 import { sha256 } from "../../parser/index.ts";
-import { analyzeCompilerLanguage, compilerFingerprint } from "./compiler.ts";
 import { analyzeTypeScriptProject } from "./compiler-project.ts";
+import { analyzeCompilerLanguage, compilerFingerprint } from "./compiler.ts";
 import { analyzeTemplate } from "./templates.ts";
 import type {
   WebLanguageAdapter,

@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+
 import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
 import type {
   LanguageWorkerResult,
@@ -26,8 +27,9 @@ export interface LanguageWorkerLimits {
   timeoutMs: number;
 }
 
-interface Pending<LanguageId extends string>
-  extends WorkerExpectation<LanguageId> {
+interface Pending<
+  LanguageId extends string,
+> extends WorkerExpectation<LanguageId> {
   bytes: number;
   cleanup(): void;
   reject(error: Error): void;

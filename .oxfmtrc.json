@@ -1,3 +1,19 @@
 {
-  "printWidth": 80
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    ".ast-mcp/**",
+    "dist/**",
+    "node_modules/**",
+    "tests/fixtures/intelligence/languages/web/malformed.vue",
+    "website/.output/**",
+    "website/.source/**",
+    "website/src/routeTree.gen.ts"
+  ],
+  "printWidth": 80,
+  "semi": true,
+  "singleQuote": false,
+  "sortImports": true,
+  "sortPackageJson": false,
+  "tabWidth": 2,
+  "trailingComma": "all"
 }

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { evaluateHook } from "../src/hook";
 
 test("hook routes common manual mutation without policing general commands", () => {

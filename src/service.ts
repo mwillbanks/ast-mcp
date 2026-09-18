@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
+
 import type { HttpEndpoint } from "./installer-transport";
 
 export type ServiceScope = "local" | "global";

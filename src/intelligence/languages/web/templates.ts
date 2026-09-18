@@ -1,4 +1,5 @@
 import { type ParserError, parseFragment } from "parse5";
+
 import type {
   ExactSourceRange,
   NormalizedSyntaxNode,

@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import path from "node:path";
+
 import { applyAiderBlock, parseAiderBlocks } from "../src/patch/aider";
 import { detectAstLanguage } from "../src/patch/languages";
 import { sha256 } from "../src/runtime/hash";
@@ -8,7 +9,6 @@ import {
   resolveWritablePath,
   rootsForDisplay,
 } from "../src/runtime/paths";
-
 import { runCommandInput } from "../src/runtime/process-input";
 
 describe("Aider-style fallback", () => {

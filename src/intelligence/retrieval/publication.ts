@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import { embeddingArtifactIdentity } from "../contracts/artifacts.ts";
 import { createIdentity } from "../contracts/common.ts";
 import {

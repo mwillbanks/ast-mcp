@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { link, lstat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+
 import {
   beginMutation,
   completeMutation,
@@ -11,7 +12,6 @@ import {
   recordMutationRollback,
 } from "../intelligence/mutation/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
-
 import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";

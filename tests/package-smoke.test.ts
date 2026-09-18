@@ -2,11 +2,13 @@ import { test as bunTest, expect } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+
 import { spawnHttpMcpProcess } from "./support/live-process";
 
 async function command(args: string[], cwd: string): Promise<string> {

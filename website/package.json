@@ -10,7 +10,9 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite dev",
-    "lint": "biome check . --reporter concise --error-on-warnings",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --deny-warnings .",
     "preview": "vite preview",
     "test": "bun test --bail",
     "typecheck": "fumadocs-mdx && tsc --noEmit"
@@ -28,7 +30,6 @@
     "seroval": "1.6.4"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
     "@tailwindcss/vite": "^4.3.3",
     "@types/bun": "1.4.2",
     "@types/mdx": "^2.0.14",
@@ -37,6 +38,8 @@
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
     "nitro": "3.0.260610-beta",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.2.2"

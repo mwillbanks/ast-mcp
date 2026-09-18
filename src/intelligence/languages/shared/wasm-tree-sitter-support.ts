@@ -3,6 +3,7 @@ import {
   Parser,
   type Node as SyntaxNode,
 } from "web-tree-sitter";
+
 import {
   SourceCoordinateIndex,
   type SyntaxDiagnostic,

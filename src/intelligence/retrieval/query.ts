@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import { type GraphSnapshot, GraphSnapshotSchema } from "../graph/types.ts";
 import type {
   LanceIntelligenceStore,

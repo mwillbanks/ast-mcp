@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+
 import type { Connection, Table } from "@lancedb/lancedb";
+
 import { createIdentity } from "../contracts/common.ts";
 import { isRetryableLanceError, StorageError } from "./errors.ts";
 import { storagePathIdentity } from "./relocation.ts";

@@ -1,5 +1,6 @@
 import { lstat } from "node:fs/promises";
 import path from "node:path";
+
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
   type ParserLanguageId,

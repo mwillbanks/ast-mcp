@@ -12,7 +12,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
 import type { McpServer } from "@modelcontextprotocol/server";
+
 import { clearConfigCache, currentConfig, withConfig } from "../src/config.ts";
 import { withFencedFileLocks } from "../src/intelligence/mutation/locks.ts";
 import {

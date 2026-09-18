@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { HomeLayout } from "fumadocs-ui/layouts/home";
 import {
   ArrowRight,
   Binary,
@@ -8,10 +9,11 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { HomeLayout } from "fumadocs-ui/layouts/home";
-import logoUrl from "../../../logo.svg?url";
+
 import { Brand } from "@/components/brand";
 import { baseOptions } from "@/lib/layout.shared";
+
+import logoUrl from "../../../logo.svg?url";
 
 export const Route = createFileRoute("/")({ component: Home });
 

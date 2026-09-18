@@ -1,4 +1,3 @@
-// biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
   addPathTable,

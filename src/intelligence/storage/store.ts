@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+
 import type { Connection, Table } from "@lancedb/lancedb";
 import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
+
 import * as artifactContracts from "../contracts/artifacts.ts";
 import {
   createIdentity,

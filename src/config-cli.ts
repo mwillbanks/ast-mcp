@@ -1,4 +1,5 @@
 import path from "node:path";
+
 import { globalConfigPath, resolveConfig } from "./config";
 import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
 

@@ -1,4 +1,5 @@
 import path from "node:path";
+
 import type { ResolveConfigOptions } from "../../src/config";
 
 export function hermeticConfig(

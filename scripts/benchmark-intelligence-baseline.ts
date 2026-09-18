@@ -10,9 +10,11 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio.js";
+
 import {
   createIdentity,
   INTELLIGENCE_SCHEMA_VERSION,

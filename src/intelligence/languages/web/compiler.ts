@@ -1,10 +1,12 @@
 import { posix } from "node:path";
+
 import { version as typescriptVersion } from "typescript";
 import {
   createScanner,
   LanguageVariant,
   SyntaxKind,
 } from "typescript/unstable/ast";
+
 import type { ExactSourceRange, SyntaxImport } from "../../parser/index.ts";
 import {
   parseSource,

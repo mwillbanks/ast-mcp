@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["../.oxlintrc.json"],
+  "ignorePatterns": [
+    ".output/**",
+    ".source/**",
+    "node_modules/**",
+    "src/routeTree.gen.ts"
+  ]
+}

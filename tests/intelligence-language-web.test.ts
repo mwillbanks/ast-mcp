@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import * as ts from "typescript-strada";
+
 import { LanguageCapabilitySchema } from "../src/intelligence/contracts/language.ts";
 import type { WebLanguageId } from "../src/intelligence/languages/web/index.ts";
 import {

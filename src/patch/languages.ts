@@ -1,4 +1,5 @@
 import path from "node:path";
+
 import { defaultLanguageRegistry } from "../intelligence/parser/registry.ts";
 
 const structuredLanguages: Readonly<Record<string, string>> = {

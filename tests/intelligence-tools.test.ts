@@ -2,7 +2,9 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import type { McpServer } from "@modelcontextprotocol/server";
+
 import { graphNodeIdentity } from "../src/intelligence/contracts/graph.ts";
 import { LanceIntelligenceStore } from "../src/intelligence/storage/store.ts";
 import {
@@ -11,6 +13,7 @@ import {
 } from "../src/intelligence/workspace/context.ts";
 import { WorkspaceRegistry } from "../src/intelligence/workspace/registry.ts";
 import type { ConfiguredExecution } from "../src/tools/configured.ts";
+import { IntelligenceOutputSchemas } from "../src/tools/intelligence-output.ts";
 import {
   createIntelligenceToolService,
   GenerateInputSchema,
@@ -24,7 +27,6 @@ import {
   RetrieveInputSchema,
   default as registerIntelligenceTools,
 } from "../src/tools/intelligence.ts";
-import { IntelligenceOutputSchemas } from "../src/tools/intelligence-output.ts";
 
 const identity = (namespace: string, character: string) =>
   `${namespace}:v1:${character.repeat(64)}`;

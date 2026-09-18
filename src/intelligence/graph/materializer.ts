@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 import { sourceArtifactIdentity } from "../contracts/artifacts.ts";
 import type { EvidenceRange } from "../contracts/common.ts";
 import {

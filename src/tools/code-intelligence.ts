@@ -1,6 +1,8 @@
 import path from "node:path";
+
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+
 import { currentConfig } from "../config";
 import {
   toolFailure,

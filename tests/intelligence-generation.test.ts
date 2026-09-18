@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+
 import { createIdentity } from "../src/intelligence/contracts/common.ts";
 import { createStorageDomainId } from "../src/intelligence/contracts/storage.ts";
 import {

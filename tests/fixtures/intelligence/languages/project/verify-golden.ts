@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { readFile } from "node:fs/promises";
+
 import { analyzeProjectFormat } from "../../../../../src/intelligence/languages/project/index.ts";
 
 const root = import.meta.dir;

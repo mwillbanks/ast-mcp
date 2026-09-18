@@ -1,9 +1,10 @@
-// biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import path from "node:path";
+
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+
 import { currentConfig, type ResolvedConfig } from "../config";
 import { configRegistry } from "../config-registry";
 import {

@@ -31,7 +31,7 @@ jobs:
           key: ${{ steps.bun-cache.outputs.cache-primary-key }}
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.13'
+          python-version: "3.13"
       - uses: actions/cache/restore@v6
         id: pip-cache
         with:
@@ -48,7 +48,7 @@ jobs:
           key: ${{ steps.pip-cache.outputs.cache-primary-key }}
       - name: Measure the same corpus
         env:
-          AST_MCP_RUN_GRAPHIFY: '1'
+          AST_MCP_RUN_GRAPHIFY: "1"
         run: |
           bun run intelligence:measure > "$RUNNER_TEMP/intelligence-measurement.json"
           jq -e '.schema == "ast-mcp.intelligence-benchmark.v5" and .comparison.graphify.version == "graphify 0.9.53"' "$RUNNER_TEMP/intelligence-measurement.json"

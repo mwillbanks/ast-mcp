@@ -1,4 +1,5 @@
 import { parse, type SgNode } from "@ast-grep/napi";
+
 import {
   sourceArtifactIdentity,
   syntaxFactsArtifactIdentity,

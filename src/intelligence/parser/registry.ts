@@ -1,6 +1,8 @@
 import { stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+
 import { type Lang, registerDynamicLanguage } from "@ast-grep/napi";
+
 import { INTELLIGENCE_SCHEMA_VERSION } from "../contracts/common.ts";
 import {
   type LanguageCapability,

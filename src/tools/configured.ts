@@ -1,4 +1,5 @@
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
+
 import { configRequestPaths, withResolvedConfig } from "../config";
 import { configRegistry } from "../config-registry";
 import type {

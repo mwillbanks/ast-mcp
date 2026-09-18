@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { install } from "../src/installer";
 
 test("installer configures stable CLI subcommands for every local host", async () => {

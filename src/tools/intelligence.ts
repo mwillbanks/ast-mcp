@@ -1,8 +1,6 @@
-// biome-ignore-all assist/source/organizeImports: Imports follow intelligence pipeline order.
-// biome-ignore-all assist/source/useSortedInterfaceMembers: Tool methods follow registration order.
-// biome-ignore-all assist/source/useSortedKeys: Public schemas follow request documentation order.
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
+
 import { currentConfig } from "../config.ts";
 import { toolFailure, toolSuccess } from "../helpers/mcp-schema.ts";
 import {
@@ -14,6 +12,10 @@ import {
   ResolutionStatusSchema,
   WorkspaceIdSchema,
 } from "../intelligence/contracts/index.ts";
+import {
+  generateWithEvidence,
+  GenerationBudgetSchema,
+} from "../intelligence/generation/index.ts";
 import {
   createGraphAlgorithmExecutionContext,
   createGraphLoadState,
@@ -29,10 +31,6 @@ import {
   stronglyConnectedComponents,
   traverseGraph,
 } from "../intelligence/graph/index.ts";
-import {
-  generateWithEvidence,
-  GenerationBudgetSchema,
-} from "../intelligence/generation/index.ts";
 import {
   IntelligenceRuntime,
   type IntelligenceRuntimeOptions,

@@ -12,13 +12,11 @@ import {
 } from "../shared/worker-protocol-validator.ts";
 import type { LegacyLanguageId } from "./types.ts";
 
-export interface LegacyWorkerStart
-  extends LanguageWorkerStart<LegacyLanguageId> {}
+export interface LegacyWorkerStart extends LanguageWorkerStart<LegacyLanguageId> {}
 export interface LegacyWorkerCancel extends LanguageWorkerCancel {}
 export type LegacyWorkerRequest = LegacyWorkerStart | LegacyWorkerCancel;
 export type LegacyWorkerResult = LanguageWorkerResult;
-export interface LegacyWorkerExpectation
-  extends WorkerExpectation<LegacyLanguageId> {}
+export interface LegacyWorkerExpectation extends WorkerExpectation<LegacyLanguageId> {}
 
 const languageIds = new Set<LegacyLanguageId>([
   "common-lisp",

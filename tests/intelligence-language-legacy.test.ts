@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { Worker } from "node:worker_threads";
+
 import {
   analyzeLegacyLanguage,
   closeLegacyLanguageWorker,

@@ -19,6 +19,7 @@ import swift from "@ast-grep/lang-swift";
 import toml from "@ast-grep/lang-toml";
 import yaml from "@ast-grep/lang-yaml";
 import { Lang } from "@ast-grep/napi";
+
 import type { ParserLanguageId } from "./types.ts";
 
 export interface GrammarRegistration {

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import {
   createIdentity,
   INTELLIGENCE_SCHEMA_VERSION,

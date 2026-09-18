@@ -1,5 +1,5 @@
-// biome-ignore-all assist/source/useSortedKeys: Public schemas follow response documentation order.
 import * as z from "zod/v4";
+
 import { toolOutputSchema } from "../helpers/mcp-schema.ts";
 import {
   DirtyOverlayArtifactIdSchema,

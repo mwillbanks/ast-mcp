@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { install } from "../src/installer";
 import { checkInstall } from "../templates/skills/ast-mcp/scripts/check-install";
 

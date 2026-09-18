@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import { LanguageCapabilitySchema } from "../src/intelligence/contracts/language.ts";
 import type {
   InfraGrammarAssetConfig,

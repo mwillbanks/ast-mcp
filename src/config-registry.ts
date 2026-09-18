@@ -1,6 +1,7 @@
 import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+
 import {
   clearConfigCache,
   globalConfigPath,

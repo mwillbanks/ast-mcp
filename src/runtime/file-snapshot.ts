@@ -1,4 +1,5 @@
 import { lstat } from "node:fs/promises";
+
 import { sha256File } from "./hash";
 
 export interface FileSnapshot {

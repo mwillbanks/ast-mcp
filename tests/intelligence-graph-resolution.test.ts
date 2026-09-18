@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { sourceArtifactIdentity } from "../src/intelligence/contracts/artifacts.ts";
 import { createIdentity } from "../src/intelligence/contracts/common.ts";
 import { traverseGraph } from "../src/intelligence/graph/algorithms/index.ts";

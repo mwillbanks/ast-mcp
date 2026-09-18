@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   createIdentity,
   INTELLIGENCE_SCHEMA_VERSION,

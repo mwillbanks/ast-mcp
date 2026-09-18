@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/server";
+
 import packageJson from "../package.json" with { type: "json" };
 import type { IntelligenceRuntimeOptions } from "./intelligence/lifecycle/service.ts";
 import tools from "./tools";

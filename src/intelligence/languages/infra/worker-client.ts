@@ -1,4 +1,5 @@
 import type { Worker } from "node:worker_threads";
+
 import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
 import {
   createWorkerClient,

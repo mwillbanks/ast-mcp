@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+
 import { z } from "zod";
 
 export const INTELLIGENCE_SCHEMA_VERSION = "ast-mcp.intelligence.v1" as const;

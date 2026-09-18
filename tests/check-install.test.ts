@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { install, update } from "../src/installer";
 import {
   commandForPlatform,

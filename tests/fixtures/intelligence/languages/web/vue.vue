@@ -1,4 +1,6 @@
-<template><button @click="run">{{ label }}</button></template>
+<template>
+  <button @click="run">{{ label }}</button>
+</template>
 <script lang="ts">
 import { Base } from "./base";
 export class VueService extends Base implements Runnable {

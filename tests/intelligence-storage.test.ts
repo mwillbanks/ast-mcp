@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
 import { Field, Schema, Utf8 } from "apache-arrow";
+
 import {
   chunkArtifactIdentity,
   resolvedRelationshipsArtifactIdentity,

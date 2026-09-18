@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { install, uninstall } from "../src/installer";
 
 test("installer validates configuration before mutation and uninstall stays available", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { createStaticCacheUrl } from "./static-function-middleware";
 
 describe("static server-function cache URLs", () => {

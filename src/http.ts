@@ -1,5 +1,4 @@
 import type { McpServer } from "@modelcontextprotocol/server";
-
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { serve } from "bun";
 
