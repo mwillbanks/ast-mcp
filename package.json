@@ -34,21 +34,21 @@
     "@modelcontextprotocol/server": "2.0.0",
     "apache-arrow": "18.1.0",
     "diff-match-patch-ts": "^2.0.0",
-    "dprint": "0.56.1",
+    "dprint": "0.57.4",
     "parse5": "8.0.1",
     "tree-sitter-wasm": "1.1.8",
     "typescript-strada": "npm:@typescript/typescript6@6.0.2",
-    "unbash": "^4.0.10",
+    "unbash": "^4.0.11",
     "web-tree-sitter": "0.27.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.2"
   },
   "description": "Zero-trust MCP file writes, native code intelligence, graph retrieval, hooks, and agent skills",
   "devDependencies": {
-    "@biomejs/biome": "^2.5.10",
-    "@modelcontextprotocol/inspector": "^2.4.0",
+    "@biomejs/biome": "^2.5.13",
+    "@modelcontextprotocol/inspector": "^2.6.0",
     "@types/bun": "^1.4.2",
-    "@types/node": "^26.3.0",
-    "fallow": "^3.19.0",
+    "@types/node": "^26.5.1",
+    "fallow": "^3.25.0",
     "typescript": "^7.0.2"
   },
   "engines": {
