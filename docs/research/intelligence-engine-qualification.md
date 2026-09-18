@@ -6,12 +6,14 @@ This document records the native intelligence qualification baseline and package
 
 | Package                     | Version | License    | Qualified role                                                                         |
 | --------------------------- | ------: | ---------- | -------------------------------------------------------------------------------------- |
-| `@lancedb/lancedb`          |  0.38.0 | Apache-2.0 | All persistent records, vectors, full-text indexes, versions, and publication metadata |
-| `apache-arrow`              |  18.1.0 | Apache-2.0 | Explicit table schemas compatible with LanceDB 0.38.0                                  |
+| `@lancedb/lancedb`          |  0.39.0 | Apache-2.0 | All persistent records, vectors, full-text indexes, versions, and publication metadata |
+| `apache-arrow`              |  18.1.0 | Apache-2.0 | Highest Arrow release accepted by LanceDB 0.39.0                                       |
 | `@ast-grep/napi`            |  0.45.3 | MIT        | Native JavaScript and TypeScript parsing and structural matching                       |
 | `tree-sitter-wasm`          |   1.1.8 | MIT        | Pinned grammar manifest and grammar WASM assets for worker-backed languages            |
 | `web-tree-sitter`           |  0.27.0 | MIT        | Portable tree-sitter runtime used by packaged parser workers                           |
-| `@huggingface/transformers` |   4.2.0 | Apache-2.0 | Optional local embedding inference                                                     |
+| `@huggingface/transformers` |   4.3.0 | Apache-2.0 | Optional local embedding inference                                                     |
+
+LanceDB 0.39.0 optionally installs Transformers 3.0.2, which constrains its nested Sharp dependency to 0.33.x. ast-mcp does not use that legacy image pipeline. It uses the direct Transformers 4.3.0 dependency and Sharp 0.35.4. OSV exceptions for the unreachable nested Sharp path expire on 2026-10-18 and require review before renewal.
 
 The package CI and release validation matrices run on Linux, macOS, and Windows with Bun 1.4.2. Each release target qualifies native dependencies and completes a real MCP stdio initialize, tool-list, and workspace-root handshake. LanceDB declares Node 22 or newer. Bun compatibility therefore remains an application qualification, not an upstream support promise. Transformers.js model execution works under Bun, but compiled Bun binaries remain gated by upstream static native-module and WASM-path issues.
 

@@ -126,8 +126,8 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
     }>;
     expect(messages.map((message) => message.id).sort()).toEqual([2, 3, 4, 5]);
     expect(
-      messages.every((message) => message.result?.isError !== true),
-    ).toBeTrue();
+      messages.filter((message) => message.result?.isError === true),
+    ).toEqual([]);
     expect(await readFile(created, "utf8")).toBe("created\n");
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
   } finally {
