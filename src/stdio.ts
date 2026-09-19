@@ -3,6 +3,7 @@
 // fallow-ignore-file stale-suppression -- Fallow cannot model external MCP Transport dispatch
 
 import type { Readable, Writable } from "node:stream";
+
 import {
   deserializeMessage,
   type JSONRPCMessage,

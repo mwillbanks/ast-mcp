@@ -1,4 +1,9 @@
 [[IgnoredVulns]]
-id = "GHSA-frvp-7c67-39w9"
-ignoreUntil = 2027-01-22
-reason = "@hono/node-server is present only through the development-only MCP Inspector dependency; ast-mcp neither imports it nor exposes the affected Hono server request path."
+id = "GHSA-f88m-g3jw-g9cj"
+ignoreUntil = 2026-10-18
+reason = "sharp 0.33.5 is nested under LanceDB's optional Transformers 3.0.2 dependency. ast-mcp does not use that legacy image pipeline and directly uses Transformers 4.3.0 with sharp 0.35.4."
+
+[[IgnoredVulns]]
+id = "GHSA-rgj7-g3m4-5g8c"
+ignoreUntil = 2026-10-18
+reason = "sharp 0.33.5 is nested under LanceDB's optional Transformers 3.0.2 dependency. ast-mcp does not use that legacy image pipeline and directly uses Transformers 4.3.0 with sharp 0.35.4."

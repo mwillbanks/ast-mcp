@@ -1,4 +1,5 @@
 import type { Program } from "typescript-strada";
+
 import type { LanguageCapability } from "../../contracts/language.ts";
 import type {
   ExactSourceRange,

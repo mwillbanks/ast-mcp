@@ -10,7 +10,9 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import { sourceArtifactIdentity } from "../src/intelligence/contracts/artifacts.ts";
 import {
   createIdentity,

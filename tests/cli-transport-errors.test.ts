@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { type CliHandlers, runCli } from "../src/cli";
 
 function handlers(mcp: CliHandlers["mcp"]) {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+
 import * as z from "zod/v4";
+
 import { normalizeConfigLayer } from "../src/helpers/config";
 import { parseInstallerArguments } from "../src/helpers/installer";
 import { boundedRecord } from "../src/helpers/mcp-schema";

@@ -20,7 +20,11 @@ html {
 body {
   font-family: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   background-image:
-    radial-gradient(circle at 8% -10%, rgb(39 194 243 / 0.1), transparent 32rem),
+    radial-gradient(
+      circle at 8% -10%,
+      rgb(39 194 243 / 0.1),
+      transparent 32rem
+    ),
     radial-gradient(circle at 88% 2%, rgb(138 63 252 / 0.1), transparent 30rem),
     radial-gradient(
       circle at 50% 16%,

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+
 import type { Range as AstGrepRange } from "@ast-grep/napi";
+
 import type { ExactSourceRange, SourceCoordinate } from "./types.ts";
 
 const utf8Length = (value: string): number =>

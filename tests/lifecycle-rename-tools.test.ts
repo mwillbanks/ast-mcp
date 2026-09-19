@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import registerLifecycleTools from "../src/tools/lifecycle";
 
 test("registers lifecycle tools with declared files batch schemas", () => {

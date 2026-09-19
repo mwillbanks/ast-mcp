@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
+
 import { BatchingStdioServerTransport } from "../src/stdio";
 
 test("stdio transport batches split JSON-RPC input and sends framed output", async () => {

@@ -1,5 +1,6 @@
 import { copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+
 import type { BunPlugin } from "bun";
 
 const root = path.resolve(import.meta.dir, "..");

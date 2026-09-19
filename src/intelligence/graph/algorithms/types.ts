@@ -1,4 +1,5 @@
 import type { z } from "zod";
+
 import type {
   GraphNodeSchema,
   GraphRelationshipSchema,
@@ -43,8 +44,10 @@ export interface TraversalRequest {
   startNodeIds: readonly string[];
 }
 
-export interface ShortestPathRequest
-  extends Omit<TraversalRequest, "cursor" | "startNodeIds"> {
+export interface ShortestPathRequest extends Omit<
+  TraversalRequest,
+  "cursor" | "startNodeIds"
+> {
   sourceNodeId: string;
   targetNodeId: string;
 }
@@ -57,8 +60,10 @@ export interface StronglyConnectedComponentsRequest {
   snapshot: GraphAlgorithmSnapshot;
 }
 
-export interface ImpactExpansionRequest
-  extends Omit<TraversalRequest, "direction"> {
+export interface ImpactExpansionRequest extends Omit<
+  TraversalRequest,
+  "direction"
+> {
   direction?: GraphDirection;
 }
 

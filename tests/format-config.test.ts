@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
 import { formatContent, formatFileAtomically } from "../src/runtime/format";
 import { hermeticConfig } from "./support/hermetic-config";

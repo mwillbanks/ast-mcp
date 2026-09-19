@@ -10,6 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+
 import { evaluateHook } from "../src/hook";
 import { install, update } from "../src/installer";
 

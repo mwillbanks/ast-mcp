@@ -4,6 +4,7 @@ import {
   getDefaultSerovalPlugins,
 } from "@tanstack/react-start";
 import { fromJSON } from "seroval";
+
 import { normalizeBaseUrl as normalizeBaseUrlHelper } from "../helpers/url";
 
 type StaticCachedResult = {

@@ -11,6 +11,7 @@ import {
   DocsTitle,
 } from "fumadocs-ui/layouts/docs/page";
 import { Suspense } from "react";
+
 import { getMDXComponents } from "@/components/mdx";
 import { baseOptions } from "@/lib/layout.shared";
 import { source } from "@/lib/source";

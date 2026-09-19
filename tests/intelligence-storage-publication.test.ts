@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
+
 import { analyzeGraph } from "../src/intelligence/analytics/analytics.ts";
 import { LanceAnalyticsRepository } from "../src/intelligence/analytics/repository.ts";
 import { revisionManifestArtifactIdentity } from "../src/intelligence/contracts/artifacts.ts";

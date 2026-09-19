@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import { EvidenceRangeSchema } from "../contracts/common.ts";
 import { RetrievalScopeSchema } from "../retrieval/types.ts";
 

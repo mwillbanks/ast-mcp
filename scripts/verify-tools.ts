@@ -8,11 +8,10 @@ function run(command: string[]): string {
   return result.stdout.toString().trim();
 }
 
-const { DPRINT_BINARY: dprintBinary } = await import(
-  "../src/runtime/dependencies"
-);
+const { DPRINT_BINARY: dprintBinary } =
+  await import("../src/runtime/dependencies");
 const dprintVersion = run([dprintBinary, "--version"]);
-if (dprintVersion !== "dprint 0.56.1")
+if (dprintVersion !== "dprint 0.57.4")
   throw new Error(`Unexpected dprint version: ${dprintVersion || "no output"}`);
 run([dprintBinary, "check", "README.md"]);
 console.log(dprintVersion);

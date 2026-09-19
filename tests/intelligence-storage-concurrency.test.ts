@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import { sourceArtifactIdentity as sourceIdentity } from "../src/intelligence/contracts/artifacts.ts";
 import {
   createIdentity,

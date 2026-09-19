@@ -1,4 +1,5 @@
 import type { MessagePort } from "node:worker_threads";
+
 import type { SyntaxFacts } from "../../parser/index.ts";
 
 interface WasmWorkerCancel {

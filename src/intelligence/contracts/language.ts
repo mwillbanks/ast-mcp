@@ -1,4 +1,5 @@
 import { z } from "zod";
+
 import {
   INTELLIGENCE_SCHEMA_VERSION,
   NonEmptyStringSchema,

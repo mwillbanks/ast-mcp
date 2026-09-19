@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { cp, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
 import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
 import {
@@ -142,11 +143,9 @@ const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
 type Target = (typeof targets)[number];
 
-// biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
 async function json(file: string): Promise<Record<string, any>> {
   try {
     const value = Bun.JSONC.parse(await Bun.file(file).text());
-    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
     return value as Record<string, any>;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
@@ -327,7 +326,6 @@ async function removeInstructions(file: string) {
   await writeText(file, old.replace(instructionsPattern, ""));
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
 async function saveRemainingJson(file: string, value: Record<string, any>) {
   await save(file, value);
 }
@@ -382,8 +380,8 @@ async function hasLocalInstallation(root: string) {
   const copilot = await json(path.join(root, ".github/mcp.json"));
   return Boolean(
     codex.includes("# ast-mcp:begin") ||
-      claude.mcpServers?.["ast-mcp"] ||
-      copilot.mcpServers?.["ast-mcp"],
+    claude.mcpServers?.["ast-mcp"] ||
+    copilot.mcpServers?.["ast-mcp"],
   );
 }
 

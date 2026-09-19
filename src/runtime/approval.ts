@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+
 import {
   type InputRequiredResult,
   inputRequired,
@@ -17,6 +18,7 @@ import {
   type ServerContext,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
+
 import { globalConfigPath } from "../config";
 import type { PolicyDecision } from "./path-policy";
 

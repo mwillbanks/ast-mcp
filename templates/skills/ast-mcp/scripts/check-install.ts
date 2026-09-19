@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-// biome-ignore-all assist/source/useSortedKeys: Diagnostic output preserves stable user-facing order.
 import { realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import {
   commandForPlatform,
   directoryBinaryCandidates,
@@ -391,7 +391,6 @@ async function hookCurrent(
   const config = Bun.JSONC.parse(
     await readFile(configFile, "utf8").catch(() => "{}"),
   );
-  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
   const hostConfig = config as Record<string, any>;
   const entries = Array.isArray(hostConfig.hooks?.[event])
     ? hostConfig.hooks[event]
@@ -573,7 +572,6 @@ async function jsonMcpCurrent(
   home = os.homedir(),
 ) {
   const value = Bun.JSONC.parse(await readFile(file, "utf8").catch(() => "{}"));
-  // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
   const hostConfig = value as Record<string, any>;
   const entry: McpEntry | undefined = hostConfig[section]?.["ast-mcp"];
   return transport === "http"
@@ -779,7 +777,6 @@ async function configuredStdioCommand(
     const value = Bun.JSONC.parse(
       await readFile(file, "utf8").catch(() => "{}"),
     );
-    // biome-ignore lint/suspicious/noExplicitAny: Host configuration JSON is intentionally dynamic.
     const hostConfig = value as Record<string, any>;
     entry = hostConfig.mcpServers?.["ast-mcp"];
   }

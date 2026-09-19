@@ -63,7 +63,7 @@ bun run evals:check
 bun run fallow
 ```
 
-`bun run format` executes `biome check . --write --unsafe --reporter concise --error-on-warnings`. The check-only command uses the same warning policy without writing.
+`bun run format` executes `oxfmt .`. The check-only command runs `oxfmt --check .`, while `bun run lint` runs Oxlint and treats warnings as failures.
 
 ## Distribution
 

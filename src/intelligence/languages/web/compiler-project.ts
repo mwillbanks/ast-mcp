@@ -1,4 +1,5 @@
 import * as ts from "typescript-strada";
+
 import type { ExactSourceRange, SyntaxFacts } from "../../parser/index.ts";
 import { SourceCoordinateIndex, sha256 } from "../../parser/index.ts";
 import { analyzeCompilerLanguage, compilerFingerprint } from "./compiler.ts";

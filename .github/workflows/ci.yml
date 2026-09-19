@@ -35,7 +35,8 @@ jobs:
               - 'LICENSE'
               - 'README.md'
               - 'bin/**'
-              - 'biome.jsonc'
+              - '.oxfmtrc.json'
+              - '.oxlintrc.json'
               - 'bun.lock'
               - 'bunfig.toml'
               - 'dprint.json'
@@ -93,6 +94,7 @@ jobs:
       - run: bun run templates:check
       - run: bun run prose:check
       - run: bun run format:check
+      - run: bun run lint
       - run: bun run typecheck
       - name: Validate skill
         if: ${{ needs.changes.outputs.templates == 'true' }}
@@ -242,6 +244,8 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: website-bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'website/package.json', 'website/bun.lock') }}-v1
+      - name: Check website formatting
+        run: bun run --cwd website format:check
       - name: Lint website
         run: bun run --cwd website lint
       - name: Typecheck website
@@ -255,7 +259,15 @@ jobs:
 
   release:
     name: Release
-    needs: [changes, package-static, package-coverage, package-platform-tests, package-native, website]
+    needs:
+      [
+        changes,
+        package-static,
+        package-coverage,
+        package-platform-tests,
+        package-native,
+        website,
+      ]
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
     permissions:

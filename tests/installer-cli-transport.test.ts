@@ -2,6 +2,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { manualHttpLaunchCommand, runInstallerCli } from "../src/installer";
 import { httpEndpoint } from "../src/installer-transport";
 

@@ -1,10 +1,10 @@
-// biome-ignore-all assist/source/useSortedInterfaceMembers: Configuration order follows public documentation.
-// biome-ignore-all assist/source/useSortedKeys: Configuration order follows public documentation.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { z } from "zod";
+
 import {
   createFormatterSchema,
   createHookSchema,

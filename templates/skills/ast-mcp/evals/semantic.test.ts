@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import os from "node:os";
 import path from "node:path";
+
 import { verifyEvaluation } from "./semantic";
 
 test("semantic evaluator scopes declared batches and file-operation paths", () => {

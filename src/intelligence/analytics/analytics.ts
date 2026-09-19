@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 import { createIdentity } from "../contracts/common.ts";
 import { GraphSnapshotSchema } from "../graph/types.ts";
 import {

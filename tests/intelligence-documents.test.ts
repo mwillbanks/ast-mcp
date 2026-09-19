@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+
 import {
   analyzeDocument,
   DOCUMENT_GOLDEN_PROVENANCE,

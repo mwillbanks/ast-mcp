@@ -1,4 +1,5 @@
 import { availableParallelism } from "node:os";
+
 import { sha256 } from "./coordinates.ts";
 import {
   type DynamicGrammarManifest,

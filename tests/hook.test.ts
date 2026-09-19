@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+
 import { decisionPayload, evaluateHook, runHook } from "../src/hook";
 
 describe("agent hook", () => {

@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "perf": "error",
+    "suspicious": "error"
+  },
+  "ignorePatterns": [
+    ".ast-mcp/**",
+    "dist/**",
+    "node_modules/**",
+    "website/.output/**",
+    "website/.source/**",
+    "website/src/routeTree.gen.ts"
+  ],
+  "rules": {
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-shadow": "off",
+    "eslint/no-underscore-dangle": "off",
+    "eslint/no-unmodified-loop-condition": "off",
+    "eslint/no-unsafe-optional-chaining": "off",
+    "eslint/no-useless-concat": "off",
+    "eslint/preserve-caught-error": "off",
+    "oxc/no-map-spread": "off",
+    "typescript/no-extraneous-class": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/no-new-array": "off",
+    "unicorn/no-useless-fallback-in-spread": "off",
+    "unicorn/no-useless-spread": "off",
+    "unicorn/prefer-add-event-listener": "off",
+    "unicorn/prefer-array-find": "off",
+    "unicorn/prefer-set-has": "off",
+    "unicorn/prefer-string-starts-ends-with": "off",
+    "unicorn/require-post-message-target-origin": "off"
+  }
+}

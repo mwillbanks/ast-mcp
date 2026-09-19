@@ -1,6 +1,8 @@
 import { parentPort } from "node:worker_threads";
+
 import { getWasmPath } from "tree-sitter-wasm";
 import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
+
 import {
   SourceCoordinateIndex,
   type SyntaxCall,

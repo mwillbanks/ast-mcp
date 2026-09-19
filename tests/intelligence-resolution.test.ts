@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+
 import { sourceArtifactIdentity } from "../src/intelligence/contracts/artifacts.ts";
 import type { SyntaxFacts } from "../src/intelligence/parser/types.ts";
 import {

@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
 import {
   assertReadableTree,

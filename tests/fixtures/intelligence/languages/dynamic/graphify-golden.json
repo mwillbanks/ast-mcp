@@ -105,7 +105,10 @@
         ["App\\BaseService", "*", "BaseService", false, 6, 26],
         ["helpers.php", "*", "php", false, 27, 53]
       ],
-      "inheritance": [["BaseService", 77, 88], ["Runnable", 100, 108]],
+      "inheritance": [
+        ["BaseService", 77, 88],
+        ["Runnable", 100, 108]
+      ],
       "partial": false,
       "references": [
         ["App", "read", 10, 13],
@@ -129,7 +132,10 @@
         ["pathlib", "Path", "FilePath", false, 0, 36],
         ["json", "*", "json", false, 37, 48]
       ],
-      "inheritance": [["BaseService", 63, 74], ["Audited", 76, 83]],
+      "inheritance": [
+        ["BaseService", 63, 74],
+        ["Audited", 76, 83]
+      ],
       "partial": false,
       "references": [
         ["pathlib", "read", 5, 12],
@@ -149,7 +155,10 @@
       ]
     },
     "r": {
-      "calls": [["print", 45, 56], ["setClass", 59, 95]],
+      "calls": [
+        ["print", 45, 56],
+        ["setClass", 59, 95]
+      ],
       "diagnostics": [],
       "exports": [],
       "imports": [["methods", "*", "methods", false, 0, 18]],

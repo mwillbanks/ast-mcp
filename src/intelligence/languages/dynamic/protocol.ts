@@ -11,13 +11,11 @@ import {
 } from "../shared/worker-protocol-validator.ts";
 import type { DynamicLanguageId } from "./types.ts";
 
-export interface DynamicWorkerStart
-  extends LanguageWorkerStart<DynamicLanguageId> {}
+export interface DynamicWorkerStart extends LanguageWorkerStart<DynamicLanguageId> {}
 export interface DynamicWorkerCancel extends LanguageWorkerCancel {}
 export type DynamicWorkerRequest = DynamicWorkerStart | DynamicWorkerCancel;
 export type DynamicWorkerResult = LanguageWorkerResult;
-export interface DynamicWorkerExpectation
-  extends WorkerExpectation<DynamicLanguageId> {}
+export interface DynamicWorkerExpectation extends WorkerExpectation<DynamicLanguageId> {}
 
 const languageIds = new Set<DynamicLanguageId>([
   "elixir",

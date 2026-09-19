@@ -9,6 +9,7 @@ import {
   Schema,
   Utf8,
 } from "apache-arrow";
+
 import {
   COMPLETE_GENERATION_TABLES,
   type LanceTableName,

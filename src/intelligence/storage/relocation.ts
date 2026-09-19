@@ -21,7 +21,9 @@ import {
   sep,
   win32,
 } from "node:path";
+
 import * as lancedb from "@lancedb/lancedb";
+
 import { canonicalizePathSync } from "../../runtime/path-utils.ts";
 import type { LanceTableName } from "../contracts/storage.ts";
 import { StorageError } from "./errors.ts";

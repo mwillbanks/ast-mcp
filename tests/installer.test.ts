@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
 import { commandForPlatform } from "../src/runtime/subprocess";
 import {

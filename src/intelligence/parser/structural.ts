@@ -1,4 +1,5 @@
 import { parse, type SgNode } from "@ast-grep/napi";
+
 import { compareSourceRanges } from "../graph/shared.ts";
 import { SourceCoordinateIndex, sha256 } from "./coordinates.ts";
 import { defaultLanguageRegistry, type LanguageRegistry } from "./registry.ts";

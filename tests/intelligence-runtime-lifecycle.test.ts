@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import type { ResolvedConfig } from "../src/config.ts";
 import { dynamicWorkerStats } from "../src/intelligence/languages/dynamic/analyzer.ts";
 import { IntelligenceSourceDispatcher } from "../src/intelligence/lifecycle/dispatcher.ts";

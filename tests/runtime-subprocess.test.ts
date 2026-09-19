@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { runCommandInput } from "../src/runtime/process-input";
 import { commandForPlatform } from "../src/runtime/subprocess";
 

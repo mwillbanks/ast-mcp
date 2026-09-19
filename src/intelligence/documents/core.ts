@@ -1,4 +1,3 @@
-/* biome-ignore-all lint/style/noNonNullAssertion: parser indices and source-map segments are bounds-checked */
 import {
   EmbeddedSourceMap,
   parseSource,

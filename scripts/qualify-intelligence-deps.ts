@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
 import { Lang, parse } from "@ast-grep/napi";
 import { pipeline } from "@huggingface/transformers";
 import * as lancedb from "@lancedb/lancedb";
@@ -12,6 +13,7 @@ import {
   Schema,
   Utf8,
 } from "apache-arrow";
+
 import { defaultLanguageRegistry } from "../src/intelligence/parser/registry.ts";
 import { normalizeEmbedding as normalizeRuntimeEmbedding } from "../src/intelligence/retrieval/embedding.ts";
 

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import { sourceArtifactIdentity } from "../src/intelligence/contracts/artifacts.ts";
 import { createIdentity } from "../src/intelligence/contracts/common.ts";
 import { revisionMembershipIdentity } from "../src/intelligence/contracts/graph.ts";

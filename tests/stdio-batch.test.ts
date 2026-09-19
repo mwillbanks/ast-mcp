@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+
 import { spawnLiveProcess } from "./support/live-process";
 
 const encoder = new TextEncoder();
