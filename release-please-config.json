@@ -2,7 +2,48 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
     ".": {
-      "release-type": "node"
+      "release-type": "node",
+      "pull-request-title-pattern": "chore: release ast-mcp ${version}",
+      "pull-request-header": "🚀 Release candidate",
+      "pull-request-footer": "📦 Merge after validation to publish ast-mcp through the trusted release workflow.",
+      "changelog-sections": [
+        {
+          "type": "feat",
+          "section": "✨ Features"
+        },
+        {
+          "type": "fix",
+          "section": "🐛 Fixes"
+        },
+        {
+          "type": "perf",
+          "section": "⚡ Performance"
+        },
+        {
+          "type": "refactor",
+          "section": "♻️ Refactoring"
+        },
+        {
+          "type": "build",
+          "section": "📦 Build and dependencies"
+        },
+        {
+          "type": "chore",
+          "section": "🔧 Maintenance"
+        },
+        {
+          "type": "ci",
+          "section": "🚦 Automation"
+        },
+        {
+          "type": "docs",
+          "section": "📚 Documentation"
+        },
+        {
+          "type": "test",
+          "section": "🧪 Tests"
+        }
+      ]
     }
   }
 }
