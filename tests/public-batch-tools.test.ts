@@ -6,6 +6,8 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
+import { dprintCacheDirectory } from "../src/runtime/format";
+
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -24,6 +26,8 @@ test("public file tools execute declared read, hash, write, and patch batches", 
     args: [path.resolve(root, "src/index.ts")],
     command: "bun",
     cwd: root,
+    // The SDK default environment omits the cache prepared before HOME isolation.
+    env: { DPRINT_CACHE_DIR: dprintCacheDirectory() },
     stderr: "pipe",
   });
 
