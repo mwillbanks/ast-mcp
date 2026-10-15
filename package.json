@@ -27,33 +27,36 @@
     "@ast-grep/lang-swift": "0.0.8",
     "@ast-grep/lang-toml": "0.0.9",
     "@ast-grep/lang-yaml": "0.0.6",
-    "@ast-grep/napi": "0.45.3",
-    "@huggingface/transformers": "4.3.0",
-    "@lancedb/lancedb": "0.39.0",
-    "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/server": "2.0.0",
-    "apache-arrow": "18.1.0",
+    "@ast-grep/napi": "0.51.0",
+    "@huggingface/transformers": "4.3.1",
+    "@lancedb/lancedb": "0.40.0",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "apache-arrow": "21.2.0",
     "diff-match-patch-ts": "^2.0.0",
-    "dprint": "0.57.4",
+    "dprint": "0.63.0",
+    "onnxruntime-common": "1.30.0",
     "parse5": "8.0.1",
-    "tree-sitter-wasm": "1.1.8",
+    "tree-sitter-systemverilog": "0.4.1",
+    "tree-sitter-wasm": "2.0.4",
     "typescript-strada": "npm:@typescript/typescript6@6.0.2",
-    "unbash": "^4.0.11",
-    "web-tree-sitter": "0.27.0",
-    "zod": "^4.6.5"
+    "unbash": "^5.1.0",
+    "web-tree-sitter": "0.27.1",
+    "zod": "^4.6.7"
   },
   "description": "Zero-trust MCP file writes, native code intelligence, graph retrieval, hooks, and agent skills",
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "^2.7.0",
-    "@types/bun": "^1.4.2",
-    "@types/node": "^26.6.1",
-    "fallow": "^3.27.0",
-    "oxfmt": "0.68.0",
-    "oxlint": "1.83.0",
+    "@modelcontextprotocol/inspector": "^2.11.0",
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
+    "apache-arrow-18": "npm:apache-arrow@18.1.0",
+    "fallow": "^3.33.1",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
     "typescript": "^7.0.2"
   },
   "engines": {
-    "bun": ">=1.4.2"
+    "bun": ">=1.4.3"
   },
   "files": [
     "dist",
@@ -76,7 +79,7 @@
   ],
   "license": "MIT",
   "name": "@mwillbanks/ast-mcp",
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.3",
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"
@@ -87,8 +90,8 @@
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run lint && bun run typecheck && bun run test",
-    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run lint && bun run typecheck && bun run test:coverage",
+    "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run lint && bun run test",
+    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run lint && bun run test:coverage",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http-entry.ts",
     "evals:check": "bun run templates/skills/ast-mcp/evals/validate.ts",
@@ -115,7 +118,7 @@
     "test": "bun test --bail --max-concurrency=1 --timeout=30000",
     "test:coverage": "bun test --coverage --bail --max-concurrency=1 --timeout=30000",
     "tools:check": "bun run scripts/verify-tools.ts",
-    "typecheck": "bunx tsc --noEmit"
+    "typecheck": "bun --check"
   },
   "sideEffects": false,
   "trustedDependencies": [
