@@ -1,4 +1,6 @@
-import logoUrl from "../../../logo.svg?url";
+import { basePath } from "@/lib/deployment";
+
+const logoUrl = basePath + "logo.svg";
 
 type BrandProps = {
   compact?: boolean;

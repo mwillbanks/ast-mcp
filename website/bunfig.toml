@@ -1,0 +1,4 @@
+preload = ["./scripts/mdx-preload.ts"]
+
+[serve.static]
+plugins = ["./scripts/mdx-plugin.ts"]
