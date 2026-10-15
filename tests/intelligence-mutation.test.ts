@@ -1155,7 +1155,8 @@ describe("mutation recovery edges", () => {
       file,
       async (lease) => {
         const initialExpiry = lease.expiresAt;
-        await Bun.sleep(600);
+        while (lease.expiresAt === initialExpiry && Date.now() < initialExpiry)
+          await Bun.sleep(25);
         expect(lease.expiresAt).toBeGreaterThan(initialExpiry);
         await lease.fence();
       },
