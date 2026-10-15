@@ -27,6 +27,7 @@ import {
   createRevisionId,
   createWorkspaceId,
 } from "../src/intelligence/contracts/workspace.ts";
+import { toLanceSchema } from "../src/intelligence/storage/arrow.ts";
 import {
   ALL_TABLES,
   assertCompatibleSchema,
@@ -592,7 +593,7 @@ describe("LanceDB intelligence storage", () => {
       if (failure === "schema") {
         const table = await connection.createEmptyTable(
           "graph_nodes",
-          new Schema([new Field("wrong", new Utf8(), false)]),
+          toLanceSchema(new Schema([new Field("wrong", new Utf8(), false)])),
         );
         table.close();
       }
