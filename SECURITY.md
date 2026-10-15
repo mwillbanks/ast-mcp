@@ -163,15 +163,33 @@ Ignored findings are recorded in [`osv-scanner.toml`](./osv-scanner.toml) with:
 
 Suppressions are not intended to conceal exploitable vulnerabilities. Expiration dates ensure ignored findings are reconsidered rather than suppressed indefinitely.
 
-### Current OSV-Scanner Exception
+### MCP OAuth advisory
 
-The project currently ignores [`GHSA-frvp-7c67-39w9`](https://github.com/advisories/GHSA-frvp-7c67-39w9) until **January 22, 2027**.
+The upstream OAuth vulnerability is real. ast-mcp does not use the affected OAuth client path in its shipped runtime.
 
-The affected `@hono/node-server` package is present only through the development-only MCP Inspector dependency. ast-mcp does not import that package or expose the affected Hono server request path.
+[GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h) affects `@modelcontextprotocol/client` versions 2.0.0 through 2.1.0 when affected OAuth providers or credentials are used. Version 2.2.0 patches that range. The client and server packages now use 2.3.1. Inspector uses 2.11.0.
 
-The authoritative suppression and its expiration date are maintained in [`osv-scanner.toml`](./osv-scanner.toml). If the dependency becomes reachable in production, the affected path is introduced, or the applicability assessment otherwise changes, the exception must be removed or revised.
+Runtime transports implement MCP servers over stdio and HTTP. Maintained client integrations use stdio without an OAuth provider. The shipped application does not initiate the affected OAuth flow. This assessment does not cover arbitrary Inspector development sessions or future OAuth client integrations.
 
-A scanner suppression does not change the supported-version policy and does not prevent private reports containing evidence that a suppressed advisory is exploitable through ast-mcp.
+### Current OSV-Scanner exceptions
+
+LanceDB 0.40.0 retains optional Transformers 3.0.2 and sharp 0.33.5. The shipped embedding provider directly uses Transformers 4.3.1 and patched sharp 0.35.5. It does not register LanceDB's legacy embedding or image pipeline.
+
+The optional legacy graph retains these upstream image-processing advisories:
+
+- [GHSA-f88m-g3jw-g9cj](https://github.com/advisories/GHSA-f88m-g3jw-g9cj)
+- [GHSA-rgj7-g3m4-5g8c](https://github.com/advisories/GHSA-rgj7-g3m4-5g8c)
+- [GHSA-wq5f-xc86-pv6w](https://github.com/advisories/GHSA-wq5f-xc86-pv6w)
+
+The exceptions in [osv-scanner.toml](./osv-scanner.toml) expire on **October 18, 2026**. This upgrade retains the existing expiration date. Raw dependency audits continue to report these optional legacy packages.
+
+Remove or revise the exceptions if the legacy pipeline becomes reachable. The previous Hono exception is absent from the current scanner configuration. Suppressions do not prevent reports with evidence of reachability.
+
+### Website build dependency advisory
+
+The website's Tailwind CLI 4.3.3 uses `@parcel/watcher` 2.5.1, which retains `micromatch` 4.0.8 and `braces` 3.0.3. [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) affects deeply nested brace patterns. Upstream lists no patched release as of October 15, 2026.
+
+This dependency runs in the website build and development watcher. It is absent from the deployed browser assets and ast-mcp's runtime dependency graph. Repository-controlled watch patterns do not accept remote user input. The website audit remains nonzero; this advisory has no added scanner exception. Recheck upstream before changing the build dependency or accepting external watch patterns.
 
 ## Security Principles
 
