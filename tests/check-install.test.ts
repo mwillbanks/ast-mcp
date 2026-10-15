@@ -573,7 +573,7 @@ test.skipIf(process.platform === "win32")(
     const pidFile = path.join(root, "stubborn.pid");
     await writeFile(
       path.join(root, "stubborn-fixture.ts"),
-      `process.on("SIGTERM", () => {}); await Bun.write(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => process.exit(0), 8_000);`,
+      'process.on("SIGTERM", () => {}); await Bun.write(new URL("./stubborn.pid", import.meta.url), String(process.pid)); setTimeout(() => process.exit(0), 8_000);',
     );
     let pid: number | undefined;
     try {
