@@ -68,7 +68,18 @@ test.skipIf(process.platform === "win32")(
       expect(await live.waitForExit()).toBe(0);
       await live.stop();
       expect(descendant).toBeGreaterThan(0);
-      expect(() => process.kill(descendant!, 0)).toThrow();
+      if (process.platform === "linux") {
+        // Linux can retain killed orphans as zombies until init reaps them.
+        const status = await Bun.file(`/proc/${descendant}/status`)
+          .text()
+          .catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          });
+        expect(status === null || /^State:\s+Z\b/mu.test(status)).toBeTrue();
+      } else {
+        expect(() => process.kill(descendant!, 0)).toThrow();
+      }
     } finally {
       if (descendant) {
         try {
