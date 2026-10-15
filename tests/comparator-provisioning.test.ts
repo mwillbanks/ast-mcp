@@ -14,7 +14,7 @@ test("pins the graphifyy distribution through the selected Python interpreter", 
     "pip",
     "install",
     "--disable-pip-version-check",
-    "graphifyy==0.9.53",
+    "graphifyy==0.9.91",
   ]);
 });
 
@@ -65,11 +65,11 @@ test("provisions and verifies pinned Graphify only when absent", async () => {
     findExecutable: (name) => (name === "python" ? "/python" : null),
     run: async (command) => {
       commands.push(command);
-      if (command[0] === "graphify") return "graphify 0.9.53";
+      if (command[0] === "graphify") return "graphify 0.9.91";
       return "";
     },
   });
-  expect(result).toEqual({ graphify: "graphify 0.9.53" });
+  expect(result).toEqual({ graphify: "graphify 0.9.91" });
   expect(commands).toEqual([
     [
       "/python",
@@ -77,7 +77,7 @@ test("provisions and verifies pinned Graphify only when absent", async () => {
       "pip",
       "install",
       "--disable-pip-version-check",
-      "graphifyy==0.9.53",
+      "graphifyy==0.9.91",
     ],
     ["graphify", "--version"],
   ]);
@@ -89,10 +89,10 @@ test("reuses an exact Graphify version without requiring Python", async () => {
     findExecutable: (name) => (name === "graphify" ? "/graphify" : null),
     run: async (command) => {
       commands.push(command);
-      return "graphify 0.9.53";
+      return "graphify 0.9.91";
     },
   });
-  expect(result).toEqual({ graphify: "graphify 0.9.53" });
+  expect(result).toEqual({ graphify: "graphify 0.9.91" });
   expect(commands).toEqual([["graphify", "--version"]]);
 });
 
@@ -108,10 +108,10 @@ test("reinstalls a stale Graphify executable before accepting its version", asyn
         installed = true;
         return "";
       }
-      return installed ? "graphify 0.9.53" : "graphify 0.9.52";
+      return installed ? "graphify 0.9.91" : "graphify 0.9.52";
     },
   });
-  expect(result).toEqual({ graphify: "graphify 0.9.53" });
+  expect(result).toEqual({ graphify: "graphify 0.9.91" });
   expect(commands).toEqual([
     ["graphify", "--version"],
     graphifyProvisionCommand("/python"),
@@ -134,8 +134,8 @@ test("rejects Graphify version drift after reinstalling", async () => {
   const findExecutable = () => "/python";
   for (const graphify of [
     "graphify 0.9.52",
-    "prefix graphify 0.9.53",
-    "graphify 0.9.53 suffix",
+    "prefix graphify 0.9.91",
+    "graphify 0.9.91 suffix",
   ]) {
     await expect(
       provisionGraphifyComparator("linux", "x64", {
@@ -145,6 +145,6 @@ test("rejects Graphify version drift after reinstalling", async () => {
           return "";
         },
       }),
-    ).rejects.toThrow("Expected graphify 0.9.53");
+    ).rejects.toThrow("Expected graphify 0.9.91");
   }
 });
