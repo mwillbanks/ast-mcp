@@ -22,10 +22,15 @@ export function dprintCacheDirectory(
     return paths.join(
       env.LOCALAPPDATA ?? paths.join(home, "AppData", "Local"),
       "dprint",
+      "cache",
     );
   if (platform === "darwin")
-    return paths.join(home, "Library", "Caches", "dprint");
-  return paths.join(env.XDG_CACHE_HOME ?? paths.join(home, ".cache"), "dprint");
+    return paths.join(home, "Library", "Caches", "dprint", "cache");
+  return paths.join(
+    env.XDG_CACHE_HOME ?? paths.join(home, ".cache"),
+    "dprint",
+    "cache",
+  );
 }
 
 async function dprintEnvironment(): Promise<
