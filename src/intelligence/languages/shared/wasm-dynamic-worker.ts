@@ -1,6 +1,5 @@
 import { parentPort } from "node:worker_threads";
 
-import { getWasmPath } from "tree-sitter-wasm";
 import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 
 import {
@@ -10,7 +9,6 @@ import {
   type SyntaxReference,
   type SyntaxRelationship,
   type SyntaxSymbol,
-  sha256,
 } from "../../parser/index.ts";
 import {
   type DynamicWorkerStart,
@@ -20,6 +18,10 @@ import {
   isDynamicWorkerRequest,
 } from "../dynamic/protocol.ts";
 import type { DynamicLanguageId } from "../dynamic/types.ts";
+import {
+  resolveWasmGrammarAsset,
+  wasmParserFingerprint,
+} from "./wasm-assets.ts";
 import {
   appendTreeSitterImport,
   assembleTreeSitterFacts,
@@ -47,9 +49,7 @@ async function language(languageId: DynamicLanguageId) {
   await initialized;
   let loaded = languages.get(languageId);
   if (!loaded) {
-    loaded = await Language.load(
-      getWasmPath(languageId === "luau" ? "lua" : languageId),
-    );
+    loaded = await Language.load(resolveWasmGrammarAsset(languageId));
     languages.set(languageId, loaded);
   }
   return loaded;
@@ -541,7 +541,7 @@ function buildFacts(
     inheritance: validInheritance,
     languageId,
     nodes: normalized,
-    parserFingerprint: sha256("web-tree-sitter@0.27.0"),
+    parserFingerprint: wasmParserFingerprint(),
     partial: root.hasError,
     references: validReferences,
     sourceDigest,

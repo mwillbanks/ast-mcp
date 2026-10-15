@@ -19,6 +19,7 @@ import swift from "@ast-grep/lang-swift";
 import toml from "@ast-grep/lang-toml";
 import yaml from "@ast-grep/lang-yaml";
 import { Lang } from "@ast-grep/napi";
+import { version as napiVersion } from "@ast-grep/napi/package.json";
 
 import type { ParserLanguageId } from "./types.ts";
 
@@ -64,7 +65,7 @@ function builtIn(
     analysis: { symbolExtraction },
     astGrepLanguage,
     extensions,
-    grammarVersion: `@ast-grep/napi@0.45.3:${astGrepLanguage}`,
+    grammarVersion: `@ast-grep/napi@${napiVersion}:${astGrepLanguage}`,
     languageId,
     registration: null,
     structuralOperations,

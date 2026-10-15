@@ -1,6 +1,7 @@
 import type { Worker } from "node:worker_threads";
 
-import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
+import type { SyntaxFacts } from "../../parser/index.ts";
+import { wasmProviderFingerprint } from "../shared/wasm-assets.ts";
 import {
   createWorkerClient,
   type WorkerErrorCode,
@@ -10,10 +11,7 @@ import {
   createTreeSitterWorkerFactsValidator,
 } from "../worker-client-validation.ts";
 import type { JvmAnalyzeRequest } from "./types.ts";
-
-export const jvmExtractorFingerprint = sha256(
-  "tree-sitter-wasm@1.1.8+web-tree-sitter@0.27.0+coordinates-v2",
-);
+export const jvmExtractorFingerprint = wasmProviderFingerprint();
 export const JVM_WORKER_LIMITS = {
   maxOutstandingBytes: 8 * 1024 * 1024,
   maxPendingRequests: 64,

@@ -1,6 +1,5 @@
 import { parentPort } from "node:worker_threads";
 
-import { getWasmPath } from "tree-sitter-wasm";
 import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 
 import {
@@ -18,6 +17,12 @@ import {
   stableNodeId,
 } from "../../parser/index.ts";
 import type { InfraLanguageId } from "../infra/types.ts";
+import {
+  resolveWasmGrammarAsset,
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "./wasm-assets.ts";
 import { installWasmWorker } from "./wasm-worker-runtime.ts";
 import {
   positiveRequestId,
@@ -34,9 +39,7 @@ async function grammar(languageId: InfraLanguageId): Promise<Language | null> {
   await initialized;
   let loaded = languages.get(grammarId);
   if (!loaded) {
-    loaded = await Language.load(
-      getWasmPath(grammarId as Parameters<typeof getWasmPath>[0]),
-    );
+    loaded = await Language.load(resolveWasmGrammarAsset(grammarId));
     languages.set(grammarId, loaded);
   }
   return loaded;
@@ -615,25 +618,21 @@ function buildFacts(
     : languageId === "verilog"
       ? "systemverilog:verilog-subset-v1"
       : languageId;
-  const extractorFingerprint = sha256(
-    "infra-structured-v1+tree-sitter-wasm@1.1.8+web-tree-sitter@0.27.0+coordinates-v2",
-  );
+  const extractorFingerprint = wasmExtractorFingerprint(grammarIdentity);
   return {
     calls,
     diagnostics,
     exports,
     extractorFingerprint,
-    grammarFingerprint: sha256(JSON.stringify([grammarIdentity, "1.1.8"])),
+    grammarFingerprint: wasmGrammarFingerprint(grammarIdentity),
     implementations,
     imports,
     inheritance,
     languageId,
     nodes: normalized,
-    parserFingerprint: sha256(
-      grammarIdentity.startsWith("structured")
-        ? "ast-mcp-structured-parser-v1"
-        : "web-tree-sitter@0.27.0",
-    ),
+    parserFingerprint: grammarIdentity.startsWith("structured")
+      ? sha256("ast-mcp-structured-parser-v1")
+      : wasmParserFingerprint(),
     partial: errors.length > 0 || languageId === "verilog",
     references,
     rootNodeId: normalized[0]?.id ?? stableNodeId(sourceDigest, "root", 0, 0),

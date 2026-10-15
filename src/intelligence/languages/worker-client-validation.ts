@@ -1,5 +1,10 @@
 import { type SyntaxFacts, sha256 } from "../parser/index.ts";
 import {
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "./shared/wasm-assets.ts";
+import {
   validateWorkerEnvelope,
   type WorkerResponse,
 } from "./shared/worker-client.ts";
@@ -145,18 +150,9 @@ export function createTreeSitterWorkerFactsValidator(options: {
     const grammarIdentity = options.grammarIdentity(expected.languageId);
     validateWorkerFactConsistency(facts, expected, {
       createError: options.createError,
-      extractorFingerprint: () =>
-        sha256(
-          JSON.stringify([
-            "tree-sitter-wasm",
-            "1.1.8",
-            grammarIdentity,
-            "coordinates-v2",
-          ]),
-        ),
-      grammarFingerprint: () =>
-        sha256(JSON.stringify(["tree-sitter-wasm", "1.1.8", grammarIdentity])),
-      parserFingerprint: () => sha256("web-tree-sitter@0.27.0"),
+      extractorFingerprint: () => wasmExtractorFingerprint(grammarIdentity),
+      grammarFingerprint: () => wasmGrammarFingerprint(grammarIdentity),
+      parserFingerprint: wasmParserFingerprint,
     });
   };
 }

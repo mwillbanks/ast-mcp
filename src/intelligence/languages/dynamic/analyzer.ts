@@ -1,14 +1,12 @@
-import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
+import type { SyntaxFacts } from "../../parser/index.ts";
 import {
   LanguageWorkerClient,
   type LanguageWorkerErrorCode,
 } from "../shared/language-worker-client.ts";
+import { wasmProviderFingerprint } from "../shared/wasm-assets.ts";
 import { isDynamicWorkerResult } from "./protocol.ts";
 import type { DynamicAnalyzeRequest, DynamicLanguageId } from "./types.ts";
-
-export const dynamicExtractorFingerprint = sha256(
-  "tree-sitter-wasm@1.1.8+web-tree-sitter@0.27.0+coordinates-v2",
-);
+export const dynamicExtractorFingerprint = wasmProviderFingerprint();
 export const DYNAMIC_WORKER_LIMITS = {
   maxOutstandingBytes: 8 * 1024 * 1024,
   maxPendingRequests: 64,

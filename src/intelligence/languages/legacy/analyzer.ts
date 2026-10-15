@@ -1,14 +1,12 @@
-import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
+import type { SyntaxFacts } from "../../parser/index.ts";
 import {
   LanguageWorkerClient,
   type LanguageWorkerErrorCode,
 } from "../shared/language-worker-client.ts";
+import { wasmProviderFingerprint } from "../shared/wasm-assets.ts";
 import { isLegacyWorkerResult } from "./protocol.ts";
 import type { LegacyAnalyzeRequest, LegacyLanguageId } from "./types.ts";
-
-export const legacyExtractorFingerprint = sha256(
-  "legacy-tree-sitter-wasm@1.1.8+structured@1+coordinates-v2",
-);
+export const legacyExtractorFingerprint = wasmProviderFingerprint();
 export const LEGACY_WORKER_LIMITS = {
   maxOutstandingBytes: 8 * 1024 * 1024,
   maxPendingRequests: 64,

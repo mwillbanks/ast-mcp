@@ -1,6 +1,5 @@
 import { parentPort } from "node:worker_threads";
 
-import { getWasmPath } from "tree-sitter-wasm";
 import { Language, Parser, type Node as SyntaxNode } from "web-tree-sitter";
 
 import {
@@ -10,8 +9,13 @@ import {
   type SyntaxReference,
   type SyntaxRelationship,
   type SyntaxSymbol,
-  sha256,
 } from "../../parser/index.ts";
+import {
+  resolveWasmGrammarAsset,
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "./wasm-assets.ts";
 import {
   appendTreeSitterImport,
   assembleTreeSitterFacts,
@@ -45,15 +49,7 @@ async function language(languageId: MainstreamLanguageId) {
   await initialized;
   let loaded = languages.get(languageId);
   if (!loaded) {
-    loaded = await Language.load(
-      getWasmPath(
-        (languageId === "csharp"
-          ? "c_sharp"
-          : languageId === "apex"
-            ? "java"
-            : languageId) as Parameters<typeof getWasmPath>[0],
-      ),
-    );
+    loaded = await Language.load(resolveWasmGrammarAsset(languageId));
     languages.set(languageId, loaded);
   }
   return loaded;
@@ -560,29 +556,20 @@ function buildFacts(
   );
   const grammarIdentity =
     languageId === "apex" ? "java:apex-compatible-subset-v1" : languageId;
-  const extractorFingerprint = sha256(
-    JSON.stringify([
-      "tree-sitter-wasm",
-      "1.1.8",
-      grammarIdentity,
-      "coordinates-v2",
-    ]),
-  );
+  const extractorFingerprint = wasmExtractorFingerprint(grammarIdentity);
   return assembleTreeSitterFacts({
     calls,
     diagnostics,
     exports,
     extractorFingerprint,
-    grammarFingerprint: sha256(
-      JSON.stringify(["tree-sitter-wasm", "1.1.8", grammarIdentity]),
-    ),
+    grammarFingerprint: wasmGrammarFingerprint(grammarIdentity),
     implementations,
     imports,
     includeImplementationsInArtifact: true,
     inheritance,
     languageId,
     nodes: normalized,
-    parserFingerprint: sha256("web-tree-sitter@0.27.0"),
+    parserFingerprint: wasmParserFingerprint(),
     partial: root.hasError,
     references,
     sourceDigest,
