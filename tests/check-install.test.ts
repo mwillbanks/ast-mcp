@@ -99,26 +99,35 @@ test("checker accepts a lowercase Windows batch alias through global discovery",
       )
       .replace(/args = .+/, `args = ${JSON.stringify(invocation.args)}`),
   );
-  const script = `process.platform = "win32"; const { checkInstall } = await import(${JSON.stringify(path.resolve(import.meta.dir, "../templates/skills/ast-mcp/scripts/check-install.ts"))}); const result = await checkInstall(["--scope", "global", "--target", "codex", "--root", ${JSON.stringify(root)}], ${JSON.stringify(home)}); console.log(JSON.stringify({ mcp: result.checks.mcp, smokeError: result.smokeError }));`;
   async function simulatedCheck(comspec?: string) {
-    const child = Bun.spawn([process.execPath, "-e", script], {
-      env: {
-        ...process.env,
-        AST_MCP_CHECK_INSTALL_SKIP_SMOKE: "1",
-        PATHEXT: ".CMD",
-        ...(comspec ? { ComSpec: comspec } : {}),
-      },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
-    return JSON.parse(stdout) as { mcp: boolean; smokeError: string | null };
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const names = [
+      "AST_MCP_CHECK_INSTALL_SKIP_SMOKE",
+      "PATHEXT",
+      "ComSpec",
+    ] as const;
+    const before = names.map((name) => process.env[name]);
+    try {
+      Object.defineProperty(process, "platform", {
+        ...descriptor,
+        value: "win32",
+      });
+      process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE = "1";
+      process.env.PATHEXT = ".CMD";
+      if (comspec) process.env.ComSpec = comspec;
+      const result = await checkInstall(
+        ["--scope", "global", "--target", "codex", "--root", root],
+        home,
+      );
+      return { mcp: result.checks.mcp, smokeError: result.smokeError };
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      for (const [index, name] of names.entries()) {
+        const value = before[index];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   }
   const lowercaseIdentity = await stat(lowercaseAlias);
   const uppercaseIdentity = await stat(uppercaseAlias);
@@ -554,6 +563,105 @@ test("stdio smoke fails closed for incomplete and unresponsive servers", async (
 
   const silent = await mcpFixture(root, "silent", null);
   await expect(smokeMcpStdio(silent, root, 25)).rejects.toThrow("timed out");
+});
+
+test.skipIf(process.platform === "win32")(
+  "stdio smoke kills servers that ignore EOF and SIGTERM",
+  async () => {
+    const { root } = await folders();
+    const binary = await mcpFixture(root, "stubborn", null);
+    const pidFile = path.join(root, "stubborn.pid");
+    await writeFile(
+      path.join(root, "stubborn-fixture.ts"),
+      `process.on("SIGTERM", () => {}); await Bun.write(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => process.exit(0), 8_000);`,
+    );
+    let pid: number | undefined;
+    try {
+      await expect(smokeMcpStdio(binary, root, 200)).rejects.toThrow(
+        "timed out",
+      );
+      pid = Number(await readFile(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      expect(() => process.kill(pid!, 0)).toThrow();
+    } finally {
+      if (pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    }
+  },
+  5_000,
+);
+
+test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
+  "checks global service executable identity",
+  async () => {
+    const { home, root } = await folders();
+    await install({
+      home,
+      root,
+      scope: "global",
+      targets: ["codex"],
+      transport: "http",
+    });
+    const directory =
+      process.platform === "darwin"
+        ? path.join(home, "Library/LaunchAgents")
+        : path.join(home, ".config/systemd/user");
+    const file = path.join(
+      directory,
+      process.platform === "darwin"
+        ? "com.mwillbanks.ast-mcp.plist"
+        : "ast-mcp.service",
+    );
+    await mkdir(directory, { recursive: true });
+    const binary = path.join(home, ".bun/bin/ast-mcp");
+    const content =
+      process.platform === "darwin"
+        ? `<plist><string>${binary}</string><string>--transport</string><string>http</string><string>127.0.0.1</string><string>3768</string></plist>`
+        : `ExecStart="${binary}" --transport http --host 127.0.0.1 --port 3768\n`;
+    await writeFile(file, content);
+    const args = [
+      "--scope",
+      "global",
+      "--target",
+      "codex",
+      "--root",
+      root,
+      "--transport",
+      "http",
+      "--service",
+    ];
+    expect((await checkInstall(args, home)).checks.service).toBeTrue();
+    await writeFile(
+      file,
+      content.replace(binary, path.join(home, "missing/ast-mcp")),
+    );
+    expect((await checkInstall(args, home)).checks.service).toBeFalse();
+  },
+);
+
+test("checker reports protocol smoke failures as stale installations", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  await mcpFixture(path.join(root, "node_modules/.bin"), "ast-mcp", {
+    initialize: {
+      capabilities: {},
+      protocolVersion: "2025-06-18",
+      serverInfo: { name: "fixture", version: "1" },
+    },
+    "tools/list": { tools: [] },
+    "tools/call": {},
+  });
+  const result = await checkInstall(
+    ["--scope", "local", "--target", "codex", "--root", root],
+    home,
+  );
+  expect(result.checks.mcp).toBeFalse();
+  expect(result.smokeError).toContain("missing tools");
+  expect(result.installed).toBeFalse();
+  expect(result.operation).toBe("update");
 });
 
 test("checker validates HTTP and service option combinations", async () => {

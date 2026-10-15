@@ -234,6 +234,9 @@ test("workspace context is async-local and never changes process routing state",
     withConfig(hermeticConfig(first), () =>
       withWorkspaceContext(firstWorkspace, async () => {
         await Bun.sleep(10);
+        expect(await intelligenceRoot(["same.txt"])).toBe(
+          firstWorkspace.checkoutRoot,
+        );
         expect(currentWorkspace()?.workspaceId).toBe(
           firstWorkspace.workspaceId,
         );
