@@ -16,6 +16,7 @@ import {
 
 import { defaultLanguageRegistry } from "../src/intelligence/parser/registry.ts";
 import { normalizeEmbedding as normalizeRuntimeEmbedding } from "../src/intelligence/retrieval/embedding.ts";
+import { toLanceSchema } from "../src/intelligence/storage/arrow.ts";
 
 const VECTOR_SIZE = 3;
 const DEFAULT_MODEL = "onnx-community/granite-embedding-30m-english-ONNX";
@@ -115,7 +116,7 @@ export async function qualifyStorage(databasePath: string) {
           vector: [1, 0, 0],
         },
       ],
-      { mode: "overwrite", schema: qualificationSchema() },
+      { mode: "overwrite", schema: toLanceSchema(qualificationSchema()) },
     );
     try {
       const baselineVersion = await table.version();

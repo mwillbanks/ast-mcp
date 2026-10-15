@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { Connection, Table } from "@lancedb/lancedb";
+import type { Connection, SchemaLike, Table } from "@lancedb/lancedb";
 import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
 
@@ -26,6 +26,7 @@ import {
   type StorageDomain,
   StorageDomainSchema,
 } from "../contracts/storage.ts";
+import { arrowSchemaSignature, toLanceSchema } from "./arrow.ts";
 import {
   type CoordinatorLease,
   type CoordinatorOptions,
@@ -283,16 +284,9 @@ async function withLatestTable<T>(
   }
 }
 
-function arrowSchemaSignature(schema: Schema): readonly string[] {
-  return schema.fields.map(
-    (field) =>
-      `${field.name}:${field.type.toString()}:${field.nullable ? "nullable" : "required"}`,
-  );
-}
-
 function isLegacyPublicationTagSchema(
   tableName: LanceTableName,
-  actual: Schema,
+  actual: SchemaLike,
 ): boolean {
   if (
     !COMPLETE_GENERATION_TABLES.includes(
@@ -306,11 +300,9 @@ function isLegacyPublicationTagSchema(
     expected.fields.filter(
       (field) => field.name !== "publication_generation_id",
     ),
+    expected.metadata,
   );
-  return (
-    JSON.stringify(arrowSchemaSignature(actual)) ===
-    JSON.stringify(arrowSchemaSignature(legacy))
-  );
+  return arrowSchemaSignature(actual) === arrowSchemaSignature(legacy);
 }
 
 export class ReaderPinExpiredError extends StorageError {
@@ -468,7 +460,7 @@ export class LanceIntelligenceStore {
       if (access === "read-write") {
         const table = await connection.createEmptyTable(
           "coordinator_recovery",
-          TABLE_SCHEMAS.coordinator_recovery,
+          toLanceSchema(TABLE_SCHEMAS.coordinator_recovery),
           { existOk: true, mode: "create" },
         );
         table.close();
@@ -535,7 +527,7 @@ export class LanceIntelligenceStore {
           await this.coordinator.fence(lease);
           const table = await this.connection.createEmptyTable(
             tableName,
-            TABLE_SCHEMAS[tableName],
+            toLanceSchema(TABLE_SCHEMAS[tableName]),
             { mode: "create" },
           );
           table.close();

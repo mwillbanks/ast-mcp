@@ -1,3 +1,4 @@
+import type { SchemaLike } from "@lancedb/lancedb";
 import {
   Binary,
   Bool,
@@ -14,6 +15,7 @@ import {
   COMPLETE_GENERATION_TABLES,
   type LanceTableName,
 } from "../contracts/storage.ts";
+import { arrowSchemaSignature } from "./arrow.ts";
 import { StorageError } from "./errors.ts";
 
 const text = () => new Utf8();
@@ -333,20 +335,12 @@ export const IMMUTABLE_TABLES = new Set<LanceTableName>([
 
 export function assertCompatibleSchema(
   table: LanceTableName,
-  actual: Schema,
+  actual: SchemaLike,
 ): void {
   const expected = TABLE_SCHEMAS[table];
-  const actualSignature = actual.fields.map((field) => ({
-    name: field.name,
-    nullable: field.nullable,
-    type: field.type.toString(),
-  }));
-  const expectedSignature = expected.fields.map((field) => ({
-    name: field.name,
-    nullable: field.nullable,
-    type: field.type.toString(),
-  }));
-  if (JSON.stringify(actualSignature) !== JSON.stringify(expectedSignature)) {
+  const actualSignature = arrowSchemaSignature(actual);
+  const expectedSignature = arrowSchemaSignature(expected);
+  if (actualSignature !== expectedSignature) {
     throw new StorageError(
       "invalid_schema",
       `LanceDB table ${table} does not match ast-mcp intelligence schema`,
