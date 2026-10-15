@@ -438,7 +438,7 @@ describe("native intelligence parser", () => {
           `@ast-grep/lang-${entry.languageId}@${expectedVersion}`,
         );
       } else {
-        expect(entry.grammarVersion).toStartWith("@ast-grep/napi@0.45.3:");
+        expect(entry.grammarVersion).toStartWith("@ast-grep/napi@0.51.0:");
       }
     }
 

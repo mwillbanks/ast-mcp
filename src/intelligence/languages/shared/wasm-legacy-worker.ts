@@ -1,6 +1,5 @@
 import { parentPort } from "node:worker_threads";
 
-import { getWasmPath } from "tree-sitter-wasm";
 import { Language, Parser, type Node as TreeNode } from "web-tree-sitter";
 
 import {
@@ -24,6 +23,7 @@ import {
   legacyParserFingerprint,
 } from "../legacy/protocol.ts";
 import type { LegacyLanguageId } from "../legacy/types.ts";
+import { resolveWasmGrammarAsset } from "./wasm-assets.ts";
 import { installWasmWorker } from "./wasm-worker-runtime.ts";
 
 interface Token {
@@ -538,7 +538,9 @@ async function wasm(
   let grammar = wasmLanguages.get(languageId);
   if (!grammar) {
     grammar = await Language.load(
-      getWasmPath(languageId === "common-lisp" ? "commonlisp" : "ocaml"),
+      resolveWasmGrammarAsset(
+        languageId === "common-lisp" ? "commonlisp" : "ocaml",
+      ),
     );
     wasmLanguages.set(languageId, grammar);
   }

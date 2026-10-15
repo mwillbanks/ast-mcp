@@ -34,7 +34,7 @@ export const GRAPHIFY_DYNAMIC_BASELINE_REVISION =
   "3f82bf7f837a07fb0f7668fbdbd5662801906942";
 
 const unavailableReason =
-  "tree-sitter-wasm 1.1.8 does not include a Luau grammar";
+  "The installed tree-sitter bundle does not include a Luau grammar";
 
 const grammarImplementation = createExtractionImplementation();
 

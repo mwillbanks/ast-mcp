@@ -19,6 +19,7 @@ import { renameFilesSafely } from "../src/runtime/file-rename";
 import {
   resolveWorkspacePath,
   resolveWritablePath,
+  rootForPath,
 } from "../src/runtime/paths";
 
 const created: string[] = [];
@@ -79,6 +80,12 @@ test("file access defaults allow temp paths while preserving workspace protectio
   await expect(
     withConfig({ cwd: protectedRoot, env: {} }, () =>
       resolveWritablePath(temporaryPath),
+    ),
+  ).rejects.toThrow(/outside configured file-operation roots/);
+
+  await expect(
+    withConfig({ cwd: protectedRoot, env: {} }, () =>
+      rootForPath(temporaryPath),
     ),
   ).rejects.toThrow(/outside configured file-operation roots/);
 

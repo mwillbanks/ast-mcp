@@ -8,17 +8,14 @@ import { RootProvider } from "fumadocs-ui/provider/tanstack";
 import type { ReactNode } from "react";
 
 import StaticSearchDialog from "@/components/search";
-
-import logoUrl from "../../../logo.svg?url";
-
-import appCss from "@/styles/app.css?url";
+import { basePath } from "@/lib/deployment";
 
 export const Route = createRootRoute({
   component: RootComponent,
   head: () => ({
     links: [
-      { href: appCss, rel: "stylesheet" },
-      { href: logoUrl, rel: "icon", type: "image/svg+xml" },
+      { href: basePath + "assets/app.css", rel: "stylesheet" },
+      { href: basePath + "logo.svg", rel: "icon", type: "image/svg+xml" },
     ],
     meta: [
       { charSet: "utf-8" },
@@ -52,6 +49,9 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
           {children}
         </RootProvider>
         <Scripts />
+        {process.env.NODE_ENV === "production" && (
+          <script type="module" src={basePath + "assets/client.js"} />
+        )}
       </body>
     </html>
   );

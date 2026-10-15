@@ -2,6 +2,12 @@ import type { Worker } from "node:worker_threads";
 
 import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
 import {
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "../shared/wasm-assets.ts";
+import { wasmProviderFingerprint } from "../shared/wasm-assets.ts";
+import {
   createWorkerClient,
   validateWorkerEnvelope,
   type WorkerErrorCode,
@@ -9,10 +15,7 @@ import {
 } from "../shared/worker-client.ts";
 import { validateWorkerFactConsistency } from "../worker-client-validation.ts";
 import type { InfraAnalyzeRequest } from "./types.ts";
-
-export const infraExtractorFingerprint = sha256(
-  "infra-structured-v1+tree-sitter-wasm@1.1.8+web-tree-sitter@0.27.0+coordinates-v2",
-);
+export const infraExtractorFingerprint = wasmProviderFingerprint();
 export const INFRA_WORKER_LIMITS = {
   maxOutstandingBytes: 8 * 1024 * 1024,
   maxPendingRequests: 64,
@@ -46,15 +49,12 @@ function validateFactConsistency(
         "protocol",
         "INFRA worker facts are internally inconsistent",
       ),
-    extractorFingerprint: () => infraExtractorFingerprint,
-    grammarFingerprint: () =>
-      sha256(JSON.stringify([grammarIdentity, "1.1.8"])),
+    extractorFingerprint: () => wasmExtractorFingerprint(grammarIdentity),
+    grammarFingerprint: () => wasmGrammarFingerprint(grammarIdentity),
     parserFingerprint: () =>
-      sha256(
-        grammarIdentity.startsWith("structured")
-          ? "ast-mcp-structured-parser-v1"
-          : "web-tree-sitter@0.27.0",
-      ),
+      grammarIdentity.startsWith("structured")
+        ? sha256("ast-mcp-structured-parser-v1")
+        : wasmParserFingerprint(),
     requireReciprocalNodeLinks: true,
   });
 }

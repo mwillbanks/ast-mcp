@@ -1,47 +1,44 @@
 {
   "name": "ast-mcp-docs",
   "private": true,
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.3",
   "engines": {
-    "bun": ">=1.4.2"
+    "bun": ">=1.4.3"
   },
   "sideEffects": false,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite dev",
+    "build": "bun run scripts/build.ts",
+    "dev": "bun run scripts/dev.ts",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings .",
-    "preview": "vite preview",
-    "test": "bun test --bail",
-    "typecheck": "fumadocs-mdx && tsc --noEmit"
+    "preview": "bun run scripts/preview.ts",
+    "prepare": "bun run scripts/generate.ts",
+    "test": "bun test --bail tests",
+    "test:browser": "bun run scripts/test-browser.ts",
+    "typecheck": "bun run prepare && bun check"
   },
   "dependencies": {
-    "@tanstack/react-router": "^1.170.38",
-    "@tanstack/react-start": "^1.168.56",
-    "@tanstack/start-static-server-functions": "^1.167.37",
-    "fumadocs-core": "^16.15.11",
-    "fumadocs-mdx": "^15.4.1",
-    "fumadocs-ui": "^16.15.11",
-    "lucide-react": "^1.47.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "seroval": "1.6.7"
+    "@tanstack/react-router": "^1.170.44",
+    "fumadocs-core": "16.17.3",
+    "fumadocs-mdx": "^15.4.7",
+    "fumadocs-ui": "16.17.3",
+    "lucide-react": "^1.57.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/bun": "1.4.2",
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/cli": "4.3.3",
+    "@types/bun": "1.4.3",
     "@types/mdx": "^2.0.14",
-    "@types/node": "^26.6.1",
+    "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.1",
-    "nitro": "3.0.260903-beta",
-    "oxfmt": "0.68.0",
-    "oxlint": "1.83.0",
-    "tailwindcss": "^4.3.3",
+    "tailwindcss": "4.3.3",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0"
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0"
   }
 }

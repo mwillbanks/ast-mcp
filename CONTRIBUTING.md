@@ -4,7 +4,7 @@ Thanks for helping improve ast-mcp. Changes should preserve its core promise: re
 
 ## Prerequisites
 
-- Bun 1.4.2 or newer
+- Bun 1.4.3 or newer
 - Node.js 22.19 or newer when running MCP Inspector commands
 - the pinned `dprint` binary and native intelligence dependencies installed by `bun install`
 - a checkout with no unrelated changes in files you plan to edit
@@ -39,14 +39,16 @@ bun run skill:check
 bun run evals:check
 bun run fallow
 bun run build
-bun run --cwd website lint
+bun run --cwd website format:check
 bun run --cwd website typecheck
+bun run --cwd website lint
 bun run --cwd website test
-VITE_BASE_PATH=/ast-mcp/ bun run --cwd website build
+BASE_PATH=/ast-mcp/ bun run --cwd website build
+bun run --cwd website test:browser
 bun pm pack --dry-run
 ```
 
-The formatter command applies Oxfmt deterministically. Oxlint treats every warning as a failure.
+The formatter command applies Oxfmt deterministically. Oxlint treats every warning as a failure. Bun 1.4.3 does not provide fmt or lint, so these tools remain installed. Typechecking uses Bun's native check command. The root check script uses the --check spelling to avoid its package-script name collision.
 
 ### Optional live host smoke checks
 
@@ -64,7 +66,7 @@ The default timeout is 60 seconds. Set `AST_MCP_HOST_SMOKE_TIMEOUT_MS` to change
 
 Use a local Windows VM when one is available. If storage prevents that, create one temporary, isolated Windows debug workflow and connect to its runner before changing Windows code. The key-only OpenSSH and Bore workflow used for PR #18 is recorded at commit `f39a5d1` (`.github/workflows/windows-debug.yml`). Restrict it to the intended PR and actor. Fetch only that actor's registered GitHub SSH keys, disable password authentication, validate `sshd_config`, and restart `sshd` before exposing port 2222. Verify the pinned Bore ZIP SHA-256 before starting the tunnel. Delete the temporary workflow after native proof; do not make shell access a release gate.
 
-Windows Actions runners can expose the profile through an 8.3 alias. The caller's path spelling must remain native for config values and formatter arguments. Resolve aliases separately when checking authorization, containment, and locks. Use this command prompt recipe in the PR checkout with Bun 1.4.2 and dependencies installed:
+Windows Actions runners can expose the profile through an 8.3 alias. The caller's path spelling must remain native for config values and formatter arguments. Resolve aliases separately when checking authorization, containment, and locks. Use this command prompt recipe in the PR checkout with Bun 1.4.3 and dependencies installed:
 
 ```cmd
 set "PATH=%USERPROFILE%\.bun\bin;%PATH%"

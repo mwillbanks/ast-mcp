@@ -59,7 +59,11 @@ async function importersFor(filePath: string, root: string): Promise<string[]> {
     )
       continue;
     const capabilities = await inspectFileCapabilities(candidate);
-    if (!capabilities.language || !capabilities.effective.read.includes("ast"))
+    if (
+      capabilities.kind !== "source" ||
+      !capabilities.language ||
+      !capabilities.effective.read.includes("ast")
+    )
       continue;
     const source = await Bun.file(candidate).text();
     const facts = parseSource({
@@ -180,9 +184,14 @@ async function referenceStatus(
   request: FileDeleteRequest,
 ) {
   const referenceRoot = await referenceRootForPath(filePath);
+  // An explicit override bypasses advisory parsing, never existing authorization.
+  if (request.forceReferences) {
+    if (referenceRoot) assertReadableTree(await currentConfig(), referenceRoot);
+    return { importers: [], referencesVerified: false };
+  }
   const language = detectAstLanguage(filePath);
-  const capabilities = await inspectFileCapabilities(filePath, language);
-  const capable = capabilities.effective.read.includes("ast");
+  // Reference eligibility depends on file identity, not a valid target AST.
+  const capable = language !== undefined;
   requireVerifiableReferences(
     referenceRoot,
     capable,

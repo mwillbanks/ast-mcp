@@ -304,9 +304,9 @@ async function graphify(root: string, outputRoot: string) {
       status: "unavailable" as const,
     };
   const version = await cli([executable, "--version"], root);
-  if (version.output.trim() !== "graphify 0.9.53")
+  if (version.output.trim() !== "graphify 0.9.91")
     return {
-      reason: `expected Graphify 0.9.53, received ${version.output.trim()}`,
+      reason: `expected Graphify 0.9.91, received ${version.output.trim()}`,
       status: "unavailable" as const,
     };
   const build = await cli(

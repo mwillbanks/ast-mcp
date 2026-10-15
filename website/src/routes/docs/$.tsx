@@ -1,7 +1,6 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
-import { staticFunctionMiddleware } from "@tanstack/start-static-server-functions";
+import { createRoute, notFound } from "@tanstack/react-router";
 import browserCollections from "collections/browser";
+import site from "collections/site.json";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import {
@@ -14,31 +13,30 @@ import { Suspense } from "react";
 
 import { getMDXComponents } from "@/components/mdx";
 import { baseOptions } from "@/lib/layout.shared";
-import { source } from "@/lib/source";
-import { basePathStaticFunctionMiddleware } from "@/lib/static-function-middleware";
 
-export const Route = createFileRoute("/docs/$")({
+import { Route as rootRoute } from "../__root";
+
+export const Route = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "docs/$",
   component: Page,
   loader: async ({ params }) => {
-    const slugs = params._splat?.split("/") ?? [];
-    const data = await loadPage({ data: slugs });
-    await clientLoader.preload(data.path);
-    return data;
-  },
-});
-
-const loadPage = createServerFn({ method: "GET" })
-  .validator((slugs: string[]) => slugs)
-  .middleware([basePathStaticFunctionMiddleware, staticFunctionMiddleware])
-  .handler(async ({ data: slugs }) => {
-    const page = source.getPage(slugs);
+    const url =
+      "/docs" + (params._splat ? "/" + params._splat.replace(/\/$/, "") : "");
+    const page = site.pages.find((page) => page.url === url);
     if (!page) throw notFound();
-
-    return {
-      pageTree: await source.serializePageTree(source.getPageTree()),
-      path: page.path,
-    };
-  });
+    await clientLoader.preload(page.path);
+    return page;
+  },
+  head: ({ loaderData }) => ({
+    meta: loaderData
+      ? [
+          { title: loaderData.title + " | AST MCP" },
+          { name: "description", content: loaderData.description },
+        ]
+      : [],
+  }),
+});
 
 const clientLoader = browserCollections.docs.createClientLoader({
   component({ default: MDX, frontmatter, toc }) {
@@ -55,8 +53,10 @@ const clientLoader = browserCollections.docs.createClientLoader({
 });
 
 function Page() {
-  const { pageTree, path } = useFumadocsLoader(Route.useLoaderData());
-
+  const { path } = Route.useLoaderData();
+  const { pageTree } = useFumadocsLoader({
+    pageTree: { ...site.pageTree, $fumadocs_loader: "page-tree" as const },
+  });
   return (
     <DocsLayout {...baseOptions()} tree={pageTree}>
       <Suspense>{clientLoader.useContent(path)}</Suspense>

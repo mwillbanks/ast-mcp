@@ -708,6 +708,7 @@ describe("retrieval embedding provider", () => {
     const retrying = new MockProvider(config);
     retrying.failOnce = true;
     const pool = new EmbeddingWorkerPool(config, () => retrying);
+    expect(pool.pending).toBe(0);
     expect(await pool.embed("retry")).toHaveLength(2);
     expect(retrying.calls).toBe(2);
 
@@ -731,7 +732,9 @@ describe("retrieval embedding provider", () => {
     const bounded = new EmbeddingWorkerPool(config, () => blocked);
     const first = bounded.embed("first");
     await Bun.sleep(5);
+    expect(bounded.pending).toBe(1);
     const second = bounded.embed("second");
+    expect(bounded.pending).toBe(2);
     let queuedCancellation: unknown;
     const secondSettled = second.catch((error: unknown) => {
       queuedCancellation = error;
@@ -752,6 +755,7 @@ describe("retrieval embedding provider", () => {
     await secondSettled;
     expect(queuedCancellation).toBeInstanceOf(EmbeddingCancelledError);
     await closing;
+    expect(bounded.pending).toBe(0);
     expect(blockedClosed).toBeTrue();
     await bounded.close();
     await bounded.close();

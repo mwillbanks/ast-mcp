@@ -1,4 +1,9 @@
-import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
+import type { SyntaxFacts } from "../../parser/index.ts";
+import {
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "../shared/wasm-assets.ts";
 import {
   isLanguageWorkerId,
   isLanguageWorkerRequest,
@@ -32,17 +37,15 @@ export const isDynamicWorkerId = isLanguageWorkerId;
 export function dynamicLanguageExtractorFingerprint(
   languageId: DynamicLanguageId,
 ): string {
-  return sha256(
-    JSON.stringify(["tree-sitter-wasm", "1.1.8", languageId, "coordinates-v2"]),
-  );
+  return wasmExtractorFingerprint(languageId);
 }
 export function dynamicGrammarFingerprint(
   languageId: DynamicLanguageId,
 ): string {
-  return sha256(JSON.stringify(["tree-sitter-wasm", "1.1.8", languageId]));
+  return wasmGrammarFingerprint(languageId);
 }
 export function dynamicParserFingerprint(): string {
-  return sha256("web-tree-sitter@0.27.0");
+  return wasmParserFingerprint();
 }
 export function isDynamicSyntaxFacts(
   value: unknown,

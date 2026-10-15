@@ -19,7 +19,7 @@ afterEach(async () => {
 
 test("selects platform dprint cache directories", () => {
   expect(dprintCacheDirectory("win32", {}, "C:\\Users\\runneradmin")).toBe(
-    "C:\\Users\\runneradmin\\AppData\\Local\\dprint",
+    "C:\\Users\\runneradmin\\AppData\\Local\\dprint\\cache",
   );
   expect(
     dprintCacheDirectory(
@@ -27,12 +27,12 @@ test("selects platform dprint cache directories", () => {
       { LOCALAPPDATA: "D:\\Cache" },
       "C:\\Users\\runneradmin",
     ),
-  ).toBe("D:\\Cache\\dprint");
+  ).toBe("D:\\Cache\\dprint\\cache");
   expect(dprintCacheDirectory("darwin", {}, "/Users/runner")).toBe(
-    "/Users/runner/Library/Caches/dprint",
+    "/Users/runner/Library/Caches/dprint/cache",
   );
   expect(dprintCacheDirectory("linux", {}, "/home/runner")).toBe(
-    "/home/runner/.cache/dprint",
+    "/home/runner/.cache/dprint/cache",
   );
   expect(
     dprintCacheDirectory(
@@ -54,7 +54,7 @@ test("selects platform dprint cache directories", () => {
       { XDG_CACHE_HOME: "/tmp/xdg" },
       "/home/runner",
     ),
-  ).toBe("/tmp/xdg/dprint");
+  ).toBe("/tmp/xdg/dprint/cache");
 });
 
 test("formats content and files through dprint", async () => {

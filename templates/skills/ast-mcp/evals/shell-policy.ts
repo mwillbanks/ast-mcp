@@ -1,4 +1,4 @@
-import { type Command, parse } from "unbash";
+import { type Command, type SyntaxNode, parse } from "unbash";
 
 const mutators = new Set([
   "apply_patch",
@@ -47,9 +47,12 @@ function commandName(value = "") {
 }
 
 function executable(command: Command) {
-  const values = [command.name, ...command.suffix].map(
-    (word) => word?.value ?? "",
-  );
+  const values = [
+    command.name?.value ?? "",
+    ...command.args.map((argument) =>
+      argument.type === "Word" ? argument.value : argument.text,
+    ),
+  ];
   let index = 0;
   while (wrappers.has(commandName(values[index]))) {
     const wrapper = commandName(values[index++]);
@@ -351,7 +354,9 @@ function windowsShellMutates(
 
 function commandMutates(command: Command) {
   const original = commandName(command.name?.value);
-  const originalArgs = command.suffix.map((word) => word.value);
+  const originalArgs = command.args.map((argument) =>
+    argument.type === "Word" ? argument.value : argument.text,
+  );
   if (
     original === "command" &&
     originalArgs.some((arg) => arg === "-v" || arg === "-V")
@@ -409,22 +414,108 @@ function commandMutates(command: Command) {
   return false;
 }
 
-function visit(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(visit);
-  const node = value as {
-    command?: unknown;
-    commands?: unknown[];
-    parts?: unknown[];
-    script?: unknown;
-    type?: string;
-  };
-  if (node.type === "Command" && commandMutates(node as Command)) return true;
-  if (node.script && visit(node.script)) return true;
-  if (node.command && visit(node.command)) return true;
-  if (node.commands?.some(visit)) return true;
-  if (node.parts?.some(visit)) return true;
-  return Object.values(value).some(visit);
+function nodeChildren(node: SyntaxNode): readonly (SyntaxNode | undefined)[] {
+  switch (node.type) {
+    case "Script":
+    case "CompoundList":
+    case "Pipeline":
+    case "AndOr":
+      return node.commands;
+    case "Statement":
+    case "Time":
+    case "Negation":
+      return [node.command];
+    case "Command":
+      return [node.name, ...node.prefix, ...node.suffix];
+    case "Redirected":
+      return [node.command, ...node.redirects];
+    case "Word":
+    case "ArithmeticWord":
+    case "DoubleQuoted":
+    case "LocaleString":
+    case "ExtendedGlob":
+    case "BraceExpansion":
+    case "HereDocBody":
+      return node.parts ?? [];
+    case "CommandExpansion":
+    case "ProcessSubstitution":
+    case "ArithmeticCommandExpansion":
+      return [node.script];
+    case "Assignment":
+      return [node.index, node.value];
+    case "ArrayValue":
+      return node.elements;
+    case "Redirect":
+    case "HereString":
+      return [node.target];
+    case "HereDoc":
+      return [node.body];
+    case "ParameterExpansion":
+      return [node.index, node.operation];
+    case "Default":
+    case "Remove":
+    case "CaseModification":
+    case "Transform":
+    case "ArithmeticUnary":
+    case "TestUnary":
+    case "TestNot":
+      return [node.operand];
+    case "Replace":
+      return [node.pattern, node.replacement];
+    case "Slice":
+      return [node.offset, node.length];
+    case "ArithmeticExpansion":
+    case "ArithmeticGroup":
+    case "ArithmeticCommand":
+    case "TestCommand":
+    case "TestGroup":
+      return [node.expression];
+    case "ArithmeticBinary":
+    case "TestBinary":
+    case "TestLogical":
+      return [node.left, node.right];
+    case "ArithmeticTernary":
+      return [node.test, node.consequent, node.alternate];
+    case "If":
+      return [node.clause, node.then, node.else];
+    case "For":
+    case "Select":
+      return [node.name, ...(node.wordlist ?? []), node.body];
+    case "ArithmeticFor":
+      return [node.initialize, node.test, node.update, node.body];
+    case "While":
+      return [node.clause, node.body];
+    case "Function":
+    case "Coproc":
+      return [node.name, node.body];
+    case "Subshell":
+    case "BraceGroup":
+      return [node.body];
+    case "Case":
+      return [node.word, ...node.items];
+    case "CaseItem":
+      return [...node.pattern, node.body];
+    case "Literal":
+    case "SingleQuoted":
+    case "AnsiCQuoted":
+    case "SimpleExpansion":
+    case "FileDescriptor":
+    case "FileDescriptorVariable":
+    case "HereDocDelimiter":
+    case "Names":
+    case "Unknown":
+      return [];
+  }
+  const exhaustive: never = node;
+  return exhaustive;
+}
+
+function visit(node: SyntaxNode | undefined): boolean {
+  if (!node || (node.type === "Script" && node.errors?.length)) return false;
+  return (
+    (node.type === "Command" && commandMutates(node)) ||
+    nodeChildren(node).some(visit)
+  );
 }
 
 export function shellMutates(source: string, dialect: ShellDialect = "posix") {

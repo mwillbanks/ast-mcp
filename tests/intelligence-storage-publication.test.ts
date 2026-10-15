@@ -24,6 +24,7 @@ import {
   type StorageDomain,
 } from "../src/intelligence/contracts/storage.ts";
 import { GraphSnapshotSchema } from "../src/intelligence/graph/types.ts";
+import { toLanceSchema } from "../src/intelligence/storage/arrow.ts";
 import {
   LanceIntelligenceStore,
   type StorageRow,
@@ -979,7 +980,7 @@ describe("publication reservation protocol", () => {
     );
     const legacyTable = await connection.createEmptyTable(
       "artifacts",
-      legacySchema,
+      toLanceSchema(legacySchema),
     );
     const artifactId = createIdentity("source", { legacy: true });
     await legacyTable.add([sourceRow(artifactId)]);

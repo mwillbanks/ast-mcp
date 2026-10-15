@@ -5,7 +5,7 @@ import {
 
 const GRAPHIFY_DISTRIBUTION = "graphifyy";
 const GRAPHIFY_EXECUTABLE = "graphify";
-const GRAPHIFY_VERSION = "0.9.53";
+const GRAPHIFY_VERSION = "0.9.91";
 
 export function graphifyProvisionCommand(python: string): string[] {
   return [

@@ -801,7 +801,7 @@
                 }
               ],
               "extractorFingerprint": "31ea3f499763e01e9e2e3448d26fb74a6442fa4b819dbbbf27782ef00ce515f6",
-              "grammarFingerprint": "227afef0ff38d7928bafcc471d4e332a6db42cb772453d670c7f937755cbc583",
+              "grammarFingerprint": "52d388188cb180f710e45879a441fb72d6fd26917b3aa4aeed83a217c310ca11",
               "implementations": [
                 {
                   "id": "03c082ab777e824b50a17045a3e3f12fcef989e789c48fea9abd4b35ff9fa885",
@@ -2046,7 +2046,7 @@
                   }
                 }
               ],
-              "parserFingerprint": "4b0c888e3e63dfb065ec20d729d50ae0af20f3475b68c173e4bf4583e8a8b097",
+              "parserFingerprint": "d9664841cbad5ca0c617b40eb828ce430f0298230cacedfaa0b6bfece41d680b",
               "partial": false,
               "references": [
                 {
@@ -2643,7 +2643,7 @@
                   }
                 }
               ],
-              "syntaxFactsArtifactId": "syntax-facts:v1:a91520570719f9b427569928ec3a221eb49bb0b5855b106903bbb838c68e805b"
+              "syntaxFactsArtifactId": "syntax-facts:v1:f78a4c6006cde9e9b694975f7e7a05b56d1fd84e68276711408cd03bd7ba2698"
             },
             "hostRange": {
               "end": {
@@ -3149,7 +3149,7 @@
         "schemaVersion": "ast-mcp.document-facts.v1",
         "sourceByteLength": 404,
         "sourceDigest": "e1eb8aea0f9de391da578adaa70c67166b2886db38cbbdb20c05ba53f3411a80",
-        "syntaxFactsArtifactId": "8eca3d5ba34894b686f3e81aa05888b0a05892f3cf4feed03cdca33c01aab07d"
+        "syntaxFactsArtifactId": "5ffd7bc5004946b542e3d37d23224c46b4e5db2fb262717b25e1279b2b7a4262"
       },
       "fixture": "document.md",
       "fixtureSha256": "e1eb8aea0f9de391da578adaa70c67166b2886db38cbbdb20c05ba53f3411a80",
@@ -3201,7 +3201,7 @@
                 }
               ],
               "extractorFingerprint": "6a5a59f4f4b40ba5977b3e50e919de5cc93e0657ca3133bfd1e062ae1308ed53",
-              "grammarFingerprint": "3483573111f69cbd58600381af8da9437c7a3aa7ed004f7d09c29b49aa6ecaff",
+              "grammarFingerprint": "c910758c16b9630faa920d572f74e6a4e85d93ace21f767600228b951476eed6",
               "implementations": [],
               "imports": [],
               "inheritance": [],
@@ -3537,7 +3537,7 @@
                   }
                 }
               ],
-              "parserFingerprint": "95fd7c75ddf4be948eaf73bb67446b4dc86fb1dc6ffdfe5682cbffbacfca8a24",
+              "parserFingerprint": "c780c7660e75b26f63862b74bb75111136fa0952497faea02714eeb2ac1cd25f",
               "partial": false,
               "references": [
                 {
@@ -3678,7 +3678,7 @@
                   }
                 }
               ],
-              "syntaxFactsArtifactId": "syntax-facts:v1:ed7e89f13b59c1bd031e39cad519f9274830109d0aeef7743e6f0d9f03b49452"
+              "syntaxFactsArtifactId": "syntax-facts:v1:8e54db31e72c9c3c49a161adad2444359fbb180334bcb2dbeb6ad37ebfda6464"
             },
             "hostRange": {
               "end": {
@@ -3796,7 +3796,7 @@
         "schemaVersion": "ast-mcp.document-facts.v1",
         "sourceByteLength": 102,
         "sourceDigest": "9765c2e3158ca7b6aa294763fa2f1d445ffe603e28c5de9eea53a07aeb38b972",
-        "syntaxFactsArtifactId": "6535b162fee5bb37c56b4b44157de90a2a60535af0c3a90370088ccdba45effd"
+        "syntaxFactsArtifactId": "f2b929dcfbb92f21c379f1464633bb4526f3a5b5a8dc22a1792e697577a9c31c"
       },
       "fixture": "document.mdx",
       "fixtureSha256": "9765c2e3158ca7b6aa294763fa2f1d445ffe603e28c5de9eea53a07aeb38b972",

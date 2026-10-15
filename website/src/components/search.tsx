@@ -14,7 +14,9 @@ import {
   type SharedProps,
 } from "fumadocs-ui/components/dialog/search";
 
-const searchEndpoint = `${import.meta.env.BASE_URL}api/search`;
+import { basePath } from "@/lib/deployment";
+
+const searchEndpoint = `${basePath}api/search`;
 
 export default function StaticSearchDialog(props: SharedProps) {
   const { query, search, setSearch } = useDocsSearch({

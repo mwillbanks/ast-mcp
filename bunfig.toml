@@ -1,7 +1,12 @@
+[install]
+# Transformers imports onnxruntime-common without declaring that direct edge.
+# The explicit runtime dependency must remain visible to its Node entrypoint.
+linker = "hoisted"
+
 [test]
 preload = ["./tests/support/hermetic-suite.ts"]
 onlyFailures = true
-coverage = false
+# Omit coverage=false: Bun 1.4.3 otherwise ignores the CLI coverage flag.
 coverageThreshold = 0.95
 coverageSkipTestFiles = true
 # Bun applies thresholds per file and miscounts scorer callback functions.

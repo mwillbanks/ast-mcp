@@ -35,8 +35,10 @@ export function selectTestShard(
   return files.filter((_, index) => index % shards === shard);
 }
 
-if (import.meta.main) {
-  const args = process.argv.slice(2);
+export function runTestShard(
+  args = process.argv.slice(2),
+  root = process.cwd(),
+): number {
   if (args.length !== 4 || args[0] !== "--shard" || args[2] !== "--shards") {
     throw new Error(
       "Usage: bun scripts/test-shard.ts --shard <zero-based index> --shards <count>",
@@ -44,12 +46,13 @@ if (import.meta.main) {
   }
   const shard = Number(args[1]);
   const shards = Number(args[3]);
-  const files = selectTestShard(discoverTestFiles(), shard, shards);
+  const files = selectTestShard(discoverTestFiles(root), shard, shards);
   if (files.length === 0) throw new Error(`Test shard ${shard} is empty`);
   console.log(
     `Running test shard ${shard + 1}/${shards}: ${files.length} files`,
   );
   const result = Bun.spawnSync({
+    cwd: root,
     cmd: [
       process.execPath,
       "test",
@@ -61,5 +64,7 @@ if (import.meta.main) {
     stdin: "inherit",
     stdout: "inherit",
   });
-  process.exit(result.exitCode ?? 1);
+  return result.exitCode ?? 1;
 }
+
+if (import.meta.main) process.exit(runTestShard());

@@ -1,4 +1,9 @@
-import { type SyntaxFacts, sha256 } from "../../parser/index.ts";
+import type { SyntaxFacts } from "../../parser/index.ts";
+import {
+  wasmExtractorFingerprint,
+  wasmGrammarFingerprint,
+  wasmParserFingerprint,
+} from "../shared/wasm-assets.ts";
 import {
   isLanguageWorkerId,
   isLanguageWorkerRequest,
@@ -28,17 +33,27 @@ const languageIds = new Set<LegacyLanguageId>([
 
 export const isLegacyWorkerId = isLanguageWorkerId;
 export function legacyGrammarFingerprint(languageId: LegacyLanguageId): string {
-  return sha256(JSON.stringify(["legacy-parser", "1", languageId]));
+  return wasmGrammarFingerprint(
+    languageId === "common-lisp"
+      ? "commonlisp"
+      : languageId === "ocaml"
+        ? languageId
+        : `structured:${languageId}:v1`,
+  );
 }
 export function legacyLanguageExtractorFingerprint(
   languageId: LegacyLanguageId,
 ): string {
-  return sha256(
-    JSON.stringify(["legacy-parser", "1", languageId, "coordinates-v2"]),
+  return wasmExtractorFingerprint(
+    languageId === "common-lisp"
+      ? "commonlisp"
+      : languageId === "ocaml"
+        ? languageId
+        : `structured:${languageId}:v1`,
   );
 }
 export function legacyParserFingerprint(): string {
-  return sha256("legacy-parser@1+web-tree-sitter@0.27.0");
+  return wasmParserFingerprint();
 }
 export function legacySyntaxFactsArtifactId(facts: SyntaxFacts): string {
   return syntaxFactsArtifactId(facts);

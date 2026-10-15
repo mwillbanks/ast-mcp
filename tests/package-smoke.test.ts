@@ -8,7 +8,9 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { Language, Parser } from "web-tree-sitter";
 
+import { wasmGrammarAssets } from "../src/intelligence/languages/shared/wasm-assets";
 import { spawnHttpMcpProcess } from "./support/live-process";
 
 async function command(args: string[], cwd: string): Promise<string> {
@@ -182,6 +184,29 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       ? packed
       : path.join(owned, path.basename(packed));
     await command(["tar", "-xzf", archive, "-C", owned], repository);
+    await Parser.init();
+    for (const grammar of wasmGrammarAssets) {
+      const asset = path.join(
+        owned,
+        "package",
+        "dist",
+        "workers",
+        "out",
+        grammar,
+        `tree-sitter-${grammar}.wasm`,
+      );
+      const language = await Language.load(asset);
+      const parser = new Parser();
+      try {
+        parser.setLanguage(language);
+        expect(parser.language).toBe(language);
+        const tree = parser.parse("");
+        expect(tree).not.toBeNull();
+        tree?.delete();
+      } finally {
+        parser.delete();
+      }
+    }
     await command(["git", "init", "-q", fixture], repository);
     await Promise.all([
       writeFile(

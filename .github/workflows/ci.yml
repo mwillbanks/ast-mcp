@@ -2,6 +2,12 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact release PR commit to validate
+        required: true
+        type: string
   push:
     branches: [main]
 
@@ -10,7 +16,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -19,15 +25,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      package: ${{ steps.filter.outputs.package }}
-      release: ${{ steps.filter.outputs.release }}
-      templates: ${{ steps.filter.outputs.templates }}
-      website: ${{ steps.filter.outputs.website }}
+      package: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.package }}
+      release: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.release }}
+      templates: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.templates }}
+      website: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.website }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.expected_sha || github.sha }}
+      - name: Verify dispatched commit
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$GITHUB_SHA" = "$EXPECTED_SHA" && test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: dorny/paths-filter@v4
+        if: github.event_name != 'workflow_dispatch'
         id: filter
         with:
           filters: |
@@ -53,6 +66,11 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             release:
+              - 'bun.lock'
+              - 'bunfig.toml'
+              - 'release-please-config.json'
+              - '.release-please-manifest.json'
+              - '.github/workflows/release.yml'
               - 'bin/**'
               - 'dprint.json'
               - 'package.json'
@@ -62,6 +80,9 @@ jobs:
             templates:
               - 'templates/**'
             website:
+              - 'package.json'
+              - 'bun.lock'
+              - '.github/workflows/ci.yml'
               - 'website/**'
               - '.github/workflows/docs.yml'
 
@@ -74,6 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -94,8 +116,8 @@ jobs:
       - run: bun run templates:check
       - run: bun run prose:check
       - run: bun run format:check
-      - run: bun run lint
       - run: bun run typecheck
+      - run: bun run lint
       - name: Validate skill
         if: ${{ needs.changes.outputs.templates == 'true' }}
         run: bun run skill:check
@@ -128,6 +150,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -143,6 +166,8 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
+      - name: Warm formatter plugins
+        run: bun run tools:check
       - name: Test package with 95% coverage
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
@@ -162,6 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -177,6 +203,8 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
+      - name: Warm formatter plugins
+        run: bun run tools:check
       - name: Test package shard
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
@@ -195,6 +223,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -228,6 +257,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -246,16 +276,16 @@ jobs:
           key: website-bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'website/package.json', 'website/bun.lock') }}-v1
       - name: Check website formatting
         run: bun run --cwd website format:check
-      - name: Lint website
-        run: bun run --cwd website lint
       - name: Typecheck website
         run: bun run --cwd website typecheck
+      - name: Lint website
+        run: bun run --cwd website lint
       - name: Test website
         run: bun run --cwd website test
-      - name: Build website
-        env:
-          VITE_BASE_PATH: /ast-mcp/
-        run: bun run --cwd website build
+      - name: Install Chromium for browser regressions
+        run: bun run --cwd website playwright install --with-deps chromium
+      - name: Validate root and Pages builds and browser behavior
+        run: bun run --cwd website test:browser
 
   release:
     name: Release
@@ -271,6 +301,7 @@ jobs:
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
     permissions:
+      actions: write
       contents: write
       id-token: write
       pull-requests: write

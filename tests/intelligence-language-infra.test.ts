@@ -26,6 +26,7 @@ import {
 } from "../src/intelligence/languages/infra/index.ts";
 import { validateInfraWorkerRequest } from "../src/intelligence/languages/infra/wasm-worker.ts";
 import { validateInfraWorkerResponse } from "../src/intelligence/languages/infra/worker-client.ts";
+import { resolveWasmGrammarAsset } from "../src/intelligence/languages/shared/wasm-assets.ts";
 
 const root = join(
   import.meta.dir,
@@ -647,20 +648,12 @@ describe("infrastructure language adapters", () => {
           .digest("hex"),
       ).toBe(expected);
     }
-    for (const parser of Object.values(provenance.parsers) as Record<
+    for (const [languageId, parser] of Object.entries(provenance.parsers) as [
       string,
-      string
-    >[]) {
+      Record<string, string>,
+    ][]) {
       if (!parser.asset) continue;
-      const bytes = await readFile(
-        join(
-          import.meta.dir,
-          "..",
-          "node_modules",
-          "tree-sitter-wasm",
-          parser.asset,
-        ),
-      );
+      const bytes = await readFile(resolveWasmGrammarAsset(languageId));
       expect(createHash("sha256").update(bytes).digest("hex")).toBe(
         parser.sha256,
       );

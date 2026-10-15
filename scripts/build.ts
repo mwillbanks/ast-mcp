@@ -3,36 +3,18 @@ import path from "node:path";
 
 import type { BunPlugin } from "bun";
 
+import {
+  resolveWasmGrammarAsset,
+  wasmGrammarAssets as grammarAssets,
+  wasmProviderVersions,
+} from "../src/intelligence/languages/shared/wasm-assets.ts";
+
+const providerMetadata = {
+  AST_MCP_WASM_PROVIDER_VERSIONS: JSON.stringify(wasmProviderVersions()),
+};
 const root = path.resolve(import.meta.dir, "..");
 const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
-const grammarAssets = [
-  "bash",
-  "c",
-  "c_sharp",
-  "commonlisp",
-  "cpp",
-  "dart",
-  "elixir",
-  "go",
-  "groovy",
-  "java",
-  "julia",
-  "kotlin",
-  "lua",
-  "objc",
-  "ocaml",
-  "php",
-  "powershell",
-  "python",
-  "r",
-  "ruby",
-  "rust",
-  "scala",
-  "swift",
-  "systemverilog",
-  "zig",
-] as const;
 const workers = [
   {
     client: "src/intelligence/languages/dynamic/analyzer.ts",
@@ -107,6 +89,7 @@ assertBuild(
   "CLI",
   await Bun.build({
     entrypoints: [path.join(root, "bin/ast-mcp.ts")],
+    define: providerMetadata,
     format: "esm",
     minify: true,
     outdir,
@@ -121,6 +104,7 @@ for (const worker of workers) {
     worker.output,
     await Bun.build({
       entrypoints: [path.join(root, worker.entrypoint)],
+      define: providerMetadata,
       format: "esm",
       minify: true,
       naming: worker.output,
@@ -146,7 +130,7 @@ for (const grammar of grammarAssets) {
   const grammarDirectory = path.join(workerOutdir, "out", grammar);
   await mkdir(grammarDirectory, { recursive: true });
   await copyFile(
-    path.join(treeSitterAssets, "out", grammar, `tree-sitter-${grammar}.wasm`),
+    resolveWasmGrammarAsset(grammar),
     path.join(grammarDirectory, `tree-sitter-${grammar}.wasm`),
   );
 }
