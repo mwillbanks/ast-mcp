@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.5.0...ast-mcp-v0.5.1) (2026-10-15)
+
+
+### 🔧 Maintenance
+
+* **deps:** modernize dependencies and builds ([#28](https://github.com/mwillbanks/ast-mcp/issues/28)) ([2b4f50f](https://github.com/mwillbanks/ast-mcp/commit/2b4f50f9fb52e14d35609a81ae10282a4f225fcb))
+* upgrade dependencies and adopt Oxc ([#23](https://github.com/mwillbanks/ast-mcp/issues/23)) ([b5eb4a1](https://github.com/mwillbanks/ast-mcp/commit/b5eb4a13630cef1b43077d2eae0fbca2df6d0f70))
+
 ## [0.5.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.4.0...ast-mcp-v0.5.0) (2026-09-17)
 
 ### Features
