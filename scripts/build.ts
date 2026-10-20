@@ -17,6 +17,11 @@ const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
 const workers = [
   {
+    client: "src/tools/code-intelligence.ts",
+    entrypoint: "src/tools/code-intelligence-worker.ts",
+    output: "code-intelligence-worker.js",
+  },
+  {
     client: "src/intelligence/languages/dynamic/analyzer.ts",
     entrypoint: "src/intelligence/languages/shared/wasm-dynamic-worker.ts",
     output: "dynamic-wasm-worker.js",
@@ -60,7 +65,7 @@ const packagedWorkerPlugin: BunPlugin = {
     build.onLoad(
       {
         filter:
-          /src[\\/]+intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client)\.ts$/,
+          /src[\\/]+(?:tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
       },
       async ({ path: filePath }: { path: string }) => {
         const relative = path
@@ -70,7 +75,10 @@ const packagedWorkerPlugin: BunPlugin = {
         const worker = workers.find((item) => item.client === relative);
         if (!worker) return;
         const source = await Bun.file(filePath).text();
-        const marker = 'new URL("./wasm-worker.ts", import.meta.url)';
+        const marker =
+          relative === "src/tools/code-intelligence.ts"
+            ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
+            : 'new URL("./wasm-worker.ts", import.meta.url)';
         if (!source.includes(marker))
           throw new Error(`Worker URL marker is missing from ${relative}`);
         return {

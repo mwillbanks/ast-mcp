@@ -1,10 +1,38 @@
-import { installProcessSignalHandlers } from "./runtime/signals";
+import {
+  installProcessFailureHandlers,
+  installProcessSignalHandlers,
+} from "./runtime/signals";
 import { createServer } from "./server";
 
-export { createServer, installProcessSignalHandlers };
+export {
+  createServer,
+  installProcessFailureHandlers,
+  installProcessSignalHandlers,
+};
 
 export function createProcessServer() {
   const server = createServer();
-  installProcessSignalHandlers(server.close.bind(server));
+  const close = server.close.bind(server);
+  let disposeSignals: (() => void) | undefined;
+  let disposeFailures: (() => void) | undefined;
+  let closing: Promise<void> | undefined;
+  server.close = () => {
+    closing ??= Promise.resolve().then(async () => {
+      const deadline = setTimeout(() => {
+        process.stderr.write("ast-mcp connection shutdown timed out\n");
+        process.exit(1);
+      }, 5000);
+      try {
+        await close();
+      } finally {
+        clearTimeout(deadline);
+        disposeSignals?.();
+        disposeFailures?.();
+      }
+    });
+    return closing;
+  };
+  disposeSignals = installProcessSignalHandlers(server.close.bind(server));
+  disposeFailures = installProcessFailureHandlers(server.close.bind(server));
   return server;
 }

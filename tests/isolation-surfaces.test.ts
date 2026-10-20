@@ -13,6 +13,8 @@ import { pathToFileURL } from "node:url";
 
 import { evaluateHook } from "../src/hook";
 import { install, update } from "../src/installer";
+import { httpEndpoint } from "../src/installer-transport";
+import { createServicePlan } from "../src/service";
 
 const shell = (command: string) =>
   evaluateHook({ tool_input: { command }, tool_name: "bash" }).denied;
@@ -64,8 +66,8 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       `#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"fixture","version":"1"}}}' ;;
-    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
+    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"ast-mcp","version":"1"}}}' ;;
+    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"file_read"},{"name":"file_hash"},{"name":"file_patch"},{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
     *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"data":{"workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ok":true}}}' ;;
   esac
 done
@@ -80,6 +82,74 @@ done
         path.join(root, ".codex/skills/ast-mcp/scripts/check-install.ts"),
       ).href
     );
+    const sourceConfigFile = path.join(root, ".mcp.json");
+    const sourceConfig = JSON.parse(await readFile(sourceConfigFile, "utf8"));
+    const sourceEntry = sourceConfig.mcpServers["ast-mcp"];
+    expect(path.isAbsolute(sourceEntry.command)).toBeTrue();
+    expect(path.isAbsolute(sourceEntry.args[0])).toBeTrue();
+    expect(sourceEntry.args[1]).toBe("mcp");
+    expect(sourceEntry.cwd).toBe(root);
+    const checkSource = () =>
+      installedChecker.checkInstall(
+        ["--scope", "local", "--target", "claude", "--root", root],
+        home,
+      );
+    expect((await checkSource()).installed).toBeTrue();
+    for (const invalid of [
+      { command: sourceEntry.args[0] },
+      { args: [sourceEntry.command, "mcp"] },
+      { args: [...sourceEntry.args, "--eval", "evil"] },
+      { cwd: home },
+      { cwd: undefined },
+    ]) {
+      await writeFile(
+        sourceConfigFile,
+        JSON.stringify({
+          ...sourceConfig,
+          mcpServers: {
+            ...sourceConfig.mcpServers,
+            "ast-mcp": { ...sourceEntry, ...invalid },
+          },
+        }),
+      );
+      expect((await checkSource()).checks.mcp).toBeFalse();
+    }
+    await writeFile(sourceConfigFile, JSON.stringify(sourceConfig));
+    const sourceHooksFile = path.join(root, ".claude/settings.json");
+    const sourceHooks = JSON.parse(await readFile(sourceHooksFile, "utf8"));
+    const sourceHookCommand = sourceHooks.hooks.PreToolUse[0].hooks[0].command;
+    for (const invalid of [
+      `${JSON.stringify(sourceEntry.args[0])} hook`,
+      `${JSON.stringify(sourceEntry.command)} ${JSON.stringify(sourceEntry.command)} hook`,
+      `${sourceHookCommand} --eval evil`,
+    ]) {
+      const candidate = structuredClone(sourceHooks);
+      candidate.hooks.PreToolUse[0].hooks[0].command = invalid;
+      await writeFile(sourceHooksFile, JSON.stringify(candidate));
+      expect((await checkSource()).checks.hook).toBeFalse();
+    }
+    await writeFile(sourceHooksFile, JSON.stringify(sourceHooks));
+    const receiptFile = path.join(
+      home,
+      ".ast-mcp/installations",
+      `local-${new Bun.CryptoHasher("sha256").update(path.resolve(root)).digest("hex")}.json`,
+    );
+    const receiptText = await readFile(receiptFile, "utf8");
+    const receipt = JSON.parse(receiptText);
+    expect(receipt).toMatchObject({
+      projectRoot: root,
+      runtime: sourceEntry.command,
+      script: sourceEntry.args[0],
+      version: 1,
+    });
+    await writeFile(
+      receiptFile,
+      JSON.stringify({ ...receipt, projectRoot: home }),
+    );
+    const untrusted = await checkSource();
+    expect(untrusted.checks.mcp).toBeFalse();
+    expect(untrusted.checks.hook).toBeFalse();
+    await writeFile(receiptFile, receiptText);
     if (process.platform === "darwin" || process.platform === "linux") {
       const digest = new Bun.CryptoHasher("sha256")
         .update(path.resolve(root))
@@ -100,7 +170,15 @@ done
       await mkdir(path.dirname(serviceFile), { recursive: true });
       await writeFile(
         serviceFile,
-        `ExecStart="./node_modules/.bin/ast-mcp" --transport http --host 127.0.0.1 --port 3768 ${root}`,
+        createServicePlan({
+          cliEntry: sourceEntry.command,
+          cliArgs: [sourceEntry.args[0]],
+          endpoint: httpEndpoint("127.0.0.1", 3768),
+          home,
+          platform: process.platform,
+          root,
+          scope: "local",
+        }).content,
       );
       const serviceResult = await installedChecker.checkInstall(
         [

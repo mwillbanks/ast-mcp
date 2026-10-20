@@ -123,7 +123,7 @@ describe("installer HTTP transport", () => {
     await install({ root, scope: "local", targets: ["codex"] });
     expect(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
-    ).toContain('command = "./node_modules/.bin/ast-mcp"');
+    ).toContain(`command = ${JSON.stringify(process.execPath)}`);
 
     const invalid = await temporary("ast-mcp-http-invalid-");
     await expect(
@@ -167,7 +167,8 @@ describe("installer HTTP transport", () => {
     });
     const unit = await readFile(plan.file, "utf8");
     expect(unit).toContain('--transport" "http');
-    expect(unit).not.toContain(process.execPath);
+    expect(unit).toContain(process.execPath);
+    expect(unit).toContain(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"));
     const environment = unit.match(/^Environment="(.*)"$/m)?.[1];
     expect(environment?.replaceAll("\\\\", "\\")).toBe(
       `AST_MCP_PROJECT_ROOT=${root}`,

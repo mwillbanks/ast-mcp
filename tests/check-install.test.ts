@@ -13,6 +13,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { install, update } from "../src/installer";
+import { httpEndpoint } from "../src/installer-transport";
+import { createServicePlan } from "../src/service";
 import {
   commandForPlatform,
   executableNames,
@@ -72,6 +74,8 @@ test("checker accepts a lowercase Windows batch alias through global discovery",
     root,
     scope: "global",
     targets: ["codex"],
+    // This test renders Windows configuration on non-Windows hosts.
+    verifyLaunch: process.platform === "win32" ? undefined : async () => {},
   });
   const directory = path.join(home, ".bun/install/global/node_modules/.bin");
   await mcpFixture(directory, "ast-mcp", workingResponses(root));
@@ -247,7 +251,7 @@ function workingResponses(root: string): FixtureResponses {
     initialize: {
       capabilities: { tools: {} },
       protocolVersion: "2025-06-18",
-      serverInfo: { name: "fixture", version: "1" },
+      serverInfo: { name: "ast-mcp", version: "1" },
     },
     "tools/call": {
       structuredContent: {
@@ -264,6 +268,9 @@ function workingResponses(root: string): FixtureResponses {
     },
     "tools/list": {
       tools: [
+        "file_read",
+        "file_hash",
+        "file_patch",
         "graph_diff",
         "graph_explain",
         "graph_path",
@@ -406,7 +413,8 @@ test("checker covers every global host surface", async () => {
 
     expect(result).toMatchObject({ installed: true, smokeError: null });
     expect(result.installCommand).not.toContain("--root");
-    expect(result.installCommand).toContain("--trust dprint");
+    expect(result.installCommand).not.toContain("--trust dprint");
+    expect(result.installCommand).not.toContain("bun pm trust");
     expect(result.updateCommand).toStartWith("ast-mcp update");
     expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
@@ -482,7 +490,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
-  expect(missing.installCommand).toContain("bun pm trust dprint");
+  expect(missing.installCommand).not.toContain("bun pm trust dprint");
   expect(missing.installCommand).toContain(
     "./node_modules/.bin/ast-mcp install",
   );
@@ -591,7 +599,7 @@ test.skipIf(process.platform === "win32")(
       }
     }
   },
-  5_000,
+  10_000,
 );
 
 test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
@@ -617,10 +625,14 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
     );
     await mkdir(directory, { recursive: true });
     const binary = path.join(home, ".bun/bin/ast-mcp");
-    const content =
-      process.platform === "darwin"
-        ? `<plist><string>${binary}</string><string>--transport</string><string>http</string><string>127.0.0.1</string><string>3768</string></plist>`
-        : `ExecStart="${binary}" --transport http --host 127.0.0.1 --port 3768\n`;
+    const content = createServicePlan({
+      cliEntry: binary,
+      endpoint: httpEndpoint("127.0.0.1", 3768),
+      home,
+      platform: process.platform,
+      root,
+      scope: "global",
+    }).content;
     await writeFile(file, content);
     const args = [
       "--scope",

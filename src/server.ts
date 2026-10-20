@@ -18,14 +18,23 @@ export function createServer(
   const closeServer = server.close.bind(server);
   let closePromise: Promise<void> | undefined;
   server.close = () => {
-    closePromise ??= (async () => {
+    closePromise ??= Promise.resolve().then(async () => {
       try {
         await closeServer();
       } finally {
         await intelligence.close?.();
       }
-    })();
+    });
     return closePromise;
+  };
+
+  server.server.onclose = () => {
+    void server.close().catch((error) => {
+      process.stderr.write(
+        `ast-mcp connection cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    });
   };
 
   return server;

@@ -13,6 +13,7 @@ export type ServiceCommandRunner = (
 
 export interface ServiceOptions {
   cliEntry: string;
+  cliArgs?: string[];
   endpoint: HttpEndpoint;
   home: string;
   platform?: NodeJS.Platform;
@@ -64,6 +65,7 @@ export function createServicePlan(options: ServiceOptions): ServicePlan {
   const id = serviceIdentity(options.scope, options.root);
   const args = [
     options.cliEntry,
+    ...(options.cliArgs ?? []),
     "mcp",
     "--transport",
     "http",

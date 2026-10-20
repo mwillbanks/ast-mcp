@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import {
   jsonTransport,
   parseInstallerArguments,
 } from "./helpers/installer";
+import { type InstallerLaunch, verifyMcpLaunch } from "./installer-health";
 import {
   type HttpEndpoint,
   httpEndpoint,
@@ -36,7 +38,10 @@ import {
 } from "./service";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
-const cliEntry = path.join(packageRoot, "dist/ast-mcp.js");
+const cliEntry = path.join(
+  packageRoot,
+  import.meta.path.endsWith(".ts") ? "bin/ast-mcp.ts" : "dist/ast-mcp.js",
+);
 const installerRuntime = new AsyncLocalStorage<{
   cliEntry: string;
   platform: NodeJS.Platform;
@@ -77,11 +82,14 @@ function configuredCliEntry(
   home: string,
 ) {
   const platform = options.platform ?? process.platform;
-  if (options.scope === "local")
-    return (
-      resolveLocalBinaryAlias("ast-mcp", root, platform) ??
-      path.join(root, "node_modules/.bin/ast-mcp")
+  if (options.scope === "local") {
+    const alias = resolveLocalBinaryAlias("ast-mcp", root, platform);
+    if (alias) return alias;
+    if (existsSync(cliEntry)) return cliEntry;
+    throw new Error(
+      "No local ast-mcp executable or shipped CLI was found. Build or install ast-mcp, then rerun the installer.",
     );
+  }
   const directories =
     options.globalBinDirectories ??
     globalBinDirectories("ast-mcp", platform, home);
@@ -98,11 +106,21 @@ function configuredCliEntry(
 }
 function cliEntryFor(root: string | undefined, _home: string) {
   const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
-  if (!root) return entry;
+  if (!root || /\.[cm]?[jt]s$/u.test(entry)) return entry;
   const relative = path.relative(root, entry);
   if (relative && pathWithin(root, entry))
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
+}
+
+function cliInvocation(entry: string, args: string[]) {
+  return /\.[cm]?[jt]s$/u.test(entry)
+    ? commandForPlatform(
+        process.execPath,
+        [entry, ...args],
+        installerRuntime.getStore()?.platform,
+      )
+    : commandForPlatform(entry, args, installerRuntime.getStore()?.platform);
 }
 
 function displayCommandPart(value: string, platform: NodeJS.Platform) {
@@ -118,7 +136,9 @@ export function manualHttpLaunchCommand(
   platform: NodeJS.Platform,
 ) {
   const parts = [
-    cliCommand,
+    ...(/\.[cm]?[jt]s$/u.test(cliCommand)
+      ? [process.execPath, cliCommand]
+      : [cliCommand]),
     "mcp",
     "--transport",
     "http",
@@ -163,12 +183,12 @@ function definition(
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
-  const invocation = commandForPlatform(
-    cliEntryFor(root, home),
-    ["mcp"],
-    installerRuntime.getStore()?.platform,
-  );
-  return { args: invocation.args, command: invocation.command };
+  const invocation = cliInvocation(cliEntryFor(root, home), ["mcp"]);
+  return {
+    args: invocation.args,
+    command: invocation.command,
+    ...(root ? { cwd: root } : {}),
+  };
 }
 async function codexMcp(
   file: string,
@@ -183,11 +203,11 @@ async function codexMcp(
   const clean = old
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
-  const stdio = definition(root, home, "stdio");
+  const stdio = definition(root, home, "stdio") as InstallerLaunch;
   const block =
     transport === "http"
       ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}\n# ast-mcp:end`;
+      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}${root ? `\ncwd = ${JSON.stringify(root)}` : ""}\n# ast-mcp:end`;
   await mkdir(path.dirname(file), { recursive: true });
   await Bun.write(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
 }
@@ -238,7 +258,9 @@ async function hook(
   if (event === "preToolUse") value.version ??= 1;
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
-  const command = `${JSON.stringify(commandPath)} hook`;
+  const command = /\.[cm]?[jt]s$/u.test(commandPath)
+    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(commandPath)} hook`
+    : `${JSON.stringify(commandPath)} hook`;
   const kept = prior.filter(
     (item: unknown) => !isManagedHook(item, event, command),
   );
@@ -387,6 +409,7 @@ async function hasLocalInstallation(root: string) {
 
 export interface InstallOptions {
   cliEntry?: string;
+  verifyLaunch?: (launch: InstallerLaunch) => Promise<void>;
   deprecatedRoot?: boolean;
   globalBinDirectories?: string[];
   home?: string;
@@ -453,8 +476,11 @@ async function selectedTransport(
 function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
+  const entry = cliEntryFor(options.scope === "local" ? root : undefined, home);
+  const invocation = cliInvocation(path.resolve(root, entry), []);
   return {
-    cliEntry: cliEntryFor(options.scope === "local" ? root : undefined, home),
+    cliEntry: invocation.command,
+    cliArgs: invocation.args,
     endpoint,
     home,
     platform: options.platform,
@@ -827,6 +853,36 @@ async function reconcileEndpoint(
   return endpoint;
 }
 
+function sourceLaunchReceiptPath(root: string, home: string) {
+  const digest = new Bun.CryptoHasher("sha256")
+    .update(path.resolve(root))
+    .digest("hex");
+  return path.join(home, ".ast-mcp/installations", `local-${digest}.json`);
+}
+
+function usesSourceLaunch(options: InstallOptions) {
+  return (
+    options.scope === "local" &&
+    /\.[cm]?[jt]s$/u.test(installerRuntime.getStore()?.cliEntry ?? "")
+  );
+}
+
+async function recordSourceLaunch(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  if (!usesSourceLaunch(options)) return;
+  const file = sourceLaunchReceiptPath(root, home);
+  await save(file, {
+    ...(await json(file)),
+    projectRoot: root,
+    runtime: path.resolve(process.execPath),
+    script: path.resolve(installerRuntime.getStore()!.cliEntry),
+    version: 1,
+  });
+}
+
 function reconcilePaths(
   options: InstallOptions,
   global: boolean,
@@ -839,6 +895,8 @@ function reconcilePaths(
     targetPaths(target, global, root, home),
   );
   paths.push(installerConfigPath(options, root, home));
+  if (usesSourceLaunch(options))
+    paths.push(sourceLaunchReceiptPath(root, home));
   if (options.service !== undefined)
     paths.push(
       createServicePlan(
@@ -881,6 +939,12 @@ async function reconcile(
     async () => {
       const transport = await selectedTransport(options, operation);
       validateReconcileOptions(options, transport);
+      if (!global) await mkdir(root, { recursive: true });
+      const launch: InstallerLaunch = {
+        ...cliInvocation(cliEntryFor(global ? undefined : root, home), ["mcp"]),
+        ...(!global ? { cwd: root } : {}),
+      };
+      await (options.verifyLaunch ?? verifyMcpLaunch)(launch);
       const paths = reconcilePaths(
         options,
         global,
@@ -903,6 +967,7 @@ async function reconcile(
         await preflightService(serviceConfiguration(options, endpoint));
       }
       await ensureInstallerConfig(options, root, home);
+      await recordSourceLaunch(options, root, home);
       const endpoint = await reconcileEndpoint(options, transport, root, home);
       for (const target of options.targets)
         await installTarget(target, global, root, home, transport, endpoint);

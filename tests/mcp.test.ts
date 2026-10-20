@@ -180,7 +180,10 @@ test("calls native code intelligence through the server", async () => {
       arguments: { paths: ["src/server.ts"], workspaceId },
       name: "map",
     });
-    expect(result.isError).not.toBeTrue();
+    expect(
+      result.isError,
+      JSON.stringify(result.structuredContent),
+    ).not.toBeTrue();
     expect(JSON.stringify(result.structuredContent)).toContain("createServer");
     const coverageResult = await client.callTool({
       arguments: {

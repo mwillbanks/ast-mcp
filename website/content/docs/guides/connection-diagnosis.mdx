@@ -1,0 +1,48 @@
+---
+title: Connection diagnosis
+description: Diagnose startup failures, missing tools, and interrupted MCP requests.
+icon: Plug
+---
+
+The installer verifies MCP initialization and required file and workspace tools before reporting a healthy launch. It also checks graceful process shutdown.
+
+Local installations use their installed executable alias when available. Source launches use absolute Bun and script paths with the project working directory. Verified source launches have project-bound receipts outside the bundled skill directory. Incorrect arguments, missing scripts, or mismatched working directories fail health checks.
+
+## Missing tools or lost connections
+
+A stdio server runs as a child of its host. A crashed child, invalid launch command, closed stream, or blocked request can make its tools unavailable.
+
+Inspect the host's MCP logs and the server's stderr. Protocol responses use stdout; diagnostics use stderr. Check the executable, arguments, working directory, and configured transport.
+
+After updating the package or launch configuration, restart or reconnect the MCP server through your host. An MCP server cannot restart its host-owned stdio process. Restarting also clears session-scoped project approvals.
+
+Recoverable framing and tool errors leave the connection usable. Fatal failures emit diagnostics, perform bounded cleanup, and exit nonzero. Shutdown uses a five-second deadline.
+
+## Stdio framing
+
+Each newline-delimited JSON frame can contain up to 10 MiB. Multiple valid frames can arrive together in a larger aggregate chunk. Fragmented frames remain supported.
+
+Malformed or oversized frames receive protocol errors and recover at the next newline boundary. Requests retain their IDs. Notifications receive no response. HTTP sessions retain separate connection state.
+
+## Intelligence request budgets
+
+Intelligence parsing and graph computation run in workers. A timed-out or cancelled request terminates its worker so subsequent MCP calls can proceed.
+
+Requests default to a 30-second deadline. Parsing limits each source to 2 MiB and 100,000 nodes. Request source and parsed-data budgets are 16 MiB. At most four CPU requests run concurrently, and file inventories are limited to 100,000 paths.
+
+An `intelligence_budget_exceeded` response requires a narrower request. Select explicit `paths`, a `glob`, or a smaller `scan_limit`. Narrow paths or globs when the file inventory itself exceeds its limit.
+
+Tool schemas reject unsupported fields before scanning. Supply `target` for `impact`, `callers`, `callees`, `trace`, `context`, and `implements`. Supply `file` or `path` for dependency queries, a query or target for search, and `pattern` for `run`.
+
+For example, limit an impact request to the relevant source directory:
+
+```json
+{
+  "target": "reconcile",
+  "paths": ["src"],
+  "scan_limit": 100,
+  "timeout_ms": 5000
+}
+```
+
+Use `workspaceId` when the host exposes multiple workspaces. Inspect truncation and omission metadata before treating scan results as exhaustive.

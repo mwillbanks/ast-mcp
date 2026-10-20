@@ -41,8 +41,8 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
   await writeFile(
     globalAlias,
     process.platform === "win32"
-      ? "@echo off\r\nexit /b 0\r\n"
-      : "#!/bin/sh\nexit 0\n",
+      ? `@echo off\r\n"${process.execPath}" "${path.resolve(import.meta.dir, "../bin/ast-mcp.ts")}" %*\r\n`
+      : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"))} "$@"\n`,
   );
   await chmod(globalAlias, 0o755);
   await install({

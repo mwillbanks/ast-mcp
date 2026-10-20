@@ -3,7 +3,11 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { serve } from "bun";
 
 import { type ResolvedConfig, resolveConfig } from "./config";
-import { createServer, installProcessSignalHandlers } from "./lifecycle";
+import {
+  createServer,
+  installProcessFailureHandlers,
+  installProcessSignalHandlers,
+} from "./lifecycle";
 import { clearSessionApprovals } from "./runtime/approval";
 
 const configuration = resolveConfig;
@@ -90,8 +94,20 @@ function sessionTransport(server: ReturnType<typeof createServer>) {
 async function createSession(request: Request) {
   const server = createServer();
   const transport = sessionTransport(server);
-  await server.connect(transport);
-  return transport.handleRequest(request);
+  try {
+    await server.connect(transport);
+    const response = await transport.handleRequest(request);
+    if (![...sessions.values()].some((session) => session.server === server))
+      await server.close();
+    return response;
+  } catch (error) {
+    await server.close().catch((closeError) => {
+      process.stderr.write(
+        `ast-mcp HTTP setup cleanup failed: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
+      );
+    });
+    throw error;
+  }
 }
 
 async function sessionRequest(request: Request) {
@@ -141,7 +157,6 @@ export async function startHttpServer(
 ) {
   const config = await configuration();
   updateSessionDurations(config);
-  startSessionSweep();
   const httpServer = serve({
     fetch: handleMcpRequest,
     port: overrides.port ?? config.http.port,
@@ -150,11 +165,14 @@ export async function startHttpServer(
       http: { ...config.http, host: overrides.host ?? config.http.host },
     }),
   });
+  startSessionSweep();
   let shutdown: Promise<void> | undefined;
-  installProcessSignalHandlers(() => {
+  const close = () => {
     shutdown ??= shutdownHttpServer(httpServer);
     return shutdown;
-  });
+  };
+  installProcessSignalHandlers(close);
+  installProcessFailureHandlers(close);
   return httpServer;
 }
 

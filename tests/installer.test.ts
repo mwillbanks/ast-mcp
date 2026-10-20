@@ -46,7 +46,9 @@ async function executable(
   await mkdir(path.dirname(alias), { recursive: true });
   await writeFile(
     alias,
-    platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+    platform === "win32"
+      ? `@echo off\r\n"${process.execPath}" "${path.resolve(import.meta.dir, "../bin/ast-mcp.ts")}" %*\r\n`
+      : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"))} "$@"\n`,
   );
   await chmod(alias, 0o755);
   return alias;
@@ -106,9 +108,9 @@ describe("installer", () => {
       path.join(root, ".github/hooks/ast-mcp.json"),
       "utf8",
     );
-    expect(codexHook).toContain("./node_modules/.bin/ast-mcp");
-    expect(claudeHook).toContain("./node_modules/.bin/ast-mcp");
-    expect(copilotHook).toContain("./node_modules/.bin/ast-mcp");
+    expect(codexHook).toContain("/bin/ast-mcp.ts");
+    expect(claudeHook).toContain("/bin/ast-mcp.ts");
+    expect(copilotHook).toContain("/bin/ast-mcp.ts");
     expect(codexHook).not.toContain(root);
     expect(claudeHook).not.toContain(root);
     expect(copilotHook).not.toContain(root);
@@ -118,6 +120,7 @@ describe("installer", () => {
   test("ignores package-internal local executables and writes the stable alias", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
     created.push(root);
+    await executable(path.join(root, "node_modules/.bin/ast-mcp"));
     const entry = path.join(
       root,
       "node_modules/@mwillbanks/ast-mcp/dist/bin/ast-mcp.js",
@@ -152,6 +155,7 @@ describe("installer", () => {
     );
 
     await install({
+      verifyLaunch: async () => {},
       platform: "win32",
       root,
       scope: "local",
@@ -226,6 +230,7 @@ describe("installer", () => {
     );
     await install({
       home,
+      verifyLaunch: async () => {},
       platform: "win32",
       root,
       scope: "global",
@@ -460,7 +465,7 @@ describe("installer", () => {
     expect(
       hooks.some((item: { matcher?: string }) => item.matcher === "custom"),
     ).toBeTrue();
-    expect(first.match(/node_modules\/.bin\/ast-mcp/g)).toHaveLength(1);
+    expect(first.match(/bin\/ast-mcp.ts/g)).toHaveLength(1);
     await update({ root, scope: "local", targets: ["codex"] });
     expect(await readFile(hookFile, "utf8")).toBe(first);
   });

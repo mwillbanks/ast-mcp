@@ -47,7 +47,7 @@ test("stdio reports empty and malformed JSON-RPC input", async () => {
   await transport.close();
 });
 
-test("stdio closes oversized input and handles drain and write errors", async () => {
+test("stdio rejects oversized input and handles drain and write errors", async () => {
   const stdin = new PassThrough();
   const stdout = new Writable({
     write(_chunk, _encoding, callback) {
@@ -62,7 +62,8 @@ test("stdio closes oversized input and handles drain and write errors", async ()
   stdin.write(Buffer.alloc(10 * 1024 * 1024 + 1));
   await Promise.resolve();
   expect(errors.some((error) => error.message.includes("exceeded"))).toBeTrue();
-  await expect(transport.send({} as never)).rejects.toThrow("closed");
+  await transport.send({} as never);
+  await transport.close();
 
   const backpressure = new BatchingStdioServerTransport(
     new PassThrough(),
@@ -315,9 +316,17 @@ test("stdio reports input and protocol-response errors", async () => {
   await transport.start();
 
   stdin.emit("error", new Error("stdin failure"));
+  await expect(transport.send({} as never)).rejects.toThrow("closed");
+  const responseInput = new PassThrough();
+  const responseTransport = new BatchingStdioServerTransport(
+    responseInput,
+    stdout,
+  );
+  responseTransport.onerror = (error) => errors.push(error);
+  await responseTransport.start();
   const write = spyOn(stdout, "write").mockImplementation(() => false);
   try {
-    stdin.write("[]\n");
+    responseInput.write("[]\n");
     stdout.emit("error", new Error("response failure"));
     await Bun.sleep(0);
     expect(
@@ -328,7 +337,7 @@ test("stdio reports input and protocol-response errors", async () => {
     ).toBeTrue();
   } finally {
     write.mockRestore();
-    await transport.close();
+    await responseTransport.close();
   }
 });
 
