@@ -467,15 +467,23 @@ async function sourceFor(
   signal?: AbortSignal,
 ): Promise<string> {
   throwIfAborted(signal);
-  if (workspace && workspace.selectedRevision.selector.kind !== "working")
-    return Buffer.from(
-      await readGitRevisionFile(
-        workspace.git,
-        workspace.selectedRevision,
-        filePath,
-        signal,
-      ),
-    ).toString("utf8");
+  if (workspace && workspace.selectedRevision.selector.kind !== "working") {
+    try {
+      return Buffer.from(
+        await readGitRevisionFile(
+          workspace.git,
+          workspace.selectedRevision,
+          filePath,
+          signal,
+          MAX_SOURCE_BYTES,
+        ),
+      ).toString("utf8");
+    } catch (error) {
+      if ((error as { code?: string })?.code === "git_output_limit_exceeded")
+        throw capacityError("Source exceeds the parser byte limit");
+      throw error;
+    }
+  }
   const file = Bun.file(filePath);
   if ((await file.stat()).size > MAX_SOURCE_BYTES)
     throw capacityError("Source exceeds the parser byte limit");
