@@ -1,5 +1,5 @@
 import { test as bunTest, expect } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -14,7 +14,12 @@ import { wasmGrammarAssets } from "../src/intelligence/languages/shared/wasm-ass
 import { spawnHttpMcpProcess } from "./support/live-process";
 
 async function command(args: string[], cwd: string): Promise<string> {
-  const child = Bun.spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
+  const child = Bun.spawn(args, {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 90_000,
+  });
   const [exitCode, stderr, stdout] = await Promise.all([
     child.exited,
     new Response(child.stderr).text(),
@@ -235,7 +240,52 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       fixture,
     );
 
-    const executable = path.join(owned, "package", "dist", "ast-mcp.js");
+    const consumer = path.join(owned, "consumer");
+    await mkdir(consumer);
+    await writeFile(
+      path.join(consumer, "package.json"),
+      JSON.stringify({
+        dependencies: { "@mwillbanks/ast-mcp": archive },
+        private: true,
+      }),
+    );
+    await command(
+      ["bun", "install", "--production", "--ignore-scripts"],
+      consumer,
+    );
+    await command(
+      ["bun", "install", "--lockfile-only", "--ignore-scripts"],
+      consumer,
+    );
+    expect(
+      JSON.parse(await command(["bun", "audit", "--json"], consumer)),
+    ).toEqual({});
+    const installedPackage = path.join(
+      consumer,
+      "node_modules",
+      "@mwillbanks",
+      "ast-mcp",
+    );
+    const installedManifest = JSON.parse(
+      await readFile(path.join(installedPackage, "package.json"), "utf8"),
+    );
+    expect(installedManifest.dependencies["@lancedb/lancedb"]).toBeUndefined();
+    expect(installedManifest.devDependencies["@lancedb/lancedb"]).toBe(
+      "0.40.0",
+    );
+    await expect(
+      readFile(
+        path.join(
+          consumer,
+          "node_modules",
+          "@lancedb",
+          "lancedb",
+          "package.json",
+        ),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const executable = path.join(installedPackage, "dist", "ast-mcp.js");
     const stdio = new Client({ name: "package-stdio-smoke", version: "1" });
     const stdioTransport = new StdioClientTransport({
       args: [executable, "mcp"],

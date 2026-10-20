@@ -32,7 +32,18 @@ ignoreUnresolvedImports = [
 # Dprint is a runtime CLI dependency resolved from the stable package installation.
 # The Svelte fixture exercises framework parsing without installing Svelte.
 # Asset-only WASM providers and Transformers' undeclared runtime edge.
+# The LanceDB facade is bundled from a build-only dependency; its upstream
+# dynamic loader resolves direct optional native packages in installed consumers.
+# Static analysis cannot inspect that bundled facade or its platform selection.
 ignoreDependencies = [
+  "@lancedb/lancedb",
+  "@lancedb/lancedb-darwin-arm64",
+  "@lancedb/lancedb-linux-arm64-gnu",
+  "@lancedb/lancedb-linux-arm64-musl",
+  "@lancedb/lancedb-linux-x64-gnu",
+  "@lancedb/lancedb-linux-x64-musl",
+  "@lancedb/lancedb-win32-arm64-msvc",
+  "@lancedb/lancedb-win32-x64-msvc",
   "collections",
   "dprint",
   "svelte",

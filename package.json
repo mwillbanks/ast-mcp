@@ -29,7 +29,6 @@
     "@ast-grep/lang-yaml": "0.0.6",
     "@ast-grep/napi": "0.51.0",
     "@huggingface/transformers": "4.3.1",
-    "@lancedb/lancedb": "0.40.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "apache-arrow": "21.2.0",
@@ -40,19 +39,20 @@
     "tree-sitter-systemverilog": "0.4.1",
     "tree-sitter-wasm": "2.0.4",
     "typescript-strada": "npm:@typescript/typescript6@6.0.2",
-    "unbash": "^5.1.0",
+    "unbash": "^6.0.1",
     "web-tree-sitter": "0.27.1",
     "zod": "^4.6.7"
   },
   "description": "Zero-trust MCP file writes, native code intelligence, graph retrieval, hooks, and agent skills",
   "devDependencies": {
+    "@lancedb/lancedb": "0.40.0",
     "@modelcontextprotocol/inspector": "^2.11.0",
     "@types/bun": "^1.4.3",
     "@types/node": "^26.6.5",
     "apache-arrow-18": "npm:apache-arrow@18.1.0",
-    "fallow": "^3.33.1",
-    "oxfmt": "0.73.0",
-    "oxlint": "1.88.0",
+    "fallow": "^3.34.1",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
     "typescript": "^7.0.2"
   },
   "engines": {
@@ -79,6 +79,18 @@
   ],
   "license": "MIT",
   "name": "@mwillbanks/ast-mcp",
+  "optionalDependencies": {
+    "@lancedb/lancedb-darwin-arm64": "0.40.0",
+    "@lancedb/lancedb-linux-arm64-gnu": "0.40.0",
+    "@lancedb/lancedb-linux-arm64-musl": "0.40.0",
+    "@lancedb/lancedb-linux-x64-gnu": "0.40.0",
+    "@lancedb/lancedb-linux-x64-musl": "0.40.0",
+    "@lancedb/lancedb-win32-arm64-msvc": "0.40.0",
+    "@lancedb/lancedb-win32-x64-msvc": "0.40.0"
+  },
+  "overrides": {
+    "sharp": "0.35.5"
+  },
   "packageManager": "bun@1.4.3",
   "preferUnplugged": true,
   "publishConfig": {
@@ -101,6 +113,7 @@
     "fallow:health": "fallow health",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
+    "format:files": "oxfmt",
     "graphify:provision": "bun run scripts/provision-intelligence-comparators-cli.ts",
     "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
     "inspect:http": "bunx @modelcontextprotocol/inspector",
@@ -121,9 +134,9 @@
     "typecheck": "bun --check"
   },
   "sideEffects": false,
+  "type": "module",
+  "version": "0.5.0",
   "trustedDependencies": [
     "dprint"
-  ],
-  "type": "module",
-  "version": "0.5.0"
+  ]
 }

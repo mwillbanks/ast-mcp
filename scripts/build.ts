@@ -89,6 +89,7 @@ assertBuild(
   "CLI",
   await Bun.build({
     entrypoints: [path.join(root, "bin/ast-mcp.ts")],
+    external: ["@lancedb/lancedb-*"],
     define: providerMetadata,
     format: "esm",
     minify: true,
