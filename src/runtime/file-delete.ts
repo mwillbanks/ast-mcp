@@ -227,7 +227,12 @@ async function authorizedImporters(
   verification: ReferenceVerification,
 ) {
   if (!referenceRoot || !capable) return [];
-  assertReadableTree(await currentConfig(), referenceRoot);
+  const config = await currentConfig();
+  assertReadableTree(config, referenceRoot);
+  if (!config.files.read.modes.includes("ast"))
+    throw referenceFailure(
+      "Reference verification requires AST read access; no files were deleted",
+    );
   return importersFor(filePath, referenceRoot, verification);
 }
 

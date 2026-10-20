@@ -1,8 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { withConfig } from "../src/config";
+import { ParserWorkerPool } from "../src/intelligence/parser/index.ts";
 import { deleteFilesSafely } from "../src/runtime/file-delete";
 import { sha256 } from "../src/runtime/hash";
 const roots: string[] = [];
@@ -142,6 +144,77 @@ test("incomplete reference scans fail closed and prune dependency directories", 
   expect(await readFile(target, "utf8")).toBe(content);
   await deleteFilesSafely({ [target]: { expectedSha256: sha256(content) } });
   expect(await Bun.file(target).exists()).toBeFalse();
+});
+
+test("AST-disabled reference verification fails closed without invoking a parser", async () => {
+  const root = await temporaryRoot();
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    [
+      "version = 2",
+      "[files.read]",
+      'modes = ["text"]',
+      "[[paths]]",
+      'id = "workspace"',
+      'path = "."',
+      'policies = { read = "allow", write = "allow" }',
+      "",
+    ].join("\n"),
+  );
+  const target = path.join(root, "target.ts");
+  const content = "export const answer = 42;\n";
+  await writeFile(target, content);
+  const parse = spyOn(ParserWorkerPool.prototype, "parse").mockImplementation(
+    () => {
+      throw new Error("Denied AST parser must not run");
+    },
+  );
+  try {
+    await withConfig(
+      {
+        cwd: root,
+        env: {
+          AST_MCP_ROOTS: root,
+          AST_MCP_ALLOW_EXTERNAL_ROOTS: "1",
+        },
+      },
+      async () => {
+        const requests = { [target]: { expectedSha256: sha256(content) } };
+        // A supported target requires reference verification even without candidates.
+        await expect(deleteFilesSafely(requests)).rejects.toMatchObject({
+          code: "reference_verification_failed",
+          message:
+            "Reference verification requires AST read access; no files were deleted",
+        });
+        const candidate = path.join(root, "consumer.ts");
+        await writeFile(candidate, 'import { answer } from "./target";\n');
+        await expect(deleteFilesSafely(requests)).rejects.toMatchObject({
+          code: "reference_verification_failed",
+        });
+        expect(await readFile(target, "utf8")).toBe(content);
+        expect(parse).not.toHaveBeenCalled();
+        await expect(
+          deleteFilesSafely({
+            [target]: {
+              expectedSha256: sha256("stale"),
+              forceReferences: true,
+            },
+          }),
+        ).rejects.toThrow("Stale file context");
+        const result = await deleteFilesSafely({
+          [target]: { expectedSha256: sha256(content), forceReferences: true },
+        });
+        expect(Object.values(result.files)[0]).toMatchObject({
+          deleted: true,
+          referenceVerificationBypassed: true,
+        });
+        expect(await Bun.file(candidate).exists()).toBeTrue();
+        expect(parse).not.toHaveBeenCalled();
+      },
+    );
+  } finally {
+    parse.mockRestore();
+  }
 });
 
 test("reference override preserves the content hash guard", async () => {
