@@ -13,12 +13,12 @@ import os from "node:os";
 import path from "node:path";
 
 import { install, runInstallerCli, uninstall, update } from "../src/installer";
-import { commandForPlatform } from "../src/runtime/subprocess";
 import {
   executableNames,
   isExecutable,
   resolveLocalBinaryAlias,
-} from "../templates/skills/ast-mcp/scripts/binary-resolution";
+} from "../src/runtime/binary-resolution";
+import { commandForPlatform } from "../src/runtime/subprocess";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -394,6 +394,7 @@ describe("installer", () => {
           .catch(() => true),
       ).toBeTrue();
 
+    await mkdir(path.join(root, ".codex/skills/ast-mcp"), { recursive: true });
     await writeFile(
       path.join(root, ".codex/skills/ast-mcp/obsolete.txt"),
       "obsolete",
@@ -404,9 +405,19 @@ describe("installer", () => {
       await writeFile(legacyHook, "stale");
     })();
     await update({ root, scope: "local", targets: ["codex"] });
-    await expect(
-      access(path.join(root, ".codex/skills/ast-mcp/obsolete.txt")),
-    ).rejects.toThrow();
+    expect(
+      await readFile(
+        path.join(root, ".codex/skills/ast-mcp/obsolete.txt"),
+        "utf8",
+      ),
+    ).toBe("obsolete");
+    await uninstall({ root, scope: "local", targets: ["codex"] });
+    expect(
+      await readFile(
+        path.join(root, ".codex/skills/ast-mcp/obsolete.txt"),
+        "utf8",
+      ),
+    ).toBe("obsolete");
     await expect(
       access(path.join(root, ".codex/hooks/ast-mcp.ts")),
     ).rejects.toThrow();

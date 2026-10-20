@@ -479,19 +479,9 @@ function sameNativePath(left: string, right: string): boolean {
   }
 }
 
-async function expectedReference(
-  name: "agents-guidance.md" | "hook.ts" | "skill-template.md",
-) {
+async function expectedReference(name: "agents-guidance.md") {
   const bundled = path.resolve(import.meta.dir, "../references", name);
-  const source =
-    name === "agents-guidance.md"
-      ? path.resolve(import.meta.dir, "../../../AGENTS.md")
-      : name === "hook.ts"
-        ? path.resolve(import.meta.dir, "../../../../src/hook.ts")
-        : path.resolve(import.meta.dir, "../SKILL.md");
-  return (
-    await readFile(bundled, "utf8").catch(() => readFile(source, "utf8"))
-  ).trim();
+  return (await readFile(bundled, "utf8")).trim();
 }
 
 async function managedInstructions(file: string) {
@@ -510,11 +500,6 @@ async function instructionsCurrent(file: string) {
     (await managedInstructions(file)) ===
     (await expectedReference("agents-guidance.md"))
   );
-}
-
-async function skillCurrent(file: string) {
-  const installed = await readFile(file, "utf8").catch(() => "");
-  return installed.trim() === (await expectedReference("skill-template.md"));
 }
 
 async function hookCurrent(
@@ -788,7 +773,7 @@ async function codexChecks(
   const base = global
     ? path.join(home, ".codex")
     : path.join(options.root, ".codex");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     codexMcpCurrent(
       path.join(base, "config.toml"),
       global ? undefined : options.root,
@@ -802,14 +787,13 @@ async function codexChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "AGENTS.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  return { hook, instructions, mcp, skill };
+  return { hook, instructions, mcp };
 }
 async function claudeChecks(
   options: CheckOptions,
@@ -819,7 +803,7 @@ async function claudeChecks(
   const base = global
     ? path.join(home, ".claude")
     : path.join(options.root, ".claude");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     jsonMcpCurrent(
       global
         ? path.join(home, ".claude.json")
@@ -837,14 +821,13 @@ async function claudeChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "CLAUDE.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  return { hook, instructions, mcp, skill };
+  return { hook, instructions, mcp };
 }
 async function copilotChecks(
   options: CheckOptions,
@@ -854,7 +837,7 @@ async function copilotChecks(
   const base = global
     ? path.join(home, ".copilot")
     : path.join(options.root, ".github");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     jsonMcpCurrent(
       global
         ? path.join(base, "mcp-config.json")
@@ -872,14 +855,13 @@ async function copilotChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "copilot-instructions.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  const checks: InstallChecks = { hook, instructions, mcp, skill };
+  const checks: InstallChecks = { hook, instructions, mcp };
   if (!global)
     checks.vscode = await jsonMcpCurrent(
       path.join(options.root, ".vscode/mcp.json"),

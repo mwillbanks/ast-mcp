@@ -51,7 +51,6 @@ for (const transportKind of ["stdio", "http"] as const) {
           `export function item${index}() { return item${index + 1}(); }\n`,
       ).join("");
       expect(Buffer.byteLength(heavy)).toBeLessThan(2 * 1024 * 1024);
-      await writeFile(path.join(root, "heavy.ts"), heavy);
       const env = {
         ...process.env,
         AST_MCP_PROJECT_ROOT: root,
@@ -117,6 +116,76 @@ for (const transportKind of ["stdio", "http"] as const) {
       );
       expect(valid.isError, JSON.stringify(valid)).not.toBeTrue();
       expect(JSON.stringify(valid.structuredContent)).toContain("receive");
+
+      // Reference preflight must reject safely and leave the transport usable.
+      const source = path.join(root, "referenced.ts");
+      await writeFile(source, "export const referenced = 1;\n");
+      await writeFile(
+        path.join(root, "importer.ts"),
+        'import { referenced } from "./referenced";\nconsole.log(referenced);\n',
+      );
+      const sourceHash = await deadline(
+        client.callTool({
+          name: "file_hash",
+          arguments: { filePaths: [source] },
+        }),
+      );
+      const expectedSha256 = (
+        sourceHash.structuredContent as {
+          data: { files: Array<{ sha256: string }> };
+        }
+      ).data.files[0]!.sha256;
+      const referenced = await deadline(
+        client.callTool({
+          name: "file_delete",
+          arguments: { files: { [source]: { expectedSha256 } } },
+        }),
+      );
+      expect(referenced.isError, JSON.stringify(referenced)).toBeTrue();
+      expect(JSON.stringify(referenced)).toContain("referenced by");
+      expect((await hash()).isError).not.toBeTrue();
+      const deleted = await deadline(
+        client.callTool({
+          name: "file_delete",
+          arguments: {
+            files: { [source]: { expectedSha256, forceReferences: true } },
+          },
+        }),
+      );
+      expect(deleted.isError, JSON.stringify(deleted)).not.toBeTrue();
+      expect(await Bun.file(source).exists()).toBeFalse();
+      expect((await hash()).isError).not.toBeTrue();
+
+      await writeFile(path.join(root, "heavy.ts"), heavy);
+      await writeFile(source, "export const referenced = 1;\n");
+      const deleteHeavy = (signal?: AbortSignal) =>
+        client.callTool(
+          {
+            name: "file_delete",
+            arguments: { files: { [source]: { expectedSha256 } } },
+          },
+          signal ? { signal } : undefined,
+        );
+      const unverified = deadline(deleteHeavy());
+      await Bun.sleep(80);
+      expect((await deadline(hash(), 1_500)).isError).not.toBeTrue();
+      const incomplete = await unverified;
+      expect(incomplete.isError).toBeTrue();
+      expect(JSON.stringify(incomplete)).toContain(
+        "reference_verification_failed",
+      );
+      expect(await Bun.file(source).exists()).toBeTrue();
+      expect((await hash()).isError).not.toBeTrue();
+      const deleteController = new AbortController();
+      const cancelledDelete = deleteHeavy(deleteController.signal).then(
+        () => false,
+        () => true,
+      );
+      await Bun.sleep(80);
+      deleteController.abort();
+      expect(await deadline(cancelledDelete)).toBeTrue();
+      expect(await Bun.file(source).exists()).toBeTrue();
+      expect((await hash()).isError).not.toBeTrue();
 
       const expensive = deadline(
         client.callTool({

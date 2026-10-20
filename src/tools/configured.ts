@@ -27,7 +27,7 @@ export interface OpenConfiguredWorkspace {
 }
 
 export interface ConfiguredExecution {
-  clientRoots?(): Promise<string[]>;
+  clientRoots?(context?: ServerContext): Promise<string[]>;
   generationDependencies?: GenerationDependencies;
   openWorkspace?(
     input: OpenConfiguredWorkspace,
@@ -65,6 +65,7 @@ async function configuredWorkspace(
     context?: ServerContext;
     server: McpServer;
     tool: string;
+    requestScoped?: boolean;
   },
   fileOperation = false,
 ): Promise<{
@@ -131,13 +132,21 @@ function isFileOperation(tool: string): boolean {
   );
 }
 
+export interface ExecutionOptions {
+  workspaceRegistry?: WorkspaceRegistry;
+  requestScoped?: boolean;
+}
+
 export function configuredExecution(
   server: McpServer,
   telemetry?: Telemetry,
+  options: ExecutionOptions = {},
 ): ConfiguredExecution {
-  const registry = new WorkspaceRegistry();
+  const registry = options.workspaceRegistry ?? new WorkspaceRegistry();
   let rootsPromise: Promise<string[]> | undefined;
-  const clientRoots = () => {
+  const clientRoots = (context?: ServerContext) => {
+    // Modern MCP carries request capabilities and does not permit legacy roots RPCs.
+    if (context?.mcpReq?.envelope) return Promise.resolve([]);
     if (!rootsPromise) {
       const capabilities = server.server.getClientCapabilities();
       rootsPromise = capabilities?.roots
@@ -154,7 +163,7 @@ export function configuredExecution(
     context,
     tool = "ast-mcp",
   ) => {
-    const roots = await clientRoots();
+    const roots = await clientRoots(context);
     const requestPaths = configRequestPaths(args);
     const request = registry.request(args);
     let workspace =
@@ -199,8 +208,12 @@ export function configuredExecution(
       const config = await configRegistry.get({ requestPaths });
       return withResolvedConfig(config, () => {
         telemetry?.select(config);
-        return withApprovalContext({ context, server, tool }, () =>
-          operation((context as { signal?: AbortSignal } | undefined)?.signal),
+        return withApprovalContext(
+          { context, server, tool, requestScoped: options.requestScoped },
+          () =>
+            operation(
+              (context as { signal?: AbortSignal } | undefined)?.signal,
+            ),
         );
       });
     }
@@ -213,7 +226,7 @@ export function configuredExecution(
         storage: workspace?.storageDomain.placement,
       },
       roots,
-      { context, server, tool },
+      { context, server, tool, requestScoped: options.requestScoped },
       isFileOperation(tool),
     );
     workspace = opened.workspace;
@@ -222,8 +235,12 @@ export function configuredExecution(
     return withResolvedConfig(opened.config, () => {
       telemetry?.select(opened.config);
       return withWorkspaceContext(workspace, () =>
-        withApprovalContext({ context, server, tool }, () =>
-          operation((context as { signal?: AbortSignal } | undefined)?.signal),
+        withApprovalContext(
+          { context, server, tool, requestScoped: options.requestScoped },
+          () =>
+            operation(
+              (context as { signal?: AbortSignal } | undefined)?.signal,
+            ),
         ),
       );
     });
@@ -258,8 +275,13 @@ export function configuredExecution(
       const opened = await configuredWorkspace(
         registry,
         input,
-        await clientRoots(),
-        { context, server, tool: "workspace_open" },
+        await clientRoots(context),
+        {
+          context,
+          server,
+          tool: "workspace_open",
+          requestScoped: options.requestScoped,
+        },
       );
       telemetry?.select(opened.config);
       return opened.workspace;
@@ -280,6 +302,7 @@ export function configuredExecution(
         context,
         "workspace_status",
       );
+    if (options.requestScoped) return { selected: null, workspaces: [] };
     const statuses = await Promise.all(
       registry
         .workspaceIds()
@@ -294,7 +317,7 @@ export function configuredExecution(
     );
     if (!statuses.length)
       telemetry?.select(
-        await configRegistry.get({ clientRoots: await clientRoots() }),
+        await configRegistry.get({ clientRoots: await clientRoots(context) }),
       );
     return {
       selected: null,

@@ -180,6 +180,7 @@ test("actual approval, formatter, stale hash, Aider, and workspace conflicts rem
   for (const code of [
     "workspace_required",
     "intelligence_budget_exceeded",
+    "reference_verification_failed",
     "patch_strategy_arguments",
     "preview_receipt_unknown",
     "preview_receipt_file_mismatch",

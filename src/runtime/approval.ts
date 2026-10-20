@@ -28,6 +28,7 @@ interface ApprovalScope {
   invocationGrants?: Set<string>;
   server?: McpServer;
   tool: string;
+  requestScoped?: boolean;
 }
 
 const activeApproval = new AsyncLocalStorage<ApprovalScope>();
@@ -402,6 +403,7 @@ export function authorizeRequestedDecision(
 ): boolean {
   const scope = activeApproval.getStore();
   if (!scope?.context || !scope.server) return false;
+  if (scope.requestScoped) throw approvalRequired(decision);
   pruneApprovalChallenges();
   const grantKey = key(decision, scope, generation);
   const invocationGrants = scope.invocationGrants ?? new Set<string>();
@@ -428,8 +430,14 @@ export function authorizeRequestedDecision(
     issuedChallenges.delete(grantKey);
     throw approvalDenied(decision);
   }
-  if (!scope.server.server.getClientCapabilities()?.elicitation)
-    throw approvalRequired(decision);
+  const envelope = scope.context.mcpReq.envelope as
+    | Record<string, unknown>
+    | undefined;
+  const capabilities =
+    (envelope?.["io.modelcontextprotocol/clientCapabilities"] as
+      | { elicitation?: unknown }
+      | undefined) ?? scope.server.server.getClientCapabilities();
+  if (!capabilities?.elicitation) throw approvalRequired(decision);
   const nextResponseKey = responseKey ?? approvalResponseKey();
   if (!challenge) storeApprovalChallenge(grantKey, scope, nextResponseKey);
   throw requestApproval(scope, decision, nextResponseKey);
@@ -462,7 +470,7 @@ function filesystemDecision(config: ResolvedConfig): PolicyDecision {
 export function grantUnrestrictedFilesystem(config: ResolvedConfig): void {
   if (config.safety.filesystem !== "unrestricted") return;
   const scope = activeApproval.getStore();
-  if (!scope?.context || !scope.server) return;
+  if (!scope?.context || !scope.server || scope.requestScoped) return;
   sessionGrants.add(key(filesystemDecision(config), scope, 0));
 }
 
@@ -475,6 +483,7 @@ export function unrestrictedFilesystemAuthorized(
   return Boolean(
     scope?.context &&
     scope.server &&
+    !scope.requestScoped &&
     sessionGrants.has(key(filesystemDecision(config), scope, 0)),
   );
 }

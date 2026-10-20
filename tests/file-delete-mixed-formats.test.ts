@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -39,6 +39,12 @@ test("mixed documents preserve source and JSON import protection", async () => {
     writeFile(path.join(root, "settings.yaml"), "answer: 42\n"),
     writeFile(path.join(root, "README.md"), "# Mixed formats\n"),
     writeFile(
+      path.join(root, "index.html"),
+      "<!doctype html><html><body>Example</body></html>\n",
+    ),
+    writeFile(path.join(root, "helper.py"), "def helper():\n    return 42\n"),
+    writeFile(path.join(root, "helper.sh"), "#!/bin/sh\nprintf 'example\\n'\n"),
+    writeFile(
       path.join(root, "consumer.ts"),
       'import { answer } from "./source";\nimport settings from "./settings.json";\nconsole.log(answer, settings);\n',
     ),
@@ -53,6 +59,12 @@ test("mixed documents preserve source and JSON import protection", async () => {
   ).rejects.toThrow("referenced by");
   expect(await readFile(source, "utf8")).toBe(sourceContent);
   expect(await readFile(document, "utf8")).toBe(documentContent);
+  const unused = path.join(root, "unused.ts");
+  await writeFile(unused, "export const unused = 1;\n");
+  await deleteFilesSafely({
+    [unused]: { expectedSha256: sha256("export const unused = 1;\n") },
+  });
+  expect(await Bun.file(unused).exists()).toBeFalse();
 });
 test("deletes unreferenced documents and malformed source without requiring a valid target AST", async () => {
   const root = await temporaryRoot();
@@ -96,6 +108,42 @@ test("explicit reference override skips discovery and reports the bypass", async
   expect(await Bun.file(target).exists()).toBe(false);
   expect(await Bun.file(path.join(root, "consumer.ts")).exists()).toBe(true);
 });
+test("incomplete reference scans fail closed and prune dependency directories", async () => {
+  const root = await temporaryRoot();
+  const target = path.join(root, "target.ts");
+  const content = "export const answer = 42;\n";
+  const candidate = path.join(root, "candidate.ts");
+  await writeFile(target, content);
+  for (const source of [
+    "export const = ;",
+    Buffer.from([0xff, 0xfe, 0xff]),
+    " ".repeat(2 * 1024 * 1024 + 1),
+  ]) {
+    await writeFile(candidate, source);
+    await expect(
+      deleteFilesSafely({ [target]: { expectedSha256: sha256(content) } }),
+    ).rejects.toMatchObject({ code: "reference_verification_failed" });
+    expect(await readFile(target, "utf8")).toBe(content);
+  }
+  await rm(candidate);
+  await mkdir(path.join(root, "node_modules/deep"), { recursive: true });
+  await writeFile(
+    path.join(root, "node_modules/deep/invalid.ts"),
+    "export const = ;",
+  );
+  const controller = new AbortController();
+  controller.abort(new Error("cancelled before deletion"));
+  await expect(
+    deleteFilesSafely(
+      { [target]: { expectedSha256: sha256(content) } },
+      controller.signal,
+    ),
+  ).rejects.toThrow("cancelled before deletion");
+  expect(await readFile(target, "utf8")).toBe(content);
+  await deleteFilesSafely({ [target]: { expectedSha256: sha256(content) } });
+  expect(await Bun.file(target).exists()).toBeFalse();
+});
+
 test("reference override preserves the content hash guard", async () => {
   const root = await temporaryRoot();
   const target = path.join(root, "source.ts");

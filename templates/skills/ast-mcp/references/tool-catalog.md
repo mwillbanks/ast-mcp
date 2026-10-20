@@ -2,6 +2,12 @@
 
 All tools are implemented and exposed directly by ast-mcp. Do not shell out to third-party intelligence binaries.
 
+## MCP Skills
+
+On protocol 2026-07-28, `server/discover` advertises `io.modelcontextprotocol/skills` and resources. Include protocol-version and client-capabilities metadata on every request. Use `skills/list({cursor?})`, `skills/get({uri})`, and `resources/read({uri})` with exact manifest URIs. Lists and gets return complete frontmatter and resource manifests. Verify resource SHA-256 digests and byte sizes; honor `ttlMs`, `cacheScope`, and pagination cursors. Directory reads remain unavailable. Use `ast-mcp skills export <destination>` for unsupported hosts; existing files remain intact.
+
+Modern HTTP preserves workspace handles across requests when callers supply `workspaceId`. It does not implicitly select or enumerate another request’s workspaces. Requested approvals return `approval_required` without a trusted persistent host scope; explicit global policies still apply. Stable stdio connections retain approval support.
+
 ## File boundary
 
 - `file_hash({ filePaths })`: batch up to 50 AST or non-AST paths and stream each whole file into SHA-256 without returning source content.
@@ -18,7 +24,7 @@ All tools are implemented and exposed directly by ast-mcp. Do not shell out to t
 - Agents working in a git worktree should pass absolute paths. Start the MCP against the config-bearing checkout; the server loads `ast-mcp.toml` from that checkout and authorizes linked worktrees of the same repository when `workspace.worktrees` is `include` or `request`. A toml-less worktree is not a different project root.
 - `policy_check({ checks })` explains batched read/write/delete decisions without side effects.
 - `document_query({ filePath, selectors })` returns bounded RFC 6901-selected JSON, JSONC, TOML, or YAML values plus the whole-file hash.
-- `config_core({ target?, workspace?, safety?, files?, formatting?, http?, dependencies?, mcp? })` updates grouped version 2 core sections without rewriting the file or changing `[[paths]]`. Default `target` is `project`. Host approval is required unless `mcp.configuration.require_approval = false`; `[mcp.configuration]` changes always require approval. Disabled when `mcp.configuration.enabled = false`.
+- `config_core({ target?, workspace?, safety?, files?, formatting?, http?, dependencies?, telemetry?, mcp? })` updates grouped version 2 core sections without rewriting the file or changing `[[paths]]`. Default `target` is `project`. Host approval is required unless `mcp.configuration.require_approval = false`; `[mcp.configuration]` changes always require approval. Disabled when `mcp.configuration.enabled = false`.
 - `config_paths({ target?, operations })` adds, updates, or removes `[[paths]]` rules in one batch by `id`. Does not change core sections. Same approval and enablement contract as `config_core`.
 
 ## Shape and source
@@ -43,7 +49,7 @@ All tools are implemented and exposed directly by ast-mcp. Do not shell out to t
 - dry-run per-file diffs when `rewrite` is present and `write` is false or omitted;
 - disk rewrite when both `rewrite` and `write: true` are present.
 
-Native `run` is read-only and previews structural matches. Use hash-guarded `file_patch` for writes; batches are capped at 50 files and report each committed file. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, each candidate is checked against dprint, and each rewritten file is atomically formatted. Narrow rules to one intended match per file.
+Native `run` is read-only and previews structural matches. Use hash-guarded `file_patch` for writes; batches are capped at 50 files and report each committed file. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, enabled external formatters validate candidates, and each rewritten file commits atomically. Formatting defaults to disabled. Narrow rules to one intended match per file.
 
 - `squeeze({ path, start?, end?, raw?, json? })`: compression for repetitive logs/text, not source code.
 

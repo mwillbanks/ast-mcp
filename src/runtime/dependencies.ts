@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
+import { currentConfig } from "../config";
 import {
   directoryBinaryCandidates,
   executableCandidate,
@@ -9,8 +10,7 @@ import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
-} from "../../templates/skills/ast-mcp/scripts/binary-resolution";
-import { currentConfig } from "../config";
+} from "./binary-resolution";
 
 export {
   globalBinDirectories,

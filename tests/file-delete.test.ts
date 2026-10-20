@@ -13,6 +13,7 @@ import path from "node:path";
 
 import { deleteFilesSafely } from "../src/runtime/file-delete";
 import { sha256 } from "../src/runtime/hash";
+import { withFileLock } from "../src/runtime/locks";
 
 let root = "";
 
@@ -85,6 +86,119 @@ test("file_delete keeps completed deletion successful when cleanup races", async
     expect(result.removedDirectories).toEqual([]);
   } finally {
     rmdir.mockRestore();
+  }
+});
+
+test("file_delete cancels while waiting for a held mutation lease", async () => {
+  const folder = await temporaryRoot();
+  const filePath = path.join(folder, "contended.txt");
+  const content = "preserved\n";
+  await writeFile(filePath, content);
+  const canonical = await realpath(filePath);
+  let release!: () => void;
+  let acquired!: () => void;
+  const held = new Promise<void>((resolve) => {
+    acquired = resolve;
+  });
+  const releaseHolder = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holder = withFileLock(canonical, async () => {
+    acquired();
+    await releaseHolder;
+  });
+  await held;
+  const controller = new AbortController();
+  const deletion = deleteFilesSafely(
+    { [filePath]: { expectedSha256: sha256(content) } },
+    controller.signal,
+  );
+  try {
+    await Bun.sleep(30);
+    controller.abort();
+    await expect(
+      Promise.race([
+        deletion,
+        Bun.sleep(500).then(() => {
+          throw new Error("Deletion still waits for the held lease");
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "lock_aborted" });
+    expect(await readFile(filePath, "utf8")).toBe(content);
+  } finally {
+    release();
+    await holder;
+    await deletion.catch(() => undefined);
+  }
+});
+
+test("file_delete reports committed deletion when cleanup lease remains held", async () => {
+  const folder = await temporaryRoot();
+  const canonical = await realpath(folder);
+  const filePath = path.join(folder, "nested", "note.txt");
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, "delete me\n");
+  let release!: () => void;
+  let acquired!: () => void;
+  const held = new Promise<void>((resolve) => {
+    acquired = resolve;
+  });
+  const releaseHolder = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const holder = withFileLock(
+    path.join(canonical, ".ast-mcp-directory-cleanup"),
+    async () => {
+      acquired();
+      await releaseHolder;
+    },
+  );
+  await held;
+  const started = performance.now();
+  try {
+    const result = await deleteFilesSafely({
+      [filePath]: { expectedSha256: sha256("delete me\n") },
+    });
+    expect(result.cleanup).toEqual({
+      status: "deferred",
+      code: "lock_deadline",
+    });
+    expect(result.removedDirectories).toEqual([]);
+    expect(await Bun.file(filePath).exists()).toBeFalse();
+    expect(await fsPromises.stat(path.dirname(filePath))).toBeDefined();
+    expect(performance.now() - started).toBeLessThan(2_000);
+  } finally {
+    release();
+    await holder;
+  }
+});
+
+test("file_delete reports cleanup errors after successful target deletion", async () => {
+  const folder = await temporaryRoot();
+  for (const code of ["EACCES", "EPERM", "lock_fenced", "unexpected_failure"]) {
+    const filePath = path.join(folder, code, "note.txt");
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, "delete me\n");
+    const cleanupError = Object.assign(new Error("private cleanup path"), {
+      code,
+    });
+    const rmdir = spyOn(fsPromises, "rmdir").mockRejectedValueOnce(
+      cleanupError,
+    );
+    try {
+      const result = await deleteFilesSafely({
+        [filePath]: { expectedSha256: sha256("delete me\n") },
+      });
+      expect(result.cleanup).toEqual({
+        status: "failed",
+        code: code === "unexpected_failure" ? "cleanup_failed" : code,
+      });
+      expect(result.removedDirectories).toEqual([]);
+      expect(await Bun.file(filePath).exists()).toBeFalse();
+      expect(JSON.stringify(result)).not.toContain("private cleanup path");
+    } finally {
+      rmdir.mockRestore();
+    }
   }
 });
 

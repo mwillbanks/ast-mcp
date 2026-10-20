@@ -1,7 +1,12 @@
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server";
 import { serve } from "bun";
 
 import { type ResolvedConfig, resolveConfig } from "./config";
+import { WorkspaceRegistry } from "./intelligence/workspace/index.ts";
 import {
   createServer,
   installProcessFailureHandlers,
@@ -126,25 +131,40 @@ async function sessionRequest(request: Request) {
     : createSession(request);
 }
 
-function handleMcpRequest(
+function modernHttpHandler() {
+  const workspaceRegistry = new WorkspaceRegistry();
+  return createMcpHandler(
+    () => createServer({}, {}, { workspaceRegistry, requestScoped: true }),
+    { legacy: "reject", responseMode: "sse" },
+  );
+}
+
+async function handleMcpRequest(
   request: Request,
   server: Pick<Bun.Server<unknown>, "timeout">,
+  modernHandler: ReturnType<typeof modernHttpHandler>,
 ) {
   const url = new URL(request.url);
   if (url.pathname !== "/mcp")
     return new Response("Not found", { status: 404 });
   server.timeout(request, 0);
-  return sessionRequest(request);
+  return (await isLegacyRequest(request))
+    ? sessionRequest(request)
+    : modernHandler.fetch(request);
 }
 
-async function shutdownHttpServer(httpServer: ReturnType<typeof serve>) {
+async function shutdownHttpServer(
+  httpServer: ReturnType<typeof serve>,
+  modernHandler: ReturnType<typeof modernHttpHandler>,
+) {
   httpServer.stop(false);
   if (sessionSweep) clearInterval(sessionSweep);
   const activeSessions = [...sessions.entries()];
   for (const [sessionId] of activeSessions) clearSessionApprovals(sessionId);
-  const results = await Promise.allSettled(
-    activeSessions.map(([, session]) => session.server.close()),
-  );
+  const results = await Promise.allSettled([
+    ...activeSessions.map(([, session]) => session.server.close()),
+    modernHandler.close(),
+  ]);
   sessions.clear();
   httpServer.stop(true);
   const failed = results.find((result) => result.status === "rejected");
@@ -156,8 +176,10 @@ export async function startHttpServer(
 ) {
   const config = await configuration();
   updateSessionDurations(config);
+  const modernHandler = modernHttpHandler();
   const httpServer = serve({
-    fetch: handleMcpRequest,
+    fetch: (request, server) =>
+      handleMcpRequest(request, server, modernHandler),
     port: overrides.port ?? config.http.port,
     ...httpBinding({
       ...config,
@@ -167,7 +189,7 @@ export async function startHttpServer(
   startSessionSweep();
   let shutdown: Promise<void> | undefined;
   const close = () => {
-    shutdown ??= shutdownHttpServer(httpServer);
+    shutdown ??= shutdownHttpServer(httpServer, modernHandler);
     return shutdown;
   };
   installProcessSignalHandlers(close);

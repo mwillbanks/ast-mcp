@@ -56,6 +56,7 @@ const EXPECTED_CODES = new Set([
   "workspace_mismatch",
   "workspace_required",
   "intelligence_budget_exceeded",
+  "reference_verification_failed",
   "graph_budget_exhausted",
   "document_too_large",
   "document_not_regular",
@@ -374,7 +375,32 @@ export class Telemetry {
     return this.#scope.run(scope, async () => {
       try {
         const result = await operation();
-        this.#enqueue(tool, performance.now() - start, scope.policy);
+        const cleanup =
+          tool === "file_delete" ? record(record(result).cleanup) : {};
+        const incomplete =
+          cleanup.status === "failed" || cleanup.status === "deferred";
+        const code =
+          typeof cleanup.code === "string" &&
+          ["EACCES", "EPERM", "lock_deadline", "lock_fenced"].includes(
+            cleanup.code,
+          )
+            ? cleanup.code
+            : "cleanup_failed";
+        this.#enqueue(
+          tool,
+          performance.now() - start,
+          scope.policy,
+          incomplete
+            ? {
+                error: Object.assign(
+                  new Error(
+                    "File deletion committed with incomplete directory cleanup",
+                  ),
+                  { code },
+                ),
+              }
+            : undefined,
+        );
         return result;
       } catch (error) {
         this.#enqueue(tool, performance.now() - start, scope.policy, { error });

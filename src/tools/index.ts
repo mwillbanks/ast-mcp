@@ -4,7 +4,7 @@ import registerWorkspaceTools from "../intelligence/workspace/tools.ts";
 import type { Telemetry } from "../runtime/telemetry";
 import registerNativeCodeIntelligenceTools from "./code-intelligence";
 import registerConfigurationTools from "./configuration";
-import { configuredExecution } from "./configured";
+import { configuredExecution, type ExecutionOptions } from "./configured";
 import registerFileTools from "./files";
 import registerIntelligenceTools, {
   type IntelligenceToolService,
@@ -16,9 +16,14 @@ export default function (
   services: {
     intelligence?: IntelligenceToolService;
     telemetry?: Telemetry;
+    execution?: ExecutionOptions;
   } = {},
 ) {
-  const execute = configuredExecution(server, services.telemetry);
+  const execute = configuredExecution(
+    server,
+    services.telemetry,
+    services.execution,
+  );
   const registerTool = server.registerTool.bind(server);
   server.registerTool = ((...args: Parameters<McpServer["registerTool"]>) => {
     services.telemetry?.register(args[0]);

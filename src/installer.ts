@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -159,7 +159,6 @@ export function manualHttpLaunchCommand(
     .join(" ");
   return `${platform === "win32" ? "cd /d" : "cd"} ${displayCommandPart(root, platform)} && ${launch}`;
 }
-const hookEntry = path.join(packageRoot, "src/hook.ts");
 const targets = ["codex", "claude", "copilot"] as const;
 type Target = (typeof targets)[number];
 
@@ -285,28 +284,6 @@ async function hook(
         };
   value.hooks[event] = [...kept, item];
   await save(file, value);
-}
-async function skills(folder: string) {
-  const destination = path.join(folder, "ast-mcp");
-  await rm(destination, { force: true, recursive: true });
-  await mkdir(folder, { recursive: true });
-  await cp(path.join(packageRoot, "templates/skills", "ast-mcp"), destination, {
-    force: true,
-    recursive: true,
-  });
-  await cp(
-    path.join(packageRoot, "templates/AGENTS.md"),
-    path.join(destination, "references/agents-guidance.md"),
-    { force: true },
-  );
-  await cp(hookEntry, path.join(destination, "references/hook.ts"), {
-    force: true,
-  });
-  await cp(
-    path.join(destination, "SKILL.md"),
-    path.join(destination, "references/skill-template.md"),
-    { force: true },
-  );
 }
 const instructionsBegin = "<!-- ast-mcp:begin -->";
 const instructionsEnd = "<!-- ast-mcp:end -->";
@@ -536,8 +513,7 @@ function changedFiles(before: Map<string, string>, after: Map<string, string>) {
     .sort();
 }
 
-async function installTargetAssets(base: string, instructionsPath: string) {
-  await skills(path.join(base, "skills"));
+async function installTargetAssets(_base: string, instructionsPath: string) {
   await instructions(instructionsPath);
 }
 
@@ -987,7 +963,6 @@ export async function update(options: InstallOptions) {
 
 async function removeTargetAssets(base: string, instructionsPath?: string) {
   await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
-  await rm(path.join(base, "skills/ast-mcp"), { force: true, recursive: true });
   if (instructionsPath) await removeInstructions(instructionsPath);
 }
 

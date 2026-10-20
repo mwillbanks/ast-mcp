@@ -7,6 +7,10 @@ try {
       const { runConfigCli } = await import("../src/config-cli");
       return await runConfigCli(args);
     },
+    skills: async (args) => {
+      const { runSkillsCli } = await import("../src/skills-cli");
+      await runSkillsCli(args);
+    },
     hook: async () => {
       const { runHook } = await import("../src/hook");
       return runHook();

@@ -234,6 +234,65 @@ test("configured execution honors configured placement and explicit overrides", 
   expect(explicit?.storageDomain.placement).toEqual({ kind: "global" });
 });
 
+test("modern requests use explicit paths without legacy roots RPCs", async () => {
+  const originalCwd = process.cwd();
+  const root = await realpath(await temporary("ast-mcp-modern-explicit-root-"));
+  await mkdir(path.join(root, ".git"));
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    [
+      "version = 2",
+      "[workspace]",
+      'roots = ["."]',
+      "[[paths]]",
+      'id = "workspace"',
+      'path = "."',
+      'policies = { read = "allow", write = "allow", delete = "deny" }',
+      "",
+    ].join("\n"),
+  );
+  process.chdir(root);
+  clearConfigCache();
+  try {
+    let rootsCalls = 0;
+    const server = serverForRoot(root);
+    server.server.listRoots = async () => {
+      rootsCalls += 1;
+      return { roots: [{ uri: pathToFileURL(root).href }] };
+    };
+    const execute = configuredExecution(server);
+    const context = {
+      mcpReq: {
+        envelope: {
+          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+          "io.modelcontextprotocol/clientCapabilities": { roots: {} },
+        },
+      },
+    } as never;
+    expect(await execute.clientRoots?.(context)).toEqual([]);
+    const workspace = await execute.openWorkspace?.(
+      { directory: root },
+      context,
+    );
+    expect(workspace?.checkoutRoot).toBe(await realpath(root));
+    expect(
+      await execute(
+        { paths: [root] },
+        async () => (await currentConfig()).projectRoot,
+        context,
+        "map",
+      ),
+    ).toBe(await realpath(root));
+    expect(rootsCalls).toBe(0);
+    // A modern request must not poison the cached roots for legacy callers.
+    expect(await execute.clientRoots?.()).toEqual([pathToFileURL(root).href]);
+    expect(rootsCalls).toBe(1);
+  } finally {
+    process.chdir(originalCwd);
+    clearConfigCache();
+  }
+});
+
 test("configured execution reopens when configuration changes during discovery", async () => {
   const root = await temporary("ast-mcp-workspace-generation-race-");
   const originalOpen = WorkspaceRegistry.prototype.open;

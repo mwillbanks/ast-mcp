@@ -7,6 +7,12 @@ description: Use ast-mcp when exploring unfamiliar code, tracing symbols or depe
 
 Treat ast-mcp as the only code-intelligence and filesystem boundary. Do not call direct editors, `apply_patch`, shell mutation utilities, or interpreter write scripts.
 
+## Skill delivery and compatibility
+
+Discover this skill through the `io.modelcontextprotocol/skills` MCP extension. Use `skills/list`, then `skills/get` with `skill://ast-mcp/SKILL.md`. Read supporting files through their exact manifest URIs using `resources/read`; validate the advertised SHA-256 digest and byte size. Preserve all frontmatter fields. Honor `ttlMs`, `cacheScope`, and pagination cursors. Unknown or modified URIs are rejected.
+
+Clients using protocol 2026-07-28 must include the required protocol-version and client-capabilities request metadata. Legacy clients retain ordinary tools. If the host cannot load MCP Skills, run `ast-mcp skills export <destination>` and load that directory manually. The destination is the skill directory itself. Export preserves existing files, including customized skills, and rejects symlink directories. Installation and updates no longer copy skills to disk; uninstall preserves legacy skill directories.
+
 ## Start with availability
 
 1. Confirm that `file_hash`, `file_read`, `file_write`, `file_patch`, and the direct intelligence tools are callable.
@@ -112,7 +118,7 @@ Read [patch-state-machine.md](references/patch-state-machine.md) for routing and
 
 ## Update configuration through MCP
 
-Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
+Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, `telemetry`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
 
 ```json
 config_core({
@@ -136,6 +142,14 @@ config_paths({
   ]
 })
 ```
+
+## Formatting, telemetry, and filesystem access
+
+Formatting is disabled by default. `[formatting] enabled = false` is the master switch. Enable formatting only when requested, configure an installed external formatter, and select its extensions and stdout or in-place mode. dprint, Prettier, oxfmt, Biome, and other executable formatters are supported. File operations never download formatters. Respect each project’s formatter configuration.
+
+Telemetry is enabled by default. Set `[telemetry] enabled = false` globally to prevent initialization and network activity, or in a project to suppress project events. Collection includes tool names, durations, outcomes, error codes, versions, build identifiers, anonymous session IDs, and sanitized package stacks. It excludes source, filesystem paths, arguments, responses, agent intent, and identifying client metadata.
+
+`[safety] filesystem = "restricted"` is the default. `"unrestricted"` bypasses path boundaries and symlink policies while preserving OS permissions, hashes, atomic operations, and immutable revisions. Project activation requires trusted session-scoped host approval tied to the effective configuration. It does not change intelligence roots, indexing, storage, or workspace selection. Modern HTTP requests have no transport session; requested approvals fail closed with `approval_required`. Use explicit global rules or a host connection with stable approval scope. Always pass the returned `workspaceId` on subsequent modern HTTP requests; no workspace is implicitly selected across requests.
 
 ## Recover safely
 

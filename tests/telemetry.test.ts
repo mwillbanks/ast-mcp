@@ -248,6 +248,58 @@ describe("telemetry configuration", () => {
   });
 });
 
+test("committed deletions report cleanup outcomes without changing results or transmitting details", async () => {
+  const sdk = fakeSdk();
+  const telemetry = new Telemetry({
+    loadSdk: sdk.loadSdk,
+    globalEnabled: async () => true,
+  });
+  telemetry.register("file_delete");
+  const codes = [
+    "EACCES",
+    "EPERM",
+    "lock_deadline",
+    "lock_fenced",
+    "cleanup_failed",
+    "private@example.invalid",
+  ];
+  for (const code of codes) {
+    const result = {
+      files: { "/private/source.ts": { deleted: true } },
+      cleanup: {
+        status: code === "lock_deadline" ? "deferred" : "failed",
+        code,
+        message: "private message",
+      },
+    };
+    expect(
+      await telemetry.run("file_delete", async () => {
+        telemetry.select(policy());
+        return result;
+      }),
+    ).toBe(result);
+  }
+  await tick();
+  await telemetry.close();
+  expect(sdk.calls).toHaveLength(codes.length);
+  expect(sdk.events).toHaveLength(2);
+  for (const call of sdk.calls.slice(0, 4))
+    expect(
+      (call as { properties: { outcome: string } }).properties.outcome,
+    ).toBe("operational_error");
+  for (const call of sdk.calls.slice(4))
+    expect(
+      (call as { properties: { outcome: string } }).properties.outcome,
+    ).toBe("unexpected_error");
+  expect(JSON.stringify([sdk.calls, sdk.events])).not.toContain("/private");
+  expect(JSON.stringify([sdk.calls, sdk.events])).not.toContain(
+    "private message",
+  );
+  expect(JSON.stringify([sdk.calls, sdk.events])).not.toContain(
+    "private@example.invalid",
+  );
+});
+
 describe("telemetry isolation and lifecycle", () => {
   test("disabled and unresolved policy never import SDK or send network", async () => {
     const sdk = fakeSdk();

@@ -15,6 +15,7 @@ import { evaluateHook } from "../src/hook";
 import { install, update } from "../src/installer";
 import { httpEndpoint } from "../src/installer-transport";
 import { createServicePlan } from "../src/service";
+import { exportSkills } from "../src/skills-cli";
 
 const shell = (command: string) =>
   evaluateHook({ tool_input: { command }, tool_name: "bash" }).denied;
@@ -46,7 +47,7 @@ test("hook routes manual mutation without policing host-governed execution", () 
   ).toBeFalse();
 });
 
-test("installer copies only the unified skill and its checker diagnoses the result", async () => {
+test("installer leaves skill export explicit and its checker diagnoses host configuration", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-skill-install-"));
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-skill-home-"));
   const priorSkipSmoke = process.env.AST_MCP_CHECK_INSTALL_SKIP_SMOKE;
@@ -58,6 +59,9 @@ test("installer copies only the unified skill and its checker diagnoses the resu
       "copilot",
     ];
     await install({ home, root, scope: "local", targets });
+    const exported = path.join(root, ".codex/skills/ast-mcp");
+    await expect(readFile(path.join(exported, "SKILL.md"))).rejects.toThrow();
+    await exportSkills(exported);
     const astMcpBinary = path.join(root, "node_modules/.bin/ast-mcp");
     await rm(astMcpBinary, { force: true });
     await mkdir(path.dirname(astMcpBinary), { recursive: true });
@@ -210,9 +214,7 @@ done
         ).installed,
       ).toBeTrue();
 
-    await rm(
-      path.join(root, ".codex/skills/ast-mcp/references/skill-template.md"),
-    );
+    await writeFile(path.join(exported, "SKILL.md"), "customized manual skill");
     expect(
       (
         await installedChecker.checkInstall(
