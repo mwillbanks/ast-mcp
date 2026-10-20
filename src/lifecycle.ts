@@ -33,6 +33,11 @@ export function createProcessServer() {
     return closing;
   };
   disposeSignals = installProcessSignalHandlers(server.close.bind(server));
-  disposeFailures = installProcessFailureHandlers(server.close.bind(server));
+  disposeFailures = installProcessFailureHandlers(
+    server.close.bind(server),
+    process,
+    5000,
+    (error) => server.telemetry.reportException(error, true),
+  );
   return server;
 }

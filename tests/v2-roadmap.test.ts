@@ -43,6 +43,7 @@ import {
   referenceRootForPath,
   resolveWorkspacePath,
 } from "../src/runtime/paths";
+import { hermeticConfig } from "./support/hermetic-config";
 
 const created: string[] = [];
 
@@ -642,7 +643,7 @@ test("migrates v1 source without discarding comments or legacy behavior", async 
   expect(await readFile(backup as string, "utf8")).toBe(source);
   if (process.platform !== "win32")
     expect((await lstat(file)).mode & 0o777).toBe(0o640);
-  expect((await resolveConfig({ cwd: root, env: {} })).version).toBe(2);
+  expect((await resolveConfig(hermeticConfig(root))).version).toBe(2);
 
   const current = migrateConfigSource(await readFile(file, "utf8"), file);
   expect(current.changed).toBeFalse();

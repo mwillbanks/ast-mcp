@@ -313,6 +313,7 @@ function statusPayload(
     projectRoot: config.projectRoot,
     provenance: config.provenance,
     safety: config.safety,
+    telemetry: config.telemetry,
     sources: config.sources,
     version: config.version,
     workspace: config.workspace,
@@ -659,6 +660,10 @@ export default function registerConfigurationTools(
                 .optional(),
               require_hash: z.boolean().optional(),
             })
+            .strict()
+            .optional(),
+          telemetry: z
+            .object({ enabled: z.boolean().optional() })
             .strict()
             .optional(),
           target: configTarget,

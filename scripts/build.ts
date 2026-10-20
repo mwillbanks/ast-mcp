@@ -9,7 +9,35 @@ import {
   wasmProviderVersions,
 } from "../src/intelligence/languages/shared/wasm-assets.ts";
 
+const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
+  cwd: path.resolve(import.meta.dir, ".."),
+  stderr: "pipe",
+});
+const buildId =
+  revision.exitCode === 0 ? revision.stdout.toString().trim() : "source";
 const providerMetadata = {
+  AST_MCP_SOURCE_FILES: JSON.stringify(
+    (
+      await Array.fromAsync(
+        new Bun.Glob("src/**/*.ts").scan({
+          cwd: path.resolve(import.meta.dir, ".."),
+        }),
+      )
+    )
+      .concat([
+        "dist/ast-mcp.js",
+        "dist/workers/code-intelligence-worker.js",
+        "dist/workers/dynamic-wasm-worker.js",
+        "dist/workers/infra-wasm-worker.js",
+        "dist/workers/jvm-wasm-worker.js",
+        "dist/workers/legacy-wasm-worker.js",
+        "dist/workers/systems-wasm-worker.js",
+      ])
+      .sort(),
+  ),
+  AST_MCP_BUILD_ID: JSON.stringify(
+    /^[a-f0-9]{40}$/.test(buildId) ? buildId : "source",
+  ),
   AST_MCP_WASM_PROVIDER_VERSIONS: JSON.stringify(wasmProviderVersions()),
 };
 const root = path.resolve(import.meta.dir, "..");

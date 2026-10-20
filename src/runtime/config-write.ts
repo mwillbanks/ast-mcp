@@ -70,6 +70,7 @@ export interface ConfigCorePatch {
     };
     require_hash?: boolean;
   };
+  telemetry?: { enabled?: boolean };
   target?: ConfigTarget;
   workspace?: {
     roots?: string[];
@@ -211,6 +212,7 @@ function removeFormatterTables(source: string): string {
 function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   let next = source;
   next = applyObjectKeys(next, "workspace", patch.workspace);
+  next = applyObjectKeys(next, "telemetry", patch.telemetry);
   next = applyObjectKeys(next, "safety", {
     filesystem: patch.safety?.filesystem,
     require_hash: patch.safety?.require_hash,
@@ -335,6 +337,7 @@ async function commitConfigEdit(
 function coreSectionChanges(patch: ConfigCorePatch): string[] {
   return [
     patch.workspace ? "workspace" : undefined,
+    patch.telemetry ? "telemetry" : undefined,
     patch.safety ? "safety" : undefined,
     patch.files ? "files" : undefined,
     patch.formatting ? "formatting" : undefined,

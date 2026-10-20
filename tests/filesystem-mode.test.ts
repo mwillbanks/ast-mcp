@@ -18,6 +18,7 @@ import {
   withConfig,
   withResolvedConfig,
 } from "../src/config";
+import { configRegistry } from "../src/config-registry";
 import { toolFailure } from "../src/helpers/mcp-schema";
 import { withWorkspaceContext } from "../src/intelligence/workspace/context";
 import { WorkspaceRegistry } from "../src/intelligence/workspace/registry";
@@ -504,8 +505,8 @@ test("config_core activation approval is reusable across tools", async () => {
       tool,
       context: { sessionId: "config-activation", mcpReq: { inputResponses } },
     }) as never;
-  const operation = () =>
-    withConfig(options, () =>
+  const operation = async () =>
+    withResolvedConfig(await configRegistry.get(options), () =>
       applyConfigCore({ safety: { filesystem: "unrestricted" } }),
     );
   let responseKey = "";

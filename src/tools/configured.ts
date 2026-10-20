@@ -18,6 +18,7 @@ import {
 import { withApprovalContext } from "../runtime/approval";
 import { assertReadableTree } from "../runtime/path-policy";
 import { canonicalPathWithin } from "../runtime/path-utils";
+import type { Telemetry } from "../runtime/telemetry";
 
 export interface OpenConfiguredWorkspace {
   directory: string;
@@ -130,7 +131,10 @@ function isFileOperation(tool: string): boolean {
   );
 }
 
-export function configuredExecution(server: McpServer): ConfiguredExecution {
+export function configuredExecution(
+  server: McpServer,
+  telemetry?: Telemetry,
+): ConfiguredExecution {
   const registry = new WorkspaceRegistry();
   let rootsPromise: Promise<string[]> | undefined;
   const clientRoots = () => {
@@ -144,7 +148,7 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
     }
     return rootsPromise;
   };
-  const execute: ConfiguredExecution = async (
+  const executeConfigured: ConfiguredExecution = async (
     args,
     operation,
     context,
@@ -193,11 +197,12 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
           },
         );
       const config = await configRegistry.get({ requestPaths });
-      return withResolvedConfig(config, () =>
-        withApprovalContext({ context, server, tool }, () =>
+      return withResolvedConfig(config, () => {
+        telemetry?.select(config);
+        return withApprovalContext({ context, server, tool }, () =>
           operation((context as { signal?: AbortSignal } | undefined)?.signal),
-        ),
-      );
+        );
+      });
     }
 
     const opened = await configuredWorkspace(
@@ -214,14 +219,26 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
     workspace = opened.workspace;
     if (!isFileOperation(tool))
       registry.validateRequestPaths(workspace, requestPaths);
-    return withResolvedConfig(opened.config, () =>
-      withWorkspaceContext(workspace, () =>
+    return withResolvedConfig(opened.config, () => {
+      telemetry?.select(opened.config);
+      return withWorkspaceContext(workspace, () =>
         withApprovalContext({ context, server, tool }, () =>
           operation((context as { signal?: AbortSignal } | undefined)?.signal),
         ),
-      ),
-    );
+      );
+    });
   };
+  const execute: ConfiguredExecution = (
+    args,
+    operation,
+    context,
+    tool = "ast-mcp",
+  ) =>
+    telemetry
+      ? telemetry.run(tool, () =>
+          executeConfigured(args, operation, context, tool),
+        )
+      : executeConfigured(args, operation, context, tool);
   execute.clientRoots = clientRoots;
   execute.generationDependencies = {
     mcpClients: {
@@ -236,21 +253,28 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
       },
     },
   };
-  execute.openWorkspace = async (input, context) =>
-    (
-      await configuredWorkspace(registry, input, await clientRoots(), {
-        context,
-        server,
-        tool: "workspace_open",
-      })
-    ).workspace;
+  execute.openWorkspace = (input, context) => {
+    const open = async () => {
+      const opened = await configuredWorkspace(
+        registry,
+        input,
+        await clientRoots(),
+        { context, server, tool: "workspace_open" },
+      );
+      telemetry?.select(opened.config);
+      return opened.workspace;
+    };
+    return telemetry ? telemetry.run("workspace_open", open) : open();
+  };
   execute.refreshRoots = () => {
     rootsPromise = undefined;
   };
   execute.workspaceRegistry = registry;
-  execute.workspaceStatus = async (workspaceId, context) => {
+  const workspaceStatus: NonNullable<
+    ConfiguredExecution["workspaceStatus"]
+  > = async (workspaceId, context) => {
     if (workspaceId)
-      return execute(
+      return executeConfigured(
         { workspaceId },
         () => registry.status(currentWorkspace()?.workspaceId),
         context,
@@ -260,7 +284,7 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
       registry
         .workspaceIds()
         .map((id) =>
-          execute(
+          executeConfigured(
             { workspaceId: id },
             () => registry.status(currentWorkspace()?.workspaceId),
             context,
@@ -268,11 +292,21 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
           ),
         ),
     );
+    if (!statuses.length)
+      telemetry?.select(
+        await configRegistry.get({ clientRoots: await clientRoots() }),
+      );
     return {
       selected: null,
       workspaces: statuses.flatMap((status) => status.workspaces),
     };
   };
+  execute.workspaceStatus = (workspaceId, context) =>
+    telemetry
+      ? telemetry.run("workspace_status", () =>
+          workspaceStatus(workspaceId, context),
+        )
+      : workspaceStatus(workspaceId, context);
   server.server.setNotificationHandler("notifications/roots/list_changed", () =>
     execute.refreshRoots?.(),
   );

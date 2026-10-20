@@ -15,6 +15,7 @@ afterEach(async () => {
 });
 test("parseable source lets the agent select Aider or AST patches", async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-ast-"));
+  await writeFile(path.join(folder, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = folder;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   const file = path.join(folder, "value.ts");

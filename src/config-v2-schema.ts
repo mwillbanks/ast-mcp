@@ -180,6 +180,10 @@ export const fileV2Schema = z
       })
       .strict()
       .optional(),
+    telemetry: z
+      .object({ enabled: z.boolean().optional() })
+      .strict()
+      .optional(),
     version: z.literal(schemaVersion),
     workspace: workspaceSchema.optional(),
   })

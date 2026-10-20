@@ -85,6 +85,7 @@ export function installProcessFailureHandlers(
   shutdown: () => Promise<void> | void,
   host: FailureHost = process,
   timeoutMs = 5000,
+  onFatal?: (error: unknown) => void,
 ) {
   let failing = false;
   let finished = false;
@@ -107,6 +108,11 @@ export function installProcessFailureHandlers(
         return;
       }
       failing = true;
+      try {
+        onFatal?.(error);
+      } catch {
+        /* Analytics must preserve fatal cleanup. */
+      }
       deadline = setTimeout(() => {
         host.stderr.write("ast-mcp fatal shutdown timed out\n");
         finish();

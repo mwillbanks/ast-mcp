@@ -20,6 +20,7 @@ afterEach(async () => {
 async function root() {
   const folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-engine-"));
   folders.push(folder);
+  await writeFile(path.join(folder, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = folder;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   return folder;

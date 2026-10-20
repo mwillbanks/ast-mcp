@@ -25,6 +25,7 @@ afterEach(async () => {
 
 async function temporaryRoot() {
   root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-delete-"));
+  await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = root;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   return root;

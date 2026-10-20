@@ -1,4 +1,3 @@
-import type { McpServer } from "@modelcontextprotocol/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { serve } from "bun";
 
@@ -27,7 +26,7 @@ const sessions = new Map<
   string,
   {
     transport: WebStandardStreamableHTTPServerTransport;
-    server: McpServer;
+    server: ReturnType<typeof createServer>;
     lastActivity: number;
   }
 >();
@@ -172,7 +171,10 @@ export async function startHttpServer(
     return shutdown;
   };
   installProcessSignalHandlers(close);
-  installProcessFailureHandlers(close);
+  installProcessFailureHandlers(close, process, 5000, (error) => {
+    for (const session of sessions.values())
+      session.server.telemetry.reportException(error);
+  });
   return httpServer;
 }
 

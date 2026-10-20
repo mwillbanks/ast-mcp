@@ -18,6 +18,7 @@ async function root() {
     path.join(os.tmpdir(), "ast-mcp-rename-adversarial-"),
   );
   created.push(value);
+  await writeFile(path.join(value, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   return value;
 }
