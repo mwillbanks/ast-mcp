@@ -29,9 +29,9 @@ import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
 import { pathWithin } from "./path-utils";
 import {
+  fileOperationRootForPath,
   referenceRootForPath,
   resolveWritablePath,
-  rootForPath,
 } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
@@ -211,7 +211,7 @@ async function prepareDeleteEntry(
   const metadata = await lstat(filePath);
   if (!metadata.isFile())
     throw new Error(`file_delete accepts files only: ${inputPath}`);
-  const root = await rootForPath(filePath);
+  const root = await fileOperationRootForPath(filePath);
   const removableDirectories = await authorizedAncestors(filePath, root);
   return {
     filePath,

@@ -54,14 +54,49 @@ function replaceLines(
   );
 }
 
+function matchOffsets(content: string, search: string): number[] {
+  const matches: number[] = [];
+  for (
+    let index = content.indexOf(search);
+    index >= 0;
+    index = content.indexOf(search, index + 1)
+  )
+    matches.push(index);
+  return matches;
+}
+
+function ambiguousMatch(
+  content: string,
+  offsets: number[],
+  method: string,
+): Error {
+  return Object.assign(
+    new Error(
+      `Aider ${method} match is ambiguous (${offsets.length} candidates)`,
+    ),
+    {
+      code: "aider_ambiguous",
+      retryable: true,
+      suggestedNextCall:
+        "file_read with a narrower SEARCH block, then file_patch with preview=true",
+      details: {
+        matches: offsets.length,
+        locations: offsets.slice(0, 20).map((offset) => ({
+          line: content.slice(0, offset).split("\n").length,
+        })),
+      },
+    },
+  );
+}
+
 function exactReplacement(
   content: string,
   search: string,
   replace: string,
 ): AiderReplacement | undefined {
-  const matches = content.split(search).length - 1;
-  if (matches > 1) throw new Error("Aider exact match is ambiguous");
-  return matches === 1
+  const offsets = matchOffsets(content, search);
+  if (offsets.length > 1) throw ambiguousMatch(content, offsets, "exact");
+  return offsets.length === 1
     ? { content: content.replace(search, () => replace), method: "exact" }
     : undefined;
 }
@@ -82,7 +117,15 @@ function whitespaceReplacement(
           normalizeWhitespaceLine(line),
       ),
     );
-  if (starts.length > 1) throw new Error("Aider whitespace match is ambiguous");
+  if (starts.length > 1)
+    throw ambiguousMatch(
+      content,
+      starts.map(
+        (start) =>
+          contentLines.slice(0, start).join("\n").length + (start ? 1 : 0),
+      ),
+      "whitespace",
+    );
   return starts.length === 1
     ? {
         content: replaceLines(
@@ -123,14 +166,17 @@ function relativeIndentationReplacement(
   search: string,
   replace: string,
 ): AiderReplacement | undefined {
-  const matches = shiftedSearches(content.split("\n"), search.split("\n"))
-    .map((shifted) => ({ index: content.indexOf(shifted), shifted }))
-    .filter(
-      ({ index, shifted }) =>
-        index >= 0 && content.indexOf(shifted, index + 1) < 0,
-    );
+  const matches = [
+    ...new Set(shiftedSearches(content.split("\n"), search.split("\n"))),
+  ].flatMap((shifted) =>
+    matchOffsets(content, shifted).map((index) => ({ index, shifted })),
+  );
   if (matches.length > 1)
-    throw new Error("Aider indentation match is ambiguous");
+    throw ambiguousMatch(
+      content,
+      matches.map((match) => match.index),
+      "indentation",
+    );
   const match = matches[0];
   return match
     ? {
@@ -217,7 +263,16 @@ function fuzzyReplacement(
     candidates[1] &&
     Math.abs(candidates[1].ratio - best.ratio) < Number.EPSILON
   )
-    throw new Error("Aider diff-match-patch match is ambiguous");
+    throw ambiguousMatch(
+      content,
+      candidates
+        .filter(
+          (candidate) =>
+            Math.abs(candidate.ratio - best.ratio) < Number.EPSILON,
+        )
+        .map((candidate) => candidate.index),
+      "diff-match-patch",
+    );
   return {
     content:
       content.slice(0, best.index) +

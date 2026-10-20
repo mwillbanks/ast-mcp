@@ -50,8 +50,15 @@ import {
   patchStrategyAdapter,
 } from "./strategy";
 
-function readText(filePath: string): Promise<string> {
-  return Bun.file(filePath).text();
+async function readText(filePath: string): Promise<string> {
+  const bytes = Buffer.from(await Bun.file(filePath).arrayBuffer());
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(bytes))
+    throw Object.assign(new Error("File patches require lossless UTF-8 text"), {
+      code: "invalid_text_encoding",
+      retryable: false,
+    });
+  return text;
 }
 
 export interface PatchRequest {
@@ -162,10 +169,7 @@ async function commit(
     if (expectedSha256) {
       const current = await readText(filePath);
       const actual = sha256(current);
-      if (actual !== expectedSha256)
-        throw new Error(
-          `Stale file context: expected ${expectedSha256}, found ${actual}`,
-        );
+      verifyExpectedHash(expectedSha256, actual);
     }
     await beforeReplace?.();
     await rename(next, filePath);
@@ -267,6 +271,24 @@ const MAX_PREVIEW_CANDIDATE_BYTES = 4 * 1024 * 1024;
 const MAX_PREVIEW_SESSION_BYTES = 16 * 1024 * 1024;
 const MAX_PREVIEW_SESSION_RECEIPTS = 32;
 const previewReceipts = new Map<string, PreviewReceipt>();
+const expiredPreviewReceipts = new Set<string>();
+
+function expirePreviewReceipt(token: string): void {
+  previewReceipts.delete(token);
+  expiredPreviewReceipts.add(token);
+  if (expiredPreviewReceipts.size > 1024) {
+    const oldest = expiredPreviewReceipts.values().next().value;
+    if (oldest) expiredPreviewReceipts.delete(oldest);
+  }
+}
+
+function receiptError(code: string, message: string): Error {
+  return Object.assign(new Error(message), {
+    code,
+    retryable: true,
+    suggestedNextCall: "file_hash then file_patch with preview=true",
+  });
+}
 
 function previewPayloadBytes(
   sessionId: string,
@@ -300,16 +322,32 @@ function previewPayloadBytes(
 async function validatePreviewReceipt(filePath: string, token: string) {
   const receipt = previewReceipts.get(token);
   if (!receipt)
-    throw new Error("Preview receipt is unknown or has already been used");
+    throw receiptError(
+      expiredPreviewReceipts.has(token)
+        ? "preview_receipt_expired"
+        : "preview_receipt_unknown",
+      expiredPreviewReceipts.has(token)
+        ? "Preview receipt has expired; preview the patch again"
+        : "Preview receipt is unknown or has already been used",
+    );
   if (receipt.expiresAt < Date.now()) {
     previewReceipts.delete(token);
     clearTimeout(receipt.expiryTimer);
-    throw new Error("Preview receipt has expired; preview the patch again");
+    throw receiptError(
+      "preview_receipt_expired",
+      "Preview receipt has expired; preview the patch again",
+    );
   }
   if (receipt.filePath !== filePath)
-    throw new Error("Preview receipt does not belong to this file");
+    throw receiptError(
+      "preview_receipt_file_mismatch",
+      "Preview receipt does not belong to this file",
+    );
   if (receipt.sessionId !== approvalSessionId())
-    throw new Error("Preview receipt belongs to a different MCP session");
+    throw receiptError(
+      "preview_receipt_session_mismatch",
+      "Preview receipt belongs to a different MCP session",
+    );
   const workspace = currentWorkspace();
   const currentBinding = workspace
     ? {
@@ -323,7 +361,8 @@ async function validatePreviewReceipt(filePath: string, token: string) {
   if (
     JSON.stringify(receipt.workspaceBinding) !== JSON.stringify(currentBinding)
   )
-    throw new Error(
+    throw receiptError(
+      "preview_receipt_workspace_changed",
       "Preview receipt belongs to a different workspace or revision",
     );
   const config = await currentConfig();
@@ -331,16 +370,19 @@ async function validatePreviewReceipt(filePath: string, token: string) {
     receipt.generation !== config.generation ||
     receipt.configurationIdentity !== previewConfigurationIdentity(config)
   )
-    throw new Error("Preview receipt is stale because configuration changed");
+    throw receiptError(
+      "preview_receipt_configuration_changed",
+      "Preview receipt is stale because configuration changed",
+    );
   await resolveWritablePath(filePath);
   const source = await readText(filePath);
   const actual = sha256(source);
-  if (actual !== receipt.sourceSha256)
-    throw new Error(
-      `Stale file context: expected ${receipt.sourceSha256}, found ${actual}`,
-    );
+  verifyExpectedHash(receipt.sourceSha256, actual);
   if (sha256(receipt.candidate) !== receipt.candidateSha256)
-    throw new Error("Preview receipt candidate integrity check failed");
+    throw receiptError(
+      "preview_receipt_integrity",
+      "Preview receipt candidate integrity check failed",
+    );
   return receipt;
 }
 
@@ -387,7 +429,7 @@ async function patchPreview(
     normalizedOperations,
   );
   const expiryTimer = setTimeout(
-    previewReceipts.delete.bind(previewReceipts, receipt),
+    expirePreviewReceipt.bind(undefined, receipt),
     PREVIEW_RECEIPT_TTL_MS,
   );
   expiryTimer.unref?.();
@@ -619,7 +661,7 @@ async function preflightFileWrite(
   request: FileWriteRequest,
 ): Promise<PreparedWrite> {
   validateFileChattr(request.chattr);
-  const existing = await readText(filePath).catch(() => undefined);
+  const existing = await optionalContent(filePath);
   let actual: string | undefined;
   let mode: number | undefined;
   if (existing !== undefined) {
@@ -672,8 +714,9 @@ interface CommittedBatchEntry {
 async function optionalContent(filePath: string): Promise<string | undefined> {
   try {
     return await readText(filePath);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
 }
 

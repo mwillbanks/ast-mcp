@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
@@ -15,6 +17,7 @@ import {
 } from "../intelligence/workspace/index.ts";
 import { withApprovalContext } from "../runtime/approval";
 import { assertReadableTree } from "../runtime/path-policy";
+import { canonicalPathWithin } from "../runtime/path-utils";
 
 export interface OpenConfiguredWorkspace {
   directory: string;
@@ -62,6 +65,7 @@ async function configuredWorkspace(
     server: McpServer;
     tool: string;
   },
+  fileOperation = false,
 ): Promise<{
   config: Awaited<ReturnType<typeof configRegistry.get>>;
   workspace: WorkspaceHandle;
@@ -72,11 +76,12 @@ async function configuredWorkspace(
     clientRoots,
     requestPaths: [input.directory],
   });
-  await withResolvedConfig(config, () =>
-    withApprovalContext(approval, async () => {
-      assertReadableTree(config, input.directory);
-    }),
-  );
+  if (!fileOperation)
+    await withResolvedConfig(config, () =>
+      withApprovalContext(approval, async () => {
+        assertReadableTree(config, input.directory);
+      }),
+    );
   let workspace = await registry.open({
     configurationGeneration: config.generation,
     directory: input.directory,
@@ -104,6 +109,25 @@ async function configuredWorkspace(
     storageDomainId: workspace.storageDomain.domainId,
   });
   return { config, workspace };
+}
+
+function fileSelectionPaths(roots: string[], requestPaths: string[]): string[] {
+  const directories = roots.map((root) =>
+    root.startsWith("file:") ? Bun.fileURLToPath(new URL(root)) : root,
+  );
+  return requestPaths.filter(
+    (request) =>
+      !path.isAbsolute(request) ||
+      directories.some((root) => canonicalPathWithin(root, request)),
+  );
+}
+
+function isFileOperation(tool: string): boolean {
+  return (
+    tool.startsWith("file_") ||
+    tool === "document_query" ||
+    tool === "policy_check"
+  );
 }
 
 export function configuredExecution(server: McpServer): ConfiguredExecution {
@@ -134,7 +158,8 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
         ? undefined
         : await registry.get(request.workspaceId);
     if (workspace) {
-      registry.validateRequestPaths(workspace, requestPaths);
+      if (!isFileOperation(tool))
+        registry.validateRequestPaths(workspace, requestPaths);
       const current = await configRegistry.get({
         clientRoots: roots,
         cwd: workspace.checkoutRoot,
@@ -151,8 +176,22 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
     }
     const directory =
       workspace?.checkoutRoot ??
-      (await registry.selectDirectory(roots, requestPaths));
+      (await registry.selectDirectory(
+        roots,
+        isFileOperation(tool)
+          ? fileSelectionPaths(roots, requestPaths)
+          : requestPaths,
+      ));
     if (!directory) {
+      if (request.revision !== undefined)
+        throw Object.assign(
+          new Error("Explicit revisions require a selected workspace"),
+          {
+            code: "workspace_required",
+            retryable: true,
+            suggestedNextCall: "workspace_open",
+          },
+        );
       const config = await configRegistry.get({ requestPaths });
       return withResolvedConfig(config, () =>
         withApprovalContext({ context, server, tool }, () =>
@@ -170,9 +209,11 @@ export function configuredExecution(server: McpServer): ConfiguredExecution {
       },
       roots,
       { context, server, tool },
+      isFileOperation(tool),
     );
     workspace = opened.workspace;
-    registry.validateRequestPaths(workspace, requestPaths);
+    if (!isFileOperation(tool))
+      registry.validateRequestPaths(workspace, requestPaths);
     return withResolvedConfig(opened.config, () =>
       withWorkspaceContext(workspace, () =>
         withApprovalContext({ context, server, tool }, () =>

@@ -1,0 +1,50 @@
+---
+title: Filesystem access modes
+description: Select restricted access or approve unrestricted file operations.
+icon: Shield
+---
+
+File operations default to restricted access. Configure the mode globally or in a project's `ast-mcp.toml`:
+
+```toml
+version = 2
+
+[safety]
+filesystem = "restricted"
+```
+
+Restricted mode enforces configured path policies, file-operation boundaries, and symlink restrictions. Explicit approved external path rules remain usable when a workspace is selected.
+
+## Enable unrestricted access
+
+Set `filesystem = "unrestricted"` to bypass file path policies, boundaries, and symlink restrictions:
+
+```toml
+[safety]
+filesystem = "unrestricted"
+```
+
+Unrestricted file access preserves OS permissions, SHA-256 guards, atomic operations, and immutable revision protection. It does not change workspace selection, intelligence roots, indexing, or storage. Intelligence calls still require paths inside their selected workspace.
+
+A global unrestricted setting applies as the host's configuration. A project unrestricted setting requires host approval for the current session. Approve the session request presented by the MCP client. Clients that cannot obtain approval receive `approval_required`; changing the configuration approval setting does not bypass this activation requirement.
+
+Approval binds to the server session, project, and effective safety and path configuration. Changing those settings requires fresh approval. Restarting the server also requires fresh project approval. Formatter or telemetry changes do not invalidate an otherwise unchanged filesystem approval.
+
+Use `config_status` to inspect the effective configuration and its provenance. Use `policy_check` to inspect path decisions. Apply configuration changes through `config_core` and `config_paths` when using the configuration tools.
+
+## Diagnose denied changes
+
+A policy denial differs from an operating-system permission error. Unrestricted mode permits paths through ast-mcp's file policy; it cannot grant OS access.
+
+Missing files, stale hashes, and stale preview receipts require different recovery:
+
+1. Read the typed error and inspect its suggested next call.
+2. Re-read changed content when necessary.
+3. Obtain a fresh whole-file hash with `file_hash`.
+4. Preview and retry the guarded patch.
+
+A stale receipt can indicate changed content, configuration, or workspace binding. Rebuild its preview instead of reusing it.
+
+Explicit revision selectors require a selected workspace. If the host advertises no roots, open the repository with `workspace_open` and pass its `workspaceId`. Otherwise, the server returns `workspace_required` before reading, hashing, or modifying files.
+
+Ambiguous Aider matches remain rejected. Diagnostics contain bounded candidates and recovery guidance. Narrow the search block with unique surrounding content, then retry with a fresh hash. Cleanup preserves the original failure when secondary cleanup also fails.

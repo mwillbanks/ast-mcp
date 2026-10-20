@@ -1151,19 +1151,34 @@ describe("mutation recovery edges", () => {
   test("renews active leases and fences expired renewal", async () => {
     const root = await temporary();
     const file = path.join(root, "value.ts");
-    await withFencedFileLock(
-      file,
-      async (lease) => {
-        const initialExpiry = lease.expiresAt;
-        while (lease.expiresAt === initialExpiry && Date.now() < initialExpiry)
-          await Bun.sleep(25);
-        expect(lease.expiresAt).toBeGreaterThan(initialExpiry);
-        await lease.fence();
-      },
-      { leaseMs: 1_500 },
-    );
-
     let clock = 1_000;
+    let heartbeat: (() => void) | undefined;
+    const actualSetInterval = globalThis.setInterval;
+    const intervals = spyOn(globalThis, "setInterval").mockImplementation(((
+      callback: () => void,
+      interval?: number,
+    ) => {
+      heartbeat = callback;
+      return actualSetInterval(callback, interval);
+    }) as typeof setInterval);
+    try {
+      await withFencedFileLock(
+        file,
+        async (lease) => {
+          const initialExpiry = lease.expiresAt;
+          clock += 500;
+          expect(heartbeat).toBeFunction();
+          heartbeat?.();
+          await lease.fence();
+          expect(lease.expiresAt).toBe(initialExpiry + 500);
+        },
+        { leaseMs: 1_500, now: () => clock },
+      );
+    } finally {
+      intervals.mockRestore();
+    }
+
+    clock = 1_000;
     const expired = await acquireFileLock(file, {
       leaseMs: 100,
       now: () => clock,

@@ -2,7 +2,7 @@ import { lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { currentConfig } from "../config";
+import { currentConfig, withResolvedConfig } from "../config";
 import {
   assertWorkspaceWritable,
   currentWorkspace,
@@ -64,13 +64,11 @@ async function workspaceRoots(): Promise<string[]> {
 }
 
 async function fileOperationRoots(): Promise<string[]> {
-  const selected = currentWorkspace();
-  if (selected) return [selected.checkoutRoot];
   const config = await currentConfig();
   const roots = await workspaceRoots();
   const policyRoots = (config.paths ?? []).map((rule) => rule.path);
   const combined = [...new Set([...roots, ...policyRoots])];
-  if (!config.safety.allowTempDirectory) return combined;
+  if (currentWorkspace() || !config.safety.allowTempDirectory) return combined;
   const temporaryRoot = await realpathOrSelf(os.tmpdir());
   return combined.includes(temporaryRoot)
     ? combined
@@ -153,8 +151,23 @@ export async function referenceRootForPath(
 }
 
 export async function rootForPath(filePath: string): Promise<string> {
+  const selected = currentWorkspace();
+  if (!selected) return fileOperationRootForPath(filePath);
+  if (within(selected.checkoutRoot, filePath)) return selected.checkoutRoot;
+  throw Object.assign(
+    new Error(`Path is outside the selected workspace: ${filePath}`),
+    { code: "workspace_mismatch", retryable: false },
+  );
+}
+
+export async function fileOperationRootForPath(
+  filePath: string,
+): Promise<string> {
   const root = await configuredRootForPath(filePath);
   if (root) return root;
+  const config = await currentConfig();
+  if (config.safety.filesystem === "unrestricted")
+    return path.dirname(filePath);
   if (currentWorkspace())
     throw Object.assign(
       new Error(`Path is outside the selected workspace: ${filePath}`),
@@ -195,8 +208,16 @@ export async function pathsShareRoot(
   second: string,
 ): Promise<boolean> {
   const config = await currentConfig();
-  if (config.version === 2 || config.safety.allowAnyPath) return true;
-  return (await rootForPath(first)) === (await rootForPath(second));
+  if (
+    config.version === 2 ||
+    config.safety.allowAnyPath ||
+    config.safety.filesystem === "unrestricted"
+  )
+    return true;
+  return (
+    (await fileOperationRootForPath(first)) ===
+    (await fileOperationRootForPath(second))
+  );
 }
 async function canonicalCandidate(filePath: string, root: string) {
   const absolute = path.isAbsolute(filePath)
@@ -215,7 +236,10 @@ function assertWithinBoundary(
   message: string,
 ) {
   if (!allowAnyPath && !roots.some((root) => within(root, target)))
-    throw new Error(message);
+    throw Object.assign(new Error(message), {
+      code: "path_denied",
+      retryable: false,
+    });
 }
 
 function enforcePolicy(
@@ -265,6 +289,7 @@ async function resolvePath(
 ): Promise<string> {
   const config = await currentConfig();
   const selected = currentWorkspace();
+  allowAnyPath ||= config.safety.filesystem === "unrestricted";
   if (!selected && !path.isAbsolute(filePath) && roots.length > 1)
     throw Object.assign(
       new Error(
@@ -323,6 +348,27 @@ export async function resolveWritablePath(
     config.safety.allowAnyPath && !currentWorkspace(),
     "configured file-operation roots and paths rules",
     operation,
+  );
+}
+
+export async function resolveIntelligencePath(
+  filePath: string,
+): Promise<string> {
+  const config = await currentConfig();
+  const workspace = currentWorkspace();
+  return withResolvedConfig(
+    {
+      ...config,
+      safety: { ...config.safety, filesystem: "restricted" },
+    },
+    async () =>
+      resolvePath(
+        filePath,
+        workspace ? [workspace.checkoutRoot] : await fileOperationRoots(),
+        false,
+        "configured intelligence workspace and paths roots",
+        "read",
+      ),
   );
 }
 

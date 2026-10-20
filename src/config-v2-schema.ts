@@ -88,7 +88,7 @@ const intelligenceSchema = z
   })
   .strict();
 
-const formatterV2Schema = createFormatterSchema({
+export const formatterV2Schema = createFormatterSchema({
   enabled: z.boolean().optional(),
   id: z.string().min(1).max(128),
   mode: z.enum(["stdout", "in_place"]).default("stdout"),
@@ -174,6 +174,7 @@ export const fileV2Schema = z
     paths: z.array(pathRuleV2Schema).max(256).optional(),
     safety: z
       .object({
+        filesystem: z.enum(["restricted", "unrestricted"]).optional(),
         hook: createHookSchema(128).optional(),
         require_hash: z.boolean().optional(),
       })

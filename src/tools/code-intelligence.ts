@@ -26,7 +26,7 @@ import {
 } from "../intelligence/workspace/index.ts";
 import { detectAstLanguage } from "../patch/languages";
 import { assertReadableTree } from "../runtime/path-policy";
-import { resolveWorkspacePath } from "../runtime/paths";
+import { resolveIntelligencePath } from "../runtime/paths";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
 const TOOL_NAMES = [
@@ -124,7 +124,7 @@ async function requestRoot(input: ToolInput): Promise<string> {
   const workspace = currentWorkspace();
   const projectRoot = workspace?.checkoutRoot ?? config.projectRoot;
   const requested = input.root ?? projectRoot;
-  const resolved = await resolveWorkspacePath(
+  const resolved = await resolveIntelligencePath(
     path.resolve(projectRoot, requested),
   );
   const metadata = await Bun.file(resolved)
@@ -245,7 +245,7 @@ async function requestedFiles(
     const files: string[] = [];
     for (const value of explicit) {
       throwIfAborted(signal);
-      const resolved = await resolveWorkspacePath(path.resolve(root, value));
+      const resolved = await resolveIntelligencePath(path.resolve(root, value));
       const metadata = await Bun.file(resolved)
         .stat()
         .catch(() => undefined);

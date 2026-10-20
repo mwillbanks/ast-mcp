@@ -50,6 +50,7 @@ const fileV1Schema = z
     http: httpSchema.optional(),
     safety: z
       .object({
+        filesystem: z.enum(["restricted", "unrestricted"]).optional(),
         allow_any_path: z.boolean().optional(),
         allow_external_roots: z.boolean().optional(),
         allow_temp_directory: z.boolean().optional(),
@@ -149,6 +150,7 @@ export interface ResolvedConfig {
   projectRoot: string;
   provenance: Record<string, "default" | "global" | "project" | "environment">;
   safety: {
+    filesystem: "restricted" | "unrestricted";
     allowAnyPath: boolean;
     allowExternalRoots: boolean;
     allowTempDirectory: boolean;
@@ -265,6 +267,7 @@ interface InternalConfig {
     policies: { delete?: PathPolicy; read: PathPolicy; write: PathPolicy };
   }>;
   safety?: {
+    filesystem?: "restricted" | "unrestricted";
     allow_any_path?: boolean;
     allow_external_roots?: boolean;
     allow_temp_directory?: boolean;
@@ -645,6 +648,7 @@ const leaves = [
   "mcp.configuration.enabled",
   "mcp.configuration.require_approval",
   "paths",
+  "safety.filesystem",
   "safety.allow_any_path",
   "safety.allow_external_roots",
   "safety.allow_temp_directory",
@@ -907,6 +911,7 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       configuration: { enabled: true, require_approval: true },
     },
     safety: {
+      filesystem: "restricted",
       hook: { allow_tools: [], block_tools: [], enabled: true },
       require_hash: true,
     },
@@ -1057,6 +1062,7 @@ type ConfiguredPathRule = PathRuleV2;
 function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
   const version = value.version ?? 1;
   return {
+    filesystem: value.safety?.filesystem ?? "restricted",
     allowAnyPath: withDefault(value.safety?.allow_any_path, false),
     allowExternalRoots: withDefault(value.safety?.allow_external_roots, false),
     allowTempDirectory: withDefault(

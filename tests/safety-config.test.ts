@@ -44,6 +44,7 @@ test("file access defaults allow temp paths while preserving workspace protectio
   const root = await project("ast-mcp-safety-defaults-");
   const config = await resolveConfig({ cwd: root, env: {} });
   expect(config.safety).toEqual({
+    filesystem: "restricted",
     allowAnyPath: false,
     allowExternalRoots: false,
     allowTempDirectory: true,

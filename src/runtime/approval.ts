@@ -19,8 +19,9 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
-import { globalConfigPath } from "../config";
+import { globalConfigPath, type ResolvedConfig } from "../config";
 import type { PolicyDecision } from "./path-policy";
+import { canonicalizePathSync } from "./path-utils";
 
 interface ApprovalScope {
   context?: ServerContext;
@@ -31,6 +32,7 @@ interface ApprovalScope {
 
 const activeApproval = new AsyncLocalStorage<ApprovalScope>();
 const sessionGrants = new Set<string>();
+const serverIdentities = new WeakMap<McpServer, string>();
 interface ApprovalChallenge {
   expiresAt: number;
   responseKey: string;
@@ -225,10 +227,17 @@ function key(
   scope: ApprovalScope,
   generation: number,
 ): string {
+  let serverIdentity = scope.server && serverIdentities.get(scope.server);
+  if (scope.server && !serverIdentity) {
+    serverIdentity = randomUUID();
+    serverIdentities.set(scope.server, serverIdentity);
+  }
+  const filesystem = decision.ruleId?.startsWith("filesystem:");
   return [
     scope.context?.sessionId ?? "connection",
-    generation,
-    scope.tool,
+    filesystem ? (serverIdentity ?? "local") : "session",
+    filesystem ? 0 : generation,
+    filesystem ? "filesystem" : scope.tool,
     decision.ruleId ?? decision.source,
     decision.operation,
     decision.canonicalPath,
@@ -271,6 +280,11 @@ function acceptResponse(
   invocationGrants: Set<string>,
 ): boolean | undefined {
   if (response?.action !== "accept") return undefined;
+  if (decision.ruleId?.startsWith("filesystem:")) {
+    if (response.content?.decision !== "allow_session") return undefined;
+    sessionGrants.add(grantKey);
+    return true;
+  }
   switch (response.content?.decision) {
     case "allow_once":
       invocationGrants.add(grantKey);
@@ -329,7 +343,9 @@ function requestApproval(
         [responseKey]: inputRequired.elicit({
           _meta: {
             codex_approval_kind: "mcp_tool_call",
-            persist: ["session", "always"],
+            persist: decision.ruleId?.startsWith("filesystem:")
+              ? ["session"]
+              : ["session", "always"],
           },
           message: [
             `${scope.tool} requests ${decision.operation} access.`,
@@ -338,12 +354,9 @@ function requestApproval(
             "Choose the narrowest approval that is appropriate.",
           ].join("\n"),
           requestedSchema: z.object({
-            decision: z.enum([
-              "deny",
-              "allow_once",
-              "allow_session",
-              "always_allow",
-            ]),
+            decision: decision.ruleId?.startsWith("filesystem:")
+              ? z.enum(["deny", "allow_session"])
+              : z.enum(["deny", "allow_once", "allow_session", "always_allow"]),
           }),
         }),
       },
@@ -420,6 +433,61 @@ export function authorizeRequestedDecision(
   const nextResponseKey = responseKey ?? approvalResponseKey();
   if (!challenge) storeApprovalChallenge(grantKey, scope, nextResponseKey);
   throw requestApproval(scope, decision, nextResponseKey);
+}
+
+function filesystemDecision(config: ResolvedConfig): PolicyDecision {
+  const fingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        project: canonicalizePathSync(config.projectRoot),
+        safety: config.safety,
+        paths: config.paths,
+        provenance: config.provenance["safety.filesystem"],
+      }),
+    )
+    .digest("hex");
+  return {
+    canonicalPath: canonicalizePathSync(config.projectRoot),
+    operation: "read",
+    policy: "request",
+    reason:
+      "Project configuration requests unrestricted access to the entire filesystem for this session",
+    ruleId: `filesystem:${fingerprint}`,
+    source: "project",
+    specificity: Number.MAX_SAFE_INTEGER,
+    symlinks: true,
+  };
+}
+
+export function grantUnrestrictedFilesystem(config: ResolvedConfig): void {
+  if (config.safety.filesystem !== "unrestricted") return;
+  const scope = activeApproval.getStore();
+  if (!scope?.context || !scope.server) return;
+  sessionGrants.add(key(filesystemDecision(config), scope, 0));
+}
+
+export function unrestrictedFilesystemAuthorized(
+  config: ResolvedConfig,
+): boolean {
+  if (config.safety.filesystem !== "unrestricted") return false;
+  if (config.provenance["safety.filesystem"] !== "project") return true;
+  const scope = activeApproval.getStore();
+  return Boolean(
+    scope?.context &&
+    scope.server &&
+    sessionGrants.has(key(filesystemDecision(config), scope, 0)),
+  );
+}
+
+export function assertUnrestrictedFilesystem(config: ResolvedConfig): void {
+  if (
+    config.safety.filesystem !== "unrestricted" ||
+    config.provenance["safety.filesystem"] !== "project"
+  )
+    return;
+  const decision = filesystemDecision(config);
+  if (!authorizeRequestedDecision(decision, 0))
+    throw approvalRequired(decision);
 }
 
 export function approvalSessionId(): string {
