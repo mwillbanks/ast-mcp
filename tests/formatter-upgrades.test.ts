@@ -38,7 +38,7 @@ const samples = [
 ] as const;
 
 test.each(samples)(
-  "upgraded formatter preserves %s and produces stable output",
+  "disabled formatting preserves %s byte-for-byte",
   async (name, source, marker) => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "ast-mcp-formatter-upgrades-"),
@@ -48,8 +48,7 @@ test.each(samples)(
         const target = path.join(root, name);
         const formatted = await formatContent(target, source);
         expect(formatted, name).toContain(marker);
-        if (!["Dockerfile", "example.html"].includes(name))
-          expect(formatted, name).not.toBe(source);
+        expect(formatted, name).toBe(source);
         expect(await formatContent(target, formatted), name).toBe(formatted);
       });
     } finally {

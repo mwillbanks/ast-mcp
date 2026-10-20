@@ -33,7 +33,6 @@
     "@modelcontextprotocol/server": "2.3.1",
     "apache-arrow": "21.2.0",
     "diff-match-patch-ts": "^2.0.0",
-    "dprint": "0.63.0",
     "onnxruntime-common": "1.30.0",
     "parse5": "8.0.1",
     "tree-sitter-systemverilog": "0.4.1",
@@ -135,8 +134,5 @@
   },
   "sideEffects": false,
   "type": "module",
-  "version": "0.5.0",
-  "trustedDependencies": [
-    "dprint"
-  ]
+  "version": "0.5.0"
 }

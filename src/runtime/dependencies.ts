@@ -96,11 +96,11 @@ export function resolveDependencyBinary(
   );
 }
 
-export const DPRINT_BINARY =
-  process.env.DPRINT_BINARY ??
-  resolveDependencyBinary("dprint", "dprint") ??
-  "dprint";
-
 export async function configuredDprintBinary(): Promise<string> {
-  return (await currentConfig()).dependencies.dprintBinary ?? DPRINT_BINARY;
+  return (
+    (await currentConfig()).dependencies.dprintBinary ??
+    process.env.DPRINT_BINARY ??
+    resolveDependencyBinary("dprint", "dprint") ??
+    "dprint"
+  );
 }

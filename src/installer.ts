@@ -740,7 +740,7 @@ function installerConfigSeed(local: boolean) {
     'aider_matchers = ["exact", "whitespace", "relative-indentation", "diff-match-patch"]',
     "",
     "[formatting]",
-    "enabled = true",
+    "enabled = false",
     'fallback = "preserve"',
     "",
     "[safety]",

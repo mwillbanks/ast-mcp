@@ -17,6 +17,7 @@ export async function readSubprocessOutput(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   onOverflow: () => Promise<void>,
+  fatalUtf8 = false,
 ) {
   const reader = stream.getReader();
   const cancel = () => {
@@ -46,7 +47,10 @@ export async function readSubprocessOutput(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
+  return new TextDecoder("utf-8", {
+    fatal: fatalUtf8,
+    ignoreBOM: fatalUtf8,
+  }).decode(bytes);
 }
 
 function batchArgument(value: string) {

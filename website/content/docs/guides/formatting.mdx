@@ -1,0 +1,100 @@
+---
+title: Optional formatting
+description: Configure an installed formatter for guarded file changes.
+icon: Settings2
+---
+
+Formatting defaults to disabled. File writes and patches preserve their candidate content unless you explicitly enable formatting.
+
+```toml
+version = 2
+
+[formatting]
+enabled = false
+fallback = "preserve"
+```
+
+The master switch overrides individual formatter settings. Disabled formatting does not check formatter executables or dprint configuration.
+
+## Configure an installed formatter
+
+Install your formatter separately. ast-mcp does not install formatter binaries during file operations. Use an executable available on the server's PATH or its absolute path.
+
+This example runs Prettier with the candidate content on stdin. The formatter must emit only formatted content on stdout.
+
+```toml
+[formatting]
+enabled = true
+fallback = "preserve"
+
+[[formatting.formatters]]
+enabled = true
+command = "prettier"
+args = ["--stdin-filepath", "{source_file}"]
+extensions = [".js", ".jsx", ".ts", ".tsx", ".json", ".css", ".md"]
+mode = "stdout"
+timeout_ms = 30000
+```
+
+Choose extensions that your installed formatter supports. Alternatively, use `globs = ["src/**/*.ts"]`. Either a matching extension or glob selects an entry. Entries are evaluated in order; the first enabled match runs.
+
+Commands receive argument arrays without a shell. Do not include shell pipes, redirection, or compound commands. Avoid package launchers that download missing executables.
+
+| Formatter                                                   | Command    | Arguments for stdout mode                                                       |
+| ----------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------- |
+| [Prettier](https://prettier.io/docs/cli)                    | `prettier` | `["--stdin-filepath", "{source_file}"]`                                         |
+| [oxfmt](https://oxc.rs/docs/guide/usage/formatter/cli.html) | `oxfmt`    | `["--stdin-filepath", "{source_file}"]`                                         |
+| [Biome](https://biomejs.dev/reference/cli/)                 | `biome`    | `["format", "--stdin-file-path", "{source_file}"]`                              |
+| [dprint](https://dprint.dev/cli/)                           | `dprint`   | `["fmt", "--config", "{project_root}/dprint.json", "--stdin", "{source_file}"]` |
+
+Other formatters work with the same command contract. Configure each formatter's plugins and supported languages separately.
+
+## Paths and configuration discovery
+
+The working directory is the selected project root, or the containing configured root for an external file. Relative command arguments resolve from that directory. Use explicit configuration arguments when your formatter requires them.
+
+Arguments support these substitutions:
+
+| Placeholder      | Value                                                                 |
+| ---------------- | --------------------------------------------------------------------- |
+| `{source_file}`  | Original destination path                                             |
+| `{project_root}` | Formatter working directory                                           |
+| `{file}`         | Original path in stdout mode; private candidate path in in-place mode |
+
+In stdout mode, the formatter receives candidate bytes on stdin. Use the source path for parser selection and configuration discovery. Do not configure commands that modify the live destination.
+
+For a formatter that requires a file, select `mode = "in_place"`. For example:
+
+```toml
+[[formatting.formatters]]
+command = "oxfmt"
+args = ["--write", "{file}"]
+extensions = [".ts", ".tsx", ".json"]
+mode = "in_place"
+timeout_ms = 30000
+```
+
+ast-mcp stages the candidate in a private sibling directory and retains its basename. Parent configuration discovery can reach the original directory. Relative-path overrides see an additional staging directory; use stdout mode when those overrides require the exact original path.
+
+## Failures and guarded writes
+
+Missing executables return `formatter_unavailable`. Timeouts return `formatter_timeout`. Invalid UTF-8, oversized output, removed output, and nonregular output return `formatter_invalid_output`. Formatter rejections return `formatter_rejected`.
+
+Output is limited to 16 MiB. A failed formatter prevents the guarded batch from committing. Hash guards, atomic writes, and OS permissions still apply. Inspect `config_status`, correct the installed command or configuration, and retry with fresh hashes.
+
+## Migrate from implicit dprint
+
+dprint is no longer a runtime dependency. Remove obsolete dprint trust commands from installation instructions. Install dprint yourself if you want to retain it.
+
+Explicit compatibility remains available:
+
+```toml
+[formatting]
+enabled = true
+fallback = "dprint"
+dprint_config = "./dprint.json"
+```
+
+Prepare the configured plugins separately. For mixed formatters, prefer explicit formatter entries and `fallback = "preserve"`. Use `fallback = "reject"` to reject unmatched files when formatting is enabled.
+
+Migration disables formatting when the previous configuration omitted its activation setting. Explicit activation remains explicit. Review the migrated settings before applying changes.

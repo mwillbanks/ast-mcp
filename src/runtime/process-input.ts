@@ -32,11 +32,13 @@ export function runCommandInput(
       child.stdout,
       controller.signal,
       stop,
+      true,
     );
     const stderrPromise = readSubprocessOutput(
       child.stderr,
       controller.signal,
       stop,
+      true,
     );
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -54,17 +56,35 @@ export function runCommandInput(
       if (!completed) {
         await terminateProcessTree(child, { force: true });
         controller.abort();
-        throw new Error(`${command} timed out after ${timeoutMs}ms`);
+        throw Object.assign(
+          new Error(`${command} timed out after ${timeoutMs}ms`),
+          { code: "command_timeout" },
+        );
       }
       const [exitCode, stdout, stderr] = completed;
       if (exitCode !== 0) {
-        const detail = (stderr || stdout || `exit code ${exitCode}`).trim();
+        const detail = (stderr || stdout || `exit code ${exitCode}`)
+          .trim()
+          .slice(0, 4096);
         throw new Error(`${command} failed: ${detail}`);
       }
       return { stderr, stdout };
     } catch (error) {
-      await terminateProcessTree(child, { force: true });
+      await terminateProcessTree(child, { force: true }).catch(() => undefined);
       controller.abort();
+      if (
+        (error instanceof TypeError &&
+          /encoded|encoding/i.test(error.message)) ||
+        (error instanceof Error &&
+          /command output exceeded/i.test(error.message))
+      )
+        throw Object.assign(
+          new Error(
+            "Command output must be valid UTF-8 within the 16777216-byte limit",
+            { cause: error },
+          ),
+          { code: "command_invalid_output" },
+        );
       throw error;
     } finally {
       clearTimeout(deadline);

@@ -8,12 +8,12 @@ function run(command: string[]): string {
   return result.stdout.toString().trim();
 }
 
-const { DPRINT_BINARY: dprintBinary } =
-  await import("../src/runtime/dependencies");
-const dprintVersion = run([dprintBinary, "--version"]);
-if (dprintVersion !== "dprint 0.63.0")
-  throw new Error(`Unexpected dprint version: ${dprintVersion || "no output"}`);
-// Prepare every configured plugin before bounded mutation and regression checks.
-run([dprintBinary, "install", "--config", "dprint.json"]);
-run([dprintBinary, "check", "README.md"]);
-console.log(dprintVersion);
+// Repository quality gates use installed development tools; runtime formatters are optional.
+for (const tool of ["oxfmt", "oxlint"]) {
+  const executable = Bun.which(tool, {
+    PATH: `${import.meta.dir}/../node_modules/.bin${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+  });
+  if (!executable)
+    throw new Error(`Missing repository tool: ${tool}; run bun install`);
+  console.log(run([executable, "--version"]));
+}

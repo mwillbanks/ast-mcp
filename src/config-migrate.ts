@@ -154,8 +154,18 @@ function migrateLegacyText(
       )
     : `version = 2\n\n${migrated}`;
   const formatting = (parsed.formatting ?? {}) as Record<string, unknown>;
+  if (formatting.enabled === undefined) {
+    migrated = insertIntoSection(migrated, "formatting", "enabled = false");
+    warnings.push(
+      "Formatting now defaults to disabled; set formatting.enabled=true to enable configured formatters.",
+    );
+  }
   if (formatting.fallback === undefined)
-    migrated = insertIntoSection(migrated, "formatting", 'fallback = "dprint"');
+    migrated = insertIntoSection(
+      migrated,
+      "formatting",
+      'fallback = "preserve"',
+    );
   migrated = formatterDefaults(migrated);
   migrated = insertIntoSection(
     migrated,

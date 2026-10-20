@@ -878,7 +878,8 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
     dependencies: {},
     formatting: {
       dprint_config: packageDprintConfig(),
-      enabled: true,
+      enabled: false,
+      fallback: "preserve",
       formatters: [],
     },
     intelligence: {
@@ -938,12 +939,10 @@ function resolvedFormatting(
   value: InternalConfig,
   dprintConfig: string,
 ): ResolvedConfig["formatting"] {
-  const version = value.version ?? 1;
   return {
     dprintConfig,
-    enabled: value.formatting?.enabled ?? true,
-    fallback:
-      value.formatting?.fallback ?? (version === 2 ? "preserve" : "dprint"),
+    enabled: value.formatting?.enabled ?? false,
+    fallback: value.formatting?.fallback ?? "preserve",
     formatters: (value.formatting?.formatters ?? []).map(
       (formatter, index) => ({
         args: formatter.args ?? [],
@@ -1208,7 +1207,9 @@ async function loadResolutionLayers(
 }
 
 async function resolvedDprint(value: InternalConfig) {
-  const enabled = value.formatting?.enabled ?? true;
+  const enabled =
+    value.formatting?.enabled === true &&
+    value.formatting.fallback === "dprint";
   const config = value.formatting?.dprint_config ?? packageDprintConfig();
   const fingerprint = enabled ? await validateDprintConfig(config) : "disabled";
   return { config, fingerprint };

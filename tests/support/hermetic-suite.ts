@@ -2,10 +2,6 @@ import { mkdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { dprintCacheDirectory } from "../../src/runtime/format";
-
-// Reuse compiled plugin artifacts warmed by tools:check. Configuration stays isolated.
-process.env.DPRINT_CACHE_DIR = dprintCacheDirectory();
 const isolatedHome = path.join(os.tmpdir(), `ast-mcp-test-home-${process.pid}`);
 
 mkdirSync(path.join(isolatedHome, "bin"), { recursive: true });

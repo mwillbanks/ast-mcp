@@ -94,7 +94,7 @@ test("file_patch preview skips formatters until commit", async () => {
     [
       "version = 2",
       "[formatting]",
-      "enabled = false",
+      "enabled = true",
       'fallback = "preserve"',
       "[[formatting.formatters]]",
       'id = "upper"',
