@@ -1,12 +1,12 @@
 # Contributing to ast-mcp
 
-Thanks for helping improve ast-mcp. Changes should preserve its core promise: repository access stays bounded, source inspection stays structural, and every write is deterministic, guarded, formatted, and reviewable.
+Thanks for helping improve ast-mcp. Changes should preserve its core promise: repository access stays bounded, source inspection stays structural, and every write is deterministic, guarded, and reviewable. Formatting is optional at runtime.
 
 ## Prerequisites
 
 - Bun 1.4.3 or newer
 - Node.js 22.19 or newer when running MCP Inspector commands
-- the pinned `dprint` binary and native intelligence dependencies installed by `bun install`
+- native intelligence dependencies installed by `bun install`
 - a checkout with no unrelated changes in files you plan to edit
 
 Install dependencies:
@@ -48,7 +48,7 @@ bun run --cwd website test:browser
 bun pm pack --dry-run
 ```
 
-The formatter command applies Oxfmt deterministically. Oxlint treats every warning as a failure. Bun 1.4.3 does not provide fmt or lint, so these tools remain installed. Typechecking uses Bun's native check command. The root check script uses the --check spelling to avoid its package-script name collision.
+The repository's `bun run format` command applies Oxfmt to project files; this development formatter is separate from ast-mcp's optional runtime formatting. Runtime formatting defaults to disabled and never downloads formatter binaries. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for external formatter configuration. Oxlint treats every warning as a failure. Typechecking uses Bun's native check command. The root check script uses the --check spelling to avoid its package-script name collision.
 
 ### Optional live host smoke checks
 
@@ -89,7 +89,7 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 
 - Keep changes focused and explain the user-visible or boundary-level behavior.
 - Add regression coverage for changed security, path, transport, patch, installer, or lifecycle behavior.
-- Update the skill templates and documentation when a public contract changes.
+- Update canonical MCP skill resources, evaluation fixtures, and documentation when a public contract changes.
 - Use Conventional Commits so release-please can determine the next version and changelog.
 - Do not commit generated `dist/`, `website/.output/`, or dependency directories.
 

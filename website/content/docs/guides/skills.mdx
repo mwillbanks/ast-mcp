@@ -1,0 +1,29 @@
+---
+title: Skills over MCP
+description: Discover ast-mcp's canonical agent skill or export it for a host without MCP Skills support.
+icon: BookOpen
+---
+
+ast-mcp serves its canonical `ast-mcp` agent skill over MCP to clients that support the [MCP Skills extension](https://modelcontextprotocol.io/extensions/skills/overview). This keeps workflow instructions and supporting references with the server that provides the tools.
+
+## Discover and load the skill
+
+After connecting to ast-mcp, a compatible host discovers the server's Skills capability and can request the available skill metadata. It retrieves the skill entry through `skills/list` or `skills/get`, then reads `SKILL.md` and supporting files through `resources/read`.
+
+The manifest identifies each resource with its URI, SHA-256 digest, and byte size. The host can verify the exact bytes it receives and use the manifest's cache metadata. Each skill remains bound to its originating MCP server.
+
+Hosts control how skills are selected, approved, and loaded into the agent context. Reading a `SKILL.md` resource does not activate the skill by itself. Support and user experience vary by host; see the [MCP client support information](https://modelcontextprotocol.io/extensions/skills/overview#client-support).
+
+## Export for unsupported clients
+
+A host without MCP Skills support can use a local copy:
+
+```bash
+ast-mcp skills export <destination>
+```
+
+The destination is the skill root and contains `SKILL.md`. Export preserves files already present, including customized copies. Review and reconcile customizations manually when updating; export does not overwrite them. The command rejects symlink destinations and symlinked support directories.
+
+New installations do not automatically install skill files on disk. Export only when a client needs a filesystem-based skill directory. The export does not configure the host or activate the skill; follow that host's instructions to load the directory.
+
+Legacy skill directories from previous installations remain in place during migration. Manage or remove those files using the host's normal skill-management controls after checking for local customizations.

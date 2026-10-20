@@ -22,7 +22,7 @@ MCP host
                                                │
                                   patch state machine
                                                │
-                                dprint candidate formatting
+                           optional external formatter
                                                │
                                   deterministic file locks
                                                │
@@ -31,7 +31,7 @@ MCP host
 
 ## Protocol layer
 
-The stdio transport supports JSON-RPC batches while preserving one framed response per request and no response for notifications. Streamable HTTP uses SSE by default and maintains MCP sessions with bounded idle cleanup.
+Stdio supports JSON-RPC batches while preserving one framed response per request and no response for notifications; it keeps one connection state per process. Modern Streamable HTTP is stateless, uses SSE by default, and requires neither initialize nor an MCP session header. Pass `workspaceId` to reuse application workspace handles within the running server. Legacy HTTP clients retain isolated sessions with bounded idle cleanup.
 
 ## Policy layer
 
@@ -39,7 +39,7 @@ Every path-bearing intelligence and file operation passes through the same confi
 
 ## Mutation layer
 
-Structural patches and Aider blocks converge on the same candidate pipeline: validate current state, transform, format, lock, recheck, and atomically replace. The operation never treats successful text generation as permission to overwrite stale state.
+Structural patches and Aider blocks converge on the same candidate pipeline: validate current state, transform, optionally format, lock, recheck, and atomically replace. The operation never treats successful text generation as permission to overwrite stale state.
 
 ## Helper boundaries
 
@@ -49,10 +49,11 @@ Fallow analyzes every duplicated pair (`minOccurrences = 2`) so reusable behavio
 
 ## Distribution
 
-The package publishes one Bun-bundled `ast-mcp` executable with three operational subcommands:
+The package publishes one Bun-bundled `ast-mcp` executable with MCP, installer, hook, and skill export commands:
 
 - `ast-mcp mcp` starts stdio by default; `--transport http` starts Streamable HTTP
 - `ast-mcp hook` runs blocking host hooks
-- `ast-mcp install` reconciles installation surfaces; `update` and `uninstall` manage them afterward
+- `ast-mcp install` reconciles host configuration, hooks, and managed instructions; `update` and `uninstall` manage them afterward
+- `ast-mcp skills export <destination>` exports the canonical MCP skill for clients without Skills support
 
-The installed CLI resolves native intelligence dependencies and dprint from the package's stable dependency tree. The source and templates remain in the package because the runtime, installer, and generated host surfaces reference them.
+The installed CLI resolves native intelligence dependencies from the package's stable dependency tree. Formatting uses only external commands that users install and configure. The server serves canonical skill content over MCP; export is explicit and preserves existing files.

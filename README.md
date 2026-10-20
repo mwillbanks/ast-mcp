@@ -27,7 +27,7 @@ Coding agents need more than a text editor. They need a way to understand code r
 - **Guarded file operations:** Batched hashes, bounded reads, deterministic creation, exact patches, attributes, and reference-aware deletion.
 - **Root isolation:** One path policy covers file and intelligence operations, symlink rejection, and explicit external roots.
 - **Safe commits:** Fresh hashes, deterministic locks, candidate formatting, hash rechecks, and atomic replacement.
-- **Agent routing:** Best-effort hooks, one skill, and idempotent installers for Codex, Claude, Copilot, and VS Code.
+- **Agent routing:** Best-effort hooks, MCP-delivered skill instructions, and idempotent host configuration for Codex, Claude, Copilot, and VS Code.
 
 AST-capable files stay on the intelligence path instead of being retrieved as whole-file text. Unsupported formats use bounded reads and exact Aider search/replace blocks.
 
@@ -50,13 +50,13 @@ A stale hash, ambiguous match, capped preview, unsupported route, formatter reje
 
 ## Distribution
 
-Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, and `mcp` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence and the pinned formatter remain available for the installation lifetime.
+Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, `mcp`, and `skills` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence remains available for the installation lifetime.
 
-Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Dprint formats candidate writes across supported languages. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
+Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Formatting is optional and uses explicitly configured external commands; ast-mcp does not download formatters during file operations. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
 
 ## Install
 
-Install the MCP server, best-effort routing hooks, unified skill, and managed instructions into the current repository:
+Install the MCP server, best-effort routing hooks, and managed instructions into the current repository. Hosts that support MCP Skills can load the canonical skill from the server; other clients can use an explicit local export with `ast-mcp skills export <destination>`. See the [MCP Skills guide](https://mwillbanks.github.io/ast-mcp/docs/guides/skills/) for details.
 
 The hooks nudge common direct editor and manual mutation attempts toward ast-mcp. They are not a security boundary and deliberately leave Git operations, output redirection, repository scripts, and arbitrary execution to the host framework and sandbox.
 
@@ -64,11 +64,7 @@ The hooks nudge common direct editor and manual mutation attempts toward ast-mcp
 npm install --save-dev @mwillbanks/ast-mcp
 ```
 
-When installing with Bun, allow the pinned native installers:
-
-```bash
-bun pm trust dprint
-```
+Formatting is disabled by default. Install and configure a formatter separately only when you choose to enable formatting; ast-mcp does not download formatter binaries during file operations.
 
 ```bash
 ./node_modules/.bin/ast-mcp install \
@@ -89,9 +85,9 @@ Stdio remains the default. To generate Streamable HTTP entries instead, select H
 
 Add `--service` to create and start a macOS LaunchAgent or Linux systemd user unit. Local services require an explicit port. Without `--service`, the installer prints the manual `ast-mcp mcp --transport http` startup command. Windows supports manual HTTP startup but not managed services.
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned dprint installer before the MCP starts. If another package manager blocks dependency build scripts, approve `dprint` through that manager before configuring a host. npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves binaries from ancestor package bins, package metadata, package-manager global bins, and then `PATH`.
+npm, pnpm, Yarn Classic, and Yarn 2+ project installations are supported. The runtime resolves native dependencies from the installed package; any configured formatter must already be available on the server.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. The installer creates version 2 configuration and omits MCP environment fields. Uninstall preserves configuration.
+Targets are `codex`, `claude`, `copilot`, or `all`. Local stdio definitions use absolute Bun runtime and CLI entry paths, pass `mcp`, and set the project directory as `cwd`; global definitions use a recognized Bun, npm, pnpm, or Yarn global-bin alias. The installer creates version 2 configuration and omits MCP environment fields. Uninstall preserves configuration.
 
 ### Platform support
 
@@ -116,6 +112,7 @@ version = 2
 roots = ["."]
 
 [safety]
+filesystem = "restricted"
 require_hash = true
 
 [[paths]]
@@ -130,13 +127,10 @@ excludes = [".git/**"]
 enabled = true
 
 [formatting]
-enabled = true
-dprint_config = "./dprint.json"
+enabled = false
 
-[[formatting.formatters]]
-extensions = [".rs"]
-command = "rustfmt"
-args = ["--emit", "stdout"]
+[telemetry]
+enabled = true
 
 [http]
 host = "127.0.0.1"
@@ -145,9 +139,13 @@ port = 3768
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
 
-Formatting uses dprint by default and supports shell-free external formatters. Mutation tools expose a declared `files` batch. Version 2 requires explicit `[[paths]]` rules outside the host baseline, including temporary paths. Path rules control symlinks, hashes, and hook policy.
+Formatting is disabled by default. Enable it only with an installed external formatter configured for the target files. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for dprint, Prettier, oxfmt, Biome, and other formatter setups. File access is restricted by default; see [filesystem access modes](https://mwillbanks.github.io/ast-mcp/docs/guides/filesystem-access/) before enabling unrestricted access. Unrestricted file access does not change intelligence workspace roots. Mutation tools expose a declared `files` batch. In restricted mode, version 2 requires explicit `[[paths]]` rules for file access outside the host baseline, including temporary paths.
 
 Inspect the result with `ast-mcp config validate` and `ast-mcp config show`. See the [configuration reference](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/) for the full schema, discovery rules, cache behavior, formatter contract, safety semantics, and migration guidance.
+
+## Telemetry
+
+Telemetry is enabled by default. It records registered tool names, durations, outcomes, known error codes, package/build versions, random server-session IDs, and sanitized package stack frames for unexpected errors. It excludes source, file paths, arguments, responses, agent intent, raw error messages, and identifying client metadata. Set `[telemetry] enabled = false` in global configuration to disable SDK initialization and analytics network activity, or in project configuration to suppress that project's events. See the [telemetry and error reporting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/telemetry/) for details and the opt-out example.
 
 ## Intelligence indexes
 
@@ -159,15 +157,15 @@ Use `index` with `build`, `refresh`, `verify`, `collect`, or `status`. Use `inde
 
 ## MCP configuration
 
-A stdio definition contains the stable local or package-manager global executable alias and `mcp` subcommand. Generated definitions omit environment fields. Project configuration supplies local roots. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
+A local stdio definition contains absolute Bun runtime and CLI entry paths, the `mcp` subcommand, and the project directory as `cwd`; a global definition uses a recognized global executable alias. Generated definitions omit environment fields. Project configuration supplies local roots. Select `--transport http` during install to generate native URL entries for Codex, Claude Code, Copilot CLI, and VS Code.
 
-Start HTTP manually with `ast-mcp mcp --transport http [--host <address>] [--port <number>]`, or install a user service with `--service`. CLI flags override environment variables, project TOML, global TOML, and built-in defaults. The endpoint is `/mcp`; wildcard bind addresses generate loopback client URLs, while explicit non-loopback addresses deliberately expose the server. MCP session IDs correlate requests and are not authentication; stdio remains the trusted default transport. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
+Start HTTP manually with `ast-mcp mcp --transport http [--host <address>] [--port <number>]`, or install a user service with `--service`. CLI flags override environment variables, project TOML, global TOML, and built-in defaults. The endpoint is `/mcp`; wildcard bind addresses generate loopback client URLs, while explicit non-loopback addresses deliberately expose the server. The modern HTTP protocol is stateless: it requires neither an initialize exchange nor an MCP session header. Pass `workspaceId` to reuse an application workspace opened on the same server. Legacy clients retain isolated MCP sessions; their session IDs correlate requests and are not authentication. Stdio keeps one connection state per process. HTTP uses SSE by default and emits one event per request; JSON-array responses require `enableJsonResponse`.
 
-`SIGTERM`, `SIGINT`, and `SIGHUP` all initiate graceful shutdown. The stdio process closes its MCP server; the HTTP process stops accepting requests, closes every active MCP session, then closes remaining connections. Successful cleanup exits 0, cleanup failure exits 1, and a second signal forces exit 1 while cleanup is pending. `SIGHUP` intentionally exits after cleanup so the host supervisor can restart ast-mcp from refreshed code and configuration.
+`SIGTERM`, `SIGINT`, and `SIGHUP` all initiate graceful shutdown. The stdio process closes its MCP server; the HTTP process stops accepting requests, closes legacy stateful sessions and the modern stateless handler, then closes remaining connections. Successful cleanup exits 0, cleanup failure exits 1, and a second signal forces exit 1 while cleanup is pending. `SIGHUP` intentionally exits after cleanup so the host supervisor can restart ast-mcp from refreshed code and configuration.
 
 ## Documentation
 
-The full documentation covers installation, host surfaces, code-intelligence selection, file tools, root isolation, the write state machine, Streamable HTTP, evaluation workflows, configuration, and limitations.
+The full documentation covers installation, host surfaces, MCP Skills delivery and export, telemetry and error reporting, code-intelligence selection, file tools, root isolation, optional formatting, filesystem access modes, connection diagnosis, the write state machine, Streamable HTTP, evaluation workflows, configuration, and limitations.
 
 **[Open the documentation website →](https://mwillbanks.github.io/ast-mcp/)**
 

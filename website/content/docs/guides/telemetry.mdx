@@ -38,7 +38,7 @@ Telemetry uses a fixed allowlist. It records:
 - Outcomes: `success`, `operational_error`, or `unexpected_error`.
 - Known error codes, such as `stale_hash`, `permission_denied`, or `formatter_timeout`; unknown failures use the fixed code `unexpected_error`.
 - The ast-mcp package version and build identifier.
-- An anonymous UUIDv7 session identifier. Each controller generates a new identifier and rotates it after 23 hours of operation. Stdio normally uses one controller per process; HTTP creates a controller per session. Restarting the server or HTTP session renews the identifier. It does not identify a person.
+- An anonymous UUIDv7 session identifier. Each telemetry controller generates a new identifier and rotates it after 23 hours of operation. Stdio normally uses one controller per process. Modern stateless HTTP does not retain MCP sessions between requests; legacy HTTP sessions have isolated controllers. Restarting the relevant server or legacy session renews the identifier. It does not identify a person.
 - For unexpected exceptions only, an allowlisted error type, a fixed message, and bounded line and column locations from sanitized ast-mcp package stack frames.
 
 Expected operational conflicts, such as denied paths or stale hashes, are recorded as tool outcomes. They are not sent as exception reports. Unexpected exceptions omit the original error message and retain only the sanitized fields above.

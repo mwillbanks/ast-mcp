@@ -34,7 +34,11 @@ A write uses an adjacent temporary file and atomic replacement, preserves file m
 - `allow_any_path = true` becomes an explicit catch-all rule and emits an `UNRESTRICTED` warning.
 - `delete` inherits `write` when omitted; migrated compatibility rules spell out all policies.
 
-Review every generated rule before writing, especially catch-all, temporary, external, or symlink-enabled rules. Prefer `request` for access that is not universally safe. Persistent user approvals belong only in the user-global version 2 configuration.
+Review every generated rule before writing, especially catch-all, temporary, external, or symlink-enabled rules. Prefer `request` for access that is not universally safe. New configurations restrict file access by default. If the project needs unrestricted file operations, configure that mode explicitly and obtain the required session approval; it does not broaden intelligence workspace roots. Persistent user approvals belong only in the user-global version 2 configuration. See the [filesystem access guide](/docs/guides/filesystem-access).
+
+## Telemetry defaults
+
+When `telemetry.enabled` is omitted, telemetry is enabled by default in both configuration versions. Set it to `false` in global configuration to disable analytics for all projects, or in project configuration to suppress that project's events. The global setting is a ceiling. See the [telemetry guide](/docs/guides/telemetry) for collected fields and opt-out instructions.
 
 ## Intelligence defaults
 
@@ -44,4 +48,4 @@ Configure `intelligence.storage.placement` before indexing when global storage i
 
 ## Rollout
 
-After migration, restart or reconnect long-lived MCP hosts once so they discover the new server/tool schemas. Subsequent configuration changes hot reload in place. Run `config_status` to verify the effective generation and formatter order, then use `policy_check` for representative read, write, delete, and external paths before the first mutation.
+After migration, restart or reconnect long-lived MCP hosts once so they discover the new server/tool schemas. Subsequent configuration changes hot reload in place. Run `config_status` to verify the effective generation and formatter order, then use `policy_check` for representative read, write, delete, and external paths before the first mutation. For startup failures or missing tools, follow the [connection diagnosis guide](/docs/guides/connection-diagnosis).

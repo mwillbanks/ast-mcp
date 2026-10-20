@@ -4,20 +4,20 @@ description: A zero-trust MCP boundary for structural code intelligence and dete
 icon: Network
 ---
 
-`@mwillbanks/ast-mcp` gives coding agents one deliberate way to inspect and change a repository. It combines native AST and graph intelligence with bounded file operations, fresh-state checks, structural rewrites, deterministic locks, formatting, and atomic replacement.
+`@mwillbanks/ast-mcp` gives coding agents one deliberate way to inspect and change a repository. It combines native AST and graph intelligence with bounded file operations, fresh-state checks, structural rewrites, deterministic locks, optional formatting, and atomic replacement.
 
 The boundary is designed to make the safe path the capable path: agents can map a codebase, trace behavior, inspect impact, and make precise edits without falling back to whole-file source dumps or unguarded editor operations.
 
 ## What ships
 
-| Surface           | Purpose                                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| Code intelligence | Maps, symbols, search, context, calls, imports, cycles, impact, and public API inspection    |
-| File boundary     | Batched hashing, bounded non-AST reads, guarded creation, patching, attributes, and deletion |
-| Routing hooks     | Nudge known direct editor and manual mutation attempts toward guarded ast-mcp tools          |
-| Agent skill       | Teaches the inspection, preview, hash, patch, verify, and recovery workflow                  |
-| Installer         | Reconciles MCP configuration, hooks, skills, and managed instruction blocks                  |
-| Transports        | Protocol-safe stdio and loopback-first Streamable HTTP                                       |
+| Surface           | Purpose                                                                                        |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| Code intelligence | Maps, symbols, search, context, calls, imports, cycles, impact, and public API inspection      |
+| File boundary     | Restricted-by-default guarded file operations                                                  |
+| Routing hooks     | Nudge known direct editor and manual mutation attempts toward guarded ast-mcp tools            |
+| Agent skill       | Serves the canonical workflow through MCP Skills, with explicit export for unsupported clients |
+| Installer         | Reconciles MCP configuration, hooks, and managed instruction blocks                            |
+| Transports        | Protocol-safe stdio and loopback-first Streamable HTTP                                         |
 
 ## The operating model
 
@@ -30,11 +30,11 @@ request
        ├─ hash current state
        ├─ acquire deterministic locks
        ├─ apply exact structural or Aider operations
-       ├─ format candidate content
+       ├─ optionally format candidate content
        └─ atomically replace ─► verify
 ```
 
-AST intelligence stays beneath effective `workspace.roots`. Version 2 requires explicit `[[paths]]` rules for external and temporary paths. MCP client roots select projects for global installations. Relative paths resolve from the first effective root. Path rules must authorize symbolic links and their targets.
+In restricted mode, file operations follow the effective host baseline and `[[paths]]` rules. Unrestricted file access requires explicit configuration and project-session approval; it does not change intelligence workspace roots. MCP client roots still select projects for global installations. See the [filesystem access guide](/docs/guides/filesystem-access).
 
 ## Start here
 
@@ -43,3 +43,8 @@ AST intelligence stays beneath effective `workspace.roots`. Version 2 requires e
 - [Choose a code-intelligence tool](/docs/tools/code-intelligence)
 - [Understand the write boundary](/docs/concepts/write-boundary)
 - [Configure a host](/docs/guides/host-installation)
+- [Choose an external formatter](/docs/guides/formatting)
+- [Load or export the MCP skill](/docs/guides/skills)
+- [Understand telemetry and opt out](/docs/guides/telemetry)
+- [Use unrestricted filesystem access](/docs/guides/filesystem-access)
+- [Diagnose connection problems](/docs/guides/connection-diagnosis)
