@@ -62,22 +62,6 @@ test("installer leaves skill export explicit and its checker diagnoses host conf
     const exported = path.join(root, ".codex/skills/ast-mcp");
     await expect(readFile(path.join(exported, "SKILL.md"))).rejects.toThrow();
     await exportSkills(exported);
-    const astMcpBinary = path.join(root, "node_modules/.bin/ast-mcp");
-    await rm(astMcpBinary, { force: true });
-    await mkdir(path.dirname(astMcpBinary), { recursive: true });
-    await writeFile(
-      astMcpBinary,
-      `#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"method":"initialize"'*) echo '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":"ast-mcp","version":"1"}}}' ;;
-    *'"method":"tools/list"'*) echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"file_read"},{"name":"file_hash"},{"name":"file_patch"},{"name":"graph_diff"},{"name":"graph_explain"},{"name":"graph_path"},{"name":"graph_query"},{"name":"index"},{"name":"index_status"},{"name":"retrieve"},{"name":"workspace_open"},{"name":"workspace_status"}]}}' ;;
-    *'"method":"tools/call"'*) echo '{"jsonrpc":"2.0","id":3,"result":{"structuredContent":{"data":{"workspaceId":"workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ok":true}}}' ;;
-  esac
-done
-`,
-    );
-    await chmod(astMcpBinary, 0o755);
     expect(
       await readFile(path.join(root, ".codex/skills/ast-mcp/SKILL.md"), "utf8"),
     ).toContain("# AST MCP");
@@ -246,9 +230,20 @@ done
         ).installed,
       ).toBeTrue();
 
-    const globalAlias = path.join(home, ".bun/bin/ast-mcp");
+    const globalAlias = path.join(
+      home,
+      process.platform === "win32"
+        ? ".bun/bin/ast-mcp.cmd"
+        : ".bun/bin/ast-mcp",
+    );
     await mkdir(path.dirname(globalAlias), { recursive: true });
-    await writeFile(globalAlias, await readFile(astMcpBinary, "utf8"));
+    const sourceCli = path.resolve(import.meta.dir, "../bin/ast-mcp.ts");
+    await writeFile(
+      globalAlias,
+      process.platform === "win32"
+        ? `@echo off\r\n"${process.execPath}" "${sourceCli}" %*\r\n`
+        : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(sourceCli)} "$@"\n`,
+    );
     await chmod(globalAlias, 0o755);
     await install({ home, root, scope: "global", targets });
     for (const target of targets) {

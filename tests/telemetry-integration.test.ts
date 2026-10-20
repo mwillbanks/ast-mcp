@@ -10,6 +10,7 @@ import { InMemoryTransport, inputRequired } from "@modelcontextprotocol/server";
 import {
   clearConfigCache,
   globalTelemetryEnabled,
+  globalConfigPath,
   resolveConfig,
   withResolvedConfig,
   type ResolvedConfig,
@@ -43,8 +44,12 @@ async function project(enabled = true) {
   const cwd = path.join(root, "project");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
-  await mkdir(path.join(home, ".config", "ast-mcp"), { recursive: true });
-  const globalPath = path.join(home, ".config", "ast-mcp", "ast-mcp.toml");
+  const env = {
+    APPDATA: path.join(home, "AppData", "Roaming"),
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+  };
+  const globalPath = globalConfigPath({ home, env });
+  await mkdir(path.dirname(globalPath), { recursive: true });
   await writeFile(globalPath, "version = 2\n[telemetry]\nenabled = true\n");
   await writeFile(
     path.join(cwd, "ast-mcp.toml"),
@@ -53,7 +58,7 @@ async function project(enabled = true) {
       '\n[mcp.configuration]\nrequire_approval = false\n[[paths]]\nid = "project"\npath = "."\npolicies = {read = "allow", write = "allow", delete = "allow"}\n',
   );
   await writeFile(path.join(cwd, "example.txt"), "private source content");
-  return { root, cwd, home, env: {}, globalPath };
+  return { root, cwd, home, env, globalPath };
 }
 function capture() {
   const packets: Array<{
@@ -335,8 +340,8 @@ for (const enabled of [true, false])
     const sink = capture();
     const previousXdg = process.env.XDG_CONFIG_HOME;
     const previousAppData = process.env.APPDATA;
-    process.env.XDG_CONFIG_HOME = path.join(options.home, ".config");
-    process.env.APPDATA = path.join(options.home, ".config");
+    process.env.XDG_CONFIG_HOME = options.env.XDG_CONFIG_HOME;
+    process.env.APPDATA = options.env.APPDATA;
     clearConfigCache();
     configRegistry.invalidate();
     const server = createServer({}, { fetch: sink.fetch });
@@ -350,6 +355,12 @@ for (const enabled of [true, false])
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
+      expect(globalConfigPath()).toBe(options.globalPath);
+      expect(await globalTelemetryEnabled()).toBe(true);
+      expect((await resolveConfig({ cwd: options.cwd })).telemetry).toEqual({
+        enabled,
+        globalEnabled: true,
+      });
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const before = await client.listTools();

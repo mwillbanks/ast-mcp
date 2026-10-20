@@ -167,8 +167,12 @@ describe("installer HTTP transport", () => {
     });
     const unit = await readFile(plan.file, "utf8");
     expect(unit).toContain('--transport" "http');
-    expect(unit).toContain(process.execPath);
-    expect(unit).toContain(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"));
+    const escaped = (value: string) =>
+      value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    expect(unit).toContain(`"${escaped(process.execPath)}"`);
+    expect(unit).toContain(
+      `"${escaped(path.resolve(import.meta.dir, "../bin/ast-mcp.ts"))}"`,
+    );
     const environment = unit.match(/^Environment="(.*)"$/m)?.[1];
     expect(environment?.replaceAll("\\\\", "\\")).toBe(
       `AST_MCP_PROJECT_ROOT=${root}`,

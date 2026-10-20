@@ -11,6 +11,7 @@ import type { EventMessage } from "posthog-node";
 import {
   clearConfigCache,
   globalTelemetryEnabled,
+  globalConfigPath,
   resolveConfig,
   type ResolvedConfig,
 } from "../src/config";
@@ -27,16 +28,21 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
   clearConfigCache();
 });
-async function fixture(global?: boolean, project?: boolean) {
+async function fixture(
+  global?: boolean,
+  project?: boolean,
+  platform: NodeJS.Platform = process.platform,
+) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-telemetry-"));
   roots.push(root);
   const cwd = path.join(root, "project");
   const home = path.join(root, "home");
   await mkdir(cwd, { recursive: true });
-  await mkdir(path.join(home, ".config", "ast-mcp"), { recursive: true });
+  const globalFile = globalConfigPath({ home, env: {}, platform });
+  await mkdir(path.dirname(globalFile), { recursive: true });
   if (global !== undefined)
     await writeFile(
-      path.join(home, ".config", "ast-mcp", "ast-mcp.toml"),
+      globalFile,
       "version = 2\n[telemetry]\nenabled = " + global + "\n",
     );
   if (project !== undefined)
@@ -44,7 +50,7 @@ async function fixture(global?: boolean, project?: boolean) {
       path.join(cwd, "ast-mcp.toml"),
       "version = 2\n[telemetry]\nenabled = " + project + "\n",
     );
-  return { root, cwd, home, env: {} };
+  return { root, cwd, home, env: {}, platform };
 }
 const policy = (enabled = true, globalEnabled = true) =>
   ({ telemetry: { enabled, globalEnabled } }) as ResolvedConfig;
@@ -198,19 +204,22 @@ describe("telemetry configuration", () => {
       [false, true, false],
       [true, true, true],
     ] as const) {
-      const options = await fixture(global, project);
-      const config = await resolveConfig(options);
-      expect(config.telemetry).toEqual({
-        enabled: expected,
-        globalEnabled: global !== false,
-      });
-      expect(config.provenance["telemetry.enabled"]).toBe(
-        project !== undefined
-          ? "project"
-          : global !== undefined
-            ? "global"
-            : "default",
-      );
+      for (const platform of ["linux", "darwin", "win32"] as const) {
+        const options = await fixture(global, project, platform);
+        const config = await resolveConfig(options);
+        expect(config.telemetry).toEqual({
+          enabled: expected,
+          globalEnabled: global !== false,
+        });
+        expect(config.provenance["telemetry.enabled"]).toBe(
+          project !== undefined
+            ? "project"
+            : global !== undefined
+              ? "global"
+              : "default",
+        );
+        expect(await globalTelemetryEnabled(options)).toBe(global !== false);
+      }
     }
   });
   test("legacy configuration accepts opt-out and invalid telemetry fails closed", async () => {

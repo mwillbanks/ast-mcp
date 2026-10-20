@@ -61,17 +61,14 @@ test("installer rejects malformed protocol and excessive output", async () => {
   }
 });
 
-test("checker validates complete Linux service arguments and rejects malformed encoding", async () => {
+test("checker validates supported service arguments and rejects unsupported Windows services", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-service-parser-"));
   const root = await mkdtemp(
     path.join(os.tmpdir(), "ast-mcp-service-parser-root-"),
   );
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
   try {
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "linux",
-    });
+    const nativePlatform = process.platform;
     const alias = path.join(root, "node_modules/.bin/ast-mcp");
     await mkdir(path.dirname(alias), { recursive: true });
     await writeFile(alias, "#!/bin/sh\nexit 0\n");
@@ -87,6 +84,27 @@ test("checker validates complete Linux service arguments and rejects malformed e
     await mkdir(path.dirname(plan.file), { recursive: true });
     const args = ["--root", root, "--transport", "http", "--service"];
     await writeFile(plan.file, plan.content);
+    if (nativePlatform === "win32") {
+      expect(plan.content).toContain(
+        '"mcp" "--transport" "http" "--host" "127.0.0.1" "--port" "3768"',
+      );
+      expect((await checkInstall(args, home)).checks.service).toBeFalse();
+      expect(() =>
+        createServicePlan({
+          cliEntry: alias,
+          endpoint: httpEndpoint("127.0.0.1", 3768),
+          home,
+          root,
+          scope: "local",
+          platform: "win32",
+        }),
+      ).toThrow("not supported on Windows");
+      return;
+    }
+    Object.defineProperty(process, "platform", {
+      configurable: true,
+      value: "linux",
+    });
     expect((await checkInstall(args, home)).checks.service).toBeTrue();
     for (const invalid of [
       plan.content.replace('"mcp"', '"mcp"--eval'),

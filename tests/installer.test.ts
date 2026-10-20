@@ -108,9 +108,13 @@ describe("installer", () => {
       path.join(root, ".github/hooks/ast-mcp.json"),
       "utf8",
     );
-    expect(codexHook).toContain("/bin/ast-mcp.ts");
-    expect(claudeHook).toContain("/bin/ast-mcp.ts");
-    expect(copilotHook).toContain("/bin/ast-mcp.ts");
+    const sourceCli = path.resolve(import.meta.dir, "../bin/ast-mcp.ts");
+    for (const document of [codexHook, claudeHook, copilotHook]) {
+      const hook = JSON.parse(document).hooks;
+      const command =
+        hook.PreToolUse?.[0].hooks[0].command ?? hook.preToolUse[0].command;
+      expect(command).toContain(JSON.stringify(sourceCli));
+    }
     expect(codexHook).not.toContain(root);
     expect(claudeHook).not.toContain(root);
     expect(copilotHook).not.toContain(root);
@@ -131,17 +135,25 @@ describe("installer", () => {
       scope: "local",
       targets: ["codex", "claude", "copilot"],
     });
-    const expected = "./node_modules/.bin/ast-mcp";
-    expect(
+    const expected = commandForPlatform(
+      process.platform === "win32"
+        ? "./node_modules/.bin/ast-mcp.cmd"
+        : "./node_modules/.bin/ast-mcp",
+      ["mcp"],
+    );
+    const codex = Bun.TOML.parse(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
-    ).toContain(expected);
+    ) as { mcp_servers: Record<string, { command: string; args: string[] }> };
+    expect(codex.mcp_servers["ast-mcp"]?.command).toBe(expected.command);
+    expect(codex.mcp_servers["ast-mcp"]?.args).toEqual(expected.args);
     for (const file of [".mcp.json", ".github/mcp.json"]) {
       const document = JSON.parse(
         await readFile(path.join(root, file), "utf8"),
       );
       const definition =
         document.mcpServers?.["ast-mcp"] ?? document.servers?.["ast-mcp"];
-      expect(definition.command).toBe(expected);
+      expect(definition.command).toBe(expected.command);
+      expect(definition.args).toEqual(expected.args);
       expect(definition.env).toBeUndefined();
     }
   });
@@ -476,7 +488,15 @@ describe("installer", () => {
     expect(
       hooks.some((item: { matcher?: string }) => item.matcher === "custom"),
     ).toBeTrue();
-    expect(first.match(/bin\/ast-mcp.ts/g)).toHaveLength(1);
+    const managed = hooks.filter(
+      (item: { hooks?: Array<{ command?: string }> }) =>
+        item.hooks?.some((hook) =>
+          hook.command?.includes(
+            JSON.stringify(path.resolve(import.meta.dir, "../bin/ast-mcp.ts")),
+          ),
+        ),
+    );
+    expect(managed).toHaveLength(1);
     await update({ root, scope: "local", targets: ["codex"] });
     expect(await readFile(hookFile, "utf8")).toBe(first);
   });
