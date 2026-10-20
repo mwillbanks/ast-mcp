@@ -1,7 +1,8 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmod,
   stat,
+  symlink,
   mkdir,
   mkdtemp,
   readFile,
@@ -373,13 +374,21 @@ test("in-place formatting preserves basename, nested config discovery, cwd and s
   const result = await withConfig(hermeticConfig(root), () =>
     formatContent(target, "{}"),
   );
-  expect(JSON.parse(result)).toEqual({
+  const formatted = JSON.parse(result);
+  expect(formatted).toEqual({
     name: "package.json",
     tag: "nested",
-    cwd: await realpath(root),
+    cwd: expect.any(String),
     source: target,
     root,
   });
+  const [actualCwd, expectedCwd] = await Promise.all([
+    stat(formatted.cwd, { bigint: true }),
+    stat(root, { bigint: true }),
+  ]);
+  expect(actualCwd.ino).toBeGreaterThan(0n);
+  expect(actualCwd.dev).toBe(expectedCwd.dev);
+  expect(actualCwd.ino).toBe(expectedCwd.ino);
   expect(await readFile(target, "utf8")).toBe('{"original":true}');
   expect((await readdir(nested)).sort()).toEqual([
     "formatter.json",
@@ -432,6 +441,67 @@ test("formatter failure preserves atomic batches and removes newly created paren
     "ast-mcp.toml",
     "first.txt",
   ]);
+});
+
+test("formatter failure cleans created parents when mkdir returns a physical alias", async () => {
+  const root = await realpath(await project("ast-mcp-formatter-alias-batch-"));
+  const first = path.join(root, "first.txt");
+  const second = path.join(root, "new", "deep", "second.txt");
+  const alias = path.join(root, ".physical-alias");
+  await symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+  await writeFile(first, "original");
+  await scriptConfig(
+    root,
+    'console.error("original formatter failure");process.exit(2)',
+    { mode: "in_place" },
+  );
+  const filesystem = await import("node:fs/promises");
+  const originalMkdir = filesystem.mkdir;
+  let aliases = 0;
+  const make = spyOn(filesystem, "mkdir").mockImplementation((async (
+    ...args: Parameters<typeof mkdir>
+  ) => {
+    const created = await originalMkdir(...args);
+    if (
+      typeof created === "string" &&
+      path.basename(String(args[0])) === "deep"
+    ) {
+      aliases++;
+      return path.join(alias, "new");
+    }
+    return created;
+  }) as typeof mkdir);
+  const remove = spyOn(filesystem, "rmdir");
+  try {
+    // Visit the new path first so the rejection exercises its parent cleanup.
+    await expect(
+      withConfig(hermeticConfig(root), () =>
+        writeFilesSafely({
+          [second]: { content: "candidate" },
+          [first]: { content: "candidate", expectedSha256: sha256("original") },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "formatter_rejected",
+      message: expect.stringContaining("original formatter failure"),
+    });
+    expect(aliases).toBe(1);
+    expect(await Bun.file(second).exists()).toBeFalse();
+    await expect(stat(path.join(root, "new"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(first, "utf8")).toBe("original");
+    for (const [directory] of remove.mock.calls) {
+      const relative = path.relative(root, String(directory));
+      expect(relative).not.toBe("..");
+      expect(relative.startsWith(`..${path.sep}`)).toBeFalse();
+      expect(path.isAbsolute(relative)).toBeFalse();
+      expect(relative).not.toBe("");
+    }
+  } finally {
+    make.mockRestore();
+    remove.mockRestore();
+  }
 });
 
 test("explicit installed external dprint compatibility receives stdin and original source path", async () => {

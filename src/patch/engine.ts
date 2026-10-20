@@ -3,6 +3,7 @@ import {
   chmod,
   lstat,
   mkdir,
+  realpath,
   rename,
   rmdir,
   unlink,
@@ -111,9 +112,23 @@ async function ensureParent(filePath: string): Promise<string[]> {
   if (revalidated !== filePath)
     throw new Error("Parent creation changed the resolved write path");
   if (!first) return [];
-  const created = [first];
-  let current = first;
-  for (const segment of path.relative(first, parent).split(path.sep)) {
+  // Recursive mkdir can return a different physical alias on Windows.
+  const [canonicalFirst, canonicalParent] = await Promise.all([
+    realpath(first),
+    realpath(parent),
+  ]);
+  const relative = path.relative(canonicalFirst, canonicalParent);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  )
+    throw new Error(
+      "Created parent directory escaped its first created ancestor",
+    );
+  const created = [canonicalFirst];
+  let current = canonicalFirst;
+  for (const segment of relative.split(path.sep)) {
     if (!segment) continue;
     current = path.join(current, segment);
     created.push(current);
