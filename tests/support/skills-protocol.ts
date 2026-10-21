@@ -57,7 +57,10 @@ export async function exerciseSkillsRequests(
 }
 
 export async function exerciseSkillsStdio(executable: string, cwd: string) {
-  const live = spawnLiveProcess(process.execPath, [executable, "mcp"], { cwd });
+  const live = spawnLiveProcess(process.execPath, [executable, "mcp"], {
+    cwd,
+    timeoutMs: 30_000,
+  });
   let id = 0;
   try {
     await exerciseSkillsRequests(async (method, params = {}) => {

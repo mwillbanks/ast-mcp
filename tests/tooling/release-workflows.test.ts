@@ -15,6 +15,7 @@ type Job = {
   needs?: string | string[];
   permissions?: Record<string, string>;
   secrets?: Record<string, string>;
+  with?: Record<string, string>;
   outputs?: Record<string, string>;
   steps?: Step[];
   strategy?: { matrix?: { os?: string[] } };
@@ -44,7 +45,12 @@ describe("release workflow contracts", () => {
       inputs: {
         expected_sha: {
           description: "Exact release PR commit to validate",
-          required: true,
+          required: false,
+          type: "string",
+        },
+        recovery_tag: {
+          description: "Published release tag to validate and publish",
+          required: false,
           type: "string",
         },
       },
@@ -60,8 +66,10 @@ describe("release workflow contracts", () => {
     const verification = changes.steps?.find((s) => s.env?.EXPECTED_SHA);
     expect(verification?.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(verification?.env?.EXPECTED_SHA).toBe("${{ inputs.expected_sha }}");
+    expect(verification?.env?.RECOVERY_TAG).toBe("${{ inputs.recovery_tag }}");
     expect(verification?.run).toContain("git rev-parse HEAD");
     expect(verification?.run).toContain('"$EXPECTED_SHA"');
+    expect(verification?.run).toContain('"$GITHUB_REF" = refs/heads/main');
   });
   test("dispatch rejects stale event or checkout commits", async () => {
     const verification = job(ci, "changes").steps?.find(
@@ -70,13 +78,23 @@ describe("release workflow contracts", () => {
     if (!verification?.run) throw new Error("Missing dispatch verification");
     const head = (await $`git rev-parse HEAD`.text()).trim();
     const other = head === "a".repeat(40) ? "b".repeat(40) : "a".repeat(40);
-    for (const [event, expected, exitCode] of [
-      [head, head, 0],
-      [other, head, 1],
-      [other, other, 1],
+    for (const [event, expected, recovery, ref, exitCode] of [
+      [head, head, "", "refs/heads/main", 0],
+      [other, head, "", "refs/heads/main", 1],
+      [other, other, "", "refs/heads/main", 1],
+      [head, "", "ast-mcp-v0.6.1", "refs/heads/main", 0],
+      [head, "", "ast-mcp-v0.6.1", "refs/heads/other", 1],
+      [head, "", "", "refs/heads/main", 1],
+      [head, head, "ast-mcp-v0.6.1", "refs/heads/main", 1],
     ] as const) {
-      const result = await $`${{ raw: verification.run }}`
-        .env({ ...process.env, GITHUB_SHA: event, EXPECTED_SHA: expected })
+      const result = await $`bash -c ${verification.run}`
+        .env({
+          ...process.env,
+          GITHUB_SHA: event,
+          GITHUB_REF: ref,
+          EXPECTED_SHA: expected,
+          RECOVERY_TAG: recovery,
+        })
         .quiet()
         .nothrow();
       expect(result.exitCode).toBe(exitCode);
@@ -92,19 +110,15 @@ describe("release workflow contracts", () => {
       }
     expect(checkouts).toBeGreaterThanOrEqual(6);
   });
-  test("CI dispatch cannot create or publish releases", () => {
+  test("release recovery uses the registered CI workflow", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
+    expect(job(ci, "release").if).toContain("inputs.recovery_tag != ''");
     expect(job(ci, "release").if).toContain("github.ref == 'refs/heads/main'");
     expect(job(ci, "release").uses).toBe("./.github/workflows/release.yml");
-    expect(release.on.workflow_dispatch).toEqual({
-      inputs: {
-        tag_name: {
-          description: "Published release tag to validate and publish",
-          required: true,
-          type: "string",
-        },
-      },
-    });
+    expect(job(ci, "release").with?.recovery_tag).toBe(
+      "${{ inputs.recovery_tag }}",
+    );
+    expect(Object.keys(release.on)).toEqual(["workflow_call"]);
     expect(job(release, "validate").if).toContain(
       "needs.release.outputs.release_created == 'true'",
     );
@@ -122,11 +136,11 @@ describe("release workflow contracts", () => {
     const requireMain = steps.find((step) =>
       step.run?.includes('test "$GITHUB_REF" = refs/heads/main'),
     );
-    expect(requireMain?.if).toBe("github.event_name == 'workflow_dispatch'");
+    expect(requireMain?.if).toBe("inputs.recovery_tag != ''");
     const action = steps.find((step) =>
       step.uses?.startsWith("googleapis/release-please-action@"),
     );
-    expect(action?.if).toBe("github.event_name != 'workflow_dispatch'");
+    expect(action?.if).toBe("inputs.recovery_tag == ''");
     expect(action?.["continue-on-error"]).toBe(true);
     const checkout = steps.find((step) =>
       step.uses?.startsWith("actions/checkout@"),
@@ -137,7 +151,10 @@ describe("release workflow contracts", () => {
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
     const recover = steps.find((step) => step.env?.RELEASE_TAG);
     expect(recover?.if).toContain("steps.release.outcome == 'failure'");
-    expect(recover?.env?.RELEASE_TAG).toBe("${{ inputs.tag_name }}");
+    expect(recover?.env?.RELEASE_TAG).toBe("${{ inputs.recovery_tag }}");
+    expect(recover?.env?.RECOVERY_TAG).toBe("${{ inputs.recovery_tag }}");
+    expect(recover?.run).toContain('if [[ -z "$RECOVERY_TAG" ]]');
+    expect(recover?.run).not.toContain("${{ inputs.recovery_tag }}");
     for (const required of [
       "jq -r .draft",
       "jq -r .target_commitish",
@@ -174,6 +191,13 @@ describe("release workflow contracts", () => {
   });
   test("creator uses a workflow-scoped token and passes PR metadata", () => {
     expect(release.on.workflow_call).toEqual({
+      inputs: {
+        recovery_tag: {
+          description: "Published release tag to validate and publish",
+          required: false,
+          type: "string",
+        },
+      },
       secrets: { RELEASE_PLEASE_TOKEN: { required: true } },
     });
     expect(job(ci, "release").secrets).toEqual({

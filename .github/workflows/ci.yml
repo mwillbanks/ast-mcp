@@ -6,7 +6,11 @@ on:
     inputs:
       expected_sha:
         description: Exact release PR commit to validate
-        required: true
+        required: false
+        type: string
+      recovery_tag:
+        description: Published release tag to validate and publish
+        required: false
         type: string
   push:
     branches: [main]
@@ -16,7 +20,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || inputs.recovery_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,11 +38,18 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.expected_sha || github.sha }}
-      - name: Verify dispatched commit
+      - name: Verify dispatched request
         if: github.event_name == 'workflow_dispatch'
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: test "$GITHUB_SHA" = "$EXPECTED_SHA" && test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+        run: |
+          if [[ -n "$EXPECTED_SHA" && -n "$RECOVERY_TAG" ]] || [[ -z "$EXPECTED_SHA" && -z "$RECOVERY_TAG" ]]; then exit 1; fi
+          if [[ -n "$EXPECTED_SHA" ]]; then
+            test "$GITHUB_SHA" = "$EXPECTED_SHA" && test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          else
+            test "$GITHUB_REF" = refs/heads/main && test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          fi
       - uses: dorny/paths-filter@v4
         if: github.event_name != 'workflow_dispatch'
         id: filter
@@ -296,8 +307,10 @@ jobs:
         package-native,
         website,
       ]
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
+    with:
+      recovery_tag: ${{ inputs.recovery_tag }}
     secrets:
       RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
     permissions:
