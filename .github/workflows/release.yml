@@ -27,9 +27,9 @@ jobs:
     needs: release
     if: ${{ needs.release.outputs.prs_created == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
       pull-requests: read
       actions: write
     steps:
@@ -39,7 +39,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - name: Validate release PR commits
+      - name: Install trusted repository tools
+        run: bun ci
+      - name: Format release changelogs and validate resulting commits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_PRS: ${{ needs.release.outputs.prs }}

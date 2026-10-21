@@ -114,7 +114,7 @@ describe("release workflow contracts", () => {
         .map(([name]) => name),
     ).toEqual(["dispatch-ci"]);
     expect(job(release, "dispatch-ci").permissions).toEqual({
-      contents: "read",
+      contents: "write",
       "pull-requests": "read",
       actions: "write",
     });
@@ -137,6 +137,20 @@ describe("release workflow contracts", () => {
     );
     expect(dispatch?.env?.RELEASE_PRS).toBe("${{ needs.release.outputs.prs }}");
     expect(dispatch?.env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
+    const steps = job(release, "dispatch-ci").steps ?? [];
+    const checkout = steps.findIndex((s) =>
+      s.uses?.startsWith("actions/checkout@"),
+    );
+    const install = steps.findIndex((s) => s.run === "bun ci");
+    const normalize = steps.indexOf(dispatch!);
+    expect(checkout).toBeGreaterThanOrEqual(0);
+    expect(install).toBeGreaterThan(checkout);
+    expect(normalize).toBeGreaterThan(install);
+    expect(steps[checkout]?.with?.["persist-credentials"]).toBe(false);
+    expect(steps[checkout]?.with?.ref).toBeUndefined();
+    expect(steps.some((s) => /git push|git checkout/.test(s.run ?? ""))).toBe(
+      false,
+    );
   });
   test("publishing preserves tags platforms and provenance", () => {
     expect(job(release, "validate").strategy?.matrix?.os).toEqual([
