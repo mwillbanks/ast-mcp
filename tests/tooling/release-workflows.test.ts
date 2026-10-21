@@ -165,6 +165,10 @@ describe("release workflow contracts", () => {
       "macos-latest",
       "windows-latest",
     ]);
+    const handshakes = job(release, "validate").steps?.filter((step) =>
+      step.run?.startsWith("bun test mcp.test.ts --test-name-pattern"),
+    );
+    expect(handshakes).toHaveLength(2);
     for (const name of ["validate", "publish"])
       expect(
         job(release, name).steps?.find((s) =>

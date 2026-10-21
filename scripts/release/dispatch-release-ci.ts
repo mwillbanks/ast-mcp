@@ -1,6 +1,8 @@
 import path from "node:path";
 
 const maximumChangelogBytes = 1024 * 1024;
+const headVisibilityRetries = 20;
+const headVisibilityDelayMs = 250;
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -114,6 +116,7 @@ export async function dispatchReleaseCi(
   output: string,
   api: ReleaseCiApi,
   format: (content: string) => Promise<string> = formatReleaseChangelog,
+  delay: (milliseconds: number) => Promise<void> = Bun.sleep,
 ): Promise<string[]> {
   const prs: unknown = JSON.parse(output);
   if (!Array.isArray(prs))
@@ -149,7 +152,17 @@ export async function dispatchReleaseCi(
         await api.commitChangelog(pr.head.ref, pr.head.sha, formatted),
       );
       expectedHead = { ...pr.head, sha };
-      const normalized = await api.pullRequest(number);
+      let normalized = await api.pullRequest(number);
+      // GitHub can return the previous PR head briefly after committing.
+      for (
+        let attempt = 0;
+        attempt < headVisibilityRetries && normalized.head.sha === pr.head.sha;
+        attempt++
+      ) {
+        validatePullRequest(repository, number, normalized, pr.head);
+        await delay(headVisibilityDelayMs);
+        normalized = await api.pullRequest(number);
+      }
       validatePullRequest(repository, number, normalized, expectedHead);
     }
     await api.dispatch(expectedHead.ref, expectedHead.sha);
