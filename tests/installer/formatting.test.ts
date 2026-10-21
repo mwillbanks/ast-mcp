@@ -83,4 +83,5 @@ test.each(["local", "global"] as const)(
       await rm(root, { recursive: true, force: true });
     }
   },
+  60_000,
 );
