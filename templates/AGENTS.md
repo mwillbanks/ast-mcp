@@ -12,9 +12,13 @@ CRITICAL INSTRUCTION: You are operating in an AST-isolated environment.
 - For existing files, call `file_hash` immediately before a guarded `file_patch`; mutation tools declare a `files` property containing the path-keyed batch.
 - The agent selects `file_patch.patchStrategy` per target from the effective methods reported by `file_capabilities`. Prefer `ast` for structural changes and `aider_block` for small exact text changes; parseable source commonly supports both.
 
+## Local files and remote content
+
+AST-MCP governs local filesystem operations and local code intelligence. Use web search or connected tools for remote content without requesting local-file authorization. If remote content is saved locally, follow the normal local file policy for that path.
+
 ## Available ast-mcp tools
 
-File boundary: `file_capabilities`, `file_hash`, `file_read`, `file_write`, `file_patch`, `file_chattr`, `file_delete`.
+File boundary: `file_capabilities`, `file_hash`, `file_read`, `file_write`, `file_patch`, `file_rename`, `file_chattr`, `file_delete`.
 
 Configuration: `config_status`, `policy_check`, `document_query`, `config_core`, `config_paths`.
 
@@ -41,9 +45,10 @@ Change `ast-mcp.toml` only through grouped `config_core` and batched `config_pat
 3. Preview structural matches with `run({ pattern, paths, lang?, json: true })`, bounded to explicit paths. Use `file_patch` with `preview: true` for the full guarded dry-run contract of either strategy. Preview does not format; commit, including `previewReceipt` commit, formats.
 4. Call `file_hash({ filePaths })` immediately before a SHA-guarded patch.
 5. Call one `file_patch({ files: { ... } })` batch with one fresh hash and matching ordered `astRules` or `aiderBlocks` per path. Each keyed path is locked and atomically committed once.
-6. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement.
-7. Use direct `run` with `rewrite` and `write: true` only when an intentionally bounded lower-level rewrite is required; do not use it instead of `file_patch` for normal agent edits.
-8. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation and review the final diff without mutating through Git.
+6. Use one `file_rename({ files: { ... } })` batch for guarded moves. Hash each source, ensure destinations are absent, and let the tool preflight source and destination policies; moves cannot replace a destination and are not crash-atomic.
+7. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement.
+8. Use direct `run` with `rewrite` and `write: true` only when an intentionally bounded lower-level rewrite is required; do not use it instead of `file_patch` for normal agent edits.
+9. Verify keyed results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation and review the final diff without mutating through Git.
 
 A stale hash, ambiguous Aider block, unexpected match count, capped run preview, capped file slice, dprint preflight failure, missing MCP, or lost MCP connection is a safe stop. Refresh `file_hash`, re-inspect through the correct route, or restore ast-mcp and rebuild the operation; never switch to a forbidden writer.
 

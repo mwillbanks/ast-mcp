@@ -26,7 +26,7 @@ bun run dev:http
 bun run inspect
 ```
 
-Tests live in `tests/`. Keep stdio output protocol-safe: server diagnostics belong on stderr, never stdout.
+Tests mirror source domains beneath `tests/`; use `tests/integration/` for cross-domain behavior and `tests/tooling/` for repository tooling. Keep shared fixtures and helpers under `tests/fixtures/` and `tests/support/`. Application modules live under `src/config`, `src/cli`, `src/installer`, `src/http`, `src/server`, `src/hooks`, and `src/skills`, alongside `src/intelligence`, `src/runtime`, `src/patch`, and `src/tools`. Operational scripts are grouped under `scripts/build`, `scripts/release`, `scripts/validation`, `scripts/testing`, and `scripts/benchmark`; host-smoke implementation belongs under `scripts/testing`. Keep stdio output protocol-safe: server diagnostics belong on stderr, never stdout.
 
 Before opening a pull request, run:
 
@@ -95,4 +95,4 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 
 ## Releases
 
-Releases are automated from `main`. Release Please opens and maintains the release pull request; merging it creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.
+Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the trusted, installed Oxfmt and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.

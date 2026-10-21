@@ -5,7 +5,7 @@ description: Use ast-mcp when exploring unfamiliar code, tracing symbols or depe
 
 # AST MCP
 
-Treat ast-mcp as the only code-intelligence and filesystem boundary. Do not call direct editors, `apply_patch`, shell mutation utilities, or interpreter write scripts.
+Treat ast-mcp as the only code-intelligence and filesystem boundary for local content. Use web search and connected tools for remote content without requesting local filesystem authorization. If remote content is saved locally, follow the normal local file policy for that path. Do not call direct editors, `apply_patch`, shell mutation utilities, or interpreter write scripts.
 
 ## Skill delivery and compatibility
 

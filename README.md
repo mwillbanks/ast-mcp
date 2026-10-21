@@ -25,7 +25,7 @@ Coding agents need more than a text editor. They need a way to understand code r
 
 - **Structural intelligence:** Directory digests, symbols, search, context, calls, dependencies, cycles, impact, and public API inspection.
 - **Guarded file operations:** Batched hashes, bounded reads, deterministic creation, exact patches, attributes, and reference-aware deletion.
-- **Root isolation:** One path policy covers file and intelligence operations, symlink rejection, and explicit external roots.
+- **Local filesystem boundary:** File authorization applies to local files; intelligence workspace roots remain separate. Use web or connected tools for remote content, and apply normal file policy when saving it locally.
 - **Safe commits:** Fresh hashes, deterministic locks, candidate formatting, hash rechecks, and atomic replacement.
 - **Agent routing:** Best-effort hooks, MCP-delivered skill instructions, and idempotent host configuration for Codex, Claude, Copilot, and VS Code.
 
@@ -108,6 +108,10 @@ Install or update ast-mcp to create `ast-mcp.toml`. The installer migrates versi
 ```toml
 version = 2
 
+[cli.output]
+interactive = "human"
+non_interactive = "json"
+
 [workspace]
 roots = ["."]
 
@@ -138,6 +142,8 @@ port = 3768
 ```
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
+
+User-facing config, installer, and skills commands default to `human` when stdout is a terminal and `json` when redirected. Set `[cli.output]` defaults or override them with `--output human|json|yaml|toml`. See the [commands reference](https://mwillbanks.github.io/ast-mcp/docs/reference/commands/#output-formats).
 
 Formatting is disabled by default. Enable it only with an installed external formatter configured for the target files. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for dprint, Prettier, oxfmt, Biome, and other formatter setups. File access is restricted by default; see [filesystem access modes](https://mwillbanks.github.io/ast-mcp/docs/guides/filesystem-access/) before enabling unrestricted access. Unrestricted file access does not change intelligence workspace roots. Mutation tools expose a declared `files` batch. In restricted mode, version 2 requires explicit `[[paths]]` rules for file access outside the host baseline, including temporary paths.
 
