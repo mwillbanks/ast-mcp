@@ -6,8 +6,8 @@ import {
   type DocumentFacts,
   type DocumentFormat,
   documentCapabilities,
-} from "../src/intelligence/documents/index.ts";
-import { sha256 } from "../src/intelligence/parser/index.ts";
+} from "../../src/intelligence/documents/index.ts";
+import { sha256 } from "../../src/intelligence/parser/index.ts";
 
 type GoldenRecord = {
   facts: DocumentFacts;
@@ -25,7 +25,7 @@ type DocumentGoldens = {
 
 const root = join(
   import.meta.dir,
-  "..",
+  "../..",
   "tests",
   "fixtures",
   "intelligence",

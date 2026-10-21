@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { checkMarkdown } from "../scripts/check-prose";
+import { checkMarkdown } from "../scripts/validation/check-prose";
 
 test("enforces ASD-STE100 sentence limits and active voice", () => {
   expect(checkMarkdown("guide.md", "Run this clear command now.")).toEqual([]);

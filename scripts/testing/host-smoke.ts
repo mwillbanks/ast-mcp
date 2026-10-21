@@ -2,7 +2,7 @@ import {
   commandForPlatform,
   readSubprocessOutput,
   terminateProcessTree,
-} from "./runtime/subprocess";
+} from "../../src/runtime/subprocess";
 
 const HOST_SMOKE_PREFIX = "AST_MCP_HOST_SMOKE_";
 const HOST_SMOKE_TIMEOUT = `${HOST_SMOKE_PREFIX}TIMEOUT_MS`;
@@ -131,11 +131,14 @@ async function spawnHostSmoke(
   const stop = () => terminateProcessTree(child);
   const stdout = readSubprocessOutput(child.stdout, controller.signal, stop);
   const stderr = readSubprocessOutput(child.stderr, controller.signal, stop);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const completion = Promise.all([child.exited, stdout, stderr]);
     const completed = await Promise.race([
       completion,
-      Bun.sleep(check.timeoutMs).then(() => null),
+      new Promise<null>((resolve) => {
+        deadline = setTimeout(resolve, check.timeoutMs, null);
+      }),
     ]);
     if (!completed) {
       await terminateProcessTree(child, { force: true });
@@ -148,6 +151,8 @@ async function spawnHostSmoke(
     await terminateProcessTree(child, { force: true });
     controller.abort();
     throw error;
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -196,4 +201,13 @@ export async function main(env: NodeJS.ProcessEnv = process.env) {
   const completed = await runHostSmokeChecks(checks);
   console.log(`Host smoke checks passed: ${completed.join(", ")}`);
   return completed;
+}
+
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

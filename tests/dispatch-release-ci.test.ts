@@ -5,7 +5,7 @@ import {
   dispatchReleaseCi,
   formatReleaseChangelog,
   runReleaseCi,
-} from "../scripts/dispatch-release-ci";
+} from "../scripts/release/dispatch-release-ci";
 
 const repository = "mwillbanks/ast-mcp";
 const sha = "a".repeat(40);
@@ -522,7 +522,7 @@ async function runCli(env: NodeJS.ProcessEnv) {
     [
       process.execPath,
       fileURLToPath(
-        new URL("../scripts/dispatch-release-ci.ts", import.meta.url),
+        new URL("../scripts/release/dispatch-release-ci.ts", import.meta.url),
       ),
     ],
     { env, stdout: "pipe", stderr: "pipe" },

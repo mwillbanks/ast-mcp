@@ -75,9 +75,9 @@ set "TMP=%TEMP%"
 bun --version
 set AST_MCP_SKIP_PACKAGE_SMOKE=1
 bun test --max-concurrency=1 --timeout=30000 tests/config.test.ts tests/config-cli.test.ts tests/format-config.test.ts tests/git-worktrees.test.ts tests/workspace-concurrency.test.ts
-bun scripts/test-shard.ts --shard 0 --shards 3
-bun scripts/test-shard.ts --shard 1 --shards 3
-bun scripts/test-shard.ts --shard 2 --shards 3
+bun scripts/testing/test-shard.ts --shard 0 --shards 3
+bun scripts/testing/test-shard.ts --shard 1 --shards 3
+bun scripts/testing/test-shard.ts --shard 2 --shards 3
 bun test --dots --max-concurrency=1 --timeout=30000
 bun run intelligence:qualify
 bun test tests/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"

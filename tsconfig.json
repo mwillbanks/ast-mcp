@@ -20,13 +20,12 @@
     "src/**/*",
     "bin/**/*",
     "tests/**/*",
-    "scripts/check-prose.ts",
-    "scripts/check-prose-cli.ts",
-    "scripts/check-template-drift.ts",
-    "scripts/dispatch-release-ci.ts",
-    "scripts/provision-intelligence-comparators.ts",
-    "scripts/provision-intelligence-comparators-cli.ts",
-    "scripts/test-shard.ts",
+    "scripts/validation/check-prose.ts",
+    "scripts/validation/check-prose-cli.ts",
+    "scripts/validation/check-template-drift.ts",
+    "scripts/release/dispatch-release-ci.ts",
+    "scripts/testing/test-shard.ts",
+    "scripts/testing/host-smoke.ts",
     "templates/skills/ast-mcp/scripts/**/*"
   ]
 }

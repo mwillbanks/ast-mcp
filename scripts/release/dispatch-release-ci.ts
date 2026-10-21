@@ -79,7 +79,7 @@ function validatePullRequest(
 
 /** Use only the installed formatter and configuration from this trusted checkout. */
 export async function formatReleaseChangelog(content: string): Promise<string> {
-  const root = path.resolve(import.meta.dir, "..");
+  const root = path.resolve(import.meta.dir, "../..");
   const executable = path.join(
     path.dirname(Bun.resolveSync("oxfmt/package.json", root)),
     "bin/oxfmt",

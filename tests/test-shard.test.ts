@@ -7,7 +7,7 @@ import {
   discoverTestFiles,
   runTestShard,
   selectTestShard,
-} from "../scripts/test-shard";
+} from "../scripts/testing/test-shard";
 
 describe("package test shards", () => {
   test("cover every package and template test exactly once", () => {

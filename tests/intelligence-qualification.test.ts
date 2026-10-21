@@ -5,6 +5,7 @@ test("qualifies native intelligence dependencies without downloading a model", a
   const script = path.join(
     process.cwd(),
     "scripts",
+    "validation",
     "qualify-intelligence-deps.ts",
   );
   const child = Bun.spawn([process.execPath, "run", script], {
@@ -54,7 +55,11 @@ test("qualifies native intelligence dependencies without downloading a model", a
 
 test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
   const child = Bun.spawn(
-    [process.execPath, "run", "scripts/benchmark-intelligence-baseline.ts"],
+    [
+      process.execPath,
+      "run",
+      "scripts/benchmark/benchmark-intelligence-baseline.ts",
+    ],
     {
       cwd: process.cwd(),
       env: {

@@ -41,7 +41,7 @@ export function runTestShard(
 ): number {
   if (args.length !== 4 || args[0] !== "--shard" || args[2] !== "--shards") {
     throw new Error(
-      "Usage: bun scripts/test-shard.ts --shard <zero-based index> --shards <count>",
+      "Usage: bun scripts/testing/test-shard.ts --shard <zero-based index> --shards <count>",
     );
   }
   const shard = Number(args[1]);

@@ -11,7 +11,7 @@ function run(command: string[]): string {
 // Repository quality gates use installed development tools; runtime formatters are optional.
 for (const tool of ["oxfmt", "oxlint"]) {
   const executable = Bun.which(tool, {
-    PATH: `${import.meta.dir}/../node_modules/.bin${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
+    PATH: `${import.meta.dir}/../../node_modules/.bin${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
   });
   if (!executable)
     throw new Error(`Missing repository tool: ${tool}; run bun install`);

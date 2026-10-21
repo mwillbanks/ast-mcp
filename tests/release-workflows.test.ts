@@ -133,7 +133,7 @@ describe("release workflow contracts", () => {
     ).toBe("${{ secrets.GITHUB_TOKEN }}");
     expect(creator.outputs?.prs).toBe("${{ steps.release.outputs.prs }}");
     const dispatch = job(release, "dispatch-ci").steps?.find(
-      (s) => s.run === "bun scripts/dispatch-release-ci.ts",
+      (s) => s.run === "bun scripts/release/dispatch-release-ci.ts",
     );
     expect(dispatch?.env?.RELEASE_PRS).toBe("${{ needs.release.outputs.prs }}");
     expect(dispatch?.env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");

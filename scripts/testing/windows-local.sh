@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 image="ast-mcp/wine-bun:debian13-1.4.3"
 wine_volume="ast-mcp-wine-debian13"
 bun_volume="ast-mcp-wine-bun-cache-1-4-3"

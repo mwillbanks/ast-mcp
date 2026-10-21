@@ -5,7 +5,7 @@ import {
   type HostSmokeCheck,
   main,
   runHostSmokeChecks,
-} from "../src/host-smoke";
+} from "../scripts/testing/host-smoke";
 
 describe("optional live host smoke checks", () => {
   test("disables every host by default", () => {
@@ -200,6 +200,47 @@ describe("optional live host smoke checks", () => {
       expect(performance.now() - start).toBeLessThan(700);
     },
   );
+
+  test("relocated script preserves CLI output and error exits", async () => {
+    const environment = Object.fromEntries(
+      Object.entries(process.env).filter(
+        ([name]) => !name.startsWith("AST_MCP_HOST_SMOKE_"),
+      ),
+    ) as Record<string, string>;
+    const script = Bun.fileURLToPath(
+      new URL("../scripts/testing/host-smoke.ts", import.meta.url),
+    );
+    for (const [extra, exitCode, marker] of [
+      [{}, 0, "Host smoke checks skipped"],
+      [{ AST_MCP_HOST_SMOKE_BROKEN: "{" }, 1, "must contain valid JSON"],
+      [
+        {
+          AST_MCP_HOST_SMOKE_LOCAL: JSON.stringify({
+            command: [process.execPath, "-e", 'console.log("ready")'],
+            expect: ["ready"],
+          }),
+        },
+        0,
+        "Host smoke checks passed: local",
+      ],
+    ] as const) {
+      const started = performance.now();
+      const child = Bun.spawn([process.execPath, script], {
+        env: { ...environment, ...extra },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [status, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(status, stderr).toBe(exitCode);
+      expect(performance.now() - started).toBeLessThan(5_000);
+      expect(exitCode === 0 ? stdout : stderr).toContain(marker);
+      expect(exitCode === 0 ? stderr : stdout).toBe("");
+    }
+  });
 
   test("main skips by default and runs only explicit definitions", async () => {
     await expect(main({})).resolves.toEqual([]);

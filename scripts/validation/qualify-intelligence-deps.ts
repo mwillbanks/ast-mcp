@@ -14,9 +14,9 @@ import {
   Utf8,
 } from "apache-arrow";
 
-import { defaultLanguageRegistry } from "../src/intelligence/parser/registry.ts";
-import { normalizeEmbedding as normalizeRuntimeEmbedding } from "../src/intelligence/retrieval/embedding.ts";
-import { toLanceSchema } from "../src/intelligence/storage/arrow.ts";
+import { defaultLanguageRegistry } from "../../src/intelligence/parser/registry.ts";
+import { normalizeEmbedding as normalizeRuntimeEmbedding } from "../../src/intelligence/retrieval/embedding.ts";
+import { toLanceSchema } from "../../src/intelligence/storage/arrow.ts";
 
 const VECTOR_SIZE = 3;
 const DEFAULT_MODEL = "onnx-community/granite-embedding-30m-english-ONNX";

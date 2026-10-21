@@ -13,6 +13,30 @@
     "website/.source/**",
     "website/src/routeTree.gen.ts"
   ],
+  "overrides": [
+    {
+      "files": ["src/**", "bin/**"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^(oxfmt|oxlint|fallow|@modelcontextprotocol/inspector)(/|$)",
+                "allowTypeImports": true,
+                "message": "Keep development tooling out of runtime modules; invoke repository scripts instead."
+              },
+              {
+                "regex": "^(\\.{1,2}/)+(scripts|tests)(/|$)",
+                "allowTypeImports": true,
+                "message": "Runtime modules must not import development scripts or tests."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
   "rules": {
     "eslint/no-await-in-loop": "off",
     "eslint/no-shadow": "off",

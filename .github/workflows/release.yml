@@ -45,7 +45,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_PRS: ${{ needs.release.outputs.prs }}
-        run: bun scripts/dispatch-release-ci.ts
+        run: bun scripts/release/dispatch-release-ci.ts
 
   validate:
     needs: release

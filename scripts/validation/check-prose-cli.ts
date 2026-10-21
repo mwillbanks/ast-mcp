@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { checkMarkdown } from "./check-prose";
 
-const root = path.resolve(import.meta.dir, "..");
+const root = path.resolve(import.meta.dir, "../..");
 const targets = [
   path.join(root, "templates/skills/ast-mcp/references/installation.md"),
 ];

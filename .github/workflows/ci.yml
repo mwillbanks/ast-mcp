@@ -206,7 +206,7 @@ jobs:
       - name: Test package shard
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
-        run: bun scripts/test-shard.ts --shard ${{ matrix.shard }} --shards 3
+        run: bun scripts/testing/test-shard.ts --shard ${{ matrix.shard }} --shards 3
 
   package-native:
     name: Native package qualification (${{ matrix.os }})

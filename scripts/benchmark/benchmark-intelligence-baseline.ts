@@ -18,34 +18,34 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio.js";
 import {
   createIdentity,
   INTELLIGENCE_SCHEMA_VERSION,
-} from "../src/intelligence/contracts/common.ts";
+} from "../../src/intelligence/contracts/common.ts";
 import {
   createStorageDomainId,
   type StorageDomain,
-} from "../src/intelligence/contracts/storage.ts";
+} from "../../src/intelligence/contracts/storage.ts";
 import {
   createRepositoryId,
   createRevisionId,
   createWorkspaceId,
-} from "../src/intelligence/contracts/workspace.ts";
-import { ParserWorkerPool } from "../src/intelligence/parser/pool.ts";
+} from "../../src/intelligence/contracts/workspace.ts";
+import { ParserWorkerPool } from "../../src/intelligence/parser/pool.ts";
 import {
   type EmbeddingProvider,
   EmbeddingWorkerPool,
   normalizeEmbedding,
-} from "../src/intelligence/retrieval/embedding.ts";
+} from "../../src/intelligence/retrieval/embedding.ts";
 import {
   publishChunkEmbeddings,
   publishRetrievalChunks,
   syntheticChunkArtifactId,
-} from "../src/intelligence/retrieval/publication.ts";
+} from "../../src/intelligence/retrieval/publication.ts";
 import {
   EmbeddingModelConfigSchema,
   type RetrievalChunk,
   type RetrievalScope,
-} from "../src/intelligence/retrieval/types.ts";
-import { LanceIntelligenceStore } from "../src/intelligence/storage/store.ts";
-import type { WorkspaceHandle } from "../src/intelligence/workspace/context.ts";
+} from "../../src/intelligence/retrieval/types.ts";
+import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
+import type { WorkspaceHandle } from "../../src/intelligence/workspace/context.ts";
 
 const CORPUS = {
   "entry.ts":
@@ -177,7 +177,7 @@ function toolText(result: unknown): string {
 async function connect(cwd: string, name: string) {
   const client = new Client({ name, version: "1.0.0" });
   const transport = new StdioClientTransport({
-    args: [path.resolve(import.meta.dir, "../src/index.ts")],
+    args: [path.resolve(import.meta.dir, "../../src/index.ts")],
     command: process.execPath,
     cwd,
     env: { ...process.env, PWD: cwd },

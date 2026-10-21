@@ -1,7 +1,7 @@
 import { cp, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-const root = path.resolve(import.meta.dir, "..");
+const root = path.resolve(import.meta.dir, "../..");
 const canonical = path.join(root, "templates/skills/ast-mcp");
 const local = path.join(root, ".codex/skills/ast-mcp");
 const write = process.argv.includes("--write");

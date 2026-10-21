@@ -7,10 +7,10 @@ import {
   resolveWasmGrammarAsset,
   wasmGrammarAssets as grammarAssets,
   wasmProviderVersions,
-} from "../src/intelligence/languages/shared/wasm-assets.ts";
+} from "../../src/intelligence/languages/shared/wasm-assets.ts";
 
 const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
-  cwd: path.resolve(import.meta.dir, ".."),
+  cwd: path.resolve(import.meta.dir, "../.."),
   stderr: "pipe",
 });
 const buildId =
@@ -20,7 +20,7 @@ const providerMetadata = {
     (
       await Array.fromAsync(
         new Bun.Glob("src/**/*.ts").scan({
-          cwd: path.resolve(import.meta.dir, ".."),
+          cwd: path.resolve(import.meta.dir, "../.."),
         }),
       )
     )
@@ -40,7 +40,7 @@ const providerMetadata = {
   ),
   AST_MCP_WASM_PROVIDER_VERSIONS: JSON.stringify(wasmProviderVersions()),
 };
-const root = path.resolve(import.meta.dir, "..");
+const root = path.resolve(import.meta.dir, "../..");
 const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
 const workers = [
