@@ -58,6 +58,8 @@ Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power co
 
 Install the MCP server, best-effort routing hooks, and managed instructions into the current repository. Hosts that support MCP Skills can load the canonical skill from the server; other clients can use an explicit local export with `ast-mcp skills export <destination>`. See the [MCP Skills guide](https://mwillbanks.github.io/ast-mcp/docs/guides/skills/) for details.
 
+For a manual skill, run `ast-mcp skills update <destination>` after a package upgrade. It updates unchanged managed files and preserves customizations. Conflicts require manual reconciliation and return a nonzero exit. MCP Skills clients need no disk refresh unless they select a local copy. Check host selection when an old local copy shadows current MCP instructions.
+
 The hooks nudge common direct editor and manual mutation attempts toward ast-mcp. They are not a security boundary and deliberately leave Git operations, output redirection, repository scripts, and arbitrary execution to the host framework and sandbox.
 
 ```npm

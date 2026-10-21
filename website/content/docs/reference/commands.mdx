@@ -29,9 +29,10 @@ Installer results contain changed paths, the effective transport, HTTP endpoint,
 
 ```bash
 ast-mcp skills export <destination>
+ast-mcp skills update <destination>
 ```
 
-The destination is the skill root and contains `SKILL.md`. Export preserves files already present. See the [MCP Skills guide](/docs/guides/skills) for host support and migration details.
+The destination is the skill root and contains `SKILL.md`. Export preserves existing files and records managed hashes. Update replaces only unchanged managed files. It preserves customizations and returns a nonzero exit for conflicts. MCP Skills clients need no manual refresh unless they select a local copy. See the [MCP Skills guide](/docs/guides/skills) for recovery and migration.
 
 ## Configuration
 
@@ -60,9 +61,9 @@ ast-mcp skills export ./manual-skill --output toml
 
 Both `--output <format>` and `--output=<format>` accept `human`, `json`, `yaml`, or `toml`. The flag can appear before or after the command. Explicit flags override [configured defaults](/docs/reference/configuration#cli-output). Invalid, missing, or duplicate output flags fail before command execution, including when help is requested.
 
-JSON preserves the existing configuration and installer result fields. Skills export returns `operation`, `destination`, `written`, and `preserved`. YAML and TOML use Bun's native serializers. TOML omits null and undefined object fields recursively. Unrepresentable array entries produce an error; select JSON or YAML instead. Diagnostics remain on stderr and command exit codes are unchanged.
+JSON preserves the existing configuration and installer result fields. Skills commands return `operation`, `destination`, `written`, `updated`, `unchanged`, `preserved`, `obsolete`, and `conflicts`. YAML and TOML use Bun's native serializers. TOML omits null and undefined object fields recursively. Unrepresentable array entries produce an error; select JSON or YAML instead. Diagnostics remain on stderr and command exit codes are unchanged.
 
-For uninstall or skills export, specify `--output json` when invalid runtime configuration prevents loading output defaults. Explicit output skips that configuration lookup. Operation-specific configuration validation still applies.
+For uninstall or skills commands, specify `--output json` when invalid runtime configuration prevents loading output defaults. Explicit output skips that configuration lookup. Operation-specific configuration validation still applies.
 
 MCP and hook commands retain their protocol output and reject `--output`.
 
