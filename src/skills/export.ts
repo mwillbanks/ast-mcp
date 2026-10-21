@@ -118,11 +118,20 @@ async function inspectTree(root: string, relatives: string[]) {
   for (const relative of relatives) await inspectParents(root, relative);
 }
 
+async function closeFile(handle: FileHandle, failed: boolean) {
+  try {
+    await handle.close();
+  } catch (error) {
+    if (!failed) throw error;
+  }
+}
+
 async function readRegular(file: string): Promise<Buffer | undefined> {
   const entry = await metadata(file);
   if (!entry) return undefined;
   if (!entry.isFile() || entry.isSymbolicLink()) return undefined;
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let failed = false;
   try {
     const opened = await handle.stat();
     if (
@@ -132,8 +141,11 @@ async function readRegular(file: string): Promise<Buffer | undefined> {
     )
       throw new Error("Skill export file changed while opening it");
     return await handle.readFile();
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await handle.close();
+    await closeFile(handle, failed);
   }
 }
 
@@ -178,14 +190,16 @@ async function createFile(target: string, bytes: Uint8Array, mode = 0o644) {
     throw error;
   });
   if (!handle) return false;
+  let failed = false;
   try {
     await handle.writeFile(bytes);
     await handle.sync();
   } catch (error) {
+    failed = true;
     await unlink(target).catch(ignoreCleanupError);
     throw error;
   } finally {
-    await handle.close();
+    await closeFile(handle, failed);
   }
   return true;
 }

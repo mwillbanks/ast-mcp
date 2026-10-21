@@ -506,6 +506,63 @@ test("successful writes report lock cleanup failure instead of false success", a
   );
 });
 
+for (const failure of [
+  "read",
+  "write",
+  "sync",
+  "read-close",
+  "write-close",
+] as const) {
+  test(
+    "resource handle cleanup preserves " + failure + " failures",
+    async () => {
+      const root = await temporary();
+      if (failure.startsWith("read"))
+        await fs.writeFile(path.join(root, "SKILL.md"), "old");
+      const originalOpen = fs.open;
+      const open = spyOn(fs, "open").mockImplementation(
+        async (...args: Parameters<typeof fs.open>) => {
+          const handle = await originalOpen(...args);
+          if (String(args[0]).endsWith("SKILL.md")) {
+            const close = handle.close.bind(handle);
+            spyOn(handle, "close").mockImplementation(async () => {
+              await close();
+              throw new Error("resource close failed");
+            });
+            if (failure === "read")
+              spyOn(handle, "readFile").mockRejectedValueOnce(
+                new Error("primary read failed"),
+              );
+            if (failure === "write")
+              spyOn(handle, "writeFile").mockRejectedValueOnce(
+                new Error("primary write failed"),
+              );
+            if (failure === "sync")
+              spyOn(handle, "sync").mockRejectedValueOnce(
+                new Error("primary sync failed"),
+              );
+          }
+          return handle;
+        },
+      );
+      try {
+        await expect(
+          reconcileSkillExport(root, "export", [file("SKILL.md", "new")]),
+        ).rejects.toThrow(
+          failure.endsWith("close")
+            ? "resource close failed"
+            : "primary " + failure + " failed",
+        );
+      } finally {
+        open.mockRestore();
+      }
+      expect(
+        (await fs.readdir(root)).some((name) => name.endsWith(".lock")),
+      ).toBeFalse();
+    },
+  );
+}
+
 test("lock close failures do not hide the primary operation failure", async () => {
   const root = await temporary();
   const originalOpen = fs.open;
