@@ -27,7 +27,7 @@ const PACKAGE_FILES = new Set(
     ? AST_MCP_SOURCE_FILES
     : [
         "src/server.ts",
-        "src/config.ts",
+        "src/config/index.ts",
         "src/http.ts",
         "src/stdio.ts",
         "src/tools/configured.ts",

@@ -15,8 +15,8 @@ import {
   removeTomlSectionKey,
   validateConfigSource,
   writeConfigSource,
-} from "../src/config-edit";
-import { configRegistry } from "../src/config-registry";
+} from "../src/config/edit";
+import { configRegistry } from "../src/config/registry";
 import {
   InputRequiredSignal,
   withApprovalContext,

@@ -2,14 +2,14 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
+import { resolveConfig } from "../config";
+import { bundledSkills } from "../skills";
 import {
   parseOutputArguments,
   selectOutputFormat,
   writeCliOutput,
   type CliOutputContext,
-} from "./cli-output";
-import { resolveConfig } from "./config";
-import { bundledSkills } from "./skills";
+} from "./output";
 
 export class SkillsUsageError extends Error {
   constructor(message: string) {

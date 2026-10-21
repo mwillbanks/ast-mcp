@@ -11,8 +11,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { ConfigRegistry } from "../src/config-registry.ts";
-import { clearConfigCache, resolveConfig, withConfig } from "../src/config.ts";
+import {
+  clearConfigCache,
+  resolveConfig,
+  withConfig,
+} from "../src/config/index.ts";
+import { ConfigRegistry } from "../src/config/registry.ts";
 import {
   currentWorkspace,
   discoverGitWorkspace,

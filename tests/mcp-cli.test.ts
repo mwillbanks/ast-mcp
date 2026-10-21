@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { runMcpCli } from "../src/mcp-cli";
+import { runMcpCli } from "../src/cli/mcp";
 import { spawnHttpMcpProcess } from "./support/live-process";
 
 test("validates MCP transport arguments", async () => {

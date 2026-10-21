@@ -6,7 +6,7 @@ import {
   renderCliOutput,
   selectOutputFormat,
   writeCliOutput,
-} from "../src/cli-output";
+} from "../src/cli/output";
 
 test("output options accept both forms anywhere and preserve command arguments", () => {
   expect(parseOutputArguments(["--output", "yaml", "config", "show"])).toEqual({

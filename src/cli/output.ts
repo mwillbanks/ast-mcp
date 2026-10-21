@@ -1,8 +1,8 @@
-import type { ResolvedConfig } from "./config";
+import type { ResolvedConfig } from "../config";
 import {
   cliOutputFormatSchema,
   type CliOutputFormat,
-} from "./config-schema-common";
+} from "../config/schema-common";
 
 export class CliOutputUsageError extends Error {
   constructor(message: string) {

@@ -6,9 +6,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { currentConfig, type ResolvedConfig } from "../config";
-import { configRegistry } from "../config-registry";
-import { cliSchema } from "../config-schema-common";
-import { formatterV2Schema } from "../config-v2-schema";
+import { configRegistry } from "../config/registry";
+import { cliSchema } from "../config/schema-common";
+import { formatterV2Schema } from "../config/v2-schema";
 import {
   toolFailure,
   toolOutputSchema,

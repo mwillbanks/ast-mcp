@@ -11,8 +11,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { currentConfig, withConfig } from "../src/config";
-import { migrateConfigSource } from "../src/config-migrate";
-import { ConfigRegistry } from "../src/config-registry";
+import { migrateConfigSource } from "../src/config/migrate";
+import { ConfigRegistry } from "../src/config/registry";
 import { patchFile } from "../src/patch/engine";
 import {
   authorizeRequestedDecision,

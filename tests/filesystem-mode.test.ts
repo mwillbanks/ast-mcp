@@ -18,7 +18,7 @@ import {
   withConfig,
   withResolvedConfig,
 } from "../src/config";
-import { configRegistry } from "../src/config-registry";
+import { configRegistry } from "../src/config/registry";
 import { toolFailure } from "../src/helpers/mcp-schema";
 import { withWorkspaceContext } from "../src/intelligence/workspace/context";
 import { WorkspaceRegistry } from "../src/intelligence/workspace/registry";

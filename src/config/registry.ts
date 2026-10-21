@@ -2,15 +2,15 @@ import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
+import { setApprovalConfigInvalidator } from "../runtime/approval";
+import { canonicalPathWithin } from "../runtime/path-utils";
 import {
   clearConfigCache,
   globalConfigPath,
   type ResolveConfigOptions,
   type ResolvedConfig,
   resolveConfig,
-} from "./config";
-import { setApprovalConfigInvalidator } from "./runtime/approval";
-import { canonicalPathWithin } from "./runtime/path-utils";
+} from "./index";
 
 export interface ConfigSnapshot {
   config?: Readonly<ResolvedConfig>;

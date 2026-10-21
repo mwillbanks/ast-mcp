@@ -5,6 +5,17 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { collectRequestPaths, normalizeConfigLayer } from "../helpers/config";
+import { DEFAULT_EMBEDDING_MODEL } from "../intelligence/retrieval/types.ts";
+import {
+  clearGitWorktreeCache,
+  linkedWorktrees,
+} from "../runtime/git-worktrees";
+import {
+  canonicalizePath,
+  canonicalizePathSync,
+  canonicalPathWithin,
+} from "../runtime/path-utils";
 import {
   cliSchema,
   type CliOutputFormat,
@@ -14,23 +25,8 @@ import {
   httpSchema,
   type WorktreesMode,
   workspaceSchema,
-} from "./config-schema-common";
-import {
-  fileV2Schema,
-  type PathPolicy,
-  type PathRuleV2,
-} from "./config-v2-schema";
-import { collectRequestPaths, normalizeConfigLayer } from "./helpers/config";
-import { DEFAULT_EMBEDDING_MODEL } from "./intelligence/retrieval/types.ts";
-import {
-  clearGitWorktreeCache,
-  linkedWorktrees,
-} from "./runtime/git-worktrees";
-import {
-  canonicalizePath,
-  canonicalizePathSync,
-  canonicalPathWithin,
-} from "./runtime/path-utils";
+} from "./schema-common";
+import { fileV2Schema, type PathPolicy, type PathRuleV2 } from "./v2-schema";
 
 export type { WorktreesMode };
 

@@ -14,13 +14,13 @@ import path from "node:path";
 import { type Transport } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
-import { createServer } from "../src/server";
-import { createSkillCatalog, SKILL_URI } from "../src/skills";
 import {
   exportSkills,
   runSkillsCli,
   SkillsUsageError,
-} from "../src/skills-cli";
+} from "../src/cli/skills";
+import { createServer } from "../src/server";
+import { createSkillCatalog, SKILL_URI } from "../src/skills";
 
 const roots: string[] = [];
 afterEach(async () => {

@@ -1,14 +1,14 @@
 import path from "node:path";
 
+import { globalConfigPath, resolveConfig } from "../config";
+import { migrateConfigSource, writeMigratedConfig } from "../config/migrate";
+import type { CliOutputFormat } from "../config/schema-common";
 import {
   parseOutputArguments,
   selectOutputFormat,
   writeCliOutput,
   type CliOutputContext,
-} from "./cli-output";
-import { globalConfigPath, resolveConfig } from "./config";
-import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
-import type { CliOutputFormat } from "./config-schema-common";
+} from "./output";
 
 class ConfigurationUsageError extends Error {
   constructor(message: string) {

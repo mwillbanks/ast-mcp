@@ -15,7 +15,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
-import { withConfig } from "../src/config.ts";
+import { withConfig } from "../src/config/index.ts";
 import {
   createRepositoryId,
   createRevisionId,

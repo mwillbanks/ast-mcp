@@ -9,9 +9,9 @@ import {
   selectOutputFormat,
   writeCliOutput,
   type CliOutputContext,
-} from "./cli-output";
+} from "./cli/output";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
-import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
+import { migrateConfigSource, writeMigratedConfig } from "./config/migrate";
 import {
   codexTransport,
   installerTargetPaths,

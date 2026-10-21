@@ -15,7 +15,7 @@ import {
   withResolvedConfig,
   type ResolvedConfig,
 } from "../src/config";
-import { configRegistry } from "../src/config-registry";
+import { configRegistry } from "../src/config/registry";
 import { applyAiderBlockCascade } from "../src/helpers/aider";
 import { WorkspaceError } from "../src/intelligence/workspace/errors";
 import { InputRequiredSignal } from "../src/runtime/approval";
@@ -97,7 +97,7 @@ test("SDK inherited environment preserves global opt-out in child processes", as
       process.execPath,
       "-e",
       `
-import { resolveConfig, globalTelemetryEnabled } from ${JSON.stringify(path.resolve("src/config.ts"))};
+import { resolveConfig, globalTelemetryEnabled } from ${JSON.stringify(path.resolve("src/config/index.ts"))};
 import { Telemetry } from ${JSON.stringify(path.resolve("src/runtime/telemetry.ts"))};
 let initialized = 0;
 let transmitted = 0;

@@ -7,7 +7,7 @@ import {
   dependenciesSchema,
   httpSchema,
   workspaceSchema,
-} from "./config-schema-common";
+} from "./schema-common";
 
 const schemaVersion = 2 as const;
 const pathPolicy = z.enum(["allow", "request", "deny"]);

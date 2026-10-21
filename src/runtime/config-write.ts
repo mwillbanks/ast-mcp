@@ -10,9 +10,9 @@ import {
   type TomlValue,
   updatePathTable,
   writeConfigSource,
-} from "../config-edit";
-import { configRegistry } from "../config-registry";
-import type { CliOutputFormat } from "../config-schema-common";
+} from "../config/edit";
+import { configRegistry } from "../config/registry";
+import type { CliOutputFormat } from "../config/schema-common";
 import { grantUnrestrictedFilesystem } from "./approval";
 import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";

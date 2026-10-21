@@ -2,7 +2,7 @@ import {
   transports,
   validateHttpHost,
   validateHttpPort,
-} from "./installer-transport";
+} from "../installer-transport";
 
 export interface McpCliRuntime {
   http?(options: { host?: string; port?: number }): Promise<{ url: URL }>;
@@ -80,14 +80,14 @@ function validateMcpOptions(options: ParsedMcpOptions) {
 
 async function startStdio(runtime: McpCliRuntime) {
   if (runtime.stdio) await runtime.stdio();
-  else await import("./index");
+  else await import("../index");
 }
 
 async function startHttp(options: ParsedMcpOptions, runtime: McpCliRuntime) {
   const host =
     options.host === undefined ? undefined : validateHttpHost(options.host);
   if (runtime.http) return await runtime.http({ host, port: options.port });
-  const { startHttpServer } = await import("./http");
+  const { startHttpServer } = await import("../http");
   return await startHttpServer({ host, port: options.port });
 }
 

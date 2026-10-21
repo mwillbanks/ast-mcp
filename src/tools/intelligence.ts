@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
-import { currentConfig } from "../config.ts";
+import { currentConfig } from "../config/index.ts";
 import { toolFailure, toolSuccess } from "../helpers/mcp-schema.ts";
 import {
   GenerationIdSchema,

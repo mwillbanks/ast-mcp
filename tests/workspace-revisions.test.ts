@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { withConfig } from "../src/config.ts";
+import { withConfig } from "../src/config/index.ts";
 import {
   discoverGitWorkspace,
   gitDirtyOverlayId,

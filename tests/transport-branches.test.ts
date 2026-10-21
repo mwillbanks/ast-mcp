@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { createServer as createHttpServer } from "node:http";
 
+import { runMcpCli } from "../src/cli/mcp";
 import { updateHttpToml, validateHttpHost } from "../src/installer-transport";
-import { runMcpCli } from "../src/mcp-cli";
 import {
   createServicePlan,
   runServiceCommand,

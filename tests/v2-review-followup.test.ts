@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { ConfigRegistry } from "../src/config-registry";
+import { ConfigRegistry } from "../src/config/registry";
 import { toolFailure } from "../src/helpers/mcp-schema";
 
 test("registry watches every ancestor searched for project configuration", async () => {

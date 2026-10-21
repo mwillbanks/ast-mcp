@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { runConfigCli } from "../src/cli/config";
 import { clearConfigCache } from "../src/config";
-import { runConfigCli } from "../src/config-cli";
 
 let root = "";
 

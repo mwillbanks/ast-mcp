@@ -2,8 +2,8 @@ import { copyFile, lstat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { fileV2Schema } from "./config-v2-schema";
-import { replaceFileAtomically } from "./runtime/atomic";
+import { replaceFileAtomically } from "../runtime/atomic";
+import { fileV2Schema } from "./v2-schema";
 
 export interface MigrationPreview {
   changed: boolean;

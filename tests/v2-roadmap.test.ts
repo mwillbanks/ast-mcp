@@ -14,13 +14,13 @@ import {
 import os from "node:os";
 import path from "node:path";
 
+import { runConfigCli } from "../src/cli/config";
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
-import { runConfigCli } from "../src/config-cli";
 import {
   migrateConfigSource,
   writeMigratedConfig,
-} from "../src/config-migrate";
-import { ConfigRegistry, configRegistry } from "../src/config-registry";
+} from "../src/config/migrate";
+import { ConfigRegistry, configRegistry } from "../src/config/registry";
 import { patchFiles, writeFileSafely } from "../src/patch/engine";
 import {
   authorizeRequestedDecision,

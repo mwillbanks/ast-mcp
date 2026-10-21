@@ -4,11 +4,11 @@ const { runCli } = await import("../src/cli");
 try {
   const exitCode = await runCli(process.argv.slice(2), {
     config: async (args) => {
-      const { runConfigCli } = await import("../src/config-cli");
+      const { runConfigCli } = await import("../src/cli/config");
       return await runConfigCli(args);
     },
     skills: async (args) => {
-      const { runSkillsCli } = await import("../src/skills-cli");
+      const { runSkillsCli } = await import("../src/cli/skills");
       await runSkillsCli(args);
     },
     hook: async () => {
@@ -20,7 +20,7 @@ try {
       await runInstallerCli(args);
     },
     mcp: async (args) => {
-      const { runMcpCli } = await import("../src/mcp-cli");
+      const { runMcpCli } = await import("../src/cli/mcp");
       await runMcpCli(args);
     },
   });

@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 
-import { fileV2Schema } from "./config-v2-schema";
-import { replaceFileAtomically } from "./runtime/atomic";
+import { replaceFileAtomically } from "../runtime/atomic";
+import { fileV2Schema } from "./v2-schema";
 
 export type TomlValue =
   | boolean

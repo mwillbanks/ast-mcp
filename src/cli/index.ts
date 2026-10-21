@@ -1,4 +1,4 @@
-import { CliOutputUsageError, parseOutputArguments } from "./cli-output";
+import { CliOutputUsageError, parseOutputArguments } from "./output";
 
 export interface CliHandlers {
   config(args: string[]): Promise<number | undefined> | Promise<void>;

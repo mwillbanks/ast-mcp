@@ -15,7 +15,11 @@ import { pathToFileURL } from "node:url";
 
 import type { McpServer } from "@modelcontextprotocol/server";
 
-import { clearConfigCache, currentConfig, withConfig } from "../src/config.ts";
+import {
+  clearConfigCache,
+  currentConfig,
+  withConfig,
+} from "../src/config/index.ts";
 import { withFencedFileLocks } from "../src/intelligence/mutation/locks.ts";
 import {
   discoverGitWorkspace,
