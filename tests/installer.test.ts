@@ -124,7 +124,9 @@ describe("installer", () => {
   test("ignores package-internal local executables and writes the stable alias", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast mcp invoked-"));
     created.push(root);
-    await executable(path.join(root, "node_modules/.bin/ast-mcp"));
+    const alias = await executable(
+      path.join(root, "node_modules/.bin/ast-mcp"),
+    );
     const entry = path.join(
       root,
       "node_modules/@mwillbanks/ast-mcp/dist/bin/ast-mcp.js",
@@ -136,9 +138,7 @@ describe("installer", () => {
       targets: ["codex", "claude", "copilot"],
     });
     const expected = commandForPlatform(
-      process.platform === "win32"
-        ? "./node_modules/.bin/ast-mcp.cmd"
-        : "./node_modules/.bin/ast-mcp",
+      `./${path.relative(root, alias).split(path.sep).join("/")}`,
       ["mcp"],
     );
     const codex = Bun.TOML.parse(

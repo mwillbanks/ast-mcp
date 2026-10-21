@@ -13,6 +13,7 @@ import path from "node:path";
 
 import { deleteFilesSafely } from "../src/runtime/file-delete";
 import { sha256 } from "../src/runtime/hash";
+import * as mutationLocks from "../src/runtime/locks";
 import { withFileLock } from "../src/runtime/locks";
 
 let root = "";
@@ -109,12 +110,30 @@ test("file_delete cancels while waiting for a held mutation lease", async () => 
   });
   await held;
   const controller = new AbortController();
+  const waiting = Promise.withResolvers<void>();
+  const originalLocks = mutationLocks.withFileLocks;
+  const locks = spyOn(mutationLocks, "withFileLocks").mockImplementation(((
+    ...args: Parameters<typeof originalLocks>
+  ) => {
+    const pending = originalLocks(...args);
+    if (args[2]?.signal === controller.signal) {
+      expect(args[0]).toEqual([canonical]);
+      // The real queue registers its cancellation listener before returning.
+      waiting.resolve();
+    }
+    return pending;
+  }) as typeof originalLocks);
   const deletion = deleteFilesSafely(
     { [filePath]: { expectedSha256: sha256(content) } },
     controller.signal,
   );
   try {
-    await Bun.sleep(30);
+    await Promise.race([
+      waiting.promise,
+      Bun.sleep(5_000).then(() => {
+        throw new Error("Deletion did not reach mutation lease acquisition");
+      }),
+    ]);
     controller.abort();
     await expect(
       Promise.race([
@@ -129,6 +148,7 @@ test("file_delete cancels while waiting for a held mutation lease", async () => 
     release();
     await holder;
     await deletion.catch(() => undefined);
+    locks.mockRestore();
   }
 });
 

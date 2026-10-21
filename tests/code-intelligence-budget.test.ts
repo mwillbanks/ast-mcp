@@ -13,9 +13,11 @@ import registerCodeIntelligence from "../src/tools/code-intelligence";
 import { spawnHttpMcpProcess } from "./support/live-process";
 
 const repository = path.resolve(import.meta.dir, "..");
+const startupTimeoutMs = 15_000;
 async function deadline<T>(
   operation: Promise<T>,
   milliseconds = 4_000,
+  phase = "MCP tool operation",
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -25,7 +27,9 @@ async function deadline<T>(
         timer = setTimeout(
           () =>
             reject(
-              new Error("MCP operation exceeded the independent deadline"),
+              new Error(
+                `${phase} exceeded the independent ${milliseconds}ms deadline`,
+              ),
             ),
           milliseconds,
         );
@@ -65,7 +69,11 @@ for (const transportKind of ["stdio", "http"] as const) {
           env: env as Record<string, string>,
           stderr: "pipe",
         });
-        await deadline(client.connect(transport));
+        await deadline(
+          client.connect(transport),
+          startupTimeoutMs,
+          "stdio initialization",
+        );
       } else {
         const server = await spawnHttpMcpProcess(
           process.execPath,
@@ -75,8 +83,19 @@ for (const transportKind of ["stdio", "http"] as const) {
         stop = () => server.stop();
         await deadline(
           client.connect(new StreamableHTTPClientTransport(server.url)),
+          startupTimeoutMs,
+          "HTTP initialization",
         );
       }
+      // The initialization response and discovery prove readiness before operational budgets begin.
+      const available = await deadline(
+        client.listTools(),
+        4_000,
+        "MCP tool discovery",
+      );
+      const names = available.tools.map((tool) => tool.name);
+      for (const name of ["map", "impact", "file_hash", "file_delete"])
+        expect(names).toContain(name);
       const hash = () =>
         deadline(
           client.callTool({
@@ -100,7 +119,10 @@ for (const transportKind of ["stdio", "http"] as const) {
       expect(invalid.isError).toBeTrue();
       expect((await hash()).isError).not.toBeTrue();
       const missing = await deadline(
-        client.callTool({ name: "impact", arguments: { paths: ["small.ts"] } }),
+        client.callTool({
+          name: "impact",
+          arguments: { paths: ["small.ts"] },
+        }),
       );
       expect(missing.isError).toBeTrue();
       expect(JSON.stringify(missing)).toContain("target");
@@ -279,7 +301,7 @@ for (const transportKind of ["stdio", "http"] as const) {
       await stop?.();
       await rm(root, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 35_000);
 }
 
 test("inventory overflow fails explicitly before parsing and releases server resources", async () => {
