@@ -159,7 +159,7 @@ It adds missing resources and preserves customized, untracked, and obsolete file
 Legacy files matching current bundled bytes can become tracked.
 Other existing legacy files produce conflicts.
 
-Inspect structured `written`, `updated`, `unchanged`, `preserved`, `obsolete`, and `conflicting` results.
+Inspect structured `written`, `updated`, `unchanged`, `preserved`, `obsolete`, and `conflicts` results.
 Conflicts or operational failures produce a nonzero exit code.
 Do not delete custom files or edit baseline hashes to force an update.
 Reconcile conflicts through an authorized guarded workflow.
