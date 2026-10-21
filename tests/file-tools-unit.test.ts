@@ -205,7 +205,7 @@ test("file tool handlers execute keyed batches without transport indirection", a
   }
 });
 
-test("file patch formats committed content and preserves batch output", async () => {
+test("file patch preserves unformatted content by default and batch output", async () => {
   const folder = await mkdtemp(path.join(process.cwd(), ".tmp-file-tools-"));
   try {
     const notes = path.join(folder, "notes.ts");
@@ -244,9 +244,7 @@ test("file patch formats committed content and preserves batch output", async ()
         patched.content.map((item) => item.text ?? "").join("\n"),
       );
     expect(patched.isError).not.toBeTrue();
-    expect(await readFile(notes, "utf8")).toBe(
-      "const one = 1;\nconst two = 2;\n",
-    );
+    expect(await readFile(notes, "utf8")).toBe("const one=1;\nconst two=2;\n");
   } finally {
     await rm(folder, { force: true, recursive: true });
   }

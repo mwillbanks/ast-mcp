@@ -6,7 +6,11 @@ import path from "node:path";
 import type { ResolvedConfig } from "../config";
 import type { PathPolicy } from "../config-v2-schema";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
-import { authorizeRequestedDecision } from "./approval";
+import {
+  assertUnrestrictedFilesystem,
+  authorizeRequestedDecision,
+  unrestrictedFilesystemAuthorized,
+} from "./approval";
 import {
   canonicalizePath,
   canonicalizePathSync,
@@ -184,6 +188,18 @@ export function evaluatePolicy(
   platform: NodeJS.Platform = process.platform,
 ): PolicyDecision {
   const canonicalPath = path.resolve(targetPath);
+  if (config.safety.filesystem === "unrestricted") {
+    assertUnrestrictedFilesystem(config);
+    return {
+      canonicalPath,
+      operation,
+      policy: "allow",
+      reason: "Unrestricted filesystem access",
+      source: "baseline",
+      specificity: Number.MAX_SAFE_INTEGER,
+      symlinks: true,
+    };
+  }
   if (
     operation !== "read" &&
     protectedConfiguration(config, canonicalPath, platform)
@@ -312,6 +328,20 @@ export async function evaluatePolicyForCheck(
     ? targetPath
     : path.resolve(base, targetPath);
   const linkPath = await canonicalPolicyPath(inputPath);
+  if (
+    config.safety.filesystem === "unrestricted" &&
+    !unrestrictedFilesystemAuthorized(config)
+  )
+    return {
+      canonicalPath: linkPath,
+      operation,
+      policy: "request",
+      reason:
+        "Project unrestricted filesystem access requires session approval",
+      source: "project",
+      specificity: Number.MAX_SAFE_INTEGER,
+      symlinks: true,
+    };
   const linkDecision = evaluatePolicy(config, linkPath, operation);
   const metadata = await lstat(linkPath).catch(() => undefined);
   if (!metadata?.isSymbolicLink()) return linkDecision;
@@ -587,6 +617,10 @@ export function assertReadableTree(
   targetPath: string,
 ): void {
   const root = path.resolve(targetPath);
+  config = {
+    ...config,
+    safety: { ...config.safety, filesystem: "restricted" },
+  };
   assertPolicy(evaluatePolicy(config, root, "read"), config.generation);
   let fullTreeAllowed =
     config.trustedRoots.some((trustedRoot) => within(trustedRoot, root)) ||

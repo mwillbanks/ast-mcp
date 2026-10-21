@@ -48,8 +48,13 @@ const fileV1Schema = z
       .strict()
       .optional(),
     http: httpSchema.optional(),
+    telemetry: z
+      .object({ enabled: z.boolean().optional() })
+      .strict()
+      .optional(),
     safety: z
       .object({
+        filesystem: z.enum(["restricted", "unrestricted"]).optional(),
         allow_any_path: z.boolean().optional(),
         allow_external_roots: z.boolean().optional(),
         allow_temp_directory: z.boolean().optional(),
@@ -149,6 +154,7 @@ export interface ResolvedConfig {
   projectRoot: string;
   provenance: Record<string, "default" | "global" | "project" | "environment">;
   safety: {
+    filesystem: "restricted" | "unrestricted";
     allowAnyPath: boolean;
     allowExternalRoots: boolean;
     allowTempDirectory: boolean;
@@ -157,6 +163,7 @@ export interface ResolvedConfig {
     requireHash: boolean;
   };
   sources: { project?: string; global?: string; environment: string[] };
+  telemetry: { enabled: boolean; globalEnabled: boolean };
   trustedRoots: string[];
   version: 1 | 2;
   workspace: {
@@ -265,6 +272,7 @@ interface InternalConfig {
     policies: { delete?: PathPolicy; read: PathPolicy; write: PathPolicy };
   }>;
   safety?: {
+    filesystem?: "restricted" | "unrestricted";
     allow_any_path?: boolean;
     allow_external_roots?: boolean;
     allow_temp_directory?: boolean;
@@ -276,6 +284,7 @@ interface InternalConfig {
     };
     require_hash?: boolean;
   };
+  telemetry?: { enabled?: boolean };
   version?: 1 | 2;
   workspace?: { roots?: string[]; worktrees?: WorktreesMode };
 }
@@ -640,11 +649,13 @@ function environmentLayer(
 
 const leaves = [
   "version",
+  "telemetry.enabled",
   "workspace.roots",
   "workspace.worktrees",
   "mcp.configuration.enabled",
   "mcp.configuration.require_approval",
   "paths",
+  "safety.filesystem",
   "safety.allow_any_path",
   "safety.allow_external_roots",
   "safety.allow_temp_directory",
@@ -688,6 +699,7 @@ function leaf(value: InternalConfig, dotted: (typeof leaves)[number]) {
 
 const mergeSections = [
   "workspace",
+  "telemetry",
   "safety",
   "files",
   "formatting",
@@ -874,7 +886,8 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
     dependencies: {},
     formatting: {
       dprint_config: packageDprintConfig(),
-      enabled: true,
+      enabled: false,
+      fallback: "preserve",
       formatters: [],
     },
     intelligence: {
@@ -907,9 +920,11 @@ function defaultInternalConfig(candidates: string[]): InternalConfig {
       configuration: { enabled: true, require_approval: true },
     },
     safety: {
+      filesystem: "restricted",
       hook: { allow_tools: [], block_tools: [], enabled: true },
       require_hash: true,
     },
+    telemetry: { enabled: true },
     version: 1,
     workspace: { roots: candidates, worktrees: "include" },
   };
@@ -933,12 +948,10 @@ function resolvedFormatting(
   value: InternalConfig,
   dprintConfig: string,
 ): ResolvedConfig["formatting"] {
-  const version = value.version ?? 1;
   return {
     dprintConfig,
-    enabled: value.formatting?.enabled ?? true,
-    fallback:
-      value.formatting?.fallback ?? (version === 2 ? "preserve" : "dprint"),
+    enabled: value.formatting?.enabled ?? false,
+    fallback: value.formatting?.fallback ?? "preserve",
     formatters: (value.formatting?.formatters ?? []).map(
       (formatter, index) => ({
         args: formatter.args ?? [],
@@ -1057,6 +1070,7 @@ type ConfiguredPathRule = PathRuleV2;
 function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
   const version = value.version ?? 1;
   return {
+    filesystem: value.safety?.filesystem ?? "restricted",
     allowAnyPath: withDefault(value.safety?.allow_any_path, false),
     allowExternalRoots: withDefault(value.safety?.allow_external_roots, false),
     allowTempDirectory: withDefault(
@@ -1168,6 +1182,12 @@ function resolvedConfiguration(args: {
     provenance,
     safety: resolvedSafety(value),
     sources: resolvedSources(environment, global, project),
+    telemetry: {
+      enabled:
+        global.value?.telemetry?.enabled !== false &&
+        (value.telemetry?.enabled ?? true),
+      globalEnabled: global.value?.telemetry?.enabled !== false,
+    },
     trustedRoots,
     version: value.version ?? 1,
     workspace: resolvedWorkspace(value, candidates),
@@ -1202,7 +1222,9 @@ async function loadResolutionLayers(
 }
 
 async function resolvedDprint(value: InternalConfig) {
-  const enabled = value.formatting?.enabled ?? true;
+  const enabled =
+    value.formatting?.enabled === true &&
+    value.formatting.fallback === "dprint";
   const config = value.formatting?.dprint_config ?? packageDprintConfig();
   const fingerprint = enabled ? await validateDprintConfig(config) : "disabled";
   return { config, fingerprint };
@@ -1393,6 +1415,7 @@ function policy(config: ResolvedConfig) {
     formatting: config.formatting,
     mcp: config.mcp.configuration,
     safety: config.safety,
+    telemetry: config.telemetry,
     worktrees: config.workspace.worktrees,
   });
 }
@@ -1459,6 +1482,19 @@ export function configRequestPaths(value: unknown): string[] {
 }
 
 const activeConfig = new AsyncLocalStorage<ResolvedConfig>();
+
+export async function globalTelemetryEnabled(
+  options: ResolveConfigOptions = {},
+): Promise<boolean> {
+  try {
+    return (
+      (await loadLayer(globalConfigPath(options))).value?.telemetry?.enabled !==
+      false
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function currentConfig(): Promise<ResolvedConfig> {
   return activeConfig.getStore() ?? resolveConfig();

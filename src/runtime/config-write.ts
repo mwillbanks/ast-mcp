@@ -11,6 +11,7 @@ import {
   writeConfigSource,
 } from "../config-edit";
 import { configRegistry } from "../config-registry";
+import { grantUnrestrictedFilesystem } from "./approval";
 import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
 
@@ -33,6 +34,16 @@ export interface ConfigCorePatch {
     dprint_config?: string;
     enabled?: boolean;
     fallback?: "dprint" | "preserve" | "reject";
+    formatters?: Array<{
+      id: string;
+      command: string;
+      args?: string[];
+      enabled?: boolean;
+      extensions?: string[];
+      globs?: string[];
+      mode?: "stdout" | "in_place";
+      timeout_ms?: number;
+    }>;
   };
   intelligence?: {
     federation?: { enabled?: boolean };
@@ -51,6 +62,7 @@ export interface ConfigCorePatch {
   };
   mcp?: { configuration?: { enabled?: boolean; require_approval?: boolean } };
   safety?: {
+    filesystem?: "restricted" | "unrestricted";
     hook?: {
       allow_tools?: string[];
       block_tools?: string[];
@@ -58,6 +70,7 @@ export interface ConfigCorePatch {
     };
     require_hash?: boolean;
   };
+  telemetry?: { enabled?: boolean };
   target?: ConfigTarget;
   workspace?: {
     roots?: string[];
@@ -181,19 +194,41 @@ function applyObjectKeys(
   return next;
 }
 
+function removeFormatterTables(source: string): string {
+  const lines = source.split("\n");
+  let skip = false;
+  return lines
+    .filter((line) => {
+      if (/^\s*\[\[formatting\.formatters\]\]\s*(?:#.*)?$/.test(line)) {
+        skip = true;
+        return false;
+      }
+      if (/^\s*\[/.test(line)) skip = false;
+      return !skip;
+    })
+    .join("\n");
+}
+
 function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   let next = source;
   next = applyObjectKeys(next, "workspace", patch.workspace);
+  next = applyObjectKeys(next, "telemetry", patch.telemetry);
   next = applyObjectKeys(next, "safety", {
+    filesystem: patch.safety?.filesystem,
     require_hash: patch.safety?.require_hash,
   });
   next = applyObjectKeys(next, "safety.hook", patch.safety?.hook);
   next = applyObjectKeys(next, "files.read", patch.files?.read);
   next = applyObjectKeys(next, "files.patch", patch.files?.patch);
+  if (patch.formatting?.formatters !== undefined)
+    next = removeFormatterTables(next);
   next = applyObjectKeys(next, "formatting", {
     dprint_config: patch.formatting?.dprint_config,
     enabled: patch.formatting?.enabled,
     fallback: patch.formatting?.fallback,
+    formatters: patch.formatting?.formatters?.map((formatter) =>
+      Object.fromEntries(compactEntries(formatter)),
+    ),
   });
   next = applyObjectKeys(
     next,
@@ -276,6 +311,7 @@ async function commitConfigEdit(
   filePath: string,
   source: string,
   changed: string[],
+  grantFilesystem = false,
 ) {
   const current = await currentConfig();
   await writeConfigSource(filePath, source);
@@ -287,6 +323,8 @@ async function commitConfigEdit(
         item.config?.sources.project === filePath ||
         item.config?.sources.global === filePath,
     ) ?? (await configRegistry.snapshot({ cwd: current.projectRoot }));
+  if (grantFilesystem && snapshot.config)
+    grantUnrestrictedFilesystem(snapshot.config);
   return {
     changed,
     filePath,
@@ -299,6 +337,7 @@ async function commitConfigEdit(
 function coreSectionChanges(patch: ConfigCorePatch): string[] {
   return [
     patch.workspace ? "workspace" : undefined,
+    patch.telemetry ? "telemetry" : undefined,
     patch.safety ? "safety" : undefined,
     patch.files ? "files" : undefined,
     patch.formatting ? "formatting" : undefined,
@@ -320,7 +359,8 @@ async function editConfigCore(target: ConfigTarget, patch: ConfigCorePatch) {
   authorizeConfigWrite(
     loaded.config,
     loaded.filePath,
-    patch.mcp?.configuration?.enabled !== undefined ||
+    patch.safety?.filesystem === "unrestricted" ||
+      patch.mcp?.configuration?.enabled !== undefined ||
       patch.mcp?.configuration?.require_approval !== undefined,
   );
   return commitConfigEdit(
@@ -328,6 +368,7 @@ async function editConfigCore(target: ConfigTarget, patch: ConfigCorePatch) {
     loaded.filePath,
     applyConfigCorePatch(loaded.source, patch),
     changed,
+    patch.safety?.filesystem === "unrestricted",
   );
 }
 

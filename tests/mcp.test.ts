@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -156,16 +164,34 @@ test("CLI mcp subcommand remains alive for a stdio handshake", async () => {
 });
 
 test("calls native code intelligence through the server", async () => {
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "ast-mcp-native-tools-")),
+  );
+  await mkdir(path.join(root, "src"));
+  await mkdir(path.join(root, "tests/fixtures/intelligence"), {
+    recursive: true,
+  });
+  await writeFile(
+    path.join(root, "src/server.ts"),
+    await readFile(path.resolve(import.meta.dir, "../src/server.ts")),
+  );
+  await cp(
+    path.resolve(import.meta.dir, "fixtures/intelligence/scan"),
+    path.join(root, "tests/fixtures/intelligence/scan"),
+    { recursive: true },
+  );
+  await git(root, ["init", "-b", "main"]);
+  await git(root, ["add", "."]);
+  await git(root, ["commit", "-m", "fixture"]);
   const client = new Client({ name: "native-code-test", version: "1.0.0" });
   const transport = new StdioClientTransport({
     args: [path.resolve(import.meta.dir, "../src/index.ts")],
     command: "bun",
-    cwd: path.resolve(import.meta.dir, ".."),
+    cwd: root,
     stderr: "pipe",
   });
   try {
     await client.connect(transport);
-    const root = path.resolve(import.meta.dir, "..");
     const opened = await client.callTool({
       arguments: { directory: root },
       name: "workspace_open",
@@ -180,7 +206,10 @@ test("calls native code intelligence through the server", async () => {
       arguments: { paths: ["src/server.ts"], workspaceId },
       name: "map",
     });
-    expect(result.isError).not.toBeTrue();
+    expect(
+      result.isError,
+      JSON.stringify(result.structuredContent),
+    ).not.toBeTrue();
     expect(JSON.stringify(result.structuredContent)).toContain("createServer");
     const coverageResult = await client.callTool({
       arguments: {
@@ -244,6 +273,7 @@ test("calls native code intelligence through the server", async () => {
     expect(JSON.stringify(write.structuredContent)).toContain("file_patch");
   } finally {
     await client.close();
+    await rm(root, { recursive: true, force: true });
   }
 }, 30_000);
 

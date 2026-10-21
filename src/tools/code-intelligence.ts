@@ -10,23 +10,21 @@ import {
   toolSuccess,
 } from "../helpers/mcp-schema";
 import {
-  findStructuralMatches,
   LANGUAGE_CAPABILITY_CATALOG,
   type ParserLanguageId,
-  parseSource,
-  rewriteStructuralMatches,
-  type SyntaxFacts,
 } from "../intelligence/parser/index.ts";
 import { LanceIntelligenceStore } from "../intelligence/storage/index.ts";
 import {
   currentWorkspace,
   readGitRevisionFile,
-  runGitRaw,
   type WorkspaceHandle,
 } from "../intelligence/workspace/index.ts";
 import { detectAstLanguage } from "../patch/languages";
 import { assertReadableTree } from "../runtime/path-policy";
-import { resolveWorkspacePath } from "../runtime/paths";
+import { resolveIntelligencePath } from "../runtime/paths";
+import { terminateProcessTree } from "../runtime/subprocess";
+import type { CompilerAlias, NativeFile } from "./code-intelligence-compute.ts";
+import type { CpuJob, CpuReply } from "./code-intelligence-worker.ts";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
 const TOOL_NAMES = [
@@ -88,12 +86,86 @@ const inputSchema = z
   })
   .strict();
 
-type ToolInput = z.infer<typeof inputSchema>;
-type NativeFile = {
-  facts: SyntaxFacts;
-  path: string;
-  source: string;
-};
+export type ToolInput = z.infer<typeof inputSchema>;
+export type ToolName = (typeof TOOL_NAMES)[number];
+
+function schemaFor(name: ToolName) {
+  const selection = [
+    "paths",
+    "file",
+    "path",
+    "root",
+    "glob",
+    "lang",
+    "languages",
+    "scan_limit",
+  ];
+  const output = ["budget", "limit", "top_k", "timeout_ms", "workspaceId"];
+  const specific: Record<ToolName, string[]> = {
+    map: ["detail", "max_members"],
+    digest: ["detail", "max_members"],
+    show: ["symbols", "target", "detail"],
+    surface: [],
+    implements: ["target"],
+    deps: ["hide_ambiguous", "hide_external"],
+    reverse_deps: ["hide_ambiguous", "hide_external"],
+    graph: ["hide_ambiguous", "hide_external"],
+    cycles: ["hide_ambiguous", "hide_external"],
+    search: ["query", "target"],
+    find_related: ["query", "target"],
+    callers: ["target", "depth", "direct", "detail"],
+    callees: ["target", "depth", "direct", "detail"],
+    trace: ["target", "depth", "direct", "detail"],
+    impact: [
+      "target",
+      "depth",
+      "direct",
+      "detail",
+      "hide_ambiguous",
+      "hide_external",
+    ],
+    context: ["target", "depth", "direct", "detail"],
+    run: ["pattern", "rewrite", "write", "json"],
+    squeeze: ["text", "query"],
+  };
+  const fields =
+    name === "squeeze"
+      ? [...output, ...specific[name]]
+      : [...selection, ...output, ...specific[name]];
+  if (name === "impact") {
+    fields.splice(fields.indexOf("file"), 1);
+    fields.splice(fields.indexOf("path"), 1);
+  }
+  const mask = Object.fromEntries(fields.map((field) => [field, true])) as {
+    [K in keyof ToolInput]: true;
+  };
+  return inputSchema.pick(mask).superRefine((input, context) => {
+    const requireOne = (keys: (keyof ToolInput)[]) => {
+      if (!keys.some((key) => input[key] !== undefined))
+        context.addIssue({
+          code: "custom",
+          message: `${name} requires ${keys.join(" or ")}; narrow scans with paths or glob`,
+          path: [keys[0] as string],
+        });
+    };
+    if (
+      [
+        "callers",
+        "callees",
+        "trace",
+        "impact",
+        "context",
+        "implements",
+      ].includes(name)
+    )
+      requireOne(["target"]);
+    if (["deps", "reverse_deps"].includes(name)) requireOne(["file", "path"]);
+    if (["search", "find_related"].includes(name))
+      requireOne(["query", "target", "path"]);
+    if (name === "run") requireOne(["pattern"]);
+    if (name === "squeeze") requireOne(["text", "query"]);
+  });
+}
 
 function toolDescription(name: (typeof TOOL_NAMES)[number]): string {
   const descriptions: Record<(typeof TOOL_NAMES)[number], string> = {
@@ -124,7 +196,7 @@ async function requestRoot(input: ToolInput): Promise<string> {
   const workspace = currentWorkspace();
   const projectRoot = workspace?.checkoutRoot ?? config.projectRoot;
   const requested = input.root ?? projectRoot;
-  const resolved = await resolveWorkspacePath(
+  const resolved = await resolveIntelligencePath(
     path.resolve(projectRoot, requested),
   );
   const metadata = await Bun.file(resolved)
@@ -139,9 +211,76 @@ function relative(root: string, file: string): string {
   return path.relative(root, file).split(path.sep).join("/");
 }
 
+async function boundedGitInventory(
+  directory: string,
+  args: string[],
+  signal?: AbortSignal,
+) {
+  throwIfAborted(signal);
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name, value]) => value !== undefined && !name.startsWith("GIT_"),
+    ),
+  ) as Record<string, string>;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  const child = Bun.spawn(["git", "-C", directory, ...args], {
+    detached: process.platform !== "win32",
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let termination: Promise<void> | undefined;
+  let exceeded: Error | undefined;
+  const terminate = () => {
+    termination ??= terminateProcessTree(child, { graceMs: 250 });
+  };
+  signal?.addEventListener("abort", terminate, { once: true });
+  if (signal?.aborted) terminate();
+  const collect = async (
+    stream: ReadableStream<Uint8Array>,
+    limit: number,
+    inventory: boolean,
+  ) => {
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    let paths = 0;
+    for await (const chunk of stream) {
+      bytes += chunk.byteLength;
+      if (inventory) for (const byte of chunk) if (byte === 0) paths += 1;
+      if (bytes > limit || paths > MAX_CANDIDATE_PATHS) {
+        exceeded ??= capacityError(
+          inventory
+            ? "Git inventory exceeds 100000 paths or 16 MiB"
+            : "Git diagnostics exceed 16 KiB",
+        );
+        terminate();
+      }
+      if (!exceeded) chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  };
+  try {
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      collect(child.stdout, MAX_REQUEST_BYTES, true),
+      collect(child.stderr, 16 * 1024, false),
+    ]);
+    throwIfAborted(signal);
+    if (exceeded) throw exceeded;
+    return { code, stdout, stderr: stderr.toString("utf8").trim() };
+  } catch (error) {
+    terminate();
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", terminate);
+    if (termination) await termination;
+  }
+}
+
 async function revisionFilePaths(
   workspace: WorkspaceHandle,
   signal?: AbortSignal,
+  scopes: string[] = [],
 ): Promise<string[]> {
   throwIfAborted(signal);
   const revision = workspace.selectedRevision;
@@ -155,22 +294,25 @@ async function revisionFilePaths(
           "-z",
           revision.resolvedCommitOid as string,
         ];
-  const { code, stderr, stdout } = await runGitRaw(
+  if (scopes.length)
+    args.push("--", ...scopes.map((scope) => `:(literal)${scope}`));
+  const { code, stderr, stdout } = await boundedGitInventory(
     workspace.checkoutRoot,
     args,
     signal,
-    throwIfAborted,
   );
   if (code !== 0)
     throw Object.assign(
       new Error(stderr || `Git failed with exit code ${code}`),
       { code: "workspace_git_failure", retryable: false },
     );
-  return Buffer.from(stdout)
+  const files = Buffer.from(stdout)
     .toString("utf8")
     .split("\0")
-    .filter(Boolean)
-    .sort();
+    .filter(Boolean);
+  if (files.length > MAX_CANDIDATE_PATHS)
+    throw capacityError("File inventory exceeds 100000 paths");
+  return files.sort();
 }
 
 function requestedRelativePaths(input: ToolInput, root: string): string[] {
@@ -232,7 +374,12 @@ async function requestedFiles(
   throwIfAborted(signal);
   const workspace = currentWorkspace();
   if (workspace && workspace.selectedRevision.selector.kind !== "working") {
-    const repositoryPaths = await revisionFilePaths(workspace, signal);
+    const scopes = requestedRelativePaths(input, root).map((entry) =>
+      relative(workspace.checkoutRoot, path.resolve(root, entry)),
+    );
+    if (!scopes.length && root !== workspace.checkoutRoot)
+      scopes.push(relative(workspace.checkoutRoot, root));
+    const repositoryPaths = await revisionFilePaths(workspace, signal, scopes);
     throwIfAborted(signal);
     return selectedRevisionPaths(input, root, workspace, repositoryPaths);
   }
@@ -245,7 +392,7 @@ async function requestedFiles(
     const files: string[] = [];
     for (const value of explicit) {
       throwIfAborted(signal);
-      const resolved = await resolveWorkspacePath(path.resolve(root, value));
+      const resolved = await resolveIntelligencePath(path.resolve(root, value));
       const metadata = await Bun.file(resolved)
         .stat()
         .catch(() => undefined);
@@ -259,7 +406,10 @@ async function requestedFiles(
           onlyFiles: true,
         })) {
           throwIfAborted(signal);
+          if (files.length >= MAX_CANDIDATE_PATHS)
+            throw capacityError("File inventory exceeds 100000 paths");
           files.push(entry);
+          if (files.length % 128 === 0) await Bun.sleep(0);
         }
       }
     }
@@ -278,8 +428,12 @@ async function requestedFiles(
       !entry.includes(`${path.sep}node_modules${path.sep}`) &&
       !entry.includes(`${path.sep}.git${path.sep}`) &&
       !entry.includes(`${path.sep}.ast-mcp${path.sep}`)
-    )
+    ) {
+      if (files.length >= MAX_CANDIDATE_PATHS)
+        throw capacityError("File inventory exceeds 100000 paths");
       files.push(entry);
+      if (files.length % 128 === 0) await Bun.sleep(0);
+    }
   }
   return files.sort();
 }
@@ -313,20 +467,36 @@ async function sourceFor(
   signal?: AbortSignal,
 ): Promise<string> {
   throwIfAborted(signal);
-  if (workspace && workspace.selectedRevision.selector.kind !== "working")
-    return Buffer.from(
-      await readGitRevisionFile(
-        workspace.git,
-        workspace.selectedRevision,
-        filePath,
-        signal,
-      ),
-    ).toString("utf8");
-  return Bun.file(filePath).text();
+  if (workspace && workspace.selectedRevision.selector.kind !== "working") {
+    try {
+      return Buffer.from(
+        await readGitRevisionFile(
+          workspace.git,
+          workspace.selectedRevision,
+          filePath,
+          signal,
+          MAX_SOURCE_BYTES,
+        ),
+      ).toString("utf8");
+    } catch (error) {
+      if ((error as { code?: string })?.code === "git_output_limit_exceeded")
+        throw capacityError("Source exceeds the parser byte limit");
+      throw error;
+    }
+  }
+  const file = Bun.file(filePath);
+  if ((await file.stat()).size > MAX_SOURCE_BYTES)
+    throw capacityError("Source exceeds the parser byte limit");
+  return file.text();
 }
 
 function abortError(signal: AbortSignal): Error {
-  if (signal.reason instanceof Error) return signal.reason;
+  if (
+    signal.reason instanceof Error &&
+    "code" in signal.reason &&
+    typeof signal.reason.code === "string"
+  )
+    return signal.reason;
   return Object.assign(new Error("Code intelligence request was aborted"), {
     code: "aborted",
     retryable: true,
@@ -336,6 +506,10 @@ function abortError(signal: AbortSignal): Error {
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError(signal);
 }
+
+const LANGUAGE_EXTENSIONS = LANGUAGE_CAPABILITY_CATALOG.flatMap((entry) =>
+  entry.extensions.map((extension) => ({ entry, extension })),
+).sort((left, right) => right.extension.length - left.extension.length);
 
 function catalogLanguage(
   filePath: string,
@@ -350,13 +524,9 @@ function catalogLanguage(
   }
   const name = path.basename(filePath).toLowerCase();
   return (
-    [...LANGUAGE_CAPABILITY_CATALOG]
-      .flatMap((entry) =>
-        entry.extensions.map((extension) => ({ entry, extension })),
-      )
-      .sort((left, right) => right.extension.length - left.extension.length)
-      .find(({ extension }) => name.endsWith(extension.toLowerCase()))?.entry
-      .languageId ??
+    LANGUAGE_EXTENSIONS.find(({ extension }) =>
+      name.endsWith(extension.toLowerCase()),
+    )?.entry.languageId ??
     detectAstLanguage(filePath) ??
     null
   );
@@ -364,7 +534,8 @@ function catalogLanguage(
 
 async function loadFiles(
   input: ToolInput,
-  signal?: AbortSignal,
+  signal: AbortSignal,
+  cpu: RequestCpu,
 ): Promise<{ files: NativeFile[]; root: string; scan: ScanCoverage }> {
   throwIfAborted(signal);
   const root = await requestRoot(input);
@@ -377,7 +548,8 @@ async function loadFiles(
     : undefined;
   const eligible: Array<{ language: ParserLanguageId; path: string }> = [];
   const unsupported: string[] = [];
-  for (const filePath of selected) {
+  for (const [index, filePath] of selected.entries()) {
+    if (index % 64 === 0) await Bun.sleep(0);
     throwIfAborted(signal);
     const language = catalogLanguage(filePath, input.lang);
     const catalog = language
@@ -400,15 +572,34 @@ async function loadFiles(
     .map((item) => relative(root, item.path));
   const files: NativeFile[] = [];
   const unreadable: string[] = [];
+  let sourceBytes = 0;
   for (const item of selectedEligible) {
     throwIfAborted(signal);
     try {
+      if (
+        (!workspace ||
+          workspace.selectedRevision.selector.kind === "working") &&
+        (await Bun.file(item.path).stat()).size > MAX_SOURCE_BYTES
+      )
+        throw capacityError("Source exceeds the parser byte limit");
       const source = await sourceFor(item.path, workspace, signal);
+      const bytes = Buffer.byteLength(source);
+      if (bytes > MAX_SOURCE_BYTES)
+        throw capacityError("Source exceeds the parser byte limit");
+      sourceBytes += bytes;
+      if (sourceBytes > MAX_REQUEST_BYTES)
+        throw capacityError("Selected sources exceed the request byte limit");
       throwIfAborted(signal);
-      const facts = parseSource({ languageId: item.language, source });
+      const facts = await cpu.run<NativeFile["facts"]>({
+        kind: "parse",
+        languageId: item.language,
+        source,
+      });
       files.push({ facts, path: item.path, source });
-    } catch {
+    } catch (error) {
       if (signal?.aborted) throw abortError(signal);
+      if ((error as { code?: string })?.code === "intelligence_budget_exceeded")
+        throw error;
       unreadable.push(relative(root, item.path));
     }
   }
@@ -560,208 +751,25 @@ function compactVisiblePayload(
   return visible;
 }
 
-function symbolView(file: NativeFile, root: string, includeSource = false) {
-  return file.facts.symbols.map((symbol) => ({
-    exported: symbol.exported,
-    kind: symbol.kind,
-    name: symbol.name,
-    path: relative(root, file.path),
-    qualifiedName: symbol.qualifiedName,
-    range: {
-      endLine: symbol.range.end.line + 1,
-      startLine: symbol.range.start.line + 1,
-    },
-    ...(includeSource
-      ? {
-          source: file.source.slice(
-            symbol.range.startCoordinate.utf16Offset,
-            symbol.range.endCoordinate.utf16Offset,
-          ),
-        }
-      : {}),
-  }));
-}
-
-function symbolMatches(file: NativeFile, target: string) {
-  return file.facts.symbols.filter(
-    (symbol) =>
-      symbol.name === target ||
-      symbol.qualifiedName === target ||
-      symbol.qualifiedName.endsWith(`.${target}`),
-  );
-}
-
-type CallView = {
-  callee: string;
-  caller: string | null;
-  line?: number;
-  path: string;
-  range?: { endLine: number; startLine: number };
-};
-
-function callsFor(
-  files: NativeFile[],
-  root: string,
-  target: string,
-  direction: "in" | "out",
-  fullRange = false,
-  signal?: AbortSignal,
-): CallView[] {
-  throwIfAborted(signal);
-  const symbols = new Map(
-    flatMapFilesWithAbort(files, signal, (file) =>
-      file.facts.symbols.map((symbol) => {
-        throwIfAborted(signal);
-        return [symbol.id, symbol.qualifiedName] as const;
-      }),
-    ),
-  );
-  const symbolIds = new Set(
-    flatMapFilesWithAbort(files, signal, (file) =>
-      symbolMatches(file, target).map((symbol) => {
-        throwIfAborted(signal);
-        return symbol.id;
-      }),
-    ),
-  );
-  const views: CallView[] = [];
-  for (const file of files) {
-    throwIfAborted(signal);
-    for (const call of file.facts.calls) {
-      throwIfAborted(signal);
-      const selected =
-        direction === "in"
-          ? call.callee === target || call.callee.endsWith(`.${target}`)
-          : call.enclosingSymbolId !== null &&
-            symbolIds.has(call.enclosingSymbolId);
-      if (!selected) continue;
-      views.push({
-        callee: call.callee,
-        caller:
-          call.enclosingSymbolId === null
-            ? null
-            : (symbols.get(call.enclosingSymbolId) ?? null),
-        path: relative(root, file.path),
-        ...(fullRange
-          ? {
-              range: {
-                endLine: call.range.end.line + 1,
-                startLine: call.range.start.line + 1,
-              },
-            }
-          : { line: call.range.start.line + 1 }),
-      });
-    }
-  }
-  return views.sort(
-    (left, right) =>
-      left.path.localeCompare(right.path) ||
-      (left.line ?? left.range?.startLine ?? 0) -
-        (right.line ?? right.range?.startLine ?? 0) ||
-      left.callee.localeCompare(right.callee),
-  );
-}
-
-function tracedCalls(
-  files: NativeFile[],
-  root: string,
-  target: string,
-  direction: "in" | "out",
-  depth: number,
-  fullRange: boolean,
-  signal?: AbortSignal,
-): CallView[] {
-  const results = new Map<string, CallView>();
-  let frontier = [target];
-  const visited = new Set<string>();
-  for (let level = 0; level < depth && frontier.length > 0; level += 1) {
-    const next = new Set<string>();
-    for (const current of frontier.sort()) {
-      throwIfAborted(signal);
-      if (visited.has(current)) continue;
-      visited.add(current);
-      for (const call of callsFor(
-        files,
-        root,
-        current,
-        direction,
-        fullRange,
-        signal,
-      )) {
-        throwIfAborted(signal);
-        results.set(JSON.stringify(call), call);
-        const adjacent = direction === "out" ? call.callee : call.caller;
-        if (adjacent && !visited.has(adjacent)) next.add(adjacent);
-      }
-    }
-    frontier = [...next];
-  }
-  return [...results.values()];
-}
-
-function utf8Prefix(value: string, maxBytes: number): string {
-  if (Buffer.byteLength(value) <= maxBytes) return value;
-  let result = "";
-  let bytes = 0;
-  for (const character of value) {
-    const next = Buffer.byteLength(character);
-    if (bytes + next > maxBytes) break;
-    result += character;
-    bytes += next;
-  }
-  return result;
-}
-
-function bounded<T>(
-  values: T[],
-  input: ToolInput,
-): { items: T[]; total: number; truncated: boolean } {
-  const limit = input.limit ?? input.top_k ?? 200;
-  const byteLimit = input.budget ?? Number.POSITIVE_INFINITY;
-  const items: T[] = [];
-  let bytes = 2;
-  for (const value of values.slice(0, limit)) {
-    const itemBytes = Buffer.byteLength(JSON.stringify(value));
-    const separatorBytes = items.length === 0 ? 0 : 1;
-    if (bytes + itemBytes + separatorBytes > byteLimit) break;
-    items.push(value);
-    bytes += itemBytes + separatorBytes;
-  }
-  return {
-    items,
-    total: values.length,
-    truncated: items.length < values.length,
-  };
-}
-
-type ImportEdge = {
-  ambiguous: boolean;
-  external: boolean;
-  from: string;
-  to: string;
-};
-
-type CompilerAlias = {
-  hasWildcard: boolean;
-  prefix: string;
-  suffix: string;
-  targets: string[];
-};
-
 async function compilerAliases(
   root: string,
   workspace: WorkspaceHandle | undefined,
-  signal?: AbortSignal,
+  signal: AbortSignal,
+  cpu: RequestCpu,
 ): Promise<CompilerAlias[]> {
   for (const name of ["tsconfig.json", "jsconfig.json"]) {
     try {
       const source = await sourceFor(path.join(root, name), workspace, signal);
-      const config = Bun.JSONC.parse(source) as {
+      if (Buffer.byteLength(source) > MAX_SOURCE_BYTES)
+        throw capacityError(
+          "Compiler configuration exceeds the parser byte limit",
+        );
+      const config = await cpu.run<{
         compilerOptions?: {
           baseUrl?: string;
           paths?: Record<string, string[]>;
         };
-      };
+      }>({ kind: "compiler-config", source });
       const baseUrl = path.posix.normalize(
         config.compilerOptions?.baseUrl?.replaceAll("\\", "/") ?? ".",
       );
@@ -789,503 +797,212 @@ async function compilerAliases(
             },
           ];
         });
-    } catch {
+    } catch (error) {
       if (signal?.aborted) throw abortError(signal);
+      if ((error as { code?: string })?.code === "intelligence_budget_exceeded")
+        throw error;
       // The workspace does not define compiler aliases in this file.
     }
   }
   return [];
 }
 
-function resolveKnownPath(
-  candidate: string,
-  known: readonly string[],
-): string[] {
-  const normalized = path.posix.normalize(candidate);
-  if (path.posix.extname(normalized)) {
-    return known.filter((entry) => entry === normalized);
-  }
-  return known.filter(
-    (entry) =>
-      entry === normalized ||
-      entry.replace(/\.[^./]+$/u, "") === normalized ||
-      entry.startsWith(`${normalized}/index.`),
-  );
-}
+const MAX_SOURCE_BYTES = 2 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+const MAX_ACTIVE_REQUESTS = 4;
+const MAX_CANDIDATE_PATHS = 100_000;
+let activeRequests = 0;
 
-function substituteAliasWildcard(target: string, value: string): string {
-  const marker = target.indexOf("*");
-  if (marker < 0) return target;
-  return `${target.slice(0, marker)}${value}${target.slice(marker + 1)}`;
-}
-
-function aliasCandidates(
-  specifier: string,
-  aliases: readonly CompilerAlias[],
-): string[] {
-  return aliases.flatMap((alias) => {
-    if (!alias.hasWildcard) {
-      return specifier === alias.prefix ? alias.targets : [];
-    }
-    if (
-      !specifier.startsWith(alias.prefix) ||
-      !specifier.endsWith(alias.suffix)
-    )
-      return [];
-    const captureStart = alias.prefix.length;
-    const captureEnd = specifier.length - alias.suffix.length;
-    if (captureEnd < captureStart) return [];
-    const value = specifier.slice(captureStart, captureEnd);
-    return alias.targets.map((target) =>
-      substituteAliasWildcard(target, value),
-    );
+function capacityError(message: string) {
+  return Object.assign(new Error(message), {
+    code: "intelligence_budget_exceeded",
+    retryable: true,
+    suggestedNextCall: "Retry with narrower paths, glob, or scan_limit",
   });
 }
 
-async function importGraph(
-  files: NativeFile[],
-  root: string,
-  signal?: AbortSignal,
-): Promise<ImportEdge[]> {
-  const known = files.map((file) => relative(root, file.path)).sort();
-  const workspace = currentWorkspace();
-  const aliases = await compilerAliases(root, workspace, signal);
-  const raw = files.flatMap((file) => {
-    throwIfAborted(signal);
-    const from = relative(root, file.path);
-    return [
-      ...file.facts.imports.map((entry) => ({
-        from,
-        source: entry.source,
-      })),
-      ...file.facts.exports
-        .filter(
-          (entry): entry is typeof entry & { source: string } =>
-            entry.source !== null,
-        )
-        .map((entry) => ({ from, source: entry.source })),
-    ];
-  });
-  const edges = new Map<string, ImportEdge>();
-  for (const edge of raw) {
-    throwIfAborted(signal);
-    const candidates = edge.source.startsWith(".")
-      ? [
-          path.posix.normalize(
-            path.posix.join(path.posix.dirname(edge.from), edge.source),
-          ),
-        ]
-      : aliasCandidates(edge.source, aliases);
-    const matches = [
-      ...new Set(
-        candidates.flatMap((candidate) => resolveKnownPath(candidate, known)),
-      ),
-    ].sort();
-    if (matches.length === 0) {
-      const unresolved: ImportEdge = {
-        ambiguous: false,
-        external: true,
-        from: edge.from,
-        to: edge.source,
-      };
-      edges.set(JSON.stringify(unresolved), unresolved);
-      continue;
-    }
-    for (const target of matches) {
-      const resolved: ImportEdge = {
-        ambiguous: matches.length > 1,
-        external: false,
-        from: edge.from,
-        to: target,
-      };
-      edges.set(JSON.stringify(resolved), resolved);
-    }
-  }
-  return [...edges.values()].sort(
-    (left, right) =>
-      left.from.localeCompare(right.from) || left.to.localeCompare(right.to),
-  );
-}
-
-function graphCycles(
-  edges: readonly ImportEdge[],
-  maxCycles: number,
-  signal?: AbortSignal,
-): { cycles: string[]; truncated: boolean } {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of edges) {
-    if (edge.external) continue;
-    const targets = adjacency.get(edge.from) ?? [];
-    if (!targets.includes(edge.to)) targets.push(edge.to);
-    adjacency.set(edge.from, targets.sort());
-  }
-  const state = new Map<string, "active" | "done">();
-  const stack: string[] = [];
-  const positions = new Map<string, number>();
-  const cycles = new Set<string>();
-
-  const canonicalCycle = (nodes: string[]): string => {
-    const body = nodes.slice(0, -1);
-    const rotations = body.map((_, index) => [
-      ...body.slice(index),
-      ...body.slice(0, index),
+async function withAbort<T>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  let abort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        abort = () => reject(abortError(signal));
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      }),
     ]);
-    const canonical = rotations
-      .map((rotation) => rotation.join(" -> "))
-      .sort()[0];
-    return `${canonical} -> ${canonical?.split(" -> ")[0] ?? ""}`;
-  };
-
-  const visit = (node: string): void => {
-    throwIfAborted(signal);
-    state.set(node, "active");
-    positions.set(node, stack.length);
-    stack.push(node);
-    for (const next of adjacency.get(node) ?? []) {
-      if (cycles.size > maxCycles) break;
-      const nextState = state.get(next);
-      if (nextState === "active") {
-        const index = positions.get(next) as number;
-        cycles.add(canonicalCycle([...stack.slice(index), next]));
-      } else if (nextState !== "done") {
-        visit(next);
-      }
-    }
-    stack.pop();
-    positions.delete(node);
-    state.set(node, "done");
-  };
-
-  for (const node of [...adjacency.keys()].sort()) {
-    if (cycles.size > maxCycles) break;
-    if (!state.has(node)) visit(node);
+  } finally {
+    if (abort) signal.removeEventListener("abort", abort);
   }
-  return {
-    cycles: [...cycles].sort().slice(0, maxCycles),
-    truncated: cycles.size > maxCycles,
-  };
 }
 
-function flatMapFilesWithAbort<T>(
-  files: readonly NativeFile[],
-  signal: AbortSignal | undefined,
-  transform: (file: NativeFile) => readonly T[],
-): T[] {
-  const result: T[] = [];
-  for (const file of files) {
-    throwIfAborted(signal);
-    result.push(...transform(file));
+class RequestCpu {
+  readonly worker = new Worker(
+    new URL("./code-intelligence-worker.ts", import.meta.url).href,
+    { type: "module" },
+  );
+  readonly signal: AbortSignal;
+  transferredBytes = 0;
+  readonly abort = () => this.worker.terminate();
+  constructor(signal: AbortSignal) {
+    this.signal = signal;
+    signal.addEventListener("abort", this.abort, { once: true });
   }
-  return result;
+  async run<T>(job: CpuJob): Promise<T> {
+    throwIfAborted(this.signal);
+    return new Promise<T>((resolve, reject) => {
+      const cleanup = () => {
+        this.worker.removeEventListener("message", message);
+        this.worker.removeEventListener("error", failed);
+        this.signal.removeEventListener("abort", aborted);
+      };
+      const message = (event: MessageEvent<CpuReply>) => {
+        cleanup();
+        if (event.data.ok) {
+          this.transferredBytes += event.data.bytes;
+          if (this.transferredBytes > MAX_REQUEST_BYTES)
+            reject(capacityError("Parsed data exceeds the request byte limit"));
+          else resolve(event.data.value as T);
+        } else
+          reject(
+            Object.assign(
+              new Error(event.data.error.message),
+              event.data.error,
+            ),
+          );
+      };
+      const failed = (event: ErrorEvent) => {
+        cleanup();
+        reject(
+          Object.assign(
+            new Error(event.message || "Code intelligence worker failed"),
+            { code: "worker_error", retryable: true },
+          ),
+        );
+      };
+      const aborted = () => {
+        cleanup();
+        this.worker.terminate();
+        reject(abortError(this.signal));
+      };
+      this.worker.addEventListener("message", message);
+      this.worker.addEventListener("error", failed);
+      this.signal.addEventListener("abort", aborted, { once: true });
+      try {
+        this.worker.postMessage(job);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+  close() {
+    this.signal.removeEventListener("abort", this.abort);
+    this.worker.terminate();
+  }
 }
 
 async function executeNative(
-  name: (typeof TOOL_NAMES)[number],
+  name: ToolName,
   input: ToolInput,
   state: NativeExecutionState,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ) {
-  if (name === "squeeze") {
+  if (activeRequests >= MAX_ACTIVE_REQUESTS)
+    throw capacityError("Code intelligence request capacity is full");
+  activeRequests += 1;
+  let cpu: RequestCpu | undefined;
+  try {
     throwIfAborted(signal);
-    const text = input.text ?? input.query ?? "";
-    const compact = text.replace(/\s+/g, " ").trim();
-    const budget = input.budget ?? 8_000;
-    const boundedText = utf8Prefix(compact, budget);
-    return {
-      schema: "ast-mcp.squeeze.v1",
-      text: boundedText,
-      truncated: boundedText !== compact,
-    };
-  }
-  if (name === "run" && input.write)
-    throw Object.assign(
-      new Error(
-        "run write mode is replaced by hash-guarded file_patch with patchStrategy=ast",
-      ),
-      {
-        code: "use_file_patch",
-        retryable: true,
-        suggestedNextCall: "file_hash then file_patch",
-      },
-    );
-  const graphOperation = [
-    "deps",
-    "reverse_deps",
-    "cycles",
-    "graph",
-    "impact",
-  ].includes(name);
-  const scanInput =
-    graphOperation && (input.file || input.path)
-      ? { ...input, file: undefined, path: undefined }
-      : input;
-  const { files, root, scan } = await loadFiles(scanInput, signal);
-  throwIfAborted(signal);
-  state.scan = scan;
-  const schema = `ast-mcp.${name}.v1`;
-  if (name === "map" || name === "digest") {
-    const mapped = flatMapFilesWithAbort(files, signal, (file) => [
-      {
-        diagnostics: file.facts.diagnostics,
-        language: file.facts.languageId,
-        partial: file.facts.partial,
-        path: relative(root, file.path),
-        symbols: symbolView(file, root).slice(
-          0,
-          input.max_members ?? (name === "digest" ? 50 : 200),
+    if (name === "run" && input.write)
+      throw Object.assign(
+        new Error(
+          "run write mode is replaced by hash-guarded file_patch with patchStrategy=ast",
         ),
-      },
-    ]);
-    const result = bounded(mapped, input);
-    return {
-      files: result.items,
-      scan,
-      schema,
-      total: result.total,
-      truncated: result.truncated,
-    };
-  }
-  if (name === "show") {
-    const targets = new Set(
-      input.symbols ?? (input.target ? [input.target] : []),
-    );
-    const symbols = files
-      .flatMap((file) => {
-        throwIfAborted(signal);
-        return symbolView(file, root, true);
-      })
-      .filter(
-        (symbol) =>
-          targets.size === 0 ||
-          targets.has(symbol.name) ||
-          targets.has(symbol.qualifiedName),
+        {
+          code: "use_file_patch",
+          retryable: true,
+          suggestedNextCall: "file_hash then file_patch",
+        },
       );
-    return { scan, schema, ...bounded(symbols, input) };
-  }
-  if (name === "surface")
-    return {
-      schema,
-      ...bounded(
-        files
-          .flatMap((file) => {
-            throwIfAborted(signal);
-            return symbolView(file, root);
-          })
-          .filter((symbol) => symbol.exported),
+    cpu = new RequestCpu(signal);
+    if (name === "squeeze")
+      return await cpu.run({
+        kind: "compute",
+        name,
         input,
-      ),
-    };
-  if (name === "implements") {
-    const target = input.target ?? "";
-    const items = flatMapFilesWithAbort(files, signal, (file) =>
-      [...file.facts.implementations, ...file.facts.inheritance]
-        .filter(
-          (relationship) =>
-            relationship.targetName === target ||
-            relationship.targetName.endsWith(`.${target}`),
-        )
-        .map((relationship) => ({
-          path: relative(root, file.path),
-          range: relationship.range,
-          target: relationship.targetName,
-        })),
-    );
-    return { schema, ...bounded(items, input) };
-  }
-  if (name === "search" || name === "find_related") {
-    const query = (
-      input.query ??
-      input.target ??
-      input.path ??
-      ""
-    ).toLowerCase();
-    const items = files
-      .flatMap((file) => {
-        throwIfAborted(signal);
-        return symbolView(file, root, true);
-      })
-      .filter(
-        (symbol) =>
-          symbol.name.toLowerCase().includes(query) ||
-          symbol.qualifiedName.toLowerCase().includes(query) ||
-          symbol.source?.toLowerCase().includes(query),
-      )
-      .map(({ source, ...symbol }) => ({
-        ...symbol,
-        snippet: source?.slice(0, 1_000),
-      }));
-    return { schema, ...bounded(items, input) };
-  }
-  if (name === "run") {
-    if (!input.pattern) throw new Error("run requires pattern");
-    const items: Array<Record<string, unknown>> = [];
-    for (const file of files) {
-      throwIfAborted(signal);
-      if (!input.rewrite) {
-        items.push(
-          ...findStructuralMatches(
-            file.source,
-            file.facts.languageId,
-            input.pattern as string,
-          ).map((match) => ({ ...match, path: relative(root, file.path) })),
-        );
-        throwIfAborted(signal);
-        continue;
-      }
-      throwIfAborted(signal);
-      const matches = findStructuralMatches(
-        file.source,
-        file.facts.languageId,
-        input.pattern as string,
-      );
-      throwIfAborted(signal);
-      const preview = rewriteStructuralMatches(
-        file.source,
-        file.facts.languageId,
-        [
-          {
-            expectedMatches: matches.length,
-            pattern: input.pattern as string,
-            replacement: input.rewrite,
-          },
-        ],
-      );
-      throwIfAborted(signal);
-      items.push(
-        ...preview.edits.map((edit) => ({
-          ...edit,
-          path: relative(root, file.path),
-        })),
-      );
-    }
-    return { schema, ...bounded(items, input) };
-  }
-  const edges = await importGraph(files, root, signal);
-  const visibleEdges = edges.filter((edge) => {
-    throwIfAborted(signal);
-    return (
-      (!input.hide_external || !edge.external) &&
-      (!input.hide_ambiguous || !edge.ambiguous)
-    );
-  });
-  if (name === "graph")
-    return {
-      schema,
-      ...bounded(visibleEdges, input),
-    };
-  if (name === "cycles") {
-    const limit = input.limit ?? input.top_k ?? 200;
-    const result = graphCycles(visibleEdges, limit, signal);
-    return { ...result, schema };
-  }
-  if (name === "deps" || name === "reverse_deps") {
-    const selectedPath = input.file ?? input.path;
-    const selected = selectedPath
-      ? relative(root, path.resolve(root, selectedPath))
-      : "";
-    const values = visibleEdges.filter((edge) =>
-      name === "deps" ? edge.from === selected : edge.to === selected,
-    );
-    return { schema, ...bounded(values, input) };
-  }
-  const target = input.target ?? "";
-  const fullRange = input.detail === "full";
-  const depth = input.direct ? 1 : (input.depth ?? 1);
-  const callers = tracedCalls(
-    files,
-    root,
-    target,
-    "in",
-    depth,
-    fullRange,
-    signal,
-  );
-  const callees = tracedCalls(
-    files,
-    root,
-    target,
-    "out",
-    depth,
-    fullRange,
-    signal,
-  );
-  if (name === "callers") return { schema, ...bounded(callers, input) };
-  if (name === "callees") return { schema, ...bounded(callees, input) };
-  if (name === "trace")
-    return {
-      callees: bounded(callees, input),
-      callers: bounded(callers, input),
-      depth,
-      schema,
-      target,
-    };
-  const dependents = edges.filter((edge) => {
-    throwIfAborted(signal);
-    return edge.to.includes(target);
-  });
-  const tests = [...callers, ...dependents].filter((item) => {
-    throwIfAborted(signal);
-    return (
-      "path" in item &&
-      /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\./.test(
-        item.path,
-      )
-    );
-  });
-  if (name === "impact")
-    return {
-      callees: bounded(callees, input),
-      callers: bounded(callers, input),
-      dependents: bounded(dependents, input),
-      schema,
-      target,
-      tests: bounded(tests, input),
-    };
-  const definitions = files
-    .flatMap((file) => {
-      throwIfAborted(signal);
-      return symbolMatches(file, target).flatMap(() => {
-        throwIfAborted(signal);
-        return symbolView(file, root, true);
+        files: [],
+        root: "",
+        aliases: [],
       });
-    })
-    .filter(
-      (item) =>
-        item.name === target || item.qualifiedName.endsWith(`.${target}`),
+    return await withAbort(
+      (async () => {
+        const graphOperation = [
+          "deps",
+          "reverse_deps",
+          "cycles",
+          "graph",
+          "impact",
+        ].includes(name);
+        const scanInput =
+          graphOperation && (input.file || input.path)
+            ? { ...input, file: undefined, path: undefined }
+            : input;
+        const { files, root, scan } = await loadFiles(
+          scanInput,
+          signal,
+          cpu as RequestCpu,
+        );
+        state.scan = scan;
+        const aliases = graphOperation
+          ? await compilerAliases(
+              root,
+              currentWorkspace(),
+              signal,
+              cpu as RequestCpu,
+            )
+          : [];
+        return await (cpu as RequestCpu).run({
+          kind: "compute",
+          name,
+          input,
+          files,
+          root,
+          aliases,
+        });
+      })(),
+      signal,
     );
-  const budget = input.budget ?? 32_000;
-  const payload = {
-    callees: [] as typeof callees,
-    callers: [] as typeof callers,
-    definitions: [] as typeof definitions,
-    schema,
-    target,
-    truncated: false,
-  };
-  const candidates = [
-    ...definitions.map((item) => ["definitions", item] as const),
-    ...callers.map((item) => ["callers", item] as const),
-    ...callees.map((item) => ["callees", item] as const),
-  ];
-  for (const [section, item] of candidates) {
-    throwIfAborted(signal);
-    const candidate = {
-      ...payload,
-      [section]: [...payload[section], item],
-    };
-    if (Buffer.byteLength(JSON.stringify(candidate)) > budget) {
-      payload.truncated = true;
-      break;
-    }
-    payload[section].push(item as never);
+  } finally {
+    cpu?.close();
+    activeRequests -= 1;
   }
-  return payload;
 }
 
 export default function registerNativeCodeIntelligenceTools(
   server: McpServer,
   execute: ConfiguredExecution = localExecution,
 ) {
+  const controllers = new Set<AbortController>();
+  let closed = false;
+  if (typeof server.close === "function") {
+    const closeServer = server.close.bind(server);
+    server.close = () => {
+      closed = true;
+      for (const controller of controllers)
+        controller.abort(
+          Object.assign(new Error("Code intelligence server closed"), {
+            code: "aborted",
+            retryable: true,
+          }),
+        );
+      return closeServer();
+    };
+  }
   for (const name of TOOL_NAMES) {
     server.registerTool(
       name,
@@ -1297,13 +1014,19 @@ export default function registerNativeCodeIntelligenceTools(
           readOnlyHint: true,
         },
         description: toolDescription(name),
-        inputSchema,
+        inputSchema: schemaFor(name),
         outputSchema: toolOutputSchema,
         title: `Native ${name.replaceAll("_", " ")}`,
       },
       async (input, context) => {
         try {
+          if (closed)
+            throw Object.assign(new Error("Code intelligence server closed"), {
+              code: "aborted",
+              retryable: true,
+            });
           const controller = new AbortController();
+          controllers.add(controller);
           const upstream = (context as { signal?: AbortSignal }).signal;
           const abortFromUpstream = () => controller.abort(upstream?.reason);
           if (upstream?.aborted) abortFromUpstream();
@@ -1311,41 +1034,47 @@ export default function registerNativeCodeIntelligenceTools(
             upstream?.addEventListener("abort", abortFromUpstream, {
               once: true,
             });
-          const timer =
-            input.timeout_ms === undefined
-              ? undefined
-              : setTimeout(
-                  () =>
-                    controller.abort(
-                      Object.assign(
-                        new Error("Code intelligence request timed out"),
-                        { code: "timeout", retryable: true },
-                      ),
-                    ),
-                  input.timeout_ms,
-                );
+          const timer = setTimeout(
+            () =>
+              controller.abort(
+                Object.assign(
+                  new Error("Code intelligence request timed out"),
+                  {
+                    code: "timeout",
+                    retryable: true,
+                    suggestedNextCall:
+                      "Retry with narrower paths, glob, or scan_limit",
+                  },
+                ),
+              ),
+            input.timeout_ms ?? 30_000,
+          );
           const data = await (async () => {
             try {
-              return await execute(
-                input,
-                async () => {
-                  const state = { scan: emptyScanCoverage() };
-                  const payload = (await executeNative(
-                    name,
-                    input,
-                    state,
-                    controller.signal,
-                  )) as Record<string, unknown>;
-                  return withScopeMetadata(
-                    payload,
-                    state.scan,
-                    outputOmissions(payload),
-                  );
-                },
-                context,
-                name,
+              return await withAbort(
+                execute(
+                  input,
+                  async () => {
+                    const state = { scan: emptyScanCoverage() };
+                    const payload = (await executeNative(
+                      name,
+                      input,
+                      state,
+                      controller.signal,
+                    )) as Record<string, unknown>;
+                    return withScopeMetadata(
+                      payload,
+                      state.scan,
+                      outputOmissions(payload),
+                    );
+                  },
+                  context,
+                  name,
+                ),
+                controller.signal,
               );
             } finally {
+              controllers.delete(controller);
               if (timer !== undefined) clearTimeout(timer);
               upstream?.removeEventListener("abort", abortFromUpstream);
             }

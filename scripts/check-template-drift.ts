@@ -11,6 +11,7 @@ async function files(directory: string, prefix = ""): Promise<string[]> {
   const found: string[] = [];
   for (const entry of entries) {
     const relative = path.join(prefix, entry.name);
+    if (entry.name.startsWith(".")) continue;
     if (entry.isDirectory())
       found.push(...(await files(path.join(directory, entry.name), relative)));
     else found.push(relative);
@@ -32,6 +33,23 @@ mappings.push(
     source: path.join(root, "src/hook.ts"),
   },
 );
+
+const shared = [
+  [
+    "src/runtime/binary-resolution.ts",
+    "templates/skills/ast-mcp/scripts/binary-resolution.ts",
+  ],
+  ["src/managed-hook.ts", "templates/skills/ast-mcp/scripts/managed-hook.ts"],
+  [
+    "templates/AGENTS.md",
+    "templates/skills/ast-mcp/references/agents-guidance.md",
+  ],
+  ["src/hook.ts", "templates/skills/ast-mcp/references/hook-source.txt"],
+].map(([source, destination]) => ({
+  source: path.join(root, source!),
+  destination: path.join(root, destination!),
+}));
+mappings.unshift(...shared);
 
 if (write) {
   for (const mapping of mappings)

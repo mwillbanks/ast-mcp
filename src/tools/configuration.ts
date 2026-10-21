@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { currentConfig, type ResolvedConfig } from "../config";
 import { configRegistry } from "../config-registry";
+import { formatterV2Schema } from "../config-v2-schema";
 import {
   toolFailure,
   toolOutputSchema,
@@ -312,6 +313,7 @@ function statusPayload(
     projectRoot: config.projectRoot,
     provenance: config.provenance,
     safety: config.safety,
+    telemetry: config.telemetry,
     sources: config.sources,
     version: config.version,
     workspace: config.workspace,
@@ -409,19 +411,24 @@ export default function registerConfigurationTools(
       outputSchema: toolOutputSchema,
       title: "Check Path Authorization Policy",
     },
-    async ({ checks, revision, workspaceId }) => {
+    async ({ checks, revision, workspaceId }, context) => {
       try {
         return toolSuccess(
-          await execute({ checks, revision, workspaceId }, async () => {
-            const config = await currentConfig();
-            return {
-              decisions: await Promise.all(
-                checks.map(async (check) =>
-                  evaluatePolicyForCheck(config, check.path, check.operation),
+          await execute(
+            { checks, revision, workspaceId },
+            async () => {
+              const config = await currentConfig();
+              return {
+                decisions: await Promise.all(
+                  checks.map(async (check) =>
+                    evaluatePolicyForCheck(config, check.path, check.operation),
+                  ),
                 ),
-              ),
-            };
-          }),
+              };
+            },
+            context,
+            "policy_check",
+          ),
         );
       } catch (error) {
         return toolFailure(error);
@@ -573,6 +580,7 @@ export default function registerConfigurationTools(
               dprint_config: z.string().min(1).optional(),
               enabled: z.boolean().optional(),
               fallback: z.enum(["preserve", "dprint", "reject"]).optional(),
+              formatters: z.array(formatterV2Schema).max(64).optional(),
             })
             .strict()
             .optional(),
@@ -641,6 +649,7 @@ export default function registerConfigurationTools(
             .optional(),
           safety: z
             .object({
+              filesystem: z.enum(["restricted", "unrestricted"]).optional(),
               hook: z
                 .object({
                   allow_tools: z.array(z.string().min(1)).max(128).optional(),
@@ -651,6 +660,10 @@ export default function registerConfigurationTools(
                 .optional(),
               require_hash: z.boolean().optional(),
             })
+            .strict()
+            .optional(),
+          telemetry: z
+            .object({ enabled: z.boolean().optional() })
             .strict()
             .optional(),
           target: configTarget,

@@ -305,6 +305,7 @@ describe("mutation locks", () => {
 describe("guarded patch integration", () => {
   test("journals commits and reports refresh before returning", async () => {
     const root = await temporary();
+    await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
     process.env.AST_MCP_ROOTS = root;
     process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
     const file = path.join(root, "notes.txt");
@@ -331,6 +332,7 @@ describe("guarded patch integration", () => {
 
   test("rolls back file replacements when refresh fails", async () => {
     const root = await temporary();
+    await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
     process.env.AST_MCP_ROOTS = root;
     process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
     const file = path.join(root, "notes.txt");
@@ -1151,19 +1153,34 @@ describe("mutation recovery edges", () => {
   test("renews active leases and fences expired renewal", async () => {
     const root = await temporary();
     const file = path.join(root, "value.ts");
-    await withFencedFileLock(
-      file,
-      async (lease) => {
-        const initialExpiry = lease.expiresAt;
-        while (lease.expiresAt === initialExpiry && Date.now() < initialExpiry)
-          await Bun.sleep(25);
-        expect(lease.expiresAt).toBeGreaterThan(initialExpiry);
-        await lease.fence();
-      },
-      { leaseMs: 1_500 },
-    );
-
     let clock = 1_000;
+    let heartbeat: (() => void) | undefined;
+    const actualSetInterval = globalThis.setInterval;
+    const intervals = spyOn(globalThis, "setInterval").mockImplementation(((
+      callback: () => void,
+      interval?: number,
+    ) => {
+      heartbeat = callback;
+      return actualSetInterval(callback, interval);
+    }) as typeof setInterval);
+    try {
+      await withFencedFileLock(
+        file,
+        async (lease) => {
+          const initialExpiry = lease.expiresAt;
+          clock += 500;
+          expect(heartbeat).toBeFunction();
+          heartbeat?.();
+          await lease.fence();
+          expect(lease.expiresAt).toBe(initialExpiry + 500);
+        },
+        { leaseMs: 1_500, now: () => clock },
+      );
+    } finally {
+      intervals.mockRestore();
+    }
+
+    clock = 1_000;
     const expired = await acquireFileLock(file, {
       leaseMs: 100,
       now: () => clock,
@@ -1191,14 +1208,45 @@ describe("mutation recovery edges", () => {
     await held.renew();
     expect(held.expiresAt).toBe(1_150);
     const abort = new AbortController();
-    const waiting = acquireFileLock(file, {
-      now: () => clock,
-      pollMs: 50,
-      signal: abort.signal,
-    });
-    setTimeout(() => abort.abort(), 5);
-    await expect(waiting).rejects.toMatchObject({ code: "lock_aborted" });
-    await held.release();
+    const registered = Promise.withResolvers<void>();
+    const addListener = abort.signal.addEventListener.bind(abort.signal);
+    const registration = spyOn(
+      abort.signal,
+      "addEventListener",
+    ).mockImplementation(
+      (...args: Parameters<AbortSignal["addEventListener"]>) => {
+        addListener(...args);
+        if (args[0] === "abort") registered.resolve();
+      },
+    );
+    try {
+      const waiting = acquireFileLock(file, {
+        now: () => clock,
+        pollMs: 60_000,
+        signal: abort.signal,
+      });
+      await registered.promise;
+      abort.abort();
+      await expect(waiting).rejects.toMatchObject({
+        code: "lock_aborted",
+        retryable: false,
+      });
+      await held.fence();
+      expect(JSON.parse(await readFile(held.lockPath, "utf8")).token).toBe(
+        held.token,
+      );
+    } finally {
+      registration.mockRestore();
+      await held.release();
+    }
+    const replacement = await acquireFileLock(file, { now: () => clock });
+    try {
+      expect(replacement.token).not.toBe(held.token);
+      await replacement.fence();
+      await expect(held.fence()).rejects.toMatchObject({ code: "lock_fenced" });
+    } finally {
+      await replacement.release();
+    }
   });
 
   test("records lifecycle failure paths and unknown operations", async () => {

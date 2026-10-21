@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
+import { currentConfig } from "../config";
 import {
   directoryBinaryCandidates,
   executableCandidate,
@@ -9,8 +10,7 @@ import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
-} from "../../templates/skills/ast-mcp/scripts/binary-resolution";
-import { currentConfig } from "../config";
+} from "./binary-resolution";
 
 export {
   globalBinDirectories,
@@ -96,11 +96,11 @@ export function resolveDependencyBinary(
   );
 }
 
-export const DPRINT_BINARY =
-  process.env.DPRINT_BINARY ??
-  resolveDependencyBinary("dprint", "dprint") ??
-  "dprint";
-
 export async function configuredDprintBinary(): Promise<string> {
-  return (await currentConfig()).dependencies.dprintBinary ?? DPRINT_BINARY;
+  return (
+    (await currentConfig()).dependencies.dprintBinary ??
+    process.env.DPRINT_BINARY ??
+    resolveDependencyBinary("dprint", "dprint") ??
+    "dprint"
+  );
 }

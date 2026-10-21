@@ -9,13 +9,46 @@ import {
   wasmProviderVersions,
 } from "../src/intelligence/languages/shared/wasm-assets.ts";
 
+const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
+  cwd: path.resolve(import.meta.dir, ".."),
+  stderr: "pipe",
+});
+const buildId =
+  revision.exitCode === 0 ? revision.stdout.toString().trim() : "source";
 const providerMetadata = {
+  AST_MCP_SOURCE_FILES: JSON.stringify(
+    (
+      await Array.fromAsync(
+        new Bun.Glob("src/**/*.ts").scan({
+          cwd: path.resolve(import.meta.dir, ".."),
+        }),
+      )
+    )
+      .concat([
+        "dist/ast-mcp.js",
+        "dist/workers/code-intelligence-worker.js",
+        "dist/workers/dynamic-wasm-worker.js",
+        "dist/workers/infra-wasm-worker.js",
+        "dist/workers/jvm-wasm-worker.js",
+        "dist/workers/legacy-wasm-worker.js",
+        "dist/workers/systems-wasm-worker.js",
+      ])
+      .sort(),
+  ),
+  AST_MCP_BUILD_ID: JSON.stringify(
+    /^[a-f0-9]{40}$/.test(buildId) ? buildId : "source",
+  ),
   AST_MCP_WASM_PROVIDER_VERSIONS: JSON.stringify(wasmProviderVersions()),
 };
 const root = path.resolve(import.meta.dir, "..");
 const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
 const workers = [
+  {
+    client: "src/tools/code-intelligence.ts",
+    entrypoint: "src/tools/code-intelligence-worker.ts",
+    output: "code-intelligence-worker.js",
+  },
   {
     client: "src/intelligence/languages/dynamic/analyzer.ts",
     entrypoint: "src/intelligence/languages/shared/wasm-dynamic-worker.ts",
@@ -60,7 +93,7 @@ const packagedWorkerPlugin: BunPlugin = {
     build.onLoad(
       {
         filter:
-          /src[\\/]+intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client)\.ts$/,
+          /src[\\/]+(?:tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
       },
       async ({ path: filePath }: { path: string }) => {
         const relative = path
@@ -70,7 +103,10 @@ const packagedWorkerPlugin: BunPlugin = {
         const worker = workers.find((item) => item.client === relative);
         if (!worker) return;
         const source = await Bun.file(filePath).text();
-        const marker = 'new URL("./wasm-worker.ts", import.meta.url)';
+        const marker =
+          relative === "src/tools/code-intelligence.ts"
+            ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
+            : 'new URL("./wasm-worker.ts", import.meta.url)';
         if (!source.includes(marker))
           throw new Error(`Worker URL marker is missing from ${relative}`);
         return {
@@ -89,6 +125,7 @@ assertBuild(
   "CLI",
   await Bun.build({
     entrypoints: [path.join(root, "bin/ast-mcp.ts")],
+    external: ["@lancedb/lancedb-*"],
     define: providerMetadata,
     format: "esm",
     minify: true,

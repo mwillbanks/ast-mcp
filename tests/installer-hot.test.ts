@@ -24,20 +24,22 @@ test("installer configures stable CLI subcommands for every local host", async (
   try {
     expect(
       await readFile(path.join(folder, ".codex/config.toml"), "utf8"),
-    ).toContain('command = "./node_modules/.bin/ast-mcp"\nargs = ["mcp"]');
+    ).toContain(`command = ${JSON.stringify(process.execPath)}`);
     const claude = JSON.parse(
       await readFile(path.join(folder, ".mcp.json"), "utf8"),
     );
     expect(claude.mcpServers["ast-mcp"]).toMatchObject({
-      args: ["mcp"],
-      command: "./node_modules/.bin/ast-mcp",
+      args: [path.resolve(import.meta.dir, "../bin/ast-mcp.ts"), "mcp"],
+      command: process.execPath,
+      cwd: folder,
     });
     const copilot = JSON.parse(
       await readFile(path.join(folder, ".github/mcp.json"), "utf8"),
     );
     expect(copilot.mcpServers["ast-mcp"]).toMatchObject({
-      args: ["mcp"],
-      command: "./node_modules/.bin/ast-mcp",
+      args: [path.resolve(import.meta.dir, "../bin/ast-mcp.ts"), "mcp"],
+      command: process.execPath,
+      cwd: folder,
     });
   } finally {
     await rm(folder, { force: true, recursive: true });

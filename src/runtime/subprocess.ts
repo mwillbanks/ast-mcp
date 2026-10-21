@@ -1,8 +1,6 @@
-export interface PlatformCommand {
-  args: string[];
-  command: string;
-  windowsVerbatimArguments?: boolean;
-}
+export { commandForPlatform } from "./binary-resolution";
+// fallow-ignore-next-line unused-type -- Preserve the existing public subprocess type export.
+export type { PlatformCommand } from "./binary-resolution";
 
 export interface ManagedSubprocess {
   exitCode: number | null;
@@ -17,6 +15,7 @@ export async function readSubprocessOutput(
   stream: ReadableStream<Uint8Array>,
   signal: AbortSignal,
   onOverflow: () => Promise<void>,
+  fatalUtf8 = false,
 ) {
   const reader = stream.getReader();
   const cancel = () => {
@@ -46,32 +45,10 @@ export async function readSubprocessOutput(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
-}
-
-function batchArgument(value: string) {
-  if (/[\0\r\n"%!^]/u.test(value))
-    throw new Error(
-      "Windows batch command arguments cannot contain quotes, expansion characters, or control characters",
-    );
-  if (/^[A-Za-z0-9_./:\\=-]+$/u.test(value)) return value;
-  return `"${value}"`;
-}
-
-export function commandForPlatform(
-  command: string,
-  args: string[],
-  platform: NodeJS.Platform = process.platform,
-  comspec = process.env.ComSpec ?? "cmd.exe",
-): PlatformCommand {
-  if (platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(command))
-    return { args, command };
-  const commandLine = `call ${[command, ...args].map(batchArgument).join(" ")}`;
-  return {
-    args: ["/d", "/v:off", "/s", "/c", commandLine],
-    command: comspec,
-    windowsVerbatimArguments: true,
-  };
+  return new TextDecoder("utf-8", {
+    fatal: fatalUtf8,
+    ignoreBOM: fatalUtf8,
+  }).decode(bytes);
 }
 
 function settledWithin(processHandle: ManagedSubprocess, timeoutMs: number) {

@@ -11,7 +11,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { install } from "../src/installer";
-import { checkInstall } from "../templates/skills/ast-mcp/scripts/check-install";
+import {
+  checkInstall,
+  smokeMcpStdio,
+} from "../templates/skills/ast-mcp/scripts/check-install";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -89,7 +92,7 @@ test("diagnoses the platform-native managed HTTP service", async () => {
   await writeFile(
     serviceFile,
     service.replace(
-      "./node_modules/.bin/ast-mcp",
+      localAlias,
       "/tmp/node_modules/@mwillbanks/ast-mcp/dist/ast-mcp.js",
     ),
   );
@@ -113,4 +116,139 @@ test("diagnoses the platform-native managed HTTP service", async () => {
   );
   expect(stale.installed).toBeFalse();
   expect(stale.checks.service).toBeFalse();
+
+  await rm(localAlias);
+  await install({
+    home,
+    host: "127.0.0.1",
+    platform: process.platform,
+    port: 4931,
+    root,
+    scope: "local",
+    service: true,
+    serviceRunner: async () => {},
+    targets: ["codex"],
+    transport: "http",
+  });
+  const sourceArgs = [
+    "--scope",
+    "local",
+    "--target",
+    "codex",
+    "--root",
+    root,
+    "--transport",
+    "http",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "4931",
+    "--service",
+  ];
+  const sourceResult = await checkInstall(sourceArgs, home);
+  expect(sourceResult.installed).toBeTrue();
+  expect(sourceResult.checks.service).toBeTrue();
+  const sourceService = await readFile(serviceFile, "utf8");
+  const sourceScript = path.resolve(import.meta.dir, "../bin/ast-mcp.ts");
+  expect(sourceService).toContain(sourceScript);
+  const injectedArguments =
+    process.platform === "darwin"
+      ? sourceService.replace(
+          "<string>mcp</string>",
+          "<string>mcp</string><string>--eval</string>",
+        )
+      : sourceService.replace('"mcp"', '"mcp" "--eval"');
+  const wrongDirectory =
+    process.platform === "darwin"
+      ? sourceService.replace(
+          /(<key>WorkingDirectory<\/key>\s*<string>)[^<]*(<\/string>)/,
+          `$1${home}$2`,
+        )
+      : sourceService.replace(
+          `WorkingDirectory="${root}"`,
+          `WorkingDirectory="${home}"`,
+        );
+  for (const invalid of [
+    sourceService.replace(sourceScript, process.execPath),
+    sourceService.replace(process.execPath, sourceScript),
+    injectedArguments,
+    wrongDirectory,
+  ]) {
+    expect(invalid).not.toBe(sourceService);
+    await writeFile(serviceFile, invalid);
+    expect((await checkInstall(sourceArgs, home)).checks.service).toBeFalse();
+  }
 });
+
+async function smokeFixture(
+  root: string,
+  options: { delay: number; exit: number; missing?: boolean },
+) {
+  const fixture = path.join(root, "smoke.ts");
+  const toolNames = [
+    "graph_diff",
+    "graph_explain",
+    "graph_path",
+    "graph_query",
+    "index",
+    "index_status",
+    "retrieve",
+    "workspace_open",
+    "workspace_status",
+  ];
+  await writeFile(
+    fixture,
+    `import { createInterface } from "node:readline";
+import { writeFile } from "node:fs/promises";
+const options = ${JSON.stringify(options)};
+const tools = options.missing ? [] : ${JSON.stringify(toolNames)};
+for await (const line of createInterface({ input: process.stdin })) {
+  const message = JSON.parse(line);
+  if (message.id === undefined) continue;
+  const result = message.method === "initialize" ? {} :
+    message.method === "tools/list" ? { tools: tools.map(name => ({ name })) } :
+    { structuredContent: { ok: true, data: { workspace: {
+      workspaceId: "workspace:v1:fixture", checkoutRoot: process.cwd(),
+      canonicalRootAnchor: process.cwd()
+    } } } };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\\n");
+}
+await Bun.sleep(options.delay);
+await writeFile("cleanup.txt", "complete");
+if (options.exit) process.stderr.write("fixture shutdown failure\\n");
+process.exit(options.exit);
+`,
+  );
+  return fixture;
+}
+
+test("checker awaits graceful cleanup after protocol success", async () => {
+  const root = await temporary("ast-mcp-smoke-cleanup-");
+  const fixture = await smokeFixture(root, { delay: 700, exit: 0 });
+  expect(
+    (await smokeMcpStdio(process.execPath, root, 5_000, [fixture])).initialized,
+  ).toBeTrue();
+  expect(await readFile(path.join(root, "cleanup.txt"), "utf8")).toBe(
+    "complete",
+  );
+});
+
+test("checker rejects nonzero shutdown and preserves the protocol failure", async () => {
+  const root = await temporary("ast-mcp-smoke-exit-");
+  const fixture = await smokeFixture(root, { delay: 0, exit: 7 });
+  await expect(
+    smokeMcpStdio(process.execPath, root, 5_000, [fixture]),
+  ).rejects.toThrow("exited with code 7: fixture shutdown failure");
+  await smokeFixture(root, { delay: 0, exit: 7, missing: true });
+  await expect(
+    smokeMcpStdio(process.execPath, root, 5_000, [fixture]),
+  ).rejects.toThrow("missing tools");
+});
+
+test("checker terminates cleanup that exceeds five seconds", async () => {
+  const root = await temporary("ast-mcp-smoke-stalled-");
+  const fixture = await smokeFixture(root, { delay: 60_000, exit: 0 });
+  await expect(
+    smokeMcpStdio(process.execPath, root, 5_000, [fixture]),
+  ).rejects.toThrow("shutdown exceeded five seconds");
+}, 15_000);

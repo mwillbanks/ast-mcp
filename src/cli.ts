@@ -1,23 +1,25 @@
 export interface CliHandlers {
   config(args: string[]): Promise<number | undefined> | Promise<void>;
   hook(): Promise<number>;
+  skills?(args: string[]): Promise<void>;
   installer(args: string[]): Promise<void>;
   mcp(args: string[]): Promise<void>;
   stderr?(text: string): void;
   stdout?(text: string): void;
 }
 
-const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
+const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  skills       Export bundled skills for manual installation\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
 
 const installerOptions = `Options:\n  -s, --scope <scope>       Installation scope: local or global (default: local)\n  -t, --target <target>     Host: codex, claude, copilot, or all (default: all)\n  -r, --root <path>         Deprecated root override (default: current directory)\n      --transport <mode>    MCP transport: stdio or http (default: stdio)\n      --host <address>      HTTP bind host (default: layered configuration)\n      --port <number>       HTTP bind port (default: layered configuration)\n      --service             Install and start a managed user HTTP service\n      --no-service          Stop and remove a managed user HTTP service\n  -h, --help                Display help\n`;
 
 const commandHelp: Record<string, string> = {
+  skills: `Usage:\n  ast-mcp skills export <destination>\n\nExport the bundled skill into the destination directory. Existing files are preserved. MCP clients discover skills directly; installation does not write skills to disk.\n`,
   config: `Usage:\n  ast-mcp config <validate|show|migrate> [options]\n\nValidate, display, or migrate layered ast-mcp.toml configuration. Migration previews by default and never rewrites automatically.\n\nOptions:\n  -r, --root <path>  Deprecated root or migration target directory\n      --file <path>  Migrate an explicit configuration file\n      --global       Migrate the user-global configuration\n      --to <version> Migration target version (currently 2)\n      --check        Exit 2 when migration is required\n      --write        Atomically write the migration\n      --no-backup    Do not create the default v1 backup\n  -h, --help         Display help\n`,
   hook: `Usage:\n  ast-mcp hook\n\nRun the pre-tool-use filesystem guard. Hook input is read from stdin.\n\nOptions:\n  -h, --help   Display help\n`,
   install: `Usage:\n  ast-mcp install [options]\n\nConfigure ast-mcp for supported hosts.\n\n${installerOptions}`,
   mcp: `Usage:\n  ast-mcp mcp [options]\n\nStart the MCP server. Stdio is the default; HTTP listens on the layered configuration unless flags override it.\n\nOptions:\n      --transport <mode>  MCP transport: stdio or http (default: stdio)\n      --host <address>    HTTP bind host\n      --port <number>     HTTP bind port\n  -h, --help              Display help\n`,
   uninstall: `Usage:\n  ast-mcp uninstall [options]\n\nRemove ast-mcp-managed configuration while preserving shared host files.\n\n${installerOptions}`,
-  update: `Usage:\n  ast-mcp update [options]\n\nRefresh managed configuration and installed skill content.\n\n${installerOptions}`,
+  update: `Usage:\n  ast-mcp update [options]\n\nRefresh managed configuration. Existing manual skills are preserved.\n\n${installerOptions}`,
 };
 
 export function getCliHelp(): string;
@@ -84,6 +86,7 @@ function isCliUsageError(error: unknown): error is Error {
     "InstallerUsageError",
     "ConfigurationUsageError",
     "McpUsageError",
+    "SkillsUsageError",
   ].includes(error.name);
 }
 
@@ -93,6 +96,11 @@ async function runConfiguredCommand(
   handlers: CliHandlers,
 ): Promise<number | undefined> {
   try {
+    if (command === "skills") {
+      if (!handlers.skills) throw new Error("Skills command is unavailable");
+      await handlers.skills(rest);
+      return undefined;
+    }
     if (command === "config") {
       const result = await handlers.config(rest);
       return typeof result === "number" ? result : undefined;

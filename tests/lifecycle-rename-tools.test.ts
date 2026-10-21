@@ -12,7 +12,9 @@ import {
 import os from "node:os";
 import path from "node:path";
 
+import { withConfig } from "../src/config";
 import registerLifecycleTools from "../src/tools/lifecycle";
+import { hermeticConfig } from "./support/hermetic-config";
 
 test("registers lifecycle tools with declared files batch schemas", () => {
   const definitions = new Map<string, unknown>();
@@ -52,11 +54,14 @@ test("lifecycle handlers execute successful and failed requests", async () => {
     files: Record<string, unknown>;
   }) => Promise<ToolResult>;
   const handlers = new Map<string, ToolHandler>();
-  registerLifecycleTools({
-    registerTool(name: string, _definition: unknown, handler: ToolHandler) {
-      handlers.set(name, handler);
-    },
-  } as never);
+  registerLifecycleTools(
+    {
+      registerTool(name: string, _definition: unknown, handler: ToolHandler) {
+        handlers.set(name, handler);
+      },
+    } as never,
+    async (_args, operation) => withConfig(hermeticConfig(root), operation),
+  );
   const handler = (name: string) => {
     const registered = handlers.get(name);
     if (!registered) throw new Error(`missing lifecycle handler: ${name}`);

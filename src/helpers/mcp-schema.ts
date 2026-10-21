@@ -37,7 +37,14 @@ export function toolFailure(error: unknown) {
     suggestedNextCall?: string;
   };
   const message = error instanceof Error ? error.message : String(error);
+  const operatingSystemCode =
+    value.code === "EACCES" || value.code === "EPERM"
+      ? "permission_denied"
+      : value.code === "ENOENT"
+        ? "file_not_found"
+        : undefined;
   const code =
+    operatingSystemCode ??
     value.code ??
     (/(?:hash|expectedSha256|stale file context)/i.test(message)
       ? "stale_or_missing_hash"
@@ -56,7 +63,10 @@ export function toolFailure(error: unknown) {
   const structuredContent = {
     error: {
       code,
-      details: value.details ?? value.decision,
+      details:
+        value.details ??
+        value.decision ??
+        (operatingSystemCode ? { osCode: value.code } : undefined),
       message,
       retryable:
         value.retryable ??

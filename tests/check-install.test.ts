@@ -13,11 +13,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { install, update } from "../src/installer";
+import { httpEndpoint } from "../src/installer-transport";
 import {
   commandForPlatform,
   executableNames,
   resolveLocalBinaryAlias,
-} from "../templates/skills/ast-mcp/scripts/binary-resolution";
+} from "../src/runtime/binary-resolution";
+import { createServicePlan } from "../src/service";
 import {
   checkInstall,
   mcpStdioCommand,
@@ -72,6 +74,8 @@ test("checker accepts a lowercase Windows batch alias through global discovery",
     root,
     scope: "global",
     targets: ["codex"],
+    // This test renders Windows configuration on non-Windows hosts.
+    verifyLaunch: process.platform === "win32" ? undefined : async () => {},
   });
   const directory = path.join(home, ".bun/install/global/node_modules/.bin");
   await mcpFixture(directory, "ast-mcp", workingResponses(root));
@@ -247,7 +251,7 @@ function workingResponses(root: string): FixtureResponses {
     initialize: {
       capabilities: { tools: {} },
       protocolVersion: "2025-06-18",
-      serverInfo: { name: "fixture", version: "1" },
+      serverInfo: { name: "ast-mcp", version: "1" },
     },
     "tools/call": {
       structuredContent: {
@@ -264,6 +268,9 @@ function workingResponses(root: string): FixtureResponses {
     },
     "tools/list": {
       tools: [
+        "file_read",
+        "file_hash",
+        "file_patch",
         "graph_diff",
         "graph_explain",
         "graph_path",
@@ -367,6 +374,22 @@ test("checker covers every local host surface", async () => {
   ).toBeFalse();
 });
 
+test("checker recognizes a legacy alias hook and rejects a missing alias", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["claude"] });
+  const alias = resolveLocalBinaryAlias("ast-mcp", root, process.platform)!;
+  const file = path.join(root, ".claude/settings.json");
+  const config = JSON.parse(await readFile(file, "utf8"));
+  config.hooks.PreToolUse = [
+    { hooks: [{ type: "command", command: `${JSON.stringify(alias)} hook` }] },
+  ];
+  await writeFile(file, JSON.stringify(config));
+  const args = ["--scope", "local", "--target", "claude", "--root", root];
+  expect((await checkInstall(args, home)).checks.hook).toBeTrue();
+  await rm(alias);
+  expect((await checkInstall(args, home)).checks.hook).toBeFalse();
+});
+
 test("checker reads JSONC host configuration without external parsers", async () => {
   const { home, root } = await folders();
   await install({ home, root, scope: "local", targets: ["claude"] });
@@ -406,7 +429,8 @@ test("checker covers every global host surface", async () => {
 
     expect(result).toMatchObject({ installed: true, smokeError: null });
     expect(result.installCommand).not.toContain("--root");
-    expect(result.installCommand).toContain("--trust dprint");
+    expect(result.installCommand).not.toContain("--trust dprint");
+    expect(result.installCommand).not.toContain("bun pm trust");
     expect(result.updateCommand).toStartWith("ast-mcp update");
     expect(result.uninstallCommand).toStartWith("ast-mcp uninstall");
   }
@@ -469,6 +493,97 @@ test("checker covers every global host surface", async () => {
   ).toBeFalse();
 }, 30_000);
 
+test("exported checker requires its canonical guidance resource", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  const exported = path.join(root, "exported/ast-mcp");
+  const scripts = path.join(exported, "scripts");
+  const references = path.join(exported, "references");
+  await mkdir(scripts, { recursive: true });
+  await mkdir(references);
+  const source = path.resolve(import.meta.dir, "../templates/skills/ast-mcp");
+  for (const file of [
+    "check-install.ts",
+    "binary-resolution.ts",
+    "managed-hook.ts",
+  ])
+    await writeFile(
+      path.join(scripts, file),
+      await readFile(path.join(source, "scripts", file)),
+    );
+  const guidance = path.join(references, "agents-guidance.md");
+  await writeFile(
+    guidance,
+    await readFile(path.join(source, "references/agents-guidance.md")),
+  );
+  const ancestor = await readFile(path.join(root, "AGENTS.md"), "utf8");
+  async function checkExport() {
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        path.join(scripts, "check-install.ts"),
+        "--root",
+        root,
+      ],
+      {
+        env: { ...process.env, AST_MCP_CHECK_INSTALL_SKIP_SMOKE: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    return { exitCode, stdout, stderr };
+  }
+  const healthy = await checkExport();
+  expect(healthy.exitCode).toBe(0);
+  expect(JSON.parse(healthy.stdout).checks.instructions).toBeTrue();
+  await rm(guidance);
+  const incomplete = await checkExport();
+  expect(incomplete.exitCode).not.toBe(0);
+  expect(incomplete.stdout).toBe("");
+  expect(incomplete.stderr).toContain("agents-guidance.md");
+  expect(await readFile(path.join(root, "AGENTS.md"), "utf8")).toBe(ancestor);
+});
+
+test("checker fails closed when host configuration disappears before smoke", async () => {
+  const filesystem = await import("node:fs/promises");
+  const originalRead = filesystem.readFile;
+  for (const target of ["codex", "claude"] as const) {
+    const { home, root } = await folders();
+    await install({ home, root, scope: "local", targets: [target] });
+    const config = path.join(
+      root,
+      target === "codex" ? ".codex/config.toml" : ".mcp.json",
+    );
+    let reads = 0;
+    const read = spyOn(filesystem, "readFile").mockImplementation((async (
+      ...args: Parameters<typeof readFile>
+    ) => {
+      if (String(args[0]) === config && ++reads === 2) await rm(config);
+      return originalRead(...args);
+    }) as typeof readFile);
+    try {
+      const result = await checkInstall(
+        ["--scope", "local", "--target", target, "--root", root],
+        home,
+      );
+      expect(reads).toBe(2);
+      expect(result.checks.mcp).toBeFalse();
+      expect(result.installed).toBeFalse();
+      expect(result.smoke).toBeNull();
+      expect(result.smokeError).toBe(
+        "No platform-compatible ast-mcp executable was found",
+      );
+    } finally {
+      read.mockRestore();
+    }
+  }
+});
+
 test("checker rejects invalid arguments and CLI emits JSON", async () => {
   await expect(checkInstall(["--unknown"])).rejects.toThrow("Unknown argument");
   await expect(checkInstall(["--scope", "wrong"])).rejects.toThrow("Invalid");
@@ -482,7 +597,7 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
   ]);
   expect(missing.operation).toBe("install");
   expect(missing.recommendedCommand).toBe(missing.installCommand);
-  expect(missing.installCommand).toContain("bun pm trust dprint");
+  expect(missing.installCommand).not.toContain("bun pm trust dprint");
   expect(missing.installCommand).toContain(
     "./node_modules/.bin/ast-mcp install",
   );
@@ -506,6 +621,50 @@ test("checker rejects invalid arguments and CLI emits JSON", async () => {
     write.mockRestore();
   }
 });
+
+test.skipIf(process.platform === "win32")(
+  "checker bounds cleanup when an unresponsive child ignores termination",
+  async () => {
+    const encoder = new TextEncoder();
+    const child = {
+      exitCode: null,
+      pid: 99,
+      exited: new Promise<number>(() => {}),
+      stdin: { write() {}, flush: async () => {}, end() {} },
+      stdout: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("invalid\n"));
+          controller.close();
+        },
+      }),
+      stderr: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      kill: spyOn({ kill(_signal?: string) {} }, "kill"),
+    };
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => child as never);
+    const kill = spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("No process group"), { code: "ESRCH" });
+    });
+    const started = performance.now();
+    try {
+      await expect(
+        smokeMcpStdio("fixture", os.tmpdir(), 200),
+      ).rejects.toThrow();
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+      // The checker grants five seconds for EOF shutdown, then two bounded kill waits.
+      expect(performance.now() - started).toBeGreaterThanOrEqual(5_000);
+      expect(performance.now() - started).toBeLessThan(7_000);
+    } finally {
+      spawn.mockRestore();
+      kill.mockRestore();
+      child.kill.mockRestore();
+    }
+  },
+);
 
 test("stdio smoke fails closed for incomplete and unresponsive servers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-smoke-"));
@@ -591,7 +750,7 @@ test.skipIf(process.platform === "win32")(
       }
     }
   },
-  5_000,
+  10_000,
 );
 
 test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
@@ -617,10 +776,14 @@ test.skipIf(process.platform !== "darwin" && process.platform !== "linux")(
     );
     await mkdir(directory, { recursive: true });
     const binary = path.join(home, ".bun/bin/ast-mcp");
-    const content =
-      process.platform === "darwin"
-        ? `<plist><string>${binary}</string><string>--transport</string><string>http</string><string>127.0.0.1</string><string>3768</string></plist>`
-        : `ExecStart="${binary}" --transport http --host 127.0.0.1 --port 3768\n`;
+    const content = createServicePlan({
+      cliEntry: binary,
+      endpoint: httpEndpoint("127.0.0.1", 3768),
+      home,
+      platform: process.platform,
+      root,
+      scope: "global",
+    }).content;
     await writeFile(file, content);
     const args = [
       "--scope",
@@ -698,6 +861,7 @@ test("checker detects stale managed guidance and hook payloads", async () => {
     hooks.hooks.PreToolUse[0].hooks[0].command = 'bun "/stale/ast-mcp.js" hook';
     await writeFile(hookFile, JSON.stringify(hooks));
   })();
+  await mkdir(path.join(root, ".codex/skills/ast-mcp"), { recursive: true });
   await writeFile(path.join(root, ".codex/skills/ast-mcp/SKILL.md"), "stale");
 
   const stale = await checkInstall(
@@ -707,7 +871,7 @@ test("checker detects stale managed guidance and hook payloads", async () => {
   expect(stale.installed).toBeFalse();
   expect(stale.checks.instructions).toBeFalse();
   expect(stale.checks.hook).toBeFalse();
-  expect(stale.checks.skill).toBeFalse();
+  expect(stale.checks.skill).toBeUndefined();
   expect(stale.needsUpdate).toBeTrue();
   expect(stale.operation).toBe("update");
   expect(stale.recommendedCommand).toBe(stale.updateCommand);

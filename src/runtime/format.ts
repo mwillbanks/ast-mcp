@@ -1,5 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, unlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -85,15 +91,122 @@ function formatterArgs(
   );
 }
 
-async function removeFormatterStage(staged: string): Promise<void> {
-  try {
-    await unlink(staged);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      throw new Error(`Failed to remove formatter stage ${staged}`, {
-        cause: error,
-      });
+export class FormatterError extends Error {
+  readonly retryable = false;
+  readonly suggestedNextCall = "config_status";
+  constructor(
+    readonly code:
+      | "formatter_unavailable"
+      | "formatter_timeout"
+      | "formatter_invalid_output"
+      | "formatter_rejected"
+      | "formatter_cleanup_failed",
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "FormatterError";
   }
+}
+
+async function invokeFormatter(
+  command: string,
+  args: string[],
+  content: string,
+  options: {
+    cwd: string;
+    timeoutMs?: number;
+    env?: Record<string, string | undefined>;
+  },
+) {
+  try {
+    return await runCommandInput(command, args, content, options);
+  } catch (error) {
+    const value = error as Error & { code?: string };
+    const code =
+      value.code === "command_timeout"
+        ? "formatter_timeout"
+        : value.code === "command_invalid_output"
+          ? "formatter_invalid_output"
+          : value.code === "ENOENT" ||
+              value.code === "EACCES" ||
+              value.code === "EPERM"
+            ? "formatter_unavailable"
+            : "formatter_rejected";
+    throw new FormatterError(code, `Formatter ${command}: ${value.message}`, {
+      cause: error,
+    });
+  }
+}
+
+async function inPlaceContent(
+  config: ResolvedConfig,
+  filePath: string,
+  content: string,
+  formatter: ResolvedConfig["formatting"]["formatters"][number],
+) {
+  // Retain the basename for filename-sensitive rules. Parent configuration discovery
+  // reaches the original directory without exposing the live file to the formatter.
+  const directory = await mkdtemp(
+    path.join(path.dirname(filePath), ".ast-mcp-format-"),
+  );
+  const staged = path.join(directory, path.basename(filePath));
+  let primaryError: unknown;
+  let output = "";
+  try {
+    await writeFile(staged, content, { flag: "wx", mode: 0o600 });
+    await invokeFormatter(
+      formatter.command,
+      formatterArgs(config, filePath, staged, formatter.args),
+      "",
+      {
+        cwd: formatterRoot(config, filePath),
+        timeoutMs: formatter.timeoutMs,
+      },
+    );
+    const metadata = await lstat(staged);
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      metadata.size > 16 * 1024 * 1024
+    )
+      throw new FormatterError(
+        "formatter_invalid_output",
+        "Formatter output must be a regular file of at most 16777216 bytes",
+      );
+    try {
+      output = new TextDecoder("utf-8", {
+        fatal: true,
+        ignoreBOM: true,
+      }).decode(await readFile(staged));
+    } catch (error) {
+      throw new FormatterError(
+        "formatter_invalid_output",
+        "Formatter output must be valid UTF-8",
+        { cause: error },
+      );
+    }
+  } catch (error) {
+    primaryError =
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+        ? new FormatterError(
+            "formatter_invalid_output",
+            "Formatter removed its staged output",
+            { cause: error },
+          )
+        : error;
+  }
+  try {
+    await rm(directory, { force: true, recursive: true });
+  } catch (error) {
+    primaryError ??= new FormatterError(
+      "formatter_cleanup_failed",
+      `Failed to remove formatter staging directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (primaryError) throw primaryError;
+  return output;
 }
 
 export async function formatContent(
@@ -101,14 +214,17 @@ export async function formatContent(
   content: string,
 ): Promise<string> {
   const config = await currentConfig();
+  if (!config.formatting.enabled) return content;
   const formatter = config.formatting.formatters.find(
     (candidate) =>
-      (candidate.enabled ?? config.formatting.enabled) &&
+      candidate.enabled !== false &&
       matchesFormatter(config, filePath, candidate),
   );
   if (formatter) {
-    if (formatter.mode === "stdout") {
-      const result = await runCommandInput(
+    if (formatter.mode === "in_place")
+      return inPlaceContent(config, filePath, content, formatter);
+    return (
+      await invokeFormatter(
         formatter.command,
         formatterArgs(config, filePath, filePath, formatter.args),
         content,
@@ -116,35 +232,16 @@ export async function formatContent(
           cwd: formatterRoot(config, filePath),
           timeoutMs: formatter.timeoutMs,
         },
-      );
-      return result.stdout;
-    }
-    const extension = path.extname(filePath);
-    const staged = path.join(
-      path.dirname(filePath),
-      `.ast-mcp-format-${randomUUID()}${extension}`,
-    );
-    try {
-      await writeFile(staged, content, { flag: "wx" });
-      await runCommandInput(
-        formatter.command,
-        formatterArgs(config, filePath, staged, formatter.args),
-        "",
-        {
-          cwd: formatterRoot(config, filePath),
-          timeoutMs: formatter.timeoutMs,
-        },
-      );
-      return await Bun.file(staged).text();
-    } finally {
-      await removeFormatterStage(staged);
-    }
+      )
+    ).stdout;
   }
-  if (!config.formatting.enabled || config.formatting.fallback === "preserve")
-    return content;
+  if (config.formatting.fallback === "preserve") return content;
   if (config.formatting.fallback === "reject")
-    throw new Error(`No enabled formatter matches ${filePath}`);
-  const result = await runCommandInput(
+    throw new FormatterError(
+      "formatter_rejected",
+      `No enabled formatter matches ${filePath}`,
+    );
+  const result = await invokeFormatter(
     await dprint(),
     [
       "fmt",

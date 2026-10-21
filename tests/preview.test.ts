@@ -20,6 +20,7 @@ function sha256(value: string) {
 
 test("file_patch preview uses the normal AST and Aider contract without committing", async () => {
   const folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-preview-"));
+  await writeFile(path.join(folder, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = folder;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   try {
@@ -94,7 +95,7 @@ test("file_patch preview skips formatters until commit", async () => {
     [
       "version = 2",
       "[formatting]",
-      "enabled = false",
+      "enabled = true",
       'fallback = "preserve"',
       "[[formatting.formatters]]",
       'id = "upper"',

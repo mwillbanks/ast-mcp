@@ -36,18 +36,11 @@ strategies = ["ast", "aider_block"]
 aider_matchers = ["exact", "whitespace", "relative-indentation", "diff-match-patch"]
 
 [formatting]
-enabled = true
-fallback = "preserve" # preserve | dprint | reject
-dprint_config = "./dprint.json"
+enabled = false
+fallback = "preserve"
 
-[[formatting.formatters]]
-id = "biome"
-enabled = true
-extensions = [".ts", ".tsx", ".json"]
-command = "bunx"
-args = ["biome", "format", "--write", "{file}"]
-mode = "in_place" # stdout | in_place
-timeout_ms = 30000
+[telemetry]
+enabled = true # default; set false to opt out
 
 [safety]
 require_hash = true
@@ -64,9 +57,6 @@ excludes = [".git/**"]
 enabled = true
 allow_tools = []
 block_tools = []
-
-[dependencies]
-dprint_binary = "/absolute/path/to/dprint"
 
 [http]
 host = "127.0.0.1"
@@ -113,21 +103,23 @@ Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not au
 
 `[files.read].modes` filters the agent-selectable `ast` and `text` modes. `[files.patch].strategies` filters `ast` and `aider_block`; it does not auto-select a strategy. Version 2 enables every supported Aider matcher shown above by default. Repositories may narrow the list when they intentionally require stricter matching; ambiguity still fails closed. `file_capabilities` reports intrinsic and effective methods for each target.
 
+## Telemetry
+
+Telemetry defaults to enabled. Set `enabled = false` in global configuration to prevent SDK initialization and analytics network activity, or in project configuration to suppress events for that project. The global setting is a ceiling, so project configuration cannot re-enable telemetry when global telemetry is off. An omitted setting defaults to `true`; unresolved request policies and configuration errors suppress reporting. See the [telemetry and error reporting guide](/docs/guides/telemetry) for collected fields, exclusions, and privacy behavior.
+
 ## Formatting
 
-Version 2 defaults to `fallback = "preserve"`. select `dprint` or `reject` explicitly when unmatched content must be formatted or rejected. `dprint_config` accepts absolute paths and resolves relative paths from its declaring TOML file.
-
-Each formatter declares a stable `id`, `command`, `mode`, and at least one `extensions` or `globs` selector. Entries are evaluated in declaration order and the first enabled match wins. An entry's `enabled` value overrides the global formatting default, so a globally disabled configuration can selectively enable a formatter.
-
-In `stdout` mode, candidate content enters stdin and stdout becomes the formatted result. In `in_place` mode, ast-mcp writes the candidate to an adjacent staged file, expands `{file}` to that stage, runs the command, reads the stage, and removes it; the formatter never receives the live target. `{source_file}` names the logical target and `{project_root}` names the selected project. Stdout is ignored in in-place mode. Nonzero exits, spawn errors, cleanup failures, or timeouts fail without committing.
+Formatting is disabled by default, and the master switch overrides individual formatter entries. When enabled, configure an already-installed external formatter; ast-mcp does not download one during file operations. Configure a command, argument array, mode, timeout, and extension or glob selectors. The first enabled matching formatter runs. In `stdout` mode, candidate content enters stdin and stdout becomes the formatted result. In `in_place` mode, ast-mcp stages the candidate beside the target, gives the formatter the staged path as `{file}`, reads its output, and removes the stage; the live target is never passed to the formatter. `{source_file}` names the logical target and `{project_root}` names the selected project. Failures and timeouts stop the write. See the [optional formatting guide](/docs/guides/formatting) for dprint, Prettier, oxfmt, Biome, and other formatters.
 
 ## Safety
 
-Version 2 grants no implicit OS-temporary access. Each top-level `[[paths]]` rule anchors an exact file or directory; globs belong in `includes` and `excludes`, with exclusions winning. Policies are `allow`, `request`, or `deny`, and omitted `delete` inherits `write`.
+File access defaults to `filesystem = "restricted"`. Restricted mode applies the host baseline, top-level `[[paths]]` rules, and symlink checks. Global configuration can select `filesystem = "unrestricted"` as a host setting. Project configuration requires session-scoped host approval tied to the canonical project and effective safety configuration. Modern stateless HTTP has no trusted caller session for host approval, so approval-required operations fail closed; explicit global permissions remain usable. Use stdio or a legacy HTTP session for approval flows. Unrestricted mode bypasses ast-mcp path policies, boundaries, and symlink restrictions for file operations while preserving OS permissions, hash guards, atomic operations, and immutable revision protection. It does not change intelligence workspace roots, indexing, or storage. See the [filesystem access guide](/docs/guides/filesystem-access).
+
+In restricted mode, each top-level `[[paths]]` rule anchors an exact file or directory; globs belong in `includes` and `excludes`, with exclusions winning. Policies are `allow`, `request`, or `deny`, and omitted `delete` inherits `write`.
 
 Exact files outrank directories; otherwise the deepest anchor and longest include literal prefix wins. Equal specificity resolves `deny` before `request` before `allow`. Rename needs source `delete` and destination `write`; metadata uses `write`; hashing and intelligence use `read`. Both a symlink and its resolved target must be authorized, and the winning rule must enable `follow_symlinks`.
 
-Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets for `file_write` and `file_patch` and always require explicit approval for those mutations. Grouped `config_core` / `config_paths` edits follow `[mcp.configuration]` instead. Clients without elicitation fail closed with `approval_required` remediation.
+Project rules that broaden beyond the host baseline are reduced from `allow` to `request`. Once/session approvals bind connection, generation, rule, operation, and canonical path. Modern stateless HTTP has no trusted caller session for host approval, so approval-required operations fail closed. Persistent approvals create the narrowest user-global rule. Active configuration files are protected targets for `file_write` and `file_patch` and always require explicit approval for those mutations. Grouped `config_core` / `config_paths` edits follow `[mcp.configuration]` instead. Clients without elicitation fail closed with `approval_required` remediation.
 
 `require_hash = false` makes `expectedSha256` optional for guarded mutations, but supplied hashes are always checked. Hook allow/block settings affect only the host hook and never weaken server-side path, symlink, approval, or hash enforcement.
 
@@ -137,11 +129,11 @@ Project rules that broaden beyond the host baseline are reduced from `allow` to 
 
 Agents must use the grouped tools rather than rewriting `ast-mcp.toml` as a whole file:
 
-- `config_core` updates `workspace`, `safety`, `files`, `formatting` scalars (`enabled`, `fallback`, `dprint_config`), `intelligence`, `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
+- `config_core` updates `workspace`, `telemetry`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
 - `config_paths` adds, updates, or removes `[[paths]]` rules in one operations batch. A single path rule can be fully specified in one add or update; partial `policies` updates merge with the existing rule. It does not change core sections.
 - `target` is `project` or `global` and defaults to `project`. Version 1 files must be migrated first.
 
-A successful write validates version 2 schema, replaces the file atomically, invalidates the process-wide registry, and returns the new generation so later tool calls use the updated snapshot without restarting the MCP server. Claude, Codex, Grok, and other elicitation-capable hosts receive a standard `request` approval; hosts without elicitation fail closed with `approval_required`.
+A successful write validates version 2 schema, replaces the file atomically, invalidates the process-wide registry, and returns the new generation so later tool calls use the updated snapshot without restarting the MCP server. Elicitation-capable stdio and legacy HTTP hosts receive a standard `request` approval. Modern stateless HTTP has no trusted caller session for host approval, and hosts without elicitation also fail closed with `approval_required`.
 
 ## Environment compatibility
 
@@ -170,7 +162,7 @@ ast-mcp config migrate --check  # 0 current, 2 required, 1 invalid
 ast-mcp config migrate --write  # atomic write plus .v1.bak
 ```
 
-The `config_status` tool returns redacted effective configuration, including `mcp.configuration`, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. `config_core` and `config_paths` invalidate that registry after a successful write so the next snapshot is the new generation. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
+The `config_status` tool returns redacted effective configuration, including telemetry and `mcp.configuration`, provenance, generation, formatter order, and health. `policy_check` reports side-effect-free decisions. A process-wide registry watches global and discovered project configuration, debounces atomic reloads, and periodically reconciles fingerprints. Ordinary tool calls use immutable in-memory snapshots. `config_core` and `config_paths` invalidate that registry after a successful write so the next snapshot is the new generation. Invalid reloads mark the root unhealthy and fail closed while retaining the last valid snapshot only for diagnostics.
 
 Local installer definitions omit environment fields and use project `ast-mcp.toml`. Global definitions remain project-neutral. `AST_MCP_PROJECT_ROOT`, `AST_MCP_ROOTS`, and `--root` remain deprecated for one release.
 

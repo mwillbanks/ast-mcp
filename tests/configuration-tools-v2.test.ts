@@ -29,7 +29,11 @@ test("configuration tools expose health, policy, and bounded document selectors"
     path.join(os.tmpdir(), "ast-mcp-config-tools-v2-"),
   );
   const previousRoots = process.env.AST_MCP_ROOTS;
+  const previousXdg = process.env.XDG_CONFIG_HOME;
+  const previousAppData = process.env.APPDATA;
   process.env.AST_MCP_ROOTS = root;
+  process.env.XDG_CONFIG_HOME = path.join(root, "xdg");
+  process.env.APPDATA = path.join(root, "xdg");
   const registered = new Map<string, ToolHandler>();
   const server = {
     registerTool(name: string, _definition: unknown, handler: ToolHandler) {
@@ -239,6 +243,10 @@ test("configuration tools expose health, policy, and bounded document selectors"
       },
     });
   } finally {
+    if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = previousXdg;
+    if (previousAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previousAppData;
     if (previousRoots === undefined) delete process.env.AST_MCP_ROOTS;
     else process.env.AST_MCP_ROOTS = previousRoots;
     await rm(root, { force: true, recursive: true });

@@ -1,0 +1,58 @@
+---
+title: Telemetry and error reporting
+description: Understand MCP analytics, privacy controls, and telemetry opt-out.
+icon: Activity
+---
+
+ast-mcp sends privacy-filtered tool analytics and sanitized unexpected errors to PostHog's US ingestion endpoint. Telemetry is enabled by default. It helps us identify failing tools, regressions, and reliability problems before users need to report them.
+
+## Turn telemetry off
+
+Set `enabled = false` in the global configuration to disable telemetry for every project:
+
+```toml
+version = 2
+
+[telemetry]
+enabled = false
+```
+
+Global configuration is stored at `${XDG_CONFIG_HOME:-~/.config}/ast-mcp/ast-mcp.toml` on POSIX and `%APPDATA%\ast-mcp\ast-mcp.toml` on Windows. See [configuration](../reference/configuration.mdx) for configuration paths and layered settings.
+
+You can also disable events for one project by setting the same option in that project's `ast-mcp.toml`:
+
+```toml
+version = 2
+
+[telemetry]
+enabled = false
+```
+
+The global setting is a ceiling: when global telemetry is disabled, ast-mcp does not initialize the analytics SDK or make analytics network requests, even if a project enables telemetry. A project-level `false` suppresses events for that project. If `enabled` is omitted, telemetry defaults to `true`. An unresolved request policy or configuration error suppresses telemetry reporting. Configuration changes apply to newly resolved requests.
+
+## What telemetry contains
+
+Telemetry uses a fixed allowlist. It records:
+
+- Registered MCP tool names, elapsed time, and whether each call succeeded.
+- Outcomes: `success`, `operational_error`, or `unexpected_error`.
+- Known error codes, such as `stale_hash`, `permission_denied`, or `formatter_timeout`; unknown failures use the fixed code `unexpected_error`.
+- The ast-mcp package version and build identifier.
+- An anonymous UUIDv7 session identifier. Each telemetry controller generates a new identifier and rotates it after 23 hours of operation. Stdio normally uses one controller per process. Modern stateless HTTP does not retain MCP sessions between requests; legacy HTTP sessions have isolated controllers. Restarting the relevant server or legacy session renews the identifier. It does not identify a person.
+- For unexpected exceptions only, an allowlisted error type, a fixed message, and bounded line and column locations from sanitized ast-mcp package stack frames.
+
+Expected operational conflicts, such as denied paths or stale hashes, are recorded as tool outcomes. They are not sent as exception reports. Unexpected exceptions omit the original error message and retain only the sanitized fields above.
+
+## What telemetry excludes
+
+Event payloads exclude source code, file contents, filesystem paths, tool arguments, tool responses, agent intent, raw error messages, and identifying client metadata. Stack frames are limited to package files and use package-relative names; local absolute paths and other stack text are removed.
+
+ast-mcp disables PostHog person profiles and GeoIP enrichment. It does not send session replay, conversation content, or model inputs and outputs. Events use an anonymous session identifier rather than a user account identifier. As with any network request, the ingestion service receives connection metadata needed to deliver the request; those details are not added to event properties. See [PostHog's privacy documentation](https://posthog.com/docs/privacy) for its data handling information.
+
+## Failure handling
+
+Telemetry uses a bounded in-memory queue. It drops events when the queue is full. Network requests have a one-second timeout, and shutdown gives pending telemetry up to 1.5 seconds to flush. SDK, network, and PostHog failures are isolated from MCP tool calls and do not take the server offline.
+
+The analytics SDK is loaded only when an enabled tool call or an authorized sanitized fatal-error report needs it. Disabling global telemetry prevents SDK initialization and analytics network activity. Telemetry does not download formatters or other tools during file operations.
+
+HTTP process failures outside a resolved, enabled request policy may be suppressed. The server does not attribute those failures to its working directory across project sessions.

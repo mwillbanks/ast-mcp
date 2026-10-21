@@ -24,9 +24,16 @@ test("bounded command runners terminate children that exceed the output limit", 
                 timeoutMs: 5_000,
               })
             : runComparatorCommand([process.execPath, "-e", script], 5_000);
-        await expect(completion).rejects.toThrow(
-          "command output exceeded 16777216 bytes",
-        );
+        if (runner === "input")
+          await expect(completion).rejects.toMatchObject({
+            code: "command_invalid_output",
+            message:
+              "Command output must be valid UTF-8 within the 16777216-byte limit",
+          });
+        else
+          await expect(completion).rejects.toThrow(
+            "command output exceeded 16777216 bytes",
+          );
         pid = Number(await readFile(pidFile, "utf8"));
         expect(pid).toBeGreaterThan(0);
         expect(() => process.kill(pid!, 0)).toThrow();

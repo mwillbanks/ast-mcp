@@ -36,5 +36,5 @@ Version 2 enables exact, whitespace-normalized, relative-indentation, and diff-m
 - `matched N nodes; expected M`: inspect the returned bounded locations and narrow the rule.
 - `first match per file`: narrow `file_patch` to one structural node or use a bounded direct run only when the lower-level rewrite is intentional.
 - capped preview or read: narrow paths, glob, pattern, line ranges, or byte caps.
-- formatter preflight failure: the selected external formatter or dprint fallback does not support the target; no write occurs. Formatting is skipped only when `[formatting].enabled = false`.
+- formatter preflight failure: the explicitly enabled external formatter failed or rejected the target; no write occurs. Formatting defaults to disabled through `[formatting].enabled = false`. No file operation downloads a formatter.
 - path or symlink rejection: use a real path permitted by the effective host baseline and top-level `[[paths]]` rules. Version 2 grants no implicit OS-temporary access; add a narrow explicit path rule when it is required. Legacy `safety.allow_temp_directory`, `safety.allow_any_path`, and `safety.follow_symlinks` apply only to version 1. In version 2, both a link and its resolved target must be authorized and the winning rule must set `follow_symlinks = true`.

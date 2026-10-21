@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 
 import {
+  installProcessFailureHandlers,
   installProcessSignalHandlers,
   PROCESS_SIGNALS,
   type ProcessSignal,
@@ -91,4 +92,77 @@ test("a repeated signal forces exit while cleanup is pending", () => {
 test("selects signals supported by each operating system", () => {
   expect(processSignals("win32")).toEqual(["SIGINT", "SIGBREAK"]);
   expect(processSignals("linux")).toEqual(["SIGTERM", "SIGINT", "SIGHUP"]);
+});
+
+test("signal cleanup has a bounded deadline", async () => {
+  const host = new FakeSignalHost();
+  const dispose = installProcessSignalHandlers(
+    () => new Promise(() => {}),
+    host,
+    10,
+  );
+  host.trigger(PROCESS_SIGNALS[0] as ProcessSignal);
+  await Bun.sleep(30);
+  expect(host.exits).toEqual([1]);
+  expect(host.messages[0]).toContain("timed out");
+  dispose();
+});
+
+test("fatal exceptions clean up once and exit unsuccessfully", async () => {
+  const listeners = new Map<string, (error: unknown) => void>();
+  const exits: number[] = [];
+  const messages: string[] = [];
+  let cleanups = 0;
+  const host = {
+    exit: (code: number) => {
+      exits.push(code);
+    },
+    off: (event: string) => {
+      listeners.delete(event);
+    },
+    on: (event: string, listener: (error: unknown) => void) => {
+      listeners.set(event, listener);
+    },
+    stderr: {
+      write: (message: string) => {
+        messages.push(message);
+      },
+    },
+  };
+  const dispose = installProcessFailureHandlers(() => {
+    cleanups += 1;
+  }, host);
+  listeners.get("uncaughtException")?.(new Error("fatal test"));
+  await flushPromises();
+  expect(cleanups).toBe(1);
+  expect(exits).toEqual([1]);
+  expect(messages[0]).toContain("fatal test");
+  dispose();
+  expect(listeners.size).toBe(0);
+});
+
+test("fatal cleanup cannot hang indefinitely", async () => {
+  const listeners = new Map<string, (error: unknown) => void>();
+  const exits: number[] = [];
+  const host = {
+    exit: (code: number) => {
+      exits.push(code);
+    },
+    off: (event: string) => {
+      listeners.delete(event);
+    },
+    on: (event: string, listener: (error: unknown) => void) => {
+      listeners.set(event, listener);
+    },
+    stderr: { write: () => {} },
+  };
+  const dispose = installProcessFailureHandlers(
+    () => new Promise(() => {}),
+    host,
+    10,
+  );
+  listeners.get("unhandledRejection")?.(new Error("fatal rejection"));
+  await Bun.sleep(30);
+  expect(exits).toEqual([1]);
+  dispose();
 });

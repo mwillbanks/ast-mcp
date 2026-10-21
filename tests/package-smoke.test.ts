@@ -1,5 +1,5 @@
 import { test as bunTest, expect } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,9 +12,19 @@ import { Language, Parser } from "web-tree-sitter";
 
 import { wasmGrammarAssets } from "../src/intelligence/languages/shared/wasm-assets";
 import { spawnHttpMcpProcess } from "./support/live-process";
+import {
+  exerciseSkillsHttp,
+  exerciseSkillsStdio,
+  exerciseModernWorkspaceHttp,
+} from "./support/skills-protocol";
 
 async function command(args: string[], cwd: string): Promise<string> {
-  const child = Bun.spawn(args, { cwd, stderr: "pipe", stdout: "pipe" });
+  const child = Bun.spawn(args, {
+    cwd,
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: 90_000,
+  });
   const [exitCode, stderr, stdout] = await Promise.all([
     child.exited,
     new Response(child.stderr).text(),
@@ -149,7 +159,12 @@ async function startHttpServer(executable: string, fixture: string) {
     await client.connect(new StreamableHTTPClientTransport(server.url), {
       timeout: 5_000,
     });
-    return { client, diagnostics: server.diagnostics, stop: server.stop };
+    return {
+      client,
+      url: server.url,
+      diagnostics: server.diagnostics,
+      stop: server.stop,
+    };
   } catch (error) {
     await client.close().catch(() => undefined);
     await server.stop();
@@ -183,6 +198,8 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     const archive = path.isAbsolute(packed)
       ? packed
       : path.join(owned, path.basename(packed));
+    const archivedPaths = await command(["tar", "-tzf", archive], repository);
+    expect(archivedPaths).not.toContain(".ast-bro");
     await command(["tar", "-xzf", archive, "-C", owned], repository);
     await Parser.init();
     for (const grammar of wasmGrammarAssets) {
@@ -219,6 +236,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       ),
       writeFile(path.join(fixture, "stdio.txt"), "original\n"),
       writeFile(path.join(fixture, "http.txt"), "original\n"),
+      writeFile(path.join(fixture, "modern.txt"), "original\n"),
     ]);
     await command(["git", "add", "."], fixture);
     await command(
@@ -235,7 +253,53 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       fixture,
     );
 
-    const executable = path.join(owned, "package", "dist", "ast-mcp.js");
+    const consumer = path.join(owned, "consumer");
+    await mkdir(consumer);
+    await writeFile(
+      path.join(consumer, "package.json"),
+      JSON.stringify({
+        dependencies: { "@mwillbanks/ast-mcp": archive },
+        private: true,
+      }),
+    );
+    await command(
+      ["bun", "install", "--production", "--ignore-scripts"],
+      consumer,
+    );
+    await command(
+      ["bun", "install", "--lockfile-only", "--ignore-scripts"],
+      consumer,
+    );
+    expect(
+      JSON.parse(await command(["bun", "audit", "--json"], consumer)),
+    ).toEqual({});
+    const installedPackage = path.join(
+      consumer,
+      "node_modules",
+      "@mwillbanks",
+      "ast-mcp",
+    );
+    const installedManifest = JSON.parse(
+      await readFile(path.join(installedPackage, "package.json"), "utf8"),
+    );
+    expect(installedManifest.dependencies["@lancedb/lancedb"]).toBeUndefined();
+    expect(installedManifest.devDependencies["@lancedb/lancedb"]).toBe(
+      "0.40.0",
+    );
+    await expect(
+      readFile(
+        path.join(
+          consumer,
+          "node_modules",
+          "@lancedb",
+          "lancedb",
+          "package.json",
+        ),
+        "utf8",
+      ),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const executable = path.join(installedPackage, "dist", "ast-mcp.js");
+    await exerciseSkillsStdio(executable, fixture);
     const stdio = new Client({ name: "package-stdio-smoke", version: "1" });
     const stdioTransport = new StdioClientTransport({
       args: [executable, "mcp"],
@@ -257,6 +321,12 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
 
     const httpServer = await startHttpServer(executable, fixture);
     try {
+      await exerciseSkillsHttp(httpServer.url);
+      await exerciseModernWorkspaceHttp(
+        httpServer.url,
+        fixture,
+        path.join(owned, "modern-storage"),
+      );
       try {
         try {
           await exercisePackage(

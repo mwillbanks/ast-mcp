@@ -66,3 +66,33 @@ test("stdio batch suppresses notification responses and preserves request IDs", 
     await child.stop();
   }
 });
+
+test("stdio EOF exits cleanly after a real initialized session", async () => {
+  const child = spawnLiveProcess(process.execPath, ["run", "src/index.ts"], {
+    cwd: process.cwd(),
+  });
+  try {
+    child.process.stdin.write(
+      `${JSON.stringify({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "eof-test", version: "1" },
+          protocolVersion: "2025-11-25",
+        },
+      })}\n`,
+    );
+    expect(JSON.parse(await child.readStdoutLine()).id).toBe(1);
+    child.process.stdin.end();
+    expect(
+      await Promise.race([
+        child.process.exited,
+        Bun.sleep(2000).then(() => "timeout"),
+      ]),
+    ).toBe(0);
+  } finally {
+    await child.stop();
+  }
+});

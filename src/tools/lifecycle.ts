@@ -249,7 +249,10 @@ export default function registerLifecycleTools(
         return toolSuccess(
           await execute(
             { files, revision, workspaceId },
-            () => withLanceMutationLifecycle(() => deleteFilesSafely(files)),
+            (signal) =>
+              withLanceMutationLifecycle(() =>
+                deleteFilesSafely(files, signal),
+              ),
             context,
             "file_delete",
           ),

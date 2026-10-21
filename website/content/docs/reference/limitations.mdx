@@ -7,12 +7,15 @@ icon: TriangleAlert
 - Structural patterns are syntactic. They do not provide semantic type identity.
 - Native structural writes require an explicit expected match count for each rule.
 - Optional parser and embedding artifacts can vary by platform and report explicit capability errors.
-- `run` does not create files, perform semantic renames, or guarantee formatted output by itself.
+- `run` does not create files or perform semantic renames. Formatting is disabled by default; `run` does not format output.
 - Parse health comes from `map.error_count`, not from an empty structural search.
 - `show` uses the native `ast-mcp.show.v1` contract. Directory and glob scans honor `limit`; glob prefixes and matches must remain inside workspace policy.
 - Markdown is structurally inspectable through `map` and v2 `show`, including the `frontmatter` symbol, but edits use the guarded Aider route.
-- `file_read` is intentionally unavailable for AST-capable files.
+- `file_read` supports explicit AST and bounded text modes for AST-capable files. Use AST mode for source maps or selected symbols, and text mode for bounded source slices.
 - Routing hooks are a best-effort agent nudge, not a security boundary. They reject known manual edit paths but leave Git operations, output redirection, repository scripts, and arbitrary execution to the host sandbox.
-- HTTP session IDs are correlation identifiers, not authentication.
-- Multiple configured roots deliberately enlarge the connected agent's filesystem boundary.
-- A formatter rejection, capped preview, stale hash, ambiguous match, or lost MCP connection stops the write rather than choosing a weaker mutation path.
+- Modern HTTP is stateless and does not require MCP session IDs. Legacy HTTP session IDs correlate requests but are not authentication; stdio keeps connection state for one process.
+- MCP Skills support depends on the connected client. Clients without extension support need an explicit export and host-side setup; reading a skill resource does not activate it.
+- In restricted mode, configured roots and path rules control file access. Unrestricted file access bypasses those file boundaries but does not change intelligence workspace selection or roots.
+- `file_delete` reference verification scans supported AST source files only. It matches resolved relative import bases against the target path, target-extension form, and target `index` form; it does not resolve aliases or remap extensions. Malformed candidates and parser or scan-limit failures stop the batch before deletion; unrecognized extensions and excluded formats are outside the scan. `forceReferences` explicitly bypasses reference verification after review while retaining file authorization and hash guards. Postcommit directory cleanup can be deferred after a 1-second contended-lock wait deadline or fail; this does not undo the successful file deletion. See the [filesystem access guide](/docs/guides/filesystem-access).
+- An enabled formatter rejection, capped preview, stale hash, ambiguous match, or lost MCP connection stops the write rather than choosing a weaker mutation path. See the [connection diagnosis guide](/docs/guides/connection-diagnosis) for recoverable failures and host-controlled restart steps.
+- Telemetry is enabled by default and can be disabled globally or per project. See the [telemetry guide](/docs/guides/telemetry) for its collection and exclusion list.

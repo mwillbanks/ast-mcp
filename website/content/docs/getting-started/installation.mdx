@@ -1,26 +1,22 @@
 ---
 title: Installation
-description: Install the MCP server, best-effort routing hooks, skill, and host configuration.
+description: Install the MCP server, best-effort routing hooks, and host configuration.
 icon: Download
 ---
 
-Bun is required. The package pins its native intelligence dependencies and dprint where binary compatibility matters.
+Bun is required. The package pins its native intelligence dependencies. Runtime formatting is disabled by default and uses only formatters that you install and configure.
 
 ## From a package registry
 
-Install ast-mcp into a repository so its native intelligence and dprint dependencies remain available, then connect every supported host:
+Install ast-mcp into a repository so its native intelligence dependencies remain available, then connect every supported host:
 
 ```npm
 npm install --save-dev @mwillbanks/ast-mcp
 ```
 
-When installing with Bun, allow the package's pinned native installers:
+No formatter installation or trust step is required. To enable formatting, install a formatter separately and follow the [optional formatting guide](/docs/guides/formatting).
 
-```bash
-bun pm trust dprint
-```
-
-Run the repository-local executable so the configured MCP and hooks retain a stable package path:
+Run the repository-local executable to install host entries for the project package:
 
 ```bash
 ./node_modules/.bin/ast-mcp install \
@@ -30,9 +26,9 @@ Run the repository-local executable so the configured MCP and hooks retain a sta
 
 This installs stdio definitions by default. To install Streamable HTTP definitions, add `--transport http --host 127.0.0.1 --port 3768`. Add `--service` for a macOS LaunchAgent or Linux systemd user service; otherwise start the manual HTTP command printed by the installer. Windows supports manual HTTP startup only.
 
-Bun blocks transitive lifecycle scripts by default, so the explicit trust step runs the pinned dprint installer before the MCP starts. If another package manager blocks dependency build scripts, approve `dprint` through that manager. npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`.
+npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. ast-mcp never downloads formatter binaries during file operations.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local surfaces always use `./node_modules/.bin/ast-mcp`; global surfaces use a recognized Bun, npm, pnpm, or Yarn global-bin alias. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration.
+Targets are `codex`, `claude`, `copilot`, or `all`. Local stdio definitions use absolute Bun runtime and CLI entry paths, pass `mcp`, and set the project directory as `cwd`; global definitions use a recognized Bun, npm, pnpm, or Yarn global-bin alias. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration. Clients that support MCP Skills can discover the canonical skill from the server. Unsupported clients can use `ast-mcp skills export <destination>`; see the [skills guide](/docs/guides/skills).
 
 ## Platform support
 
@@ -50,7 +46,7 @@ bun run bin/ast-mcp.ts install \
   --target all
 ```
 
-Restart or reconnect the host's MCP servers after installation. A configuration file cannot activate a server in an already-running host process.
+Restart or reconnect the host's MCP servers after installation. A configuration file cannot activate a server in an already-running host process. If startup fails or tools disappear, follow the [connection diagnosis guide](/docs/guides/connection-diagnosis).
 
 ## Verify the installation
 
@@ -63,9 +59,9 @@ Confirm that these file-boundary tools are callable:
 - `file_chattr`
 - `file_delete`
 
-Then confirm direct intelligence tools such as `digest`, `show`, `context`, `impact`, and `run`.
+Then confirm direct intelligence tools such as `digest`, `show`, `context`, `impact`, and `run`. If the host supports MCP Skills, verify that it can discover and load the `ast-mcp` skill. Otherwise, export the skill explicitly and configure the host to load that directory.
 
-The installed skill includes a checker:
+An exported `ast-mcp` skill includes an installation checker. From the exported skill root, run:
 
 ```bash
 bun run scripts/check-install.ts \

@@ -130,6 +130,30 @@ export function mcpStdioCommand(
   return [invocation.command, ...invocation.args];
 }
 
+async function mcpDeadline<T>(
+  pending: Promise<T>,
+  timeoutMs: number,
+  fallback: () => T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<T>((resolve, reject) => {
+        timer = setTimeout(() => {
+          try {
+            resolve(fallback());
+          } catch (error) {
+            reject(error);
+          }
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
 ) {
@@ -140,7 +164,11 @@ async function terminateMcpProcess(
         ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
         { stderr: "ignore", stdin: "ignore", stdout: "ignore" },
       );
-      await Promise.race([taskkill.exited, Bun.sleep(500)]);
+      await mcpDeadline<number | undefined>(
+        taskkill.exited,
+        500,
+        () => undefined,
+      );
       if (taskkill.exitCode === null) taskkill.kill();
     } catch {
       processHandle.kill();
@@ -152,10 +180,11 @@ async function terminateMcpProcess(
       processHandle.kill("SIGTERM");
     }
   }
-  const stopped = await Promise.race([
+  const stopped = await mcpDeadline(
     processHandle.exited.then(() => true),
-    Bun.sleep(500).then(() => false),
-  ]);
+    500,
+    () => false,
+  );
   if (!stopped && processHandle.exitCode === null) {
     if (process.platform !== "win32") {
       try {
@@ -165,15 +194,20 @@ async function terminateMcpProcess(
       }
     } else processHandle.kill("SIGKILL");
   }
-  await Promise.race([processHandle.exited, Bun.sleep(500)]);
+  await mcpDeadline<number | undefined>(
+    processHandle.exited,
+    500,
+    () => undefined,
+  );
 }
 
 export async function smokeMcpStdio(
   binary: string,
   root: string,
   timeoutMs = 15_000,
+  args: string[] = ["mcp"],
 ): Promise<McpSmokeResult> {
-  const invocation = commandForPlatform(binary, ["mcp"]);
+  const invocation = commandForPlatform(binary, args);
   const process = Bun.spawn([invocation.command, ...invocation.args], {
     cwd: root,
     detached: globalThis.process.platform !== "win32",
@@ -187,7 +221,22 @@ export async function smokeMcpStdio(
     stdout: "pipe",
     windowsVerbatimArguments: invocation.windowsVerbatimArguments,
   });
-  const stderrDrain = new Response(process.stderr).text().catch(() => "");
+  const stderrDrain = (async () => {
+    const reader = process.stderr.getReader();
+    const decoder = new TextDecoder();
+    let diagnostic = "";
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return (diagnostic + decoder.decode()).slice(-8_192);
+        diagnostic = (
+          diagnostic + decoder.decode(chunk.value, { stream: true })
+        ).slice(-8_192);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })().catch(() => "");
   const deadline = Date.now() + timeoutMs;
   const responses = new Map<number, Record<string, unknown>>();
   const reader = process.stdout.getReader();
@@ -197,26 +246,14 @@ export async function smokeMcpStdio(
     process.stdin.write(`${JSON.stringify(message)}\n`);
     await process.stdin.flush();
   };
-  await send({
-    id: 1,
-    jsonrpc: "2.0",
-    method: "initialize",
-    params: {
-      capabilities: {},
-      clientInfo: { name: "ast-mcp-check-install", version: "1" },
-      protocolVersion: "2025-06-18",
-    },
-  });
+
   const readUntil = async (id: number): Promise<Record<string, unknown>> => {
     while (!responses.has(id)) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error("MCP smoke timed out");
-      const chunk = await Promise.race([
-        reader.read(),
-        Bun.sleep(remaining).then(() => {
-          throw new Error("MCP smoke timed out");
-        }),
-      ]);
+      const chunk = await mcpDeadline(reader.read(), remaining, () => {
+        throw new Error("MCP smoke timed out");
+      });
       if (chunk.done) throw new Error("MCP smoke ended before responding");
       buffered += decoder.decode(chunk.value, { stream: true });
       const lines = buffered.split("\n");
@@ -229,7 +266,21 @@ export async function smokeMcpStdio(
     }
     return responses.get(id) as Record<string, unknown>;
   };
+  let protocolFailed = false;
+  let protocolError: unknown;
+  let smokeResult!: McpSmokeResult;
+  let shutdownError: Error | undefined;
   try {
+    await send({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: {
+        capabilities: {},
+        clientInfo: { name: "ast-mcp-check-install", version: "1" },
+        protocolVersion: "2025-06-18",
+      },
+    });
     const initialize = await readUntil(1);
     if (!initialize.result) throw new Error("MCP initialize failed");
     await send({
@@ -285,18 +336,102 @@ export async function smokeMcpStdio(
       sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
     if (!selectedWorkspace)
       throw new Error("MCP smoke did not select the requested workspace");
-    return { exposedTools, initialized: true, selectedWorkspace };
+    smokeResult = { exposedTools, initialized: true, selectedWorkspace };
+  } catch (error) {
+    protocolFailed = true;
+    protocolError = error;
   } finally {
-    process.stdin.end();
-    const exited = await Promise.race([
-      process.exited.then(() => true),
-      Bun.sleep(500).then(() => false),
-    ]);
-    if (!exited) {
-      await terminateMcpProcess(process);
+    try {
+      process.stdin.end();
+      const exitCode = await mcpDeadline<number | null>(
+        process.exited,
+        5_000,
+        () => null,
+      );
+      if (exitCode === null) {
+        shutdownError = new Error("MCP smoke shutdown exceeded five seconds");
+        await terminateMcpProcess(process);
+      } else if (exitCode !== 0) {
+        const diagnostic = (await mcpDeadline(stderrDrain, 500, () => ""))
+          .slice(-8_192)
+          .trim();
+        shutdownError = new Error(
+          `MCP smoke exited with code ${exitCode}${diagnostic ? `: ${diagnostic}` : ""}`,
+        );
+      }
+    } catch (error) {
+      shutdownError = error instanceof Error ? error : new Error(String(error));
+      await terminateMcpProcess(process).catch(() => undefined);
     }
-    await Promise.race([stderrDrain, Bun.sleep(500)]);
+    await mcpDeadline(stderrDrain, 500, () => "");
   }
+  if (protocolFailed) throw protocolError;
+  if (shutdownError) throw shutdownError;
+  return smokeResult;
+}
+
+type SourceLaunchReceipt = {
+  projectRoot: string;
+  runtime: string;
+  script: string;
+  version: 1;
+};
+async function sourceLaunchReceipt(
+  root: string | undefined,
+  home: string,
+): Promise<SourceLaunchReceipt | undefined> {
+  if (!root) return undefined;
+  const digest = new Bun.CryptoHasher("sha256")
+    .update(path.resolve(root))
+    .digest("hex");
+  try {
+    const value = JSON.parse(
+      await readFile(
+        path.join(home, ".ast-mcp/installations", `local-${digest}.json`),
+        "utf8",
+      ),
+    );
+    if (
+      value.version !== 1 ||
+      typeof value.projectRoot !== "string" ||
+      typeof value.runtime !== "string" ||
+      typeof value.script !== "string" ||
+      !path.isAbsolute(value.projectRoot) ||
+      !path.isAbsolute(value.runtime) ||
+      !path.isAbsolute(value.script) ||
+      !sameNativePath(value.projectRoot, root) ||
+      !isExecutable(value.runtime, process.platform) ||
+      !statSync(value.script).isFile()
+    )
+      return undefined;
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+async function matchingSourceLaunch(
+  entry: McpEntry,
+  root: string | undefined,
+  home: string,
+) {
+  const receipt = await sourceLaunchReceipt(root, home);
+  if (
+    !receipt ||
+    typeof entry.command !== "string" ||
+    !path.isAbsolute(entry.command) ||
+    !samePhysicalPath(entry.command, receipt.runtime, true) ||
+    !Array.isArray(entry.args) ||
+    entry.args.length !== 2 ||
+    typeof entry.args[0] !== "string" ||
+    !path.isAbsolute(entry.args[0]) ||
+    !samePhysicalPath(entry.args[0], receipt.script, true) ||
+    entry.args[1] !== "mcp" ||
+    typeof entry.cwd !== "string" ||
+    !path.isAbsolute(entry.cwd) ||
+    !sameNativePath(entry.cwd, receipt.projectRoot)
+  )
+    return undefined;
+  return { command: receipt.runtime, args: [receipt.script, "mcp"] };
 }
 
 async function astMcpEntry(
@@ -344,19 +479,9 @@ function sameNativePath(left: string, right: string): boolean {
   }
 }
 
-async function expectedReference(
-  name: "agents-guidance.md" | "hook.ts" | "skill-template.md",
-) {
+async function expectedReference(name: "agents-guidance.md") {
   const bundled = path.resolve(import.meta.dir, "../references", name);
-  const source =
-    name === "agents-guidance.md"
-      ? path.resolve(import.meta.dir, "../../../AGENTS.md")
-      : name === "hook.ts"
-        ? path.resolve(import.meta.dir, "../../../../src/hook.ts")
-        : path.resolve(import.meta.dir, "../SKILL.md");
-  return (
-    await readFile(bundled, "utf8").catch(() => readFile(source, "utf8"))
-  ).trim();
+  return (await readFile(bundled, "utf8")).trim();
 }
 
 async function managedInstructions(file: string) {
@@ -375,11 +500,6 @@ async function instructionsCurrent(file: string) {
     (await managedInstructions(file)) ===
     (await expectedReference("agents-guidance.md"))
   );
-}
-
-async function skillCurrent(file: string) {
-  const installed = await readFile(file, "utf8").catch(() => "");
-  return installed.trim() === (await expectedReference("skill-template.md"));
 }
 
 async function hookCurrent(
@@ -412,15 +532,28 @@ async function hookCurrent(
     );
   if (managed.length !== 1) return false;
   const [{ command, entry }] = managed;
-  return (
+  if (
     command === `${JSON.stringify(entry)} hook` &&
     (await astMcpEntry(entry, root, home))
+  )
+    return true;
+  const receipt = await sourceLaunchReceipt(root, home);
+  return (
+    receipt !== undefined &&
+    samePhysicalPath(
+      root ? path.resolve(root, entry) : entry,
+      receipt.script,
+      true,
+    ) &&
+    command ===
+      `${JSON.stringify(receipt.runtime)} ${JSON.stringify(receipt.script)} hook`
   );
 }
 
 type McpEntry = {
   args?: unknown[];
   command?: unknown;
+  cwd?: unknown;
   env?: Record<string, unknown>;
   tools?: unknown;
   type?: unknown;
@@ -525,9 +658,9 @@ async function matchingStdioBinary(
       ) ||
         sameBatchAliasFile(entry.args.at(-1), binary, root))
     )
-      return binary;
+      return { command: binary, args: ["mcp"] };
   }
-  return undefined;
+  return matchingSourceLaunch(entry, root, home);
 }
 
 function entryTypeCurrent(
@@ -593,12 +726,17 @@ async function codexStdioMcpCurrent(
 ) {
   const command = block.match(/command = (".*")/);
   const args = block.match(/^args = (\[.*\])$/m);
+  const cwd = block.match(/^cwd = (".*")$/m);
   if (
     !block.includes("[mcp_servers.ast-mcp]") ||
     !command ||
     !args ||
     !(await stdioCommandCurrent(
-      { args: JSON.parse(args[1]), command: JSON.parse(command[1]) },
+      {
+        args: JSON.parse(args[1]),
+        command: JSON.parse(command[1]),
+        cwd: cwd ? JSON.parse(cwd[1]) : undefined,
+      },
       root,
       home,
     ))
@@ -635,7 +773,7 @@ async function codexChecks(
   const base = global
     ? path.join(home, ".codex")
     : path.join(options.root, ".codex");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     codexMcpCurrent(
       path.join(base, "config.toml"),
       global ? undefined : options.root,
@@ -649,14 +787,13 @@ async function codexChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "AGENTS.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  return { hook, instructions, mcp, skill };
+  return { hook, instructions, mcp };
 }
 async function claudeChecks(
   options: CheckOptions,
@@ -666,7 +803,7 @@ async function claudeChecks(
   const base = global
     ? path.join(home, ".claude")
     : path.join(options.root, ".claude");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     jsonMcpCurrent(
       global
         ? path.join(home, ".claude.json")
@@ -684,14 +821,13 @@ async function claudeChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "CLAUDE.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  return { hook, instructions, mcp, skill };
+  return { hook, instructions, mcp };
 }
 async function copilotChecks(
   options: CheckOptions,
@@ -701,7 +837,7 @@ async function copilotChecks(
   const base = global
     ? path.join(home, ".copilot")
     : path.join(options.root, ".github");
-  const [mcp, hook, skill, instructions] = await Promise.all([
+  const [mcp, hook, instructions] = await Promise.all([
     jsonMcpCurrent(
       global
         ? path.join(base, "mcp-config.json")
@@ -719,14 +855,13 @@ async function copilotChecks(
       global ? undefined : options.root,
       home,
     ),
-    skillCurrent(path.join(base, "skills/ast-mcp/SKILL.md")),
     instructionsCurrent(
       global
         ? path.join(base, "copilot-instructions.md")
         : path.join(options.root, "AGENTS.md"),
     ),
   ]);
-  const checks: InstallChecks = { hook, instructions, mcp, skill };
+  const checks: InstallChecks = { hook, instructions, mcp };
   if (!global)
     checks.vscode = await jsonMcpCurrent(
       path.join(options.root, ".vscode/mcp.json"),
@@ -749,7 +884,7 @@ async function configuredStdioCommand(
   options: CheckOptions,
   home: string,
   global: boolean,
-): Promise<string | undefined> {
+): Promise<{ command: string; args: string[] } | undefined> {
   let entry: McpEntry | undefined;
   if (options.target === "codex") {
     const base = global
@@ -763,8 +898,13 @@ async function configuredStdioCommand(
       content.match(/# ast-mcp:begin\n([\s\S]*?)# ast-mcp:end/)?.[1] ?? "";
     const command = block.match(/command = (".*")/)?.[1];
     const args = block.match(/^args = (\[.*\])$/m)?.[1];
+    const cwd = block.match(/^cwd = (".*")$/m)?.[1];
     if (command && args)
-      entry = { args: JSON.parse(args), command: JSON.parse(command) };
+      entry = {
+        args: JSON.parse(args),
+        command: JSON.parse(command),
+        cwd: cwd ? JSON.parse(cwd) : undefined,
+      };
   } else {
     const file =
       options.target === "claude"
@@ -793,32 +933,90 @@ function serviceFile(options: CheckOptions, home: string) {
     ? path.join(home, "Library/LaunchAgents", `com.mwillbanks.${id}.plist`)
     : path.join(home, ".config/systemd/user", `${id}.service`);
 }
+function decodeServiceXml(value: string) {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+function serviceLaunch(
+  content: string,
+): { args: string[]; cwd: string } | undefined {
+  try {
+    if (process.platform === "darwin") {
+      const array = content.match(
+        /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/,
+      )?.[1];
+      const cwd = content.match(
+        /<key>WorkingDirectory<\/key>\s*<string>([^<]*)<\/string>/,
+      )?.[1];
+      if (
+        array === undefined ||
+        cwd === undefined ||
+        array.replace(/<string>[^<]*<\/string>/g, "").trim()
+      )
+        return undefined;
+      return {
+        args: [...array.matchAll(/<string>([^<]*)<\/string>/g)].map((match) =>
+          decodeServiceXml(match[1]),
+        ),
+        cwd: decodeServiceXml(cwd),
+      };
+    }
+    const line = content.match(/^ExecStart=(.*)$/m)?.[1];
+    const cwd = content.match(/^WorkingDirectory=("(?:\\.|[^"\\])*")$/m)?.[1];
+    if (line === undefined || cwd === undefined) return undefined;
+    const quoted = /"(?:\\.|[^"\\])*"/g;
+    const tokens = [...line.matchAll(quoted)].map((match) => match[0]);
+    if (tokens.join(" ") !== line) return undefined;
+    return {
+      args: tokens.map((token) => JSON.parse(token) as string),
+      cwd: JSON.parse(cwd) as string,
+    };
+  } catch {
+    return undefined;
+  }
+}
 async function serviceCurrent(options: CheckOptions, home: string) {
   if (process.platform !== "darwin" && process.platform !== "linux")
     return false;
   const content = await readFile(serviceFile(options, home), "utf8").catch(
     () => "",
   );
-  const commandEntries = [
-    ...content.matchAll(
-      /(?:<string>|ExecStart=")([^"<\n]*ast-mcp)(?=<\/string>|")/g,
-    ),
-  ].map((match) => match[1]);
-  const commandCurrent =
-    options.scope === "local"
-      ? commandEntries.includes("./node_modules/.bin/ast-mcp")
-      : (
-          await Promise.all(
-            commandEntries.map((entry) => astMcpEntry(entry, undefined, home)),
-          )
-        ).some(Boolean);
+  const launch = serviceLaunch(content);
+  const root = options.scope === "local" ? options.root : undefined;
+  if (
+    !launch ||
+    !path.isAbsolute(launch.cwd) ||
+    !sameNativePath(launch.cwd, root ?? home)
+  )
+    return false;
+  const tail = [
+    "mcp",
+    "--transport",
+    "http",
+    "--host",
+    options.host,
+    "--port",
+    String(options.port),
+  ];
+  const equal = (actual: string[], expected: string[]) =>
+    actual.length === expected.length &&
+    actual.every((argument, index) => argument === expected[index]);
+  const [command, ...args] = launch.args;
+  if (!command) return false;
+  if (await astMcpEntry(command, root, home)) return equal(args, tail);
+  const receipt = await sourceLaunchReceipt(root, home);
   return (
-    commandCurrent &&
-    content.includes("--transport") &&
-    content.includes("http") &&
-    content.includes(options.host) &&
-    content.includes(String(options.port)) &&
-    (options.scope === "global" || content.includes(path.resolve(options.root)))
+    receipt !== undefined &&
+    path.isAbsolute(command) &&
+    samePhysicalPath(command, receipt.runtime, true) &&
+    args[0] !== undefined &&
+    path.isAbsolute(args[0]) &&
+    samePhysicalPath(args[0], receipt.script, true) &&
+    equal(args.slice(1), tail)
   );
 }
 function installOperation(checks: InstallChecks) {
@@ -838,11 +1036,11 @@ function installCommands(options: CheckOptions, global: boolean) {
     : `./node_modules/.bin/ast-mcp update ${suffix}`;
   return {
     installCommand: global
-      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
-      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ./node_modules/.bin/ast-mcp install ${suffix}`,
+      ? `bun add --global @mwillbanks/ast-mcp && ast-mcp install ${suffix}`
+      : `bun add --dev @mwillbanks/ast-mcp && ./node_modules/.bin/ast-mcp install ${suffix}`,
     repairCommand: global
-      ? `bun add --global --trust dprint @mwillbanks/ast-mcp && ${updateCommand}`
-      : `bun add --dev @mwillbanks/ast-mcp && bun pm trust dprint && ${updateCommand}`,
+      ? `bun add --global @mwillbanks/ast-mcp && ${updateCommand}`
+      : `bun add --dev @mwillbanks/ast-mcp && ${updateCommand}`,
     uninstallCommand: global
       ? `ast-mcp uninstall ${suffix}`
       : `./node_modules/.bin/ast-mcp uninstall ${suffix}`,
@@ -866,7 +1064,12 @@ export async function checkInstall(
     const binary = await configuredStdioCommand(options, home, global);
     if (binary) {
       try {
-        smoke = await smokeMcpStdio(binary, options.root);
+        smoke = await smokeMcpStdio(
+          binary.command,
+          options.root,
+          15_000,
+          binary.args,
+        );
       } catch (error) {
         smokeError = error instanceof Error ? error.message : String(error);
         checks.mcp = false;

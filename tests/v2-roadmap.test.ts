@@ -43,6 +43,7 @@ import {
   referenceRootForPath,
   resolveWorkspacePath,
 } from "../src/runtime/paths";
+import { hermeticConfig } from "./support/hermetic-config";
 
 const created: string[] = [];
 
@@ -629,7 +630,7 @@ test("migrates v1 source without discarding comments or legacy behavior", async 
     toVersion: 2,
   });
   expect(preview.source).toContain("# keep this comment\r\n");
-  expect(preview.source).toContain('fallback = "dprint"');
+  expect(preview.source).toContain('fallback = "preserve"');
   expect(preview.source).toContain('mode = "stdout"');
   expect(preview.source).toContain('id = "legacy-1"');
   expect(preview.source).toContain('id = "legacy-unrestricted"');
@@ -642,7 +643,7 @@ test("migrates v1 source without discarding comments or legacy behavior", async 
   expect(await readFile(backup as string, "utf8")).toBe(source);
   if (process.platform !== "win32")
     expect((await lstat(file)).mode & 0o777).toBe(0o640);
-  expect((await resolveConfig({ cwd: root, env: {} })).version).toBe(2);
+  expect((await resolveConfig(hermeticConfig(root))).version).toBe(2);
 
   const current = migrateConfigSource(await readFile(file, "utf8"), file);
   expect(current.changed).toBeFalse();
@@ -672,7 +673,7 @@ test("migration preserves inline comments on versions and table headers", () => 
   expect(migrated).toContain("[formatting] # formatting note");
   expect(migrated).toContain("[[formatting.formatters]] # formatter note");
   expect(migrated.match(/^\[formatting\]/gm)).toHaveLength(1);
-  expect(migrated).toContain('fallback = "dprint"');
+  expect(migrated).toContain('fallback = "preserve"');
   expect(migrated).toContain('id = "legacy-1"');
   expect(migrated).toContain("enabled = true");
   expect(migrated).toContain('mode = "stdout"');
@@ -742,7 +743,7 @@ test("v2 formatting supports selective stdout and adjacent in-place staging", as
     [
       "version = 2",
       "[formatting]",
-      "enabled = false",
+      "enabled = true",
       'fallback = "preserve"',
       "[[formatting.formatters]]",
       'id = "upper"',

@@ -1,4 +1,4 @@
-import { type Command, type SyntaxNode, parse } from "unbash";
+import { type Command, type SyntaxNode, forEachChild, parse } from "unbash";
 
 const mutators = new Set([
   "apply_patch",
@@ -468,108 +468,18 @@ function commandMutates(command: Command) {
   return false;
 }
 
-function nodeChildren(node: SyntaxNode): readonly (SyntaxNode | undefined)[] {
-  switch (node.type) {
-    case "Script":
-    case "CompoundList":
-    case "Pipeline":
-    case "AndOr":
-      return node.commands;
-    case "Statement":
-    case "Time":
-    case "Negation":
-      return [node.command];
-    case "Command":
-      return [node.name, ...node.prefix, ...node.suffix];
-    case "Redirected":
-      return [node.command, ...node.redirects];
-    case "Word":
-    case "ArithmeticWord":
-    case "DoubleQuoted":
-    case "LocaleString":
-    case "ExtendedGlob":
-    case "BraceExpansion":
-    case "HereDocBody":
-      return node.parts ?? [];
-    case "CommandExpansion":
-    case "ProcessSubstitution":
-    case "ArithmeticCommandExpansion":
-      return [node.script];
-    case "Assignment":
-      return [node.index, node.value];
-    case "ArrayValue":
-      return node.elements;
-    case "Redirect":
-    case "HereString":
-      return [node.target];
-    case "HereDoc":
-      return [node.body];
-    case "ParameterExpansion":
-      return [node.index, node.operation];
-    case "Default":
-    case "Remove":
-    case "CaseModification":
-    case "Transform":
-    case "ArithmeticUnary":
-    case "TestUnary":
-    case "TestNot":
-      return [node.operand];
-    case "Replace":
-      return [node.pattern, node.replacement];
-    case "Slice":
-      return [node.offset, node.length];
-    case "ArithmeticExpansion":
-    case "ArithmeticGroup":
-    case "ArithmeticCommand":
-    case "TestCommand":
-    case "TestGroup":
-      return [node.expression];
-    case "ArithmeticBinary":
-    case "TestBinary":
-    case "TestLogical":
-      return [node.left, node.right];
-    case "ArithmeticTernary":
-      return [node.test, node.consequent, node.alternate];
-    case "If":
-      return [node.clause, node.then, node.else];
-    case "For":
-    case "Select":
-      return [node.name, ...(node.wordlist ?? []), node.body];
-    case "ArithmeticFor":
-      return [node.initialize, node.test, node.update, node.body];
-    case "While":
-      return [node.clause, node.body];
-    case "Function":
-    case "Coproc":
-      return [node.name, node.body];
-    case "Subshell":
-    case "BraceGroup":
-      return [node.body];
-    case "Case":
-      return [node.word, ...node.items];
-    case "CaseItem":
-      return [...node.pattern, node.body];
-    case "Literal":
-    case "SingleQuoted":
-    case "AnsiCQuoted":
-    case "SimpleExpansion":
-    case "FileDescriptor":
-    case "FileDescriptorVariable":
-    case "HereDocDelimiter":
-    case "Names":
-    case "Unknown":
-      return [];
+function visit(root: SyntaxNode): boolean {
+  const pending = [root];
+  let remaining = 100_000;
+  while (pending.length && remaining-- > 0) {
+    const node = pending.pop()!;
+    if (node.type === "Script" && node.errors?.length) continue;
+    if (node.type === "Command" && commandMutates(node)) return true;
+    forEachChild(node, (child) => {
+      pending.push(child);
+    });
   }
-  const exhaustive: never = node;
-  return exhaustive;
-}
-
-function visit(node: SyntaxNode | undefined): boolean {
-  if (!node || (node.type === "Script" && node.errors?.length)) return false;
-  return (
-    (node.type === "Command" && commandMutates(node)) ||
-    nodeChildren(node).some(visit)
-  );
+  return pending.length > 0;
 }
 
 export function shellMutates(source: string, dialect: ShellDialect = "posix") {

@@ -3,6 +3,8 @@
   "pages": [
     "host-installation",
     "configuration-migration",
+    "telemetry",
+    "skills",
     "http-transport",
     "skill-evaluations"
   ]

@@ -17,6 +17,7 @@ afterEach(async () => {
 
 test("file_read returns a bounded non-AST slice and whole-file hash", async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-read-"));
+  await writeFile(path.join(folder, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = folder;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   const filePath = path.join(folder, "note.xml");
@@ -35,6 +36,7 @@ test("file_read returns a bounded non-AST slice and whole-file hash", async () =
 
 test("file_write cannot replace an AST-capable existing file", async () => {
   folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-write-route-"));
+  await writeFile(path.join(folder, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = folder;
   process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
   const filePath = path.join(folder, "value.ts");

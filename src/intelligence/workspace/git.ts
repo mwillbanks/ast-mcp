@@ -47,11 +47,45 @@ function sanitizedGitEnvironment(): Record<string, string> {
   return environment;
 }
 
+async function readBoundedGitOutput(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  terminate: () => void,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      if (next.value.byteLength > maxBytes - size) {
+        terminate();
+        throw Object.assign(new Error("Git output exceeds the byte limit"), {
+          code: "git_output_limit_exceeded",
+        });
+      }
+      chunks.push(next.value);
+      size += next.value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export async function runGitRaw(
   directory: string,
   args: string[],
   signal?: AbortSignal,
   assertNotAborted: (signal?: AbortSignal) => void = throwIfGitAborted,
+  maxStdoutBytes?: number,
 ): Promise<GitResult> {
   assertNotAborted(signal);
   const child = Bun.spawn(["git", "-C", directory, ...args], {
@@ -70,10 +104,15 @@ export async function runGitRaw(
     const [code, stderr, stdout] = await Promise.all([
       child.exited,
       new Response(child.stderr).text(),
-      new Response(child.stdout).bytes(),
+      maxStdoutBytes === undefined
+        ? new Response(child.stdout).bytes()
+        : readBoundedGitOutput(child.stdout, maxStdoutBytes, terminate),
     ]);
     assertNotAborted(signal);
     return { code, stderr: stderr.trim(), stdout };
+  } catch (error) {
+    assertNotAborted(signal);
+    throw error;
   } finally {
     signal?.removeEventListener("abort", terminate);
     if (termination) await termination;
@@ -350,6 +389,7 @@ export async function readGitRevisionFile(
   revision: ResolvedRevision,
   absolutePath: string,
   signal?: AbortSignal,
+  maxBytes?: number,
 ): Promise<Uint8Array> {
   if (!git.isGit || revision.selector.kind === "working") {
     throw new WorkspaceError(
@@ -363,7 +403,13 @@ export async function readGitRevisionFile(
     revision.selector.kind === "index"
       ? `:${relative}`
       : `${revision.resolvedCommitOid}:${relative}`;
-  const result = await runGitRaw(git.checkoutRoot, ["show", object], signal);
+  const result = await runGitRaw(
+    git.checkoutRoot,
+    ["show", object],
+    signal,
+    throwIfGitAborted,
+    maxBytes,
+  );
   if (result.code !== 0) {
     throw new WorkspaceError(
       "workspace_revision_invalid",

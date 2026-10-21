@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,6 +7,7 @@ import { writeFileSafely } from "../src/patch/engine";
 
 test("file_write creates nested missing parents after guarded ENOENT", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-parent-write-"));
+  await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
   const previousRoots = process.env.AST_MCP_ROOTS;
   const previousExternalRoots = process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS;
   process.env.AST_MCP_ROOTS = root;

@@ -1,0 +1,52 @@
+---
+title: Connection diagnosis
+description: Diagnose startup failures, missing tools, unavailable skills, and interrupted MCP requests.
+icon: Plug
+---
+
+During install or update, ast-mcp launches the configured executable and checks MCP initialization, discovery of the required file and workspace tools, and clean shutdown before it writes host configuration. The separate `scripts/check-install.ts` checker can run a stdio smoke test that also opens the requested workspace; a failed smoke check marks MCP unhealthy. It does not verify a live host connection or HTTP endpoint.
+
+Local installations use their installed executable alias when available. Source launches use absolute Bun and script paths with the project working directory. Verified source launches have project-bound receipts outside the bundled skill directory. Incorrect arguments, missing scripts, or mismatched working directories fail health checks. Source-mode installs record the absolute runtime, script, and project root in a project-bound receipt under the user's home directory. The receipt lets checks verify the source launch belongs to that project; it does not prove the host is currently connected.
+
+## Missing tools or lost connections
+
+A stdio server runs as a child of its host. A crashed child, invalid launch command, closed stream, or blocked request can make its tools unavailable.
+
+Inspect the host's MCP logs and the server's stderr. Protocol responses use stdout; diagnostics use stderr. Check the executable, arguments, working directory, and configured transport.
+
+After updating the package or launch configuration, restart or reconnect the MCP server through your host. An MCP server cannot restart its host-owned stdio process. Restarting stdio or a legacy HTTP session clears its session-scoped approvals. Modern stateless HTTP has no trusted caller session for host approval, so any request requiring elicitation fails closed with `approval_required`; use stdio or a legacy host session for approval flows. Explicit global permissions remain usable. If tools are available but the skill is missing, check whether the host supports MCP Skills. Compatible clients discover and load the skill from the server; other clients need `ast-mcp skills export <destination>` and host-side setup. See the [skills guide](/docs/guides/skills).
+
+Recoverable framing and tool errors leave the connection usable. Fatal failures emit diagnostics, perform bounded cleanup, and exit nonzero. Shutdown uses a five-second deadline.
+
+## Stdio framing
+
+Each newline-delimited JSON frame can contain up to 10 MiB. Multiple valid frames can arrive together in a larger aggregate chunk. Fragmented frames remain supported.
+
+Malformed or oversized frames receive protocol errors and recover at the next newline boundary. Requests retain their IDs. Notifications receive no response. Stdio keeps one connection state per process. Modern HTTP requests are stateless and do not require an initialize exchange or MCP session header; pass `workspaceId` to reuse application workspace handles within the running server. Legacy HTTP clients retain separate, isolated MCP session state.
+
+## Intelligence request budgets
+
+Intelligence parsing and graph computation run in workers. A timed-out or cancelled request terminates its worker so subsequent MCP calls can proceed.
+
+Requests default to a 30-second deadline. Parsing limits each source to 2 MiB and 100,000 nodes. Request source and parsed-data budgets are 16 MiB. At most four CPU requests run concurrently, and file inventories are limited to 100,000 paths.
+
+An `intelligence_budget_exceeded` response requires a narrower request. Select explicit `paths`, a `glob`, or a smaller `scan_limit`. Narrow paths or globs when the file inventory itself exceeds its limit.
+
+For `file_delete`, `reference_verification_failed` means the reference scan could not finish safely; no batch targets were deleted. Check for parser errors, invalid UTF-8, per-file or total byte limits, and inventory limits. External cancellation may return its own cancellation error instead; cancellation during preflight still leaves all targets unchanged. Resolve the issue and retry. Use `forceReferences: true` only after reviewing references yourself. See the [filesystem access guide](/docs/guides/filesystem-access) for scan coverage and exact limits.
+
+A successful delete response may include `cleanup.status: "deferred"` with `cleanup.code: "lock_deadline"`, or `cleanup.status: "failed"` with `lock_fenced`, `EACCES`, `EPERM`, or `cleanup_failed`. The file deletion already committed in either case; do not retry it. `removedDirectories` is empty; some empty parent directories may remain. The deferred result means waiting for a contended cleanup lock exceeded its 1-second deadline; path resolution, filesystem operations, or lease publication may take longer. Caller cancellation does not abort cleanup after deletion commits.
+
+Tool schemas reject unsupported fields before scanning. Supply `target` for `impact`, `callers`, `callees`, `trace`, `context`, and `implements`. Supply `file` or `path` for dependency queries, a query or target for search, and `pattern` for `run`.
+
+For example, limit an impact request to the relevant source directory:
+
+```json
+{
+  "target": "reconcile",
+  "paths": ["src"],
+  "scan_limit": 100,
+  "timeout_ms": 5000
+}
+```
+
+Use `workspaceId` when the host exposes multiple workspaces. Inspect truncation and omission metadata before treating scan results as exhaustive.

@@ -11,7 +11,7 @@ ast-mcp install --transport http --host 127.0.0.1 --port 3768 --target all
 ast-mcp mcp --transport http
 ```
 
-The server resolves bind values as CLI flags, environment overrides, project TOML, global TOML, then built-in defaults. The built-in port is now `3768` instead of the former development default `3000`; an explicit `http.port` or `PORT` keeps an existing deployment unchanged. The remaining defaults are loopback host `127.0.0.1`, a 30-minute idle timeout, and a one-minute sweep. Existing HTTP environment variables and `PORT` remain compatible. `0.0.0.0` and `::` bind broadly but generate loopback client URLs; any other non-loopback host is an explicit network exposure.
+The server resolves bind values as CLI flags, environment overrides, project TOML, global TOML, then built-in defaults. The built-in port is now `3768` instead of the former development default `3000`; an explicit `http.port` or `PORT` keeps an existing deployment unchanged. The remaining defaults are loopback host `127.0.0.1`; legacy stateful sessions use a 30-minute idle timeout and a one-minute sweep. Modern stateless requests do not retain protocol sessions. Existing HTTP environment variables and `PORT` remain compatible. `0.0.0.0` and `::` bind broadly but generate loopback client URLs; any other non-loopback host is an explicit network exposure.
 
 ## Installer and services
 
@@ -19,9 +19,9 @@ Codex receives a TOML `url`; Claude Code, Copilot, and VS Code receive their nat
 
 Add `--service` to install a per-user macOS LaunchAgent or Linux systemd unit. Local services require an explicit `--port`; global services may use the layered/default port. `--no-service` stops and removes the managed unit, while uninstall removes it after the last HTTP host entry is removed. Windows uses manual startup because managed services are not supported.
 
-## Sessions and responses
+## Request state and responses
 
-The endpoint is `/mcp`. MCP session IDs correlate requests; they are not authentication. Sessions have bounded idle cleanup and are closed during graceful shutdown.
+The endpoint is `/mcp`. Modern protocol requests are stateless: they do not perform an initialize exchange or require an MCP session header. Pass `workspaceId` when a later request needs an application workspace opened on the same server. MCP session IDs are used only by legacy stateful clients; those sessions have bounded idle cleanup, remain isolated, and close during graceful shutdown. Session IDs are correlation values, not authentication.
 
 JSON-RPC batches may mix requests and notifications:
 
@@ -32,8 +32,8 @@ JSON-RPC batches may mix requests and notifications:
 - execution failures use structured `isError` tool results; JSON-RPC errors are reserved for malformed calls
 - `request` policy uses capability-driven `input_required` elicitation, with legacy SDK compatibility for older clients
 
-Clients without elicitation fail closed with `approval_required` and exact configuration or CLI remediation. Once and session grants are connection- and generation-bound; persistent grants are written as the narrowest user-global rule.
+Clients without elicitation fail closed with `approval_required` and exact configuration or CLI remediation. Once and session grants are connection- and generation-bound; persistent grants are written as the narrowest user-global rule. Modern stateless HTTP has no trusted caller session for host approval, so any request requiring elicitation fails closed with `approval_required`. Explicit global permissions remain usable. Use stdio or a legacy host session when a workflow requires host approval.
 
 ## Shutdown
 
-`SIGTERM`, `SIGINT`, and `SIGHUP` initiate graceful cleanup. The HTTP process stops accepting requests, closes active sessions, and then closes remaining connections. A second signal forces termination while cleanup is pending.
+`SIGTERM`, `SIGINT`, and `SIGHUP` initiate graceful cleanup. The HTTP process stops accepting requests, closes legacy stateful sessions and the modern stateless handler, then closes remaining connections. A second signal forces termination while cleanup is pending.

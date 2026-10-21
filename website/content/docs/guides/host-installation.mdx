@@ -4,7 +4,7 @@ description: What ast-mcp configures for Codex, Claude Code, Copilot, and VS Cod
 icon: Plug
 ---
 
-The installer reconciles four managed surfaces: MCP configuration, hook payloads and registration, the `ast-mcp` skill, and a marked instruction block.
+The installer reconciles three managed surfaces: MCP configuration, hook payloads and registration, and a marked instruction block. The MCP server also serves its canonical `ast-mcp` skill to clients that support MCP Skills. It does not install skill files automatically.
 
 | Host              | Local MCP configuration | Local hook surface                                          |
 | ----------------- | ----------------------- | ----------------------------------------------------------- |
@@ -13,7 +13,7 @@ The installer reconciles four managed surfaces: MCP configuration, hook payloads
 | Copilot CLI/cloud | `.github/mcp.json`      | `.github/hooks/ast-mcp.json` and `.github/hooks/ast-mcp.ts` |
 | VS Code Copilot   | `.vscode/mcp.json`      | Shares the Copilot hook and instruction surface             |
 
-Global installation uses each host's home configuration. Managed blocks and entries have exact identities so unrelated MCP servers, hooks, skills, and instructions remain untouched.
+Global installation uses each host's home configuration. Managed blocks and entries have exact identities so unrelated MCP servers, hooks, and instructions remain untouched. Clients without MCP Skills support need an explicit `ast-mcp skills export <destination>` and host-side setup. See the [skills guide](/docs/guides/skills).
 
 ## Scope and targets
 
@@ -21,12 +21,6 @@ Install the package locally with the package manager used by the repository:
 
 ```npm
 npm install --save-dev @mwillbanks/ast-mcp
-```
-
-When installing with Bun, allow the pinned native installers:
-
-```bash
-bun pm trust dprint
 ```
 
 Then manage local host surfaces through the stable repository-local executable:
@@ -61,16 +55,16 @@ ast-mcp update --scope global --target all
 ast-mcp uninstall --scope global --target all
 ```
 
-Yarn 2+ should use a project-local installation because it does not provide Yarn Classic's global workflow. The package must remain installed so the configured `mcp` and `hook` subcommands can resolve native intelligence dependencies and dprint from its stable dependency tree. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. Bun's explicit trust step runs the pinned dprint installer instead of leaving their lifecycle scripts blocked. If another manager blocks dependency build scripts, approve those packages through that manager.
+Yarn 2+ should use a project-local installation because it does not provide Yarn Classic's global workflow. The package must remain installed so the configured `mcp` and `hook` subcommands can resolve native intelligence dependencies from its stable dependency tree. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. Configure runtime formatting separately with an installed formatter; see the [optional formatting guide](/docs/guides/formatting).
 
 Local scope uses the current directory and writes `ast-mcp.toml`. Global scope writes project-neutral user configuration. Generated MCP definitions omit environment fields. Client roots are baseline scope hints, never authorization; version 2 top-level `paths` rules and user approvals remain server-authoritative. Install and update validate the applicable layered configuration before changing host files, while uninstall and `config_status` remain available to recover from invalid configuration.
 
-The Bun-native server supports macOS, Linux, and Windows without a Cargo prerequisite. The installer checks the MCP handshake before reporting a healthy host surface. See the [installation guide](/docs/getting-started/installation) for Linux, Windows, and macOS Intel instructions.
+The Bun-native server supports macOS, Linux, and Windows without a Cargo prerequisite. The installer checks the MCP handshake before reporting a healthy host surface. Restart or reconnect the server through the host after package or launch configuration changes; the host owns stdio process restarts. See the [installation guide](/docs/getting-started/installation) for Linux, Windows, and macOS Intel instructions, and the [connection diagnosis guide](/docs/guides/connection-diagnosis) when tools are unavailable.
 
 ## Routing hooks
 
-Codex and Claude installations expose the same strict tool schemas, structured results, annotations, line-range compatibility, configuration tools, and elicitation contract over stdio or Streamable HTTP.
+Codex and Claude installations expose the same strict tool schemas, structured results, annotations, line-range compatibility, and configuration tools over stdio or Streamable HTTP. Host approvals work over stdio and legacy stateful HTTP; modern stateless HTTP fails closed for operations that require host approval.
 
-Codex approval forms include `codex_approval_kind = "mcp_tool_call"` and `persist = ["session", "always"]`. Codex uses this metadata for its approval interface. Other clients receive standard MCP elicitation forms. Hosts should execute independent read-only calls concurrently when supported, while preserving sequential inspect/preview/hash/write workflows.
+Codex approval forms include `codex_approval_kind = "mcp_tool_call"` and `persist = ["session", "always"]`. Codex uses this metadata for its approval interface. Other clients receive standard MCP elicitation forms over stdio and legacy stateful HTTP. Modern stateless HTTP cannot establish a trusted caller session, so approval-required calls fail closed. Hosts should execute independent read-only calls concurrently when supported, while preserving sequential inspect/preview/hash/write workflows.
 
 The installed pre-tool hook is a best-effort routing aid. It rejects direct editor tool calls and known manual write, patch, delete, and rename escape hatches so the agent is nudged toward AST intelligence and guarded file tools. It deliberately does not police Git operations, output redirection, repository scripts, or arbitrary process execution; the host agent framework and its sandbox remain responsible for execution security.

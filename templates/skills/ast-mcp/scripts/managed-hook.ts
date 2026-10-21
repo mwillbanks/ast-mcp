@@ -7,9 +7,20 @@ export function managedAstMcpHookEntry(command: unknown) {
   const normalized = command.trim();
   if (!normalized.endsWith(" hook")) return undefined;
   let invocation = normalized.slice(0, -" hook".length).trim();
-  if (invocation.startsWith("bun ")) {
-    invocation = invocation.slice(4).trim();
-    if (invocation.startsWith("run ")) invocation = invocation.slice(4).trim();
+  const wrapped = invocation.match(
+    /^("(?:[^"\\]|\\.)*"|\S+)\s+(?:run\s+)?(.+)$/u,
+  );
+  if (wrapped) {
+    let executable = wrapped[1] ?? "";
+    try {
+      executable = JSON.parse(executable);
+    } catch {}
+    if (
+      ["bun", "bun.exe"].includes(
+        path.basename(executable.replaceAll("\\", "/")).toLowerCase(),
+      )
+    )
+      invocation = wrapped[2] ?? "";
   }
   try {
     invocation = JSON.parse(invocation);

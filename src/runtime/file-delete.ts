@@ -3,6 +3,7 @@ import {
   chmod,
   chown,
   lstat,
+  opendir,
   readdir,
   rm,
   rmdir,
@@ -19,19 +20,18 @@ import {
   recordMutationCommit,
   recordMutationRollback,
 } from "../intelligence/mutation/index.ts";
-import { parseSource } from "../intelligence/parser/index.ts";
+import { ParserWorkerPool } from "../intelligence/parser/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { detectAstLanguage } from "../patch/languages";
-import { inspectFileCapabilities } from "./file-capabilities";
 import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
 import { pathWithin } from "./path-utils";
 import {
+  fileOperationRootForPath,
   referenceRootForPath,
   resolveWritablePath,
-  rootForPath,
 } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
@@ -42,44 +42,107 @@ export interface FileDeleteRequest {
 
 export type FileDeleteBatch = Record<string, FileDeleteRequest>;
 
-async function importersFor(filePath: string, root: string): Promise<string[]> {
+interface ReferenceVerification {
+  pool: ParserWorkerPool;
+  signal: AbortSignal;
+  targets: Set<string>;
+  candidates: number;
+  sourceBytes: number;
+}
+
+function referenceFailure(message: string, cause?: unknown): Error {
+  return Object.assign(new Error(message, { cause }), {
+    code: "reference_verification_failed",
+    retryable: true,
+    suggestedNextCall:
+      "Review references before retrying file_delete with forceReferences",
+  });
+}
+
+async function* referenceCandidates(
+  root: string,
+  verification: ReferenceVerification,
+) {
+  const { signal } = verification;
+  const pending = [root];
+  while (pending.length) {
+    signal.throwIfAborted();
+    for await (const entry of await opendir(pending.pop()!)) {
+      signal.throwIfAborted();
+      if (++verification.candidates > 100_000)
+        throw referenceFailure(
+          "Reference verification exceeds the inventory limit",
+        );
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const candidate = path.join(entry.parentPath, entry.name);
+      if (entry.isDirectory()) pending.push(candidate);
+      else if (entry.isFile()) yield candidate;
+    }
+  }
+}
+
+async function importersFor(
+  filePath: string,
+  root: string,
+  verification: ReferenceVerification,
+): Promise<string[]> {
   const importers: string[] = [];
   const target = path.resolve(filePath);
-  for await (const candidate of new Bun.Glob("**/*").scan({
-    absolute: true,
-    cwd: root,
-    dot: false,
-    followSymlinks: false,
-    onlyFiles: true,
-  })) {
-    if (
-      candidate === target ||
-      candidate.includes(`${path.sep}node_modules${path.sep}`) ||
-      candidate.includes(`${path.sep}.git${path.sep}`)
-    )
-      continue;
-    const capabilities = await inspectFileCapabilities(candidate);
-    if (
-      capabilities.kind !== "source" ||
-      !capabilities.language ||
-      !capabilities.effective.read.includes("ast")
-    )
-      continue;
-    const source = await Bun.file(candidate).text();
-    const facts = parseSource({
-      languageId: capabilities.language,
-      source,
-    });
-    const referenced = facts.imports.some((entry) => {
-      if (!entry.source.startsWith(".")) return false;
-      const base = path.resolve(path.dirname(candidate), entry.source);
-      return (
-        base === target ||
-        `${base}${path.extname(target)}` === target ||
-        path.join(base, `index${path.extname(target)}`) === target
+  try {
+    for await (const candidate of referenceCandidates(root, verification)) {
+      if (candidate === target || verification.targets.has(candidate)) continue;
+      const language = detectAstLanguage(candidate);
+      if (
+        !language ||
+        [".json", ".jsonc", ".toml", ".yaml", ".yml"].includes(
+          path.extname(candidate).toLowerCase(),
+        )
+      )
+        continue;
+      const file = Bun.file(candidate);
+      if (file.size > 2 * 1024 * 1024)
+        throw referenceFailure(
+          "Reference verification source exceeds the byte limit",
+        );
+      const bytes = await file.slice(0, 2 * 1024 * 1024 + 1).arrayBuffer();
+      verification.sourceBytes += bytes.byteLength;
+      if (
+        bytes.byteLength > 2 * 1024 * 1024 ||
+        verification.sourceBytes > 16 * 1024 * 1024
+      )
+        throw referenceFailure(
+          "Reference verification exceeds the source byte limit",
+        );
+      const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const facts = await verification.pool.parse(
+        {
+          languageId: language,
+          source,
+        },
+        { signal: verification.signal, timeoutMs: 1_000 },
       );
-    });
-    if (referenced) importers.push(path.relative(root, candidate));
+      if (
+        facts.diagnostics.some((diagnostic) => diagnostic.severity === "error")
+      )
+        throw referenceFailure(
+          "Reference verification encountered invalid source",
+        );
+      const referenced = facts.imports.some((entry) => {
+        if (!entry.source.startsWith(".")) return false;
+        const base = path.resolve(path.dirname(candidate), entry.source);
+        return (
+          base === target ||
+          `${base}${path.extname(target)}` === target ||
+          path.join(base, `index${path.extname(target)}`) === target
+        );
+      });
+      if (referenced) importers.push(path.relative(root, candidate));
+    }
+  } catch (error) {
+    throw referenceFailure(
+      "Reference verification could not complete within parser, input, or inventory limits; no files were deleted",
+      error,
+    );
   }
   return importers.sort();
 }
@@ -161,10 +224,16 @@ async function authorizedImporters(
   filePath: string,
   referenceRoot: string | undefined,
   capable: boolean,
+  verification: ReferenceVerification,
 ) {
   if (!referenceRoot || !capable) return [];
-  assertReadableTree(await currentConfig(), referenceRoot);
-  return importersFor(filePath, referenceRoot);
+  const config = await currentConfig();
+  assertReadableTree(config, referenceRoot);
+  if (!config.files.read.modes.includes("ast"))
+    throw referenceFailure(
+      "Reference verification requires AST read access; no files were deleted",
+    );
+  return importersFor(filePath, referenceRoot, verification);
 }
 
 function requireUnreferenced(
@@ -174,7 +243,7 @@ function requireUnreferenced(
 ): void {
   if (importers.length === 0 || forceReferences) return;
   throw new Error(
-    `file_delete rejected ${inputPath}: referenced by ${importers.join(", ")}; set forceReferences to override`,
+    `file_delete rejected ${inputPath}: referenced by ${importers.slice(0, 20).join(", ").slice(0, 4096)}${importers.length > 20 ? ` (showing 20 of ${importers.length})` : ""}; set forceReferences to override`,
   );
 }
 
@@ -182,6 +251,7 @@ async function referenceStatus(
   filePath: string,
   inputPath: string,
   request: FileDeleteRequest,
+  verification: ReferenceVerification,
 ) {
   const referenceRoot = await referenceRootForPath(filePath);
   // An explicit override bypasses advisory parsing, never existing authorization.
@@ -198,7 +268,12 @@ async function referenceStatus(
     inputPath,
     request.forceReferences,
   );
-  const importers = await authorizedImporters(filePath, referenceRoot, capable);
+  const importers = await authorizedImporters(
+    filePath,
+    referenceRoot,
+    capable,
+    verification,
+  );
   requireUnreferenced(importers, inputPath, request.forceReferences);
   return { importers, referencesVerified: referenceRoot !== undefined };
 }
@@ -206,28 +281,66 @@ async function referenceStatus(
 async function prepareDeleteEntry(
   inputPath: string,
   request: FileDeleteRequest,
+  verification: ReferenceVerification,
 ) {
   const filePath = await resolveWritablePath(inputPath, "delete");
   const metadata = await lstat(filePath);
   if (!metadata.isFile())
     throw new Error(`file_delete accepts files only: ${inputPath}`);
-  const root = await rootForPath(filePath);
+  const root = await fileOperationRootForPath(filePath);
   const removableDirectories = await authorizedAncestors(filePath, root);
   return {
     filePath,
-    ...(await referenceStatus(filePath, inputPath, request)),
+    ...(await referenceStatus(filePath, inputPath, request, verification)),
     removableDirectories,
     request,
     root,
   };
 }
 
-export async function deleteFilesSafely(requests: FileDeleteBatch) {
-  const entries = await Promise.all(
-    Object.entries(requests).map(([inputPath, request]) =>
-      prepareDeleteEntry(inputPath, request),
-    ),
-  );
+export async function deleteFilesSafely(
+  requests: FileDeleteBatch,
+  signal?: AbortSignal,
+) {
+  const pool = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
+  const verification = {
+    pool,
+    targets: new Set<string>(),
+    candidates: 0,
+    sourceBytes: 0,
+    signal: AbortSignal.any([
+      AbortSignal.timeout(30_000),
+      ...(signal ? [signal] : []),
+    ]),
+  };
+  const entries: Awaited<ReturnType<typeof prepareDeleteEntry>>[] = [];
+  try {
+    for (const inputPath of Object.keys(requests)) {
+      verification.signal.throwIfAborted();
+      verification.targets.add(await resolveWritablePath(inputPath, "delete"));
+    }
+    for (const [inputPath, request] of Object.entries(requests)) {
+      verification.signal.throwIfAborted();
+      entries.push(await prepareDeleteEntry(inputPath, request, verification));
+    }
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    if ((error as { code?: string }).code === "reference_verification_failed")
+      throw error;
+    // Only parser errors and the overall verification deadline need translation.
+    if (
+      verification.signal.aborted ||
+      (error as { name?: string }).name === "ParserError"
+    )
+      throw referenceFailure(
+        "Reference verification could not complete within parser limits; no files were deleted",
+        error,
+      );
+    throw error;
+  } finally {
+    await pool.close({ drain: false });
+  }
+  signal?.throwIfAborted();
   const outcome = await withFileLocks(
     entries.map(({ filePath }) => filePath),
     async (leases) => {
@@ -274,6 +387,7 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
       }> = [];
       let began = false;
       try {
+        signal?.throwIfAborted();
         await beginMutation({
           files: sourcePlan,
           operationId,
@@ -288,7 +402,9 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
           referencesVerified,
           request,
         } of entries) {
+          signal?.throwIfAborted();
           await fence();
+          signal?.throwIfAborted();
           await rm(filePath);
           const snapshot = snapshots.get(filePath);
           if (!snapshot) throw new Error("mutation_snapshot_missing");
@@ -356,8 +472,10 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
         throw error;
       }
     },
+    { signal },
   );
   const roots = [...new Set(entries.map(({ root }) => root))].sort();
+  let cleanup: { status: "deferred" | "failed"; code: string } | undefined;
   const removedDirectories = await withFileLocks(
     roots.map((root) => path.join(root, ".ast-mcp-directory-cleanup")),
     async (leases) => {
@@ -375,6 +493,24 @@ export async function deleteFilesSafely(requests: FileDeleteBatch) {
           removed.add(directory);
       return [...removed].sort();
     },
-  );
-  return { ...outcome, removedDirectories };
+    // Deletion is already committed. Caller cancellation must not misreport it.
+    { deadline: Date.now() + 1_000 },
+  ).catch((error: unknown) => {
+    const code = (error as { code?: string } | null)?.code;
+    cleanup =
+      code === "lock_deadline"
+        ? { status: "deferred", code }
+        : {
+            status: "failed",
+            code: ["lock_fenced", "EACCES", "EPERM"].includes(code ?? "")
+              ? code!
+              : "cleanup_failed",
+          };
+    return undefined;
+  });
+  return {
+    ...outcome,
+    removedDirectories: removedDirectories ?? [],
+    ...(cleanup ? { cleanup } : {}),
+  };
 }

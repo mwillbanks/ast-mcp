@@ -142,10 +142,10 @@ test.skipIf(process.platform === "win32")(
 
 test("resolves executable paths declared by package metadata", () => {
   expect(
-    resolveDependencyBinary("dprint", "dprint", {
+    resolveDependencyBinary("oxfmt", "oxfmt", {
       globalBinDirectories: [],
       packageRoot: path.join(os.tmpdir(), "missing-package-root"),
       pathValue: "",
     }),
-  ).toContain(path.join("dprint", "bin.cjs"));
+  ).toContain(path.join("oxfmt", "bin", "oxfmt"));
 });
