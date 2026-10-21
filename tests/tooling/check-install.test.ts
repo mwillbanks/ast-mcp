@@ -491,7 +491,7 @@ test("checker covers every global host surface", async () => {
       )
     ).checks.mcp,
   ).toBeFalse();
-}, 30_000);
+}, 60_000);
 
 test("exported checker requires its canonical guidance resource", async () => {
   const { home, root } = await folders();

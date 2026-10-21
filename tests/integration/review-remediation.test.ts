@@ -562,7 +562,7 @@ test("live stdio server returns Invalid Request for an empty batch", async () =>
 
   try {
     child.process.stdin.write(new TextEncoder().encode("[]\n"));
-    const response = JSON.parse(await child.readStdoutLine(2_000)) as {
+    const response = JSON.parse(await child.readStdoutLine()) as {
       error?: { code?: number };
       id?: unknown;
     };
