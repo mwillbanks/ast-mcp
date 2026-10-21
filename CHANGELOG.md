@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.0...ast-mcp-v0.6.1) (2026-10-21)
+
+### 🐛 Fixes
+
+- **ci:** authorize release creation ([fb00dd4](https://github.com/mwillbanks/ast-mcp/commit/fb00dd439eec8142879bda9bb5805fe81f7b3397))
+- **ci:** stabilize release validation ([f824b3e](https://github.com/mwillbanks/ast-mcp/commit/f824b3eeaedf855cb226835fa66eff20b2fe8169))
+- **installer:** stabilize CI timing checks ([9f2a5e9](https://github.com/mwillbanks/ast-mcp/commit/9f2a5e912d800442ab0873c74c8e9d677e3a0ad2))
+- **runtime:** recover formatter failures in CI ([4c512f2](https://github.com/mwillbanks/ast-mcp/commit/4c512f2bd2e0928bbca1f7904bac5107667b25f4))
+
+### 🔧 Maintenance
+
+- **repository:** organize modules and CLI output ([#32](https://github.com/mwillbanks/ast-mcp/issues/32)) ([3007f86](https://github.com/mwillbanks/ast-mcp/commit/3007f867f74839d1f342d11292bfb90d606b3da8))
+
 ## [0.6.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.5.0...ast-mcp-v0.6.0) (2026-10-21)
 
 ### ✨ Features
