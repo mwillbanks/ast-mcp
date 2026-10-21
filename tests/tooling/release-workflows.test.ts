@@ -7,6 +7,7 @@ type Step = {
   if?: string;
   env?: Record<string, string>;
   with?: Record<string, unknown>;
+  "continue-on-error"?: boolean;
 };
 type Job = {
   if?: string;
@@ -91,11 +92,19 @@ describe("release workflow contracts", () => {
       }
     expect(checkouts).toBeGreaterThanOrEqual(6);
   });
-  test("dispatch cannot create or publish releases", () => {
+  test("CI dispatch cannot create or publish releases", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
     expect(job(ci, "release").if).toContain("github.ref == 'refs/heads/main'");
     expect(job(ci, "release").uses).toBe("./.github/workflows/release.yml");
-    expect(Object.keys(release.on)).toEqual(["workflow_call"]);
+    expect(release.on.workflow_dispatch).toEqual({
+      inputs: {
+        tag_name: {
+          description: "Published release tag to validate and publish",
+          required: true,
+          type: "string",
+        },
+      },
+    });
     expect(job(release, "validate").if).toContain(
       "needs.release.outputs.release_created == 'true'",
     );
@@ -106,6 +115,44 @@ describe("release workflow contracts", () => {
       "needs.validate.result == 'success'",
     );
     expect(job(release, "publish").needs).toEqual(["release", "validate"]);
+  });
+  test("release recovery verifies a published tag before validation", () => {
+    const creator = job(release, "release");
+    const steps = creator.steps ?? [];
+    const requireMain = steps.find((step) =>
+      step.run?.includes('test "$GITHUB_REF" = refs/heads/main'),
+    );
+    expect(requireMain?.if).toBe("github.event_name == 'workflow_dispatch'");
+    const action = steps.find((step) =>
+      step.uses?.startsWith("googleapis/release-please-action@"),
+    );
+    expect(action?.if).toBe("github.event_name != 'workflow_dispatch'");
+    expect(action?.["continue-on-error"]).toBe(true);
+    const checkout = steps.find((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    expect(steps.indexOf(checkout!)).toBeGreaterThan(steps.indexOf(action!));
+    expect(checkout?.if).toContain("steps.release.outcome == 'failure'");
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+    const recover = steps.find((step) => step.env?.RELEASE_TAG);
+    expect(recover?.if).toContain("steps.release.outcome == 'failure'");
+    expect(recover?.env?.RELEASE_TAG).toBe("${{ inputs.tag_name }}");
+    for (const required of [
+      "jq -r .draft",
+      "jq -r .target_commitish",
+      "git rev-list -n 1",
+      "git merge-base --is-ancestor",
+      'git show "$RELEASE_TAG:package.json"',
+      'test "$tag_commit" = "$GITHUB_SHA"',
+    ])
+      expect(recover?.run).toContain(required);
+    expect(creator.outputs?.release_created).toContain(
+      "steps.recover.outputs.release_created",
+    );
+    expect(creator.outputs?.tag_name).toContain(
+      "steps.recover.outputs.tag_name",
+    );
   });
   test("only dispatch concrete job grants actions write", () => {
     expect(release.permissions).toEqual({});
