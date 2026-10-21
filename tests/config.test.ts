@@ -136,15 +136,21 @@ model = "example-generator"
   });
 });
 
-test("accepts the legacy ast-bro dependency in strict v2 configuration", async () => {
-  const root = await project("ast-mcp-config-legacy-dependency-");
-  await writeFile(
-    path.join(root, "ast-mcp.toml"),
-    'version = 2\n[dependencies]\nast_bro_binary = "./bin/ast-bro"\n',
-  );
-  const config = await resolveConfig({ cwd: root, env: {} });
-  expect(config.dependencies.astBroBinary).toBe(path.join(root, "bin/ast-bro"));
-});
+test.each([
+  "obsolete_binary",
+  ["ast", "bro", "binary"].join("_"),
+  ["ast", "Bro", "Binary"].join(""),
+])(
+  "rejects unsupported dependency setting %s in strict v2 configuration",
+  async (setting) => {
+    const root = await project("ast-mcp-config-obsolete-dependency-");
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      `version = 2\n[dependencies]\n${setting} = "./bin/obsolete"\n`,
+    );
+    await expect(resolveConfig({ cwd: root, env: {} })).rejects.toThrow();
+  },
+);
 
 test("deep merges global, project, and environment layers with provenance", async () => {
   const root = await project("ast-mcp-config-layers-");

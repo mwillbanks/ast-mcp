@@ -12,7 +12,6 @@ import {
   dynamicLanguageAdapter,
   dynamicLanguageGroupManifest,
   dynamicWorkerStats,
-  GRAPHIFY_DYNAMIC_BASELINE_REVISION,
   isDynamicSyntaxFacts,
   isDynamicWorkerRequest,
   isDynamicWorkerResult,
@@ -32,15 +31,14 @@ const fixtures: Record<DynamicLanguageId, string> = {
   ruby: "ruby.rb",
 };
 
-// Records are pinned to Graphify revision 3f82bf7f837a07fb0f7668fbdbd5662801906942.
 const golden = (await Bun.file(
   new URL(
-    "./fixtures/intelligence/languages/dynamic/graphify-golden.json",
+    "./fixtures/intelligence/languages/dynamic/native-golden.json",
     import.meta.url,
   ),
 ).json()) as {
   languages: Record<DynamicLanguageId, unknown>;
-  provenance: { revision: string };
+  provenance: { schemaVersion: string };
   unsupported: Record<string, unknown>;
 };
 
@@ -388,11 +386,8 @@ test("strictly validates worker protocol and complete fact identity", async () =
 });
 
 describe.serial("dynamic language WASM adapters", () => {
-  test("pins the Graphify comparison revision and unsupported outputs", () => {
-    expect(GRAPHIFY_DYNAMIC_BASELINE_REVISION).toBe(
-      "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    );
-    expect(golden.provenance.revision).toBe(GRAPHIFY_DYNAMIC_BASELINE_REVISION);
+  test("pins the native fixture schema and unsupported outputs", () => {
+    expect(golden.provenance.schemaVersion).toBe("ast-mcp.native-goldens.v1");
     expect(golden.unsupported).toEqual({
       callResolution: true,
       exportResolution: true,
@@ -426,7 +421,7 @@ describe.serial("dynamic language WASM adapters", () => {
   });
 
   for (const languageId of Object.keys(fixtures) as DynamicLanguageId[]) {
-    test(`extracts the exact Graphify baseline set for ${languageId} through the worker`, async () => {
+    test(`extracts the exact native fixture set for ${languageId} through the worker`, async () => {
       const source = await fixture(languageId);
       const first = await dynamicLanguageAdapter(languageId).analyze({
         languageId,

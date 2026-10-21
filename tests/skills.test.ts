@@ -103,11 +103,6 @@ test("Skills discovery and retrieval preserve byte integrity and recover after u
     expect(listed.result.skills).toEqual([direct.result.skill]);
     const manifests = direct.result.skill.resources;
     expect(manifests.length).toBeGreaterThan(10);
-    expect(
-      manifests.some((resource: { uri: string }) =>
-        resource.uri.includes(".ast-bro"),
-      ),
-    ).toBeFalse();
     for (const relative of [
       "SKILL.md",
       "scripts/check-install.ts",

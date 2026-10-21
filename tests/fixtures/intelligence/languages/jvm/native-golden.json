@@ -699,8 +699,6 @@
     }
   },
   "provenance": {
-    "project": "graphify",
-    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    "scope": "JVM fixture parity: complete extracted fact, reference, diagnostic, and byte-range sets"
+    "schemaVersion": "ast-mcp.native-goldens.v1"
   }
 }

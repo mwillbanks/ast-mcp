@@ -115,7 +115,6 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "format:files": "oxfmt",
-    "graphify:provision": "bun run scripts/provision-intelligence-comparators-cli.ts",
     "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
     "inspect:http": "bunx @modelcontextprotocol/inspector",
     "intelligence:measure": "bun run scripts/benchmark-intelligence-baseline.ts",

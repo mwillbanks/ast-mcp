@@ -199,7 +199,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       ? packed
       : path.join(owned, path.basename(packed));
     const archivedPaths = await command(["tar", "-tzf", archive], repository);
-    expect(archivedPaths).not.toContain(".ast-bro");
+    expect(archivedPaths).not.toContain("node_modules");
     await command(["tar", "-xzf", archive, "-C", owned], repository);
     await Parser.init();
     for (const grammar of wasmGrammarAssets) {

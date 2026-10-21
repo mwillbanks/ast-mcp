@@ -301,13 +301,10 @@ describe("JVM WASM language adapters", () => {
     }
   });
 
-  test("matches the complete revision-pinned Graphify fact and range golden", async () => {
-    const golden = JSON.parse(await source("graphify-golden.json"));
+  test("matches the complete native fact and range golden", async () => {
+    const golden = JSON.parse(await source("native-golden.json"));
     expect(golden.provenance).toEqual({
-      project: "graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-      scope:
-        "JVM fixture parity: complete extracted fact, reference, diagnostic, and byte-range sets",
+      schemaVersion: "ast-mcp.native-goldens.v1",
     });
     for (const [languageId, file] of supported) {
       const facts = await jvmLanguageAdapter(languageId).analyze({
@@ -334,15 +331,9 @@ describe("JVM WASM language adapters", () => {
     }
   });
 
-  test("verifies Graphify source, command, and fixture checksums", async () => {
-    const provenance = JSON.parse(await source("graphify-provenance.json"));
-    expect(provenance.source).toEqual({
-      repository: "https://github.com/Graphify-Labs/graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    });
-    expect(provenance.reproduction.command).toContain(
-      provenance.source.revision,
-    );
+  test("verifies native fixture checksums", async () => {
+    const provenance = JSON.parse(await source("native-integrity.json"));
+    expect(provenance.schemaVersion).toBe("ast-mcp.native-integrity.v1");
     for (const [file, checksum] of Object.entries(provenance.checksums)) {
       const bytes = await Bun.file(join(root, file)).arrayBuffer();
       const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");

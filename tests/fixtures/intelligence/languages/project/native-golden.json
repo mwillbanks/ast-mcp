@@ -2388,8 +2388,8 @@
     }
   },
   "project": {
-    "name": "graphify",
-    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+    "name": "ast-mcp",
+    "schemaVersion": "ast-mcp.native-goldens.v1"
   },
   "provenance": {
     "fixtures": {
@@ -2409,12 +2409,7 @@
       "packages.config": "2bb405a486c8a636eb10018afe9a0652fefe626b6320e1ae1845fc38d8298860",
       "strings.resx": "4c15c4ba6a35f53c5ad624c54d71349ece75f3c78e499b031066d4decbcb3721"
     },
-    "source": {
-      "inventoryPath": "graphify/detect.py",
-      "inventorySha256": "f6d71107e2c5092f73f5c1ba1d21898a44b6f06ada6ab7161aaae0cdaa7beece",
-      "repository": "https://github.com/Graphify-Labs/graphify",
-      "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
-    }
+    "schemaVersion": "ast-mcp.native-goldens.v1"
   },
   "variants": {
     "app.fsproj": {

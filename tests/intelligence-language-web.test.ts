@@ -410,17 +410,16 @@ describe("web intelligence language adapters", () => {
     );
   });
 
-  test("matches complete facts and ranges from the pinned Graphify revision", async () => {
-    const golden = JSON.parse(await fixture("graphify-golden.json")) as {
+  test("matches complete facts and ranges from the native fixture set", async () => {
+    const golden = JSON.parse(await fixture("native-golden.json")) as {
       cases: Record<
         string,
         { facts: unknown; languageId: WebLanguageId; regions: unknown[] }
       >;
-      provenance: { revision: string; tool: string };
+      provenance: { schemaVersion: string };
     };
     expect(golden.provenance).toEqual({
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-      tool: "graphify",
+      schemaVersion: "ast-mcp.native-goldens.v1",
     });
     const range = (value: {
       range: {

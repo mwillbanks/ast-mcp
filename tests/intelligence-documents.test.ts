@@ -531,7 +531,7 @@ describe("document intelligence", () => {
     );
   });
 
-  test("matches complete revision-provenanced document goldens", async () => {
+  test("matches complete native document goldens", async () => {
     const golden = await Bun.file(join(root, "document-goldens.json")).json();
     expect(golden.provenance).toEqual(DOCUMENT_GOLDEN_PROVENANCE);
     expect(golden.capabilities).toEqual(documentCapabilities);
@@ -572,7 +572,6 @@ describe("document intelligence", () => {
     ] satisfies DocumentFormat[]);
     expect(documentCapabilityFingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(DOCUMENT_GOLDEN_PROVENANCE).toEqual({
-      graphifyRevision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
       schemaVersion: "ast-mcp.document-goldens.v1",
     });
     expect(

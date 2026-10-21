@@ -7,7 +7,7 @@ import {
 } from "../../../../../src/intelligence/languages/legacy/index.ts";
 
 const directory = new URL(".", import.meta.url);
-const goldenUrl = new URL("graphify-golden.json", directory);
+const goldenUrl = new URL("native-golden.json", directory);
 const golden = await Bun.file(goldenUrl).json();
 const fixtures: Record<LegacyLanguageId, string> = {
   "common-lisp": "common-lisp.lisp",
@@ -16,17 +16,8 @@ const fixtures: Record<LegacyLanguageId, string> = {
   pascal: "pascal.pas",
   "robot-framework": "robot.robot",
 };
-const upstreamUrl = `${golden.provenance.repository}/raw/${golden.provenance.revision}/${golden.provenance.source.path}`;
 
 try {
-  const upstreamResponse = await fetch(upstreamUrl);
-  assert.equal(upstreamResponse.ok, true, `Unable to fetch ${upstreamUrl}`);
-  const upstream = await upstreamResponse.arrayBuffer();
-  const upstreamChecksum = new Bun.CryptoHasher("sha256")
-    .update(upstream)
-    .digest("hex");
-  assert.equal(upstreamChecksum, golden.provenance.source.sha256);
-
   const languages: Record<string, unknown> = {};
   for (const id of Object.keys(fixtures) as LegacyLanguageId[]) {
     const source = await Bun.file(new URL(fixtures[id], directory)).text();

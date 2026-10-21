@@ -28,6 +28,5 @@ export interface LegacyLanguageGroupManifest {
   adapters: readonly LegacyLanguageAdapter[];
   groupId: "legacy";
   implementationFingerprint: string;
-  provenance: { graphifyRevision: string };
   schemaVersion: "ast-mcp.intelligence.v1";
 }

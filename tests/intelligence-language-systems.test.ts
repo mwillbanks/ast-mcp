@@ -448,11 +448,10 @@ describe("systems language WASM adapters", () => {
     );
   });
 
-  test("matches complete revision-pinned Graphify facts and exact ranges", async () => {
-    const golden = JSON.parse(await fixture("graphify-golden.json"));
+  test("matches complete native facts and exact ranges", async () => {
+    const golden = JSON.parse(await fixture("native-golden.json"));
     expect(golden.provenance).toEqual({
-      repository: "https://github.com/Graphify-Labs/graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+      schemaVersion: "ast-mcp.native-goldens.v1",
     });
     for (const [languageId, file] of cases) {
       const source = await fixture(file);
@@ -476,14 +475,9 @@ describe("systems language WASM adapters", () => {
     }
   });
 
-  test("verifies pinned provenance command and fixture checksums", async () => {
-    const provenance = JSON.parse(await fixture("graphify-provenance.json"));
-    expect(provenance.source.revision).toBe(
-      "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    );
-    expect(provenance.reproduction.command).toContain(
-      provenance.source.revision,
-    );
+  test("verifies native fixture checksums", async () => {
+    const provenance = JSON.parse(await fixture("native-integrity.json"));
+    expect(provenance.schemaVersion).toBe("ast-mcp.native-integrity.v1");
     for (const [file, expected] of Object.entries(provenance.checksums)) {
       const bytes = await Bun.file(join(root, file)).arrayBuffer();
       const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");

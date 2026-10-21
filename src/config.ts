@@ -74,7 +74,7 @@ type AstMcpFileConfig =
   | z.infer<typeof fileV2Schema>;
 
 export interface ResolvedConfig {
-  dependencies: { astBroBinary?: string; dprintBinary?: string };
+  dependencies: { dprintBinary?: string };
   files: {
     patch: {
       aiderMatchers: Array<
@@ -192,7 +192,7 @@ interface LoadedLayer {
 }
 
 interface InternalConfig {
-  dependencies?: { ast_bro_binary?: string; dprint_binary?: string };
+  dependencies?: { dprint_binary?: string };
   files?: {
     patch?: {
       aider_matchers?: Array<
@@ -671,7 +671,6 @@ const leaves = [
   "formatting.enabled",
   "formatting.fallback",
   "formatting.formatters",
-  "dependencies.ast_bro_binary",
   "dependencies.dprint_binary",
   "intelligence.federation.enabled",
   "intelligence.generation.enabled",
@@ -1165,7 +1164,6 @@ function resolvedConfiguration(args: {
   } = args;
   return {
     dependencies: {
-      astBroBinary: value.dependencies?.ast_bro_binary,
       dprintBinary: value.dependencies?.dprint_binary,
     },
     files: resolvedFiles(value),

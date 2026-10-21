@@ -3,8 +3,6 @@
 **/.next
 dist
 coverage
-graphify-out
-.ast-bro
 .fallow
 .grok
 .codex

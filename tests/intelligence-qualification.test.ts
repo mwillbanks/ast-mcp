@@ -59,7 +59,6 @@ test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        AST_MCP_RUN_GRAPHIFY: "0",
       },
       stderr: "pipe",
       stdout: "pipe",
@@ -101,7 +100,7 @@ test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
       stderr,
     }),
   ).toBe(0);
-  expect(result.schema).toBe("ast-mcp.intelligence-benchmark.v5");
+  expect(result.schema).toBe("ast-mcp.intelligence-benchmark.v6");
   expect(result.agentEfficiency.executedTasks).toBe(3);
   expect(result.agentEfficiency.measuredOutputCapBytes).toBe(2_000);
   expect(result.agentEfficiency.resultLimit).toBe(10);
@@ -135,15 +134,12 @@ test("benchmarks live tools, storage, cache reuse, and isolation", async () => {
   expect(result.agentEfficiency.medianWarmQueryMs).toBeGreaterThan(0);
   expect(result.agentEfficiency.medianColdReturnedBytes).toBeGreaterThan(0);
   expect(result.agentEfficiency.medianWarmReturnedBytes).toBeGreaterThan(0);
-  expect(result.comparison.graphify.status).toBe("unavailable");
-  expect(result.comparison.graphify.reason).toContain("not requested");
-  expect(result.comparison.corpus.tasks).toEqual([
+  expect(result.methodology.corpus.tasks).toEqual([
     "symbols",
     "main-callees",
     "wrapper-callees",
   ]);
-  expect(result.comparison.budgetUnits).toEqual({
-    graphifyQuery: "tokens",
+  expect(result.methodology.budgetUnits).toEqual({
     nativeOutputCap: "bytes",
     nativeResultLimit: "items",
   });

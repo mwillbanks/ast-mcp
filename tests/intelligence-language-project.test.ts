@@ -108,11 +108,11 @@ describe("project and resource format intelligence", () => {
     expect(Object.isFrozen(projectFormatEvidence.matrix.baseline)).toBe(true);
   });
 
-  test("matches the pinned Graphify format and range golden", async () => {
-    const golden = JSON.parse(await source("graphify-golden.json"));
+  test("matches the native format and range golden", async () => {
+    const golden = JSON.parse(await source("native-golden.json"));
     expect(golden.project).toEqual({
-      name: "graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+      name: "ast-mcp",
+      schemaVersion: "ast-mcp.native-goldens.v1",
     });
     const actual: Record<string, ReturnType<typeof normalize>> = {};
     for (const [format, file] of Object.entries(cases) as [
@@ -373,14 +373,10 @@ describe("project and resource format intelligence", () => {
     }
   });
 
-  test("records pinned Graphify provenance and golden integrity", async () => {
-    expect(projectFormatEvidence.graphify).toEqual({
-      inventoryPath: "graphify/detect.py",
-      inventorySha256:
-        "f6d71107e2c5092f73f5c1ba1d21898a44b6f06ada6ab7161aaae0cdaa7beece",
-      repository: "https://github.com/Graphify-Labs/graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    });
+  test("records native format coverage and golden integrity", async () => {
+    expect(projectFormatEvidence.reproduction.command).toContain(
+      "verify-golden.ts",
+    );
     expect(projectFormatEvidence.matrix.baseline).toEqual(
       expect.arrayContaining([
         ".sln",
@@ -393,8 +389,8 @@ describe("project and resource format intelligence", () => {
     );
     expect(
       createHash("sha256")
-        .update(await source("graphify-golden.json"))
+        .update(await source("native-golden.json"))
         .digest("hex"),
-    ).toBe("619818867b83dbf61470395ddeb52a5fc798f31a50d4bde27a7cf4e118b800ab");
+    ).toBe("5f9e8e67406c17e26c94f5707b2ab86c19278c80ef1037c4db271f537e330548");
   });
 });

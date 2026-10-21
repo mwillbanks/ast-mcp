@@ -2,7 +2,6 @@ import path from "node:path";
 
 type ConfigLayer = {
   dependencies?: {
-    ast_bro_binary?: string;
     dprint_binary?: string;
   };
   formatting?: {
@@ -40,11 +39,6 @@ function normalizeDependencies(
 ): ConfigLayer["dependencies"] {
   if (!dependencies) return undefined;
   return {
-    ...(dependencies.ast_bro_binary
-      ? {
-          ast_bro_binary: resolvedCommand(dependencies.ast_bro_binary, base),
-        }
-      : {}),
     ...(dependencies.dprint_binary
       ? { dprint_binary: resolvedCommand(dependencies.dprint_binary, base) }
       : {}),

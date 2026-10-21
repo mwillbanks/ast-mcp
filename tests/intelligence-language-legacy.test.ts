@@ -5,7 +5,6 @@ import {
   analyzeLegacyLanguage,
   closeLegacyLanguageWorker,
   drainLegacyLanguageWorker,
-  GRAPHIFY_LEGACY_BASELINE_REVISION,
   isLegacySyntaxFacts,
   isLegacyWorkerRequest,
   isLegacyWorkerResult,
@@ -30,7 +29,7 @@ const fixtureNames: Record<LegacyLanguageId, string> = {
 };
 const golden = await Bun.file(
   new URL(
-    "./fixtures/intelligence/languages/legacy/graphify-golden.json",
+    "./fixtures/intelligence/languages/legacy/native-golden.json",
     import.meta.url,
   ),
 ).json();
@@ -144,16 +143,8 @@ test("tree-sitter legacy ranges keep native UTF-16 offsets", async () => {
 });
 
 describe("legacy language adapters", () => {
-  test("matches pinned exact Graphify-parity records for all languages", async () => {
-    expect(golden.provenance.revision).toBe(GRAPHIFY_LEGACY_BASELINE_REVISION);
-    expect(golden.provenance.repository).toBe(
-      "https://github.com/Graphify-Labs/graphify",
-    );
-    expect(golden.provenance.source).toEqual({
-      path: "graphify/extract.py",
-      sha256:
-        "b74400146d86f48ad8023cb0732533990da1c62a4546a304c97939563281ee3b",
-    });
+  test("matches pinned exact native records for all languages", async () => {
+    expect(golden.schemaVersion).toBe("ast-mcp.native-goldens.v1");
     expect(golden.provenance.reproductionCommand).toBe(
       "bun run tests/fixtures/intelligence/languages/legacy/reproduce-golden.ts --check",
     );

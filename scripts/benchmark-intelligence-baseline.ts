@@ -57,7 +57,6 @@ type Answer = { calls: string[]; symbols: string[] };
 type Task = {
   expected: Answer;
   file: string;
-  graphifyTokenBudget: number;
   id: string;
   kind: "callees" | "symbols";
   measuredOutputCapBytes: number;
@@ -70,7 +69,6 @@ const TASKS: Task[] = [
   {
     expected: { calls: [], symbols: ["main", "wrapper"] },
     file: "entry.ts",
-    graphifyTokenBudget: 2_000,
     id: "symbols",
     kind: "symbols",
     measuredOutputCapBytes: 2_000,
@@ -81,7 +79,6 @@ const TASKS: Task[] = [
   {
     expected: { calls: ["main->publish"], symbols: [] },
     file: "entry.ts",
-    graphifyTokenBudget: 2_000,
     id: "main-callees",
     kind: "callees",
     measuredOutputCapBytes: 2_000,
@@ -96,7 +93,6 @@ const TASKS: Task[] = [
   {
     expected: { calls: ["wrapper->main"], symbols: [] },
     file: "entry.ts",
-    graphifyTokenBudget: 2_000,
     id: "wrapper-callees",
     kind: "callees",
     measuredOutputCapBytes: 2_000,
@@ -271,104 +267,6 @@ async function native(
   } finally {
     await client.close();
   }
-}
-function graphifyAnswer(task: Task, output: string): Answer {
-  if (task.kind === "symbols") {
-    const symbols = [
-      ...output.matchAll(/^NODE ([A-Za-z_$][\w$]*)\(\) \[src=([^ ]+)/gm),
-    ]
-      .filter((match) => match[2] === task.file)
-      .map((match) => match[1] as string);
-    return normalized({ calls: [], symbols });
-  }
-  const calls = [
-    ...output.matchAll(
-      /^EDGE ([A-Za-z_$][\w$]*)\(\) --calls [^\n]*--> ([A-Za-z_$][\w$]*)\(\)/gm,
-    ),
-  ]
-    .filter((match) => match[1] === task.target)
-    .map((match) => `${match[1]}->${match[2]}`);
-  return normalized({ calls, symbols: [] });
-}
-
-async function graphify(root: string, outputRoot: string) {
-  if (process.env.AST_MCP_RUN_GRAPHIFY !== "1")
-    return {
-      reason: "Graphify comparison was not requested",
-      status: "unavailable" as const,
-    };
-  const executable = Bun.which("graphify");
-  if (!executable)
-    return {
-      reason: "graphify executable was not found",
-      status: "unavailable" as const,
-    };
-  const version = await cli([executable, "--version"], root);
-  if (version.output.trim() !== "graphify 0.9.91")
-    return {
-      reason: `expected Graphify 0.9.91, received ${version.output.trim()}`,
-      status: "unavailable" as const,
-    };
-  const build = await cli(
-    [executable, root, "--code-only", "--no-cluster", "--out", outputRoot],
-    root,
-  );
-  const graph = path.join(outputRoot, "graphify-out", "graph.json");
-  const runPass = async () => {
-    const observations = [];
-    for (const task of TASKS) {
-      const result = await cli(
-        [
-          executable,
-          "query",
-          task.query,
-          "--budget",
-          String(task.graphifyTokenBudget),
-          "--graph",
-          graph,
-        ],
-        root,
-      );
-      const answer = graphifyAnswer(task, result.output);
-      observations.push({
-        answer,
-        durationMs: result.durationMs,
-        id: task.id,
-        operations: [
-          {
-            appliedTokenBudget: task.graphifyTokenBudget,
-            command: "graphify query",
-            returnedBytes: Buffer.byteLength(result.output),
-          },
-        ],
-        success: equalAnswer(answer, task.expected),
-      });
-    }
-    return observations;
-  };
-  const cold = await runPass();
-  const warm = await runPass();
-  return {
-    cold,
-    indexingDurationMs: build.durationMs,
-    medianColdQueryMs: median(cold.map((item) => item.durationMs)),
-    medianColdReturnedBytes: median(
-      cold.map((item) => item.operations[0]?.returnedBytes ?? 0),
-    ),
-    medianWarmQueryMs: median(warm.map((item) => item.durationMs)),
-    medianWarmReturnedBytes: median(
-      warm.map((item) => item.operations[0]?.returnedBytes ?? 0),
-    ),
-    setupOperations: [
-      {
-        command: "graphify index",
-        returnedBytes: Buffer.byteLength(build.output),
-      },
-    ],
-    success: [...cold, ...warm].every((item) => item.success),
-    version: version.output.trim(),
-    warm,
-  };
 }
 type CacheCounters = { hits: number; misses: number };
 
@@ -961,10 +859,7 @@ export async function benchmarkIntelligenceBaseline() {
     const root = path.join(owned, "corpus");
     await mkdir(path.join(root, ".git"), { recursive: true });
     await writeCorpus(root);
-    const [nativeResult, graphifyResult] = await Promise.all([
-      native(root, path.join(owned, "native-storage")),
-      graphify(root, path.join(owned, "graphify")),
-    ]);
+    const nativeResult = await native(root, path.join(owned, "native-storage"));
     const indexing = await productionIndexing(
       root,
       path.join(owned, "lancedb"),
@@ -1006,9 +901,8 @@ export async function benchmarkIntelligenceBaseline() {
           resultLimit: task.resultLimit,
         })),
       },
-      comparison: {
+      methodology: {
         budgetUnits: {
-          graphifyQuery: "tokens",
           nativeOutputCap: "bytes",
           nativeResultLimit: "items",
         },
@@ -1016,13 +910,8 @@ export async function benchmarkIntelligenceBaseline() {
           files: Object.keys(CORPUS),
           tasks: TASKS.map((task) => task.id),
         },
-        graphify: graphifyResult,
-        methodology: {
-          graphifyQueries:
-            "separate CLI process per query against one indexed graph",
-          nativeQueries: "persistent MCP session against one opened workspace",
-          queryPasses: "cold first pass, warm second pass for each task",
-        },
+        nativeQueries: "persistent MCP session against one opened workspace",
+        queryPasses: "cold first pass, warm second pass for each task",
       },
       indexing,
       isolation: await isolation(owned),
@@ -1035,7 +924,7 @@ export async function benchmarkIntelligenceBaseline() {
         platform: `${process.platform}-${process.arch}`,
         totalMemoryBytes: os.totalmem(),
       },
-      schema: "ast-mcp.intelligence-benchmark.v5",
+      schema: "ast-mcp.intelligence-benchmark.v6",
     };
   } finally {
     clearInterval(sampler);

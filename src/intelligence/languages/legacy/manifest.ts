@@ -15,9 +15,6 @@ import type {
   LegacyLanguageId,
 } from "./types.ts";
 
-export const GRAPHIFY_LEGACY_BASELINE_REVISION =
-  "3f82bf7f837a07fb0f7668fbdbd5662801906942";
-
 const extensions: Record<LegacyLanguageId, readonly string[]> = {
   "common-lisp": [".lisp", ".lsp", ".cl"],
   dreammaker: [".dm", ".dme"],
@@ -113,6 +110,5 @@ export const legacyLanguageGroupManifest: LegacyLanguageGroupManifest =
         ]),
       ),
     ),
-    provenance: { graphifyRevision: GRAPHIFY_LEGACY_BASELINE_REVISION },
     schemaVersion: INTELLIGENCE_SCHEMA_VERSION,
   });

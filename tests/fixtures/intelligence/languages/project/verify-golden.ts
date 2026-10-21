@@ -18,36 +18,10 @@ const casesMap = {
   "nuget-packages": "packages.config",
   xaml: "main.xaml",
 } as const;
-const golden = JSON.parse(
-  await readFile(`${root}/graphify-golden.json`, "utf8"),
-);
+const golden = JSON.parse(await readFile(`${root}/native-golden.json`, "utf8"));
 const provenance = golden.provenance as {
   fixtures: Record<string, string>;
-  source: {
-    inventoryPath: string;
-    inventorySha256: string;
-    repository: string;
-    revision: string;
-  };
 };
-assert.equal(
-  provenance.source.repository,
-  "https://github.com/Graphify-Labs/graphify",
-);
-assert.equal(provenance.source.inventoryPath, "graphify/detect.py");
-const upstreamUrl = `https://raw.githubusercontent.com/Graphify-Labs/graphify/${provenance.source.revision}/${provenance.source.inventoryPath}`;
-const upstream = await fetch(upstreamUrl);
-assert.equal(
-  upstream.ok,
-  true,
-  `Unable to read pinned Graphify source: ${upstream.status}`,
-);
-assert.equal(
-  new Bun.CryptoHasher("sha256")
-    .update(new Uint8Array(await upstream.arrayBuffer()))
-    .digest("hex"),
-  provenance.source.inventorySha256,
-);
 assert.equal(Object.keys(provenance.fixtures).length, 15);
 for (const [file, expected] of Object.entries(provenance.fixtures))
   assert.equal(

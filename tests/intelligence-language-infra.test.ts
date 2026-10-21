@@ -155,11 +155,11 @@ describe("infrastructure language adapters", () => {
     );
   });
 
-  test("matches the revision-pinned Graphify parity golden with UTF-8 byte ranges", async () => {
-    const golden = JSON.parse(await source("graphify-golden.json"));
+  test("matches the native parity golden with UTF-8 byte ranges", async () => {
+    const golden = JSON.parse(await source("native-golden.json"));
     expect(golden.project).toEqual({
-      name: "graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
+      name: "ast-mcp",
+      schemaVersion: "ast-mcp.native-goldens.v1",
     });
     const actual: Record<string, ReturnType<typeof normalize>> = {};
     for (const [languageId, fileName] of Object.entries(cases) as [
@@ -632,12 +632,9 @@ describe("infrastructure language adapters", () => {
     ).toThrow("Invalid grammar SHA-256");
   });
 
-  test("verifies Graphify and parser provenance checksums", async () => {
-    const provenance = JSON.parse(await source("graphify-provenance.json"));
-    expect(provenance.source).toEqual({
-      repository: "https://github.com/Graphify-Labs/graphify",
-      revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-    });
+  test("verifies native fixture and parser checksums", async () => {
+    const provenance = JSON.parse(await source("native-integrity.json"));
+    expect(provenance.schemaVersion).toBe("ast-mcp.native-integrity.v1");
     for (const [name, expected] of Object.entries(provenance.fixtures) as [
       string,
       string,

@@ -195,10 +195,7 @@
     }
   },
   "provenance": {
-    "fixtureSet": "WP06B dynamic-language syntax comparison",
-    "project": "graphify",
-    "recordFormat": "[semantic fields..., startByte, endByte]",
-    "revision": "3f82bf7f837a07fb0f7668fbdbd5662801906942"
+    "schemaVersion": "ast-mcp.native-goldens.v1"
   },
   "unsupported": {
     "callResolution": true,
