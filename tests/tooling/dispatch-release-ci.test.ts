@@ -30,6 +30,7 @@ function harness(pr = releasePr(), initial = formatted) {
   const contents: string[] = [];
   const commits: [string, string, string][] = [];
   const dispatches: [string, string][] = [];
+  const waits: number[] = [];
   let content = initial;
   const api: Api = {
     pullRequest: async (number) => {
@@ -54,8 +55,11 @@ function harness(pr = releasePr(), initial = formatted) {
   const run = (
     output = '[{"number":24}]',
     format = async (value: string) => value,
-  ) => dispatchReleaseCi(repository, output, api, format);
-  return { api, reads, contents, commits, dispatches, run, pr };
+  ) =>
+    dispatchReleaseCi(repository, output, api, format, async (milliseconds) => {
+      waits.push(milliseconds);
+    });
+  return { api, reads, contents, commits, dispatches, waits, run, pr };
 }
 describe("release PR normalization and dispatch", () => {
   test("checks unchanged canonical bytes and targets current heads once per PR", async () => {
@@ -91,6 +95,37 @@ describe("release PR normalization and dispatch", () => {
     ]);
     expect(await h.run()).toEqual([normalizedSha]);
     expect(h.commits).toHaveLength(1);
+  });
+  test("waits for the normalized head to become visible", async () => {
+    const h = harness(releasePr(), unformatted);
+    const read = h.api.pullRequest;
+    let staleReads = 2;
+    h.api.pullRequest = async (number) => {
+      const pr = await read(number);
+      if (h.commits.length > 0 && staleReads-- > 0) pr.head.sha = sha;
+      return pr;
+    };
+    expect(await h.run(undefined, async () => formatted)).toEqual([
+      normalizedSha,
+    ]);
+    expect(h.waits).toEqual([250, 250]);
+    expect(h.dispatches).toEqual([
+      ["release-please--branches--main", normalizedSha],
+    ]);
+  });
+  test("rejects a normalized head that never becomes visible", async () => {
+    const h = harness(releasePr(), unformatted);
+    const read = h.api.pullRequest;
+    h.api.pullRequest = async (number) => {
+      const pr = await read(number);
+      if (h.commits.length > 0) pr.head.sha = sha;
+      return pr;
+    };
+    await expect(h.run(undefined, async () => formatted)).rejects.toThrow(
+      "head changed",
+    );
+    expect(h.waits).toHaveLength(20);
+    expect(h.dispatches).toEqual([]);
   });
   test("handles empty output", async () => {
     const h = harness();

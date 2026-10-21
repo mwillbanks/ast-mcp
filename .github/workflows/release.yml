@@ -84,9 +84,9 @@ jobs:
           AST_MCP_QUALIFY_EMBEDDINGS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: bun run intelligence:qualify
       - name: Mandatory CLI MCP stdio handshake
-        run: bun test tests/integration/mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
+        run: bun test mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
       - name: Mandatory native MCP stdio initialize, tools, and workspace handshake
-        run: bun test tests/integration/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+        run: bun test mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
 
   publish:
     needs: [release, validate]
