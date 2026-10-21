@@ -9,32 +9,25 @@ import {
   selectOutputFormat,
   writeCliOutput,
   type CliOutputContext,
-} from "./cli/output";
-import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
-import { migrateConfigSource, writeMigratedConfig } from "./config/migrate";
+} from "../cli/output";
+import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
+import { migrateConfigSource, writeMigratedConfig } from "../config/migrate";
 import {
   codexTransport,
   installerTargetPaths,
   jsonTargetConfig,
   jsonTransport,
   parseInstallerArguments,
-} from "./helpers/installer";
-import { type InstallerLaunch, verifyMcpLaunch } from "./installer-health";
-import {
-  type HttpEndpoint,
-  httpEndpoint,
-  type McpTransport,
-  resolveInstallerEndpoint,
-  transports,
-} from "./installer-transport";
-import { isManagedHook } from "./managed-hook";
+} from "../helpers/installer";
+import { isManagedHook } from "../hooks/managed";
 import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
-} from "./runtime/dependencies";
-import { pathWithin } from "./runtime/path-utils";
-import { commandForPlatform } from "./runtime/subprocess";
+} from "../runtime/dependencies";
+import { pathWithin } from "../runtime/path-utils";
+import { commandForPlatform } from "../runtime/subprocess";
+import { type InstallerLaunch, verifyMcpLaunch } from "./health";
 import {
   createServicePlan,
   installService,
@@ -42,8 +35,18 @@ import {
   removeService,
   type ServiceCommandRunner,
 } from "./service";
+import {
+  type HttpEndpoint,
+  httpEndpoint,
+  type McpTransport,
+  resolveInstallerEndpoint,
+  transports,
+} from "./transport";
 
-const packageRoot = path.resolve(import.meta.dir, "..");
+const packageRoot = path.resolve(
+  import.meta.dir,
+  import.meta.path.endsWith(".ts") ? "../.." : "..",
+);
 const cliEntry = path.join(
   packageRoot,
   import.meta.path.endsWith(".ts") ? "bin/ast-mcp.ts" : "dist/ast-mcp.js",

@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { McpTransport } from "../installer-transport";
+import type { McpTransport } from "../installer/transport";
 
 const installerTargets = ["codex", "claude", "copilot"] as const;
 export type InstallerTarget = (typeof installerTargets)[number];

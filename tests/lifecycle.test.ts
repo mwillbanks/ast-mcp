@@ -1,8 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 
 import { globalTelemetryEnabled } from "../src/config";
-import { createProcessServer } from "../src/lifecycle";
 import { PROCESS_SIGNALS } from "../src/runtime/signals";
+import { createProcessServer } from "../src/server/lifecycle";
 
 for (const analyticsFails of [false, true]) {
   test(`process fatal forwards startup policy before cleanup when analytics fails=${analyticsFails}`, async () => {

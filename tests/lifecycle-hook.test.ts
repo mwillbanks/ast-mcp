@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { evaluateHook } from "../src/hook";
+import { evaluateHook } from "../src/hooks";
 
 test("hook routes common manual mutation without policing general commands", () => {
   for (const command of ["find src -delete", "printf '%s' x | xargs rm"])

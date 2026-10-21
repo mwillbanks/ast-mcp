@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 
-import { verifyMcpLaunch } from "../src/installer-health";
-import { httpEndpoint } from "../src/installer-transport";
-import { createServicePlan } from "../src/service";
+import { verifyMcpLaunch } from "../src/installer/health";
+import { createServicePlan } from "../src/installer/service";
+import { httpEndpoint } from "../src/installer/transport";
 import {
   checkInstall,
   smokeMcpStdio,

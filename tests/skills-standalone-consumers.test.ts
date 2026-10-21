@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import * as runtimeHooks from "../src/managed-hook";
+import * as runtimeHooks from "../src/hooks/managed";
 import * as runtimeBinaries from "../src/runtime/binary-resolution";
 import * as exportedBinaries from "../templates/skills/ast-mcp/scripts/binary-resolution";
 import * as exportedHooks from "../templates/skills/ast-mcp/scripts/managed-hook";

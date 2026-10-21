@@ -358,7 +358,11 @@ describe("telemetry isolation and lifecycle", () => {
       Array.from(
         { length: 25 },
         (_, n) =>
-          " at fn (" + path.resolve("src/server.ts") + ":" + (n + 1) + ":2)",
+          " at fn (" +
+          path.resolve("src/server/index.ts") +
+          ":" +
+          (n + 1) +
+          ":2)",
       ).join("\n");
     await expect(invoke(telemetry, policy(), unexpected)).rejects.toBe(
       unexpected,
@@ -540,7 +544,7 @@ describe("transmission allowlist", () => {
               { filename: "/private/a.ts", lineno: 1, colno: 2 },
               { filename: "ast-mcp/src/../private.ts", lineno: 1, colno: 2 },
               {
-                filename: "ast-mcp/src/server.ts",
+                filename: "ast-mcp/src/server/index.ts",
                 lineno: 2,
                 colno: 3,
                 context_line: "SECRET",
@@ -690,7 +694,7 @@ describe("transmission allowlist", () => {
     );
     error.stack =
       "TypeError: TOKEN\n at private (" +
-      path.resolve("src/server.ts") +
+      path.resolve("src/server/index.ts") +
       ":3:4)\n at private (/secret/source.ts:1:2)";
     await expect(invoke(telemetry, policy(), error)).rejects.toThrow();
     await telemetry.close();
@@ -745,7 +749,7 @@ describe("transmission allowlist", () => {
         stacktrace: {
           frames: [
             {
-              filename: "ast-mcp/src/server.ts",
+              filename: "ast-mcp/src/server/index.ts",
               function: "<anonymous>",
               platform: "node:javascript",
               lineno: 3,

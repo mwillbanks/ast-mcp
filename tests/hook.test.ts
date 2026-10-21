@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
-import { decisionPayload, evaluateHook, runHook } from "../src/hook";
+import { decisionPayload, evaluateHook, runHook } from "../src/hooks";
 
 describe("agent hook", () => {
   test("blocks direct edit tools", () => {
@@ -93,7 +93,7 @@ describe("agent hook", () => {
     expect(
       evaluateHook({
         tool_input:
-          'const result = await tools.mcp__ast_mcp__file_hash({ filePaths: ["src/hook.ts"] }); text(result);',
+          'const result = await tools.mcp__ast_mcp__file_hash({ filePaths: ["src/hooks/index.ts"] }); text(result);',
         tool_name: "exec",
       }).denied,
     ).toBeFalse();

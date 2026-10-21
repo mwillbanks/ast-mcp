@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { type InstallOptions, install, update } from "../src/installer";
+import { createServicePlan, serviceIdentity } from "../src/installer/service";
 import {
   httpEndpoint,
   updateHttpToml,
   validateHttpHost,
   validateHttpPort,
-} from "../src/installer-transport";
-import { createServicePlan, serviceIdentity } from "../src/service";
+} from "../src/installer/transport";
 
 const created: string[] = [];
 afterEach(async () => {

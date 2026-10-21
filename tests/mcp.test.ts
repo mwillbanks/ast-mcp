@@ -173,7 +173,7 @@ test("calls native code intelligence through the server", async () => {
   });
   await writeFile(
     path.join(root, "src/server.ts"),
-    await readFile(path.resolve(import.meta.dir, "../src/server.ts")),
+    await readFile(path.resolve(import.meta.dir, "../src/server/index.ts")),
   );
   await cp(
     path.resolve(import.meta.dir, "fixtures/intelligence/scan"),

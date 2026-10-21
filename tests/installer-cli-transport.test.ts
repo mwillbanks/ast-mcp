@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { manualHttpLaunchCommand, runInstallerCli } from "../src/installer";
-import { httpEndpoint } from "../src/installer-transport";
+import { httpEndpoint } from "../src/installer/transport";
 
 test("manual Windows HTTP launch keeps the project root and quotes the native alias", () => {
   const root = String.raw`C:\Projects\project & tools`;

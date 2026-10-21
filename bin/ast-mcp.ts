@@ -12,7 +12,7 @@ try {
       await runSkillsCli(args);
     },
     hook: async () => {
-      const { runHook } = await import("../src/hook");
+      const { runHook } = await import("../src/hooks");
       return runHook();
     },
     installer: async (args) => {

@@ -26,10 +26,10 @@ const PACKAGE_FILES = new Set(
   typeof AST_MCP_SOURCE_FILES !== "undefined"
     ? AST_MCP_SOURCE_FILES
     : [
-        "src/server.ts",
+        "src/server/index.ts",
         "src/config/index.ts",
-        "src/http.ts",
-        "src/stdio.ts",
+        "src/http/index.ts",
+        "src/server/stdio.ts",
         "src/tools/configured.ts",
         "src/runtime/paths.ts",
         "src/runtime/format.ts",

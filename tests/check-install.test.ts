@@ -13,13 +13,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { install, update } from "../src/installer";
-import { httpEndpoint } from "../src/installer-transport";
+import { createServicePlan } from "../src/installer/service";
+import { httpEndpoint } from "../src/installer/transport";
 import {
   commandForPlatform,
   executableNames,
   resolveLocalBinaryAlias,
 } from "../src/runtime/binary-resolution";
-import { createServicePlan } from "../src/service";
 import {
   checkInstall,
   mcpStdioCommand,

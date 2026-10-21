@@ -13,7 +13,9 @@ export const SKILL_URI = "skill://ast-mcp/SKILL.md";
 export const SKILL_EXTENSION = "io.modelcontextprotocol/skills";
 export const bundledSkillRoot = path.resolve(
   import.meta.dir,
-  "../templates/skills/ast-mcp",
+  import.meta.path.endsWith(".ts")
+    ? "../../templates/skills/ast-mcp"
+    : "../templates/skills/ast-mcp",
 );
 const cache = {
   resultType: "complete" as const,

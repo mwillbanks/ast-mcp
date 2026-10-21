@@ -43,7 +43,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 3,
-      "prompt": "Inspect the declarations and implementation of createServer in src/server.ts through file_read AST mode.",
+      "prompt": "Inspect the declarations and implementation of createServer in src/server/index.ts through file_read AST mode.",
       "required_tools": ["file_read"],
       "surface": "file_read",
       "variant": "ast-mode"
@@ -251,7 +251,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 16,
-      "prompt": "Show the implementation of handleRequest in src/server.ts.",
+      "prompt": "Show the implementation of createServer in src/server/index.ts.",
       "required_tools": ["show"],
       "surface": "show",
       "variant": "primary"
@@ -395,7 +395,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 25,
-      "prompt": "List the transitive imports of src/server.ts.",
+      "prompt": "List the transitive imports of src/server/index.ts.",
       "required_tools": ["deps"],
       "surface": "deps",
       "variant": "primary"
@@ -427,7 +427,7 @@
       "files": [],
       "forbidden_tools": ["deps"],
       "id": 27,
-      "prompt": "List the files that import src/server.ts.",
+      "prompt": "List the files that import src/server/index.ts.",
       "required_tools": ["reverse_deps"],
       "surface": "deps",
       "variant": "near-miss"
@@ -635,7 +635,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 40,
-      "prompt": "Find chunks related to src/server.ts line 42.",
+      "prompt": "Find chunks related to src/server/index.ts line 42.",
       "required_tools": ["find_related"],
       "surface": "find_related",
       "variant": "primary"
@@ -1363,7 +1363,7 @@
       "files": [],
       "forbidden_tools": ["document_query"],
       "id": 179,
-      "prompt": "Show the createServer implementation in src/server.ts.",
+      "prompt": "Show the createServer implementation in src/server/index.ts.",
       "required_tools": ["show"],
       "surface": "document_query",
       "variant": "ast-near-miss"
@@ -1379,7 +1379,7 @@
       "files": [],
       "forbidden_tools": ["file_read"],
       "id": 183,
-      "prompt": "Return the SHA-256 for src/server.ts without reading its contents.",
+      "prompt": "Return the SHA-256 for src/server/index.ts without reading its contents.",
       "required_tools": ["file_hash"],
       "surface": "file_read",
       "variant": "hash-only-near-miss"

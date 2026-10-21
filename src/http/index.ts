@@ -5,14 +5,14 @@ import {
 } from "@modelcontextprotocol/server";
 import { serve } from "bun";
 
-import { type ResolvedConfig, resolveConfig } from "./config";
-import { WorkspaceRegistry } from "./intelligence/workspace/index.ts";
+import { type ResolvedConfig, resolveConfig } from "../config";
+import { WorkspaceRegistry } from "../intelligence/workspace/index.ts";
+import { clearSessionApprovals } from "../runtime/approval";
 import {
   createServer,
   installProcessFailureHandlers,
   installProcessSignalHandlers,
-} from "./lifecycle";
-import { clearSessionApprovals } from "./runtime/approval";
+} from "../server/lifecycle";
 
 const configuration = resolveConfig;
 

@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
-import { evaluateHook } from "../src/hook";
-import { BatchingStdioServerTransport } from "../src/stdio";
+import { evaluateHook } from "../src/hooks";
+import { BatchingStdioServerTransport } from "../src/server/stdio";
 import { spawnHttpMcpProcess, spawnLiveProcess } from "./support/live-process";
 
 test("hook routes common nested shell and interpreter wrappers", () => {
@@ -580,7 +580,7 @@ test("live hook denies env wrapper commands", async () => {
     "version = 2\n[safety.hook]\nenabled = true\n",
   );
   const child = Bun.spawn(
-    ["bun", "run", path.join(process.cwd(), "src/hook.ts")],
+    ["bun", "run", path.join(process.cwd(), "src/hooks/index.ts")],
     {
       cwd: root,
       env: {

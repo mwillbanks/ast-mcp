@@ -107,7 +107,7 @@ for (const transportKind of ["stdio", "http"] as const) {
         client.callTool({
           name: "impact",
           arguments: {
-            file: path.join(repository, "src/installer.ts"),
+            file: path.join(repository, "src/installer/index.ts"),
             symbols: ["reconcile"],
             mode: "all",
             limit: 10,

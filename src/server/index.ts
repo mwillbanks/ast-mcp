@@ -3,13 +3,13 @@ import {
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/server";
 
-import packageJson from "../package.json" with { type: "json" };
-import type { IntelligenceRuntimeOptions } from "./intelligence/lifecycle/service.ts";
-import { Telemetry, type TelemetryOptions } from "./runtime/telemetry";
-import { registerSkills } from "./skills";
-import tools from "./tools";
-import type { ExecutionOptions } from "./tools/configured";
-import { createIntelligenceToolService } from "./tools/intelligence.ts";
+import packageJson from "../../package.json" with { type: "json" };
+import type { IntelligenceRuntimeOptions } from "../intelligence/lifecycle/service.ts";
+import { Telemetry, type TelemetryOptions } from "../runtime/telemetry";
+import { registerSkills } from "../skills";
+import tools from "../tools";
+import type { ExecutionOptions } from "../tools/configured";
+import { createIntelligenceToolService } from "../tools/intelligence.ts";
 
 export function createServer(
   intelligenceOptions: IntelligenceRuntimeOptions = {},

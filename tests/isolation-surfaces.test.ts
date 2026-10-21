@@ -12,10 +12,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { exportSkills } from "../src/cli/skills";
-import { evaluateHook } from "../src/hook";
+import { evaluateHook } from "../src/hooks";
 import { install, update } from "../src/installer";
-import { httpEndpoint } from "../src/installer-transport";
-import { createServicePlan } from "../src/service";
+import { createServicePlan } from "../src/installer/service";
+import { httpEndpoint } from "../src/installer/transport";
 
 const shell = (command: string) =>
   evaluateHook({ tool_input: { command }, tool_name: "bash" }).denied;

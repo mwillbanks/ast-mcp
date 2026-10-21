@@ -1,14 +1,14 @@
-import { currentConfig } from "./config";
+import { currentConfig } from "../config";
 import {
   eventCommand,
   type HookPolicy,
   policyMatches,
   toolIdentity,
-} from "./helpers/hook";
+} from "../helpers/hook";
 import {
   compactCallSyntax as compactCallSyntaxHelper,
   containsToolInvocation,
-} from "./helpers/string";
+} from "../helpers/string";
 import { embeddedShellMutates, shellMutates } from "./shell-policy";
 
 const directTools = new Set([

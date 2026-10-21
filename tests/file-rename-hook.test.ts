@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { evaluateHook } from "../src/hook";
+import { evaluateHook } from "../src/hooks";
 
 test("hook blocks direct rename tools and nested rename calls", () => {
   for (const toolName of [

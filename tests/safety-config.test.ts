@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { clearConfigCache, resolveConfig, withConfig } from "../src/config";
-import { evaluateHook, runHook } from "../src/hook";
+import { evaluateHook, runHook } from "../src/hooks";
 import { patchFiles, writeFileSafely } from "../src/patch/engine";
 import { deleteFilesSafely } from "../src/runtime/file-delete";
 import { renameFilesSafely } from "../src/runtime/file-rename";

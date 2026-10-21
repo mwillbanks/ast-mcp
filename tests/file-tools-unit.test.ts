@@ -187,18 +187,21 @@ test("file tool handlers execute keyed batches without transport indirection", a
     const writeFailure = await (registered.get("file_write") as RegisteredTool)(
       {
         files: {
-          [path.join(process.cwd(), "src/server.ts")]: { content: "x" },
+          [path.join(process.cwd(), "src/server/index.ts")]: { content: "x" },
         },
       },
     );
     expect(writeFailure.isError).toBeTrue();
 
     const astRead = await (registered.get("file_read") as RegisteredTool)({
-      files: [{ filePath: path.join(process.cwd(), "src/server.ts") }],
+      files: [{ filePath: path.join(process.cwd(), "src/server/index.ts") }],
     });
     const textRead = await (registered.get("file_read") as RegisteredTool)({
       files: [
-        { filePath: path.join(process.cwd(), "src/server.ts"), mode: "text" },
+        {
+          filePath: path.join(process.cwd(), "src/server/index.ts"),
+          mode: "text",
+        },
       ],
     });
     expect(astRead.isError).not.toBeTrue();

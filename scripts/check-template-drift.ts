@@ -30,7 +30,7 @@ mappings.push(
   },
   {
     destination: path.join(local, "references/hook.ts"),
-    source: path.join(root, "src/hook.ts"),
+    source: path.join(root, "src/hooks/index.ts"),
   },
 );
 
@@ -39,12 +39,12 @@ const shared = [
     "src/runtime/binary-resolution.ts",
     "templates/skills/ast-mcp/scripts/binary-resolution.ts",
   ],
-  ["src/managed-hook.ts", "templates/skills/ast-mcp/scripts/managed-hook.ts"],
+  ["src/hooks/managed.ts", "templates/skills/ast-mcp/scripts/managed-hook.ts"],
   [
     "templates/AGENTS.md",
     "templates/skills/ast-mcp/references/agents-guidance.md",
   ],
-  ["src/hook.ts", "templates/skills/ast-mcp/references/hook-source.txt"],
+  ["src/hooks/index.ts", "templates/skills/ast-mcp/references/hook-source.txt"],
 ].map(([source, destination]) => ({
   source: path.join(root, source!),
   destination: path.join(root, destination!),

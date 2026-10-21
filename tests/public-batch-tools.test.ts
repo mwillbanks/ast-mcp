@@ -82,13 +82,15 @@ test("public file tools execute declared read, hash, write, and patch batches", 
 
     const astRead = await client.callTool({
       arguments: {
-        files: [{ filePath: path.join(root, "src/server.ts") }],
+        files: [{ filePath: path.join(root, "src/server/index.ts") }],
       },
       name: "file_read",
     });
     const textRead = await client.callTool({
       arguments: {
-        files: [{ filePath: path.join(root, "src/server.ts"), mode: "text" }],
+        files: [
+          { filePath: path.join(root, "src/server/index.ts"), mode: "text" },
+        ],
       },
       name: "file_read",
     });

@@ -3,13 +3,13 @@ import { PassThrough, Writable } from "node:stream";
 
 import { McpServer } from "@modelcontextprotocol/server";
 
-import { createProcessServer } from "../src/lifecycle";
 import {
   installProcessFailureHandlers,
   type FailureHost,
 } from "../src/runtime/signals";
 import { createServer } from "../src/server";
-import { BatchingStdioServerTransport } from "../src/stdio";
+import { createProcessServer } from "../src/server/lifecycle";
+import { BatchingStdioServerTransport } from "../src/server/stdio";
 
 function failureHost() {
   const listeners = new Map<string, (error: unknown) => void>();

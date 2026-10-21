@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { embeddedShellMutates, shellMutates } from "../src/shell-policy";
+import { embeddedShellMutates, shellMutates } from "../src/hooks/shell-policy";
 
 const skillPolicyPath = "../templates/skills/ast-mcp/evals/" + "shell-policy";
 const {

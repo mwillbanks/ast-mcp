@@ -1,3 +1,1 @@
-import { startHttpServer } from "./http";
-
-await startHttpServer();
+import "./http/entry";

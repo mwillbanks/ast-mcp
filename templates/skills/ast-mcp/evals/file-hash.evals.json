@@ -10,7 +10,7 @@
     "files": [],
     "forbidden_tools": ["file_read"],
     "id": 71,
-    "prompt": "Get a fresh whole-file SHA-256 for src/server.ts immediately before a guarded patch without reading its source content.",
+    "prompt": "Get a fresh whole-file SHA-256 for src/server/index.ts immediately before a guarded patch without reading its source content.",
     "required_tools": ["file_hash"],
     "surface": "file_hash",
     "variant": "fresh-patch-hash"
@@ -42,7 +42,7 @@
     "files": [],
     "forbidden_tools": ["file_hash", "file_read"],
     "id": 73,
-    "prompt": "Show the implementation body of createServer in src/server.ts.",
+    "prompt": "Show the implementation body of createServer in src/server/index.ts.",
     "required_tools": ["show"],
     "surface": "file_hash",
     "variant": "content-near-miss"

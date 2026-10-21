@@ -2,7 +2,7 @@ import {
   transports,
   validateHttpHost,
   validateHttpPort,
-} from "../installer-transport";
+} from "../installer/transport";
 
 export interface McpCliRuntime {
   http?(options: { host?: string; port?: number }): Promise<{ url: URL }>;

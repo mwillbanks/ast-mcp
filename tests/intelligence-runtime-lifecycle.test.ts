@@ -9,7 +9,7 @@ import {
   EmbeddingModelConfigSchema,
   type EmbeddingProvider,
 } from "../src/intelligence/retrieval/index.ts";
-import { createServer } from "../src/server.ts";
+import { createServer } from "../src/server/index.ts";
 
 function resolvedConfig(modelId: string): ResolvedConfig {
   const embedding = EmbeddingModelConfigSchema.parse({

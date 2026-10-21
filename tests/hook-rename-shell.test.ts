@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { evaluateHook } from "../src/hook";
+import { evaluateHook } from "../src/hooks";
 
 test("hook routes manual renames but leaves Git to the host", () => {
   for (const command of [

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { shellMutates } from "../src/shell-policy";
+import { shellMutates } from "../src/hooks/shell-policy";
 const templatePath = "../templates/skills/ast-mcp/evals/" + "shell-policy";
 const { shellMutates: templateShellMutates } = await import(templatePath);
 

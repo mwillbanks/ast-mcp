@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import path from "node:path";
 
-import { verifyMcpLaunch } from "../src/installer-health";
+import { verifyMcpLaunch } from "../src/installer/health";
 
 function cleanupFixture(cleanup: string) {
   return `import { createInterface } from "node:readline";

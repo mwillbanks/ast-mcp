@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 import { createServer as createHttpServer } from "node:http";
 
 import { runMcpCli } from "../src/cli/mcp";
-import { updateHttpToml, validateHttpHost } from "../src/installer-transport";
 import {
   createServicePlan,
   runServiceCommand,
   waitForService,
-} from "../src/service";
+} from "../src/installer/service";
+import { updateHttpToml, validateHttpHost } from "../src/installer/transport";
 
 async function listeningServer() {
   const server = createHttpServer((_request, response) => {
