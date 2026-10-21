@@ -89,8 +89,9 @@ export async function runSkillsCli(
     args[1].startsWith("-")
   )
     throw new SkillsUsageError("Use ast-mcp skills export <destination>");
-  const config = await resolveConfig();
-  const format = selectOutputFormat(config, parsed.output, context.isTTY);
+  const format =
+    parsed.output ??
+    selectOutputFormat(await resolveConfig(), undefined, context.isTTY);
   const result = await exportSkills(args[1]);
   writeCliOutput(
     { operation: "export", ...result },

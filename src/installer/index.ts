@@ -1121,12 +1121,13 @@ export async function runInstallerCli(
     throw new Error(
       "Windows manual HTTP launch project path cannot contain CMD expansion characters or quotes",
     );
-  const outputConfig = await resolveConfig({ cwd: root });
-  const outputFormat = selectOutputFormat(
-    outputConfig,
-    parsed.output,
-    context.isTTY,
-  );
+  const outputFormat =
+    parsed.output ??
+    selectOutputFormat(
+      await resolveConfig({ cwd: root }),
+      undefined,
+      context.isTTY,
+    );
   const operationHandlers = { install, uninstall, update };
   const changed = await operationHandlers[operation](options);
   const effectiveTransport =

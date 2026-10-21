@@ -1,5 +1,12 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -134,6 +141,44 @@ test("installer output honors flags and rejects invalid output before host write
   );
   expect(chunks.join("")).toContain("Installation uninstall");
 });
+
+for (const [name, config, flags] of [
+  ["malformed TOML", "version = [", ["--output", "json"]],
+  [
+    "missing formatter configuration",
+    'version = 2\n[formatting]\nenabled = true\nfallback = "dprint"\ndprint_config = "./missing-dprint.json"\n',
+    ["--output=json"],
+  ],
+] as const) {
+  test(`explicit output permits uninstall with ${name}`, async () => {
+    const root = await temporary("ast-mcp-uninstall-recovery-");
+    const hostPath = path.join(root, ".codex/config.toml");
+    const hostConfig =
+      'model = "preserved-model"\n# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = "bun"\nargs = ["ast-mcp", "mcp"]\n# ast-mcp:end\n';
+    await mkdir(path.join(root, ".git"));
+    await mkdir(path.dirname(hostPath));
+    await writeFile(hostPath, hostConfig);
+    await writeFile(path.join(root, "ast-mcp.toml"), config);
+    const args = ["uninstall", "--root", root, "--target", "codex"];
+    const output: string[] = [];
+    const context = { write: (text: string) => output.push(text) };
+
+    await expect(runInstallerCli(args, context)).rejects.toThrow();
+    expect(await readFile(hostPath, "utf8")).toBe(hostConfig);
+    expect(output).toEqual([]);
+
+    await runInstallerCli([...args, ...flags], context);
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      operation: "uninstall",
+    });
+    expect(Bun.TOML.parse(await readFile(hostPath, "utf8"))).toEqual({
+      model: "preserved-model",
+    });
+    expect(await readFile(path.join(root, "ast-mcp.toml"), "utf8")).toBe(
+      config,
+    );
+  });
+}
 
 test("rejects invalid installer transport and service combinations before host writes", async () => {
   const root = await temporary("ast-mcp-installer-cli-invalid-");

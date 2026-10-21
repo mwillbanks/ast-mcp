@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -277,6 +277,47 @@ test("manual export preserves customized, unknown and symlink files", async () =
   await symlink(destination, path.join(unsafe, "references"));
   await expect(exportSkills(unsafe)).rejects.toThrow("symbolic links");
 });
+
+for (const [name, config, flags] of [
+  ["malformed TOML", "version = [", ["--output=json"]],
+  [
+    "missing formatter configuration",
+    'version = 2\n[formatting]\nenabled = true\nfallback = "dprint"\ndprint_config = "./missing-dprint.json"\n',
+    ["--output", "json"],
+  ],
+] as const) {
+  test(`explicit output permits skills export with ${name}`, async () => {
+    const root = await temporary();
+    const destination = path.join(root, "export");
+    await mkdir(path.join(root, ".git"));
+    await writeFile(path.join(root, "ast-mcp.toml"), config);
+    const cwd = spyOn(process, "cwd").mockReturnValue(root);
+    const output: string[] = [];
+    const context = { write: (text: string) => output.push(text) };
+    try {
+      await expect(
+        runSkillsCli(["export", destination], context),
+      ).rejects.toThrow();
+      expect(
+        await Bun.file(path.join(destination, "SKILL.md")).exists(),
+      ).toBeFalse();
+      expect(output).toEqual([]);
+
+      await runSkillsCli(["export", destination, ...flags], context);
+      expect(JSON.parse(output.join(""))).toMatchObject({
+        operation: "export",
+        destination,
+        written: expect.arrayContaining(["SKILL.md"]),
+        preserved: [],
+      });
+      expect(await readFile(path.join(root, "ast-mcp.toml"), "utf8")).toBe(
+        config,
+      );
+    } finally {
+      cwd.mockRestore();
+    }
+  });
+}
 
 test("skills CLI validates usage", async () => {
   const usage = new SkillsUsageError("Invalid export destination");
