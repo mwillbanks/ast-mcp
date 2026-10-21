@@ -92,12 +92,35 @@ enabled = false
     expect(source).not.toContain("dprint_config");
     expect(source).toContain("# preserve this formatter policy");
     expect(source).toContain('fallback = "preserve"');
+    const invalid = await client.callTool({
+      arguments: { cli: { output: { interactive: "xml" } } },
+      name: "config_core",
+    });
+    expect(invalid.isError).toBeTrue();
+    expect(await Bun.file(file).text()).toBe(source);
+    const output = await client.callTool({
+      arguments: {
+        cli: { output: { interactive: "yaml", non_interactive: "toml" } },
+      },
+      name: "config_core",
+    });
+    expect(output.isError).not.toBeTrue();
+    expect(output.structuredContent).toMatchObject({
+      ok: true,
+      data: { changed: ["cli.output"] },
+    });
+    expect(Bun.TOML.parse(await Bun.file(file).text())).toMatchObject({
+      cli: { output: { interactive: "yaml", non_interactive: "toml" } },
+    });
     const status = await client.callTool({
       arguments: {},
       name: "config_status",
     });
     expect(status.structuredContent).toMatchObject({
-      data: { healthy: true },
+      data: {
+        healthy: true,
+        cli: { output: { interactive: "yaml", nonInteractive: "toml" } },
+      },
       ok: true,
     });
   } finally {

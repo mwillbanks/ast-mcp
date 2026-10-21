@@ -1,5 +1,12 @@
 import { test as bunTest, expect } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -21,6 +28,7 @@ import {
 async function command(args: string[], cwd: string): Promise<string> {
   const child = Bun.spawn(args, {
     cwd,
+    env: { ...process.env },
     stderr: "pipe",
     stdout: "pipe",
     timeout: 90_000,
@@ -299,6 +307,61 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
     const executable = path.join(installedPackage, "dist", "ast-mcp.js");
+    const canonicalFixture = await realpath(fixture);
+    const jsonOutput = JSON.parse(
+      await command(
+        [process.execPath, executable, "config", "validate"],
+        fixture,
+      ),
+    );
+    expect(jsonOutput).toMatchObject({
+      valid: true,
+      projectRoot: canonicalFixture,
+    });
+    for (const format of ["human", "json", "yaml", "toml"] as const) {
+      const output = await command(
+        [
+          process.execPath,
+          executable,
+          "--output",
+          format,
+          "config",
+          "validate",
+        ],
+        fixture,
+      );
+      if (format === "human")
+        expect(output).toContain("Configuration validation");
+      else {
+        const parsed =
+          format === "json"
+            ? JSON.parse(output)
+            : format === "yaml"
+              ? Bun.YAML.parse(output)
+              : Bun.TOML.parse(output);
+        expect(parsed).toMatchObject({
+          valid: true,
+          projectRoot: canonicalFixture,
+        });
+      }
+    }
+    const exported = JSON.parse(
+      await command(
+        [
+          process.execPath,
+          executable,
+          "skills",
+          "export",
+          path.join(owned, "exported-skills"),
+        ],
+        fixture,
+      ),
+    );
+    expect(exported).toMatchObject({
+      operation: "export",
+      preserved: [],
+      written: expect.arrayContaining(["SKILL.md"]),
+    });
     await exerciseSkillsStdio(executable, fixture);
     const stdio = new Client({ name: "package-stdio-smoke", version: "1" });
     const stdioTransport = new StdioClientTransport({

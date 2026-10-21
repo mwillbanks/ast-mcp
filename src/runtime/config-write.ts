@@ -12,6 +12,7 @@ import {
   writeConfigSource,
 } from "../config-edit";
 import { configRegistry } from "../config-registry";
+import type { CliOutputFormat } from "../config-schema-common";
 import { grantUnrestrictedFilesystem } from "./approval";
 import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
@@ -19,6 +20,12 @@ import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
 export type ConfigTarget = "global" | "project";
 
 export interface ConfigCorePatch {
+  cli?: {
+    output?: {
+      interactive?: CliOutputFormat;
+      non_interactive?: CliOutputFormat;
+    };
+  };
   dependencies?: {
     dprint_binary?: string;
   };
@@ -212,6 +219,7 @@ function removeFormatterTables(source: string): string {
 
 function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   let next = source;
+  next = applyObjectKeys(next, "cli.output", patch.cli?.output);
   next = applyObjectKeys(next, "workspace", patch.workspace);
   next = applyObjectKeys(next, "telemetry", patch.telemetry);
   next = applyObjectKeys(next, "safety", {
@@ -339,6 +347,7 @@ async function commitConfigEdit(
 
 function coreSectionChanges(patch: ConfigCorePatch): string[] {
   return [
+    patch.cli ? "cli.output" : undefined,
     patch.workspace ? "workspace" : undefined,
     patch.telemetry ? "telemetry" : undefined,
     patch.safety ? "safety" : undefined,

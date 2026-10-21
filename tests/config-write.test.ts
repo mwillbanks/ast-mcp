@@ -94,6 +94,30 @@ afterEach(async () => {
   );
 });
 
+test("config_core edits CLI output defaults while preserving other fields", async () => {
+  const root = await project("ast-mcp-config-write-cli-");
+  const file = path.join(root, "ast-mcp.toml");
+  await writeFile(
+    file,
+    v2Source(
+      '\n[cli.output]\ninteractive = "human"\nnon_interactive = "json"\n',
+    ),
+  );
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
+    const result = await approveNext(() =>
+      applyConfigCore({ cli: { output: { interactive: "yaml" } } }),
+    );
+    expect(result).toMatchObject({ changed: ["cli.output"], healthy: true });
+  });
+  const config = await resolveConfig(options);
+  expect(config.cli.output).toEqual({
+    interactive: "yaml",
+    nonInteractive: "json",
+  });
+  expect(await readFile(file, "utf8")).toContain("# keep this comment");
+});
+
 test("defaults enable MCP configuration tools with approval required", async () => {
   const root = await project("ast-mcp-config-write-default-");
   await writeFile(path.join(root, "ast-mcp.toml"), "version = 2\n");

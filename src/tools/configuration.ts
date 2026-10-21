@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { currentConfig, type ResolvedConfig } from "../config";
 import { configRegistry } from "../config-registry";
+import { cliSchema } from "../config-schema-common";
 import { formatterV2Schema } from "../config-v2-schema";
 import {
   toolFailure,
@@ -307,6 +308,7 @@ function statusPayload(
       });
   return {
     ...base,
+    cli: config.cli,
     diagnostics,
     formatting: formattingStatus(config),
     mcp: config.mcp.configuration,
@@ -532,9 +534,10 @@ export default function registerConfigurationTools(
         readOnlyHint: false,
       },
       description:
-        "Updates grouped core ast-mcp.toml sections (workspace, safety, files, formatting, intelligence, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
+        "Updates grouped core ast-mcp.toml sections (cli.output, workspace, safety, files, formatting, intelligence, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
       inputSchema: z
         .object({
+          cli: cliSchema.optional(),
           dependencies: z
             .object({
               dprint_binary: z.string().min(1).optional(),

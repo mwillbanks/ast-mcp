@@ -49,6 +49,37 @@ test("validates and shows resolved configuration as stable JSON", async () => {
   expect(JSON.parse(written.join(""))).toMatchObject({ valid: true });
 });
 
+test("renders TTY and configured output formats with flag precedence", async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-config-cli-formats-"));
+  await mkdir(path.join(root, ".git"));
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    'version = 2\n[cli.output]\ninteractive = "human"\nnon_interactive = "yaml"\n',
+  );
+  const run = async (args: string[], isTTY: boolean) => {
+    const chunks: string[] = [];
+    await runConfigCli([...args, "--root", root], (text) => chunks.push(text), {
+      isTTY,
+    });
+    return chunks.join("");
+  };
+  expect(await run(["validate"], true)).toContain("Configuration validation\n");
+  expect(Bun.YAML.parse(await run(["validate"], false))).toMatchObject({
+    valid: true,
+  });
+  expect(
+    JSON.parse(await run(["validate", "--output=json"], true)),
+  ).toMatchObject({ valid: true });
+  expect(
+    Bun.TOML.parse(await run(["show", "--output", "toml"], false)),
+  ).toMatchObject({
+    cli: { output: { interactive: "human", nonInteractive: "yaml" } },
+  });
+  expect(await run(["validate", "--output=human"], false)).toContain(
+    "Valid: true",
+  );
+});
+
 test("reports configuration command usage errors", async () => {
   await expect(runConfigCli([])).rejects.toThrow(
     "Expected config validate, config show, or config migrate",

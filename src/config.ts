@@ -6,6 +6,8 @@ import path from "node:path";
 import { z } from "zod";
 
 import {
+  cliSchema,
+  type CliOutputFormat,
   createFormatterSchema,
   createHookSchema,
   dependenciesSchema,
@@ -38,6 +40,7 @@ const hookSchema = createHookSchema(64);
 const formatterSchema = createFormatterSchema({});
 const fileV1Schema = z
   .object({
+    cli: cliSchema.optional(),
     dependencies: dependenciesSchema.optional(),
     formatting: z
       .object({
@@ -74,6 +77,9 @@ type AstMcpFileConfig =
   | z.infer<typeof fileV2Schema>;
 
 export interface ResolvedConfig {
+  cli: {
+    output: { interactive: CliOutputFormat; nonInteractive: CliOutputFormat };
+  };
   dependencies: { dprintBinary?: string };
   files: {
     patch: {
@@ -192,6 +198,12 @@ interface LoadedLayer {
 }
 
 interface InternalConfig {
+  cli?: {
+    output?: {
+      interactive?: CliOutputFormat;
+      non_interactive?: CliOutputFormat;
+    };
+  };
   dependencies?: { dprint_binary?: string };
   files?: {
     patch?: {
@@ -645,6 +657,8 @@ function environmentLayer(
 }
 
 const leaves = [
+  "cli.output.interactive",
+  "cli.output.non_interactive",
   "version",
   "telemetry.enabled",
   "workspace.roots",
@@ -694,6 +708,7 @@ function leaf(value: InternalConfig, dotted: (typeof leaves)[number]) {
 }
 
 const mergeSections = [
+  "cli",
   "workspace",
   "telemetry",
   "safety",
@@ -782,6 +797,7 @@ function mergeSection(
 ): void {
   const incoming = layer[section];
   if (!incoming) return;
+  const previousCli = result.cli;
   const previousHook = result.safety?.hook;
   const previousFiles = result.files;
   const previousMcp = result.mcp;
@@ -790,6 +806,13 @@ function mergeSection(
     ...(result[section] as object | undefined),
     ...definedProperties(incoming),
   } as never;
+  if (section === "cli")
+    result.cli = {
+      output: {
+        ...previousCli?.output,
+        ...(incoming as InternalConfig["cli"])?.output,
+      },
+    };
   if (section === "safety")
     mergeSafetyHook(result, incoming as InternalConfig["safety"], previousHook);
   if (section === "files")
@@ -882,6 +905,7 @@ function defaultInternalConfig(
   projectRoot: string,
 ): InternalConfig {
   return {
+    cli: { output: { interactive: "human", non_interactive: "json" } },
     dependencies: {},
     formatting: {
       dprint_config: path.join(projectRoot, "dprint.json"),
@@ -1163,6 +1187,12 @@ function resolvedConfiguration(args: {
     value,
   } = args;
   return {
+    cli: {
+      output: {
+        interactive: value.cli?.output?.interactive ?? "human",
+        nonInteractive: value.cli?.output?.non_interactive ?? "json",
+      },
+    },
     dependencies: {
       dprintBinary: value.dependencies?.dprint_binary,
     },

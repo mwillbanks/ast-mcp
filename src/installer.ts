@@ -4,6 +4,12 @@ import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  parseOutputArguments,
+  selectOutputFormat,
+  writeCliOutput,
+  type CliOutputContext,
+} from "./cli-output";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "./config";
 import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
 import {
@@ -1083,9 +1089,11 @@ export async function uninstall(options: InstallOptions) {
 
 export async function runInstallerCli(
   args = process.argv.slice(2),
+  context: CliOutputContext = {},
 ): Promise<void> {
+  const parsed = parseOutputArguments(args);
   const { operation, options: parsedOptions } = parseInstallerArguments(
-    args,
+    parsed.args,
     process.cwd(),
   );
   const options: InstallOptions = parsedOptions;
@@ -1110,6 +1118,12 @@ export async function runInstallerCli(
     throw new Error(
       "Windows manual HTTP launch project path cannot contain CMD expansion characters or quotes",
     );
+  const outputConfig = await resolveConfig({ cwd: root });
+  const outputFormat = selectOutputFormat(
+    outputConfig,
+    parsed.output,
+    context.isTTY,
+  );
   const operationHandlers = { install, uninstall, update };
   const changed = await operationHandlers[operation](options);
   const effectiveTransport =
@@ -1167,6 +1181,11 @@ export async function runInstallerCli(
       : { managed: false },
     transport: effectiveTransport,
   };
-  process.stdout.write(`${JSON.stringify(result)}\n`);
+  writeCliOutput(
+    result,
+    outputFormat,
+    `Installation ${operation}`,
+    context.write,
+  );
 }
 if (import.meta.main) await runInstallerCli();

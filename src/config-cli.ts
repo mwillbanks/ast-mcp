@@ -1,7 +1,14 @@
 import path from "node:path";
 
+import {
+  parseOutputArguments,
+  selectOutputFormat,
+  writeCliOutput,
+  type CliOutputContext,
+} from "./cli-output";
 import { globalConfigPath, resolveConfig } from "./config";
 import { migrateConfigSource, writeMigratedConfig } from "./config-migrate";
+import type { CliOutputFormat } from "./config-schema-common";
 
 class ConfigurationUsageError extends Error {
   constructor(message: string) {
@@ -111,6 +118,8 @@ async function runConfigRead(
   operation: Exclude<ConfigOperation, "migrate">,
   options: ConfigOptions,
   write: (text: string) => void,
+  outputFormat: CliOutputFormat | undefined,
+  context: CliOutputContext,
 ): Promise<void> {
   assertReadOptions(options);
   const config = await resolveConfig({ cwd: path.resolve(options.root) });
@@ -123,7 +132,12 @@ async function runConfigRead(
           valid: true,
           version: config.version,
         };
-  write(`${JSON.stringify(output, null, 2)}\n`);
+  writeCliOutput(
+    output,
+    selectOutputFormat(config, outputFormat, context.isTTY),
+    operation === "show" ? "Configuration" : "Configuration validation",
+    write,
+  );
 }
 
 function migrationTarget(options: ConfigOptions): string {
@@ -162,6 +176,8 @@ function migrationReport(
 async function runMigration(
   options: ConfigOptions,
   write: (text: string) => void,
+  outputFormat: CliOutputFormat | undefined,
+  context: CliOutputContext,
 ): Promise<number> {
   if (options.file && options.global)
     throw new ConfigurationUsageError("Choose only one of --file or --global");
@@ -169,13 +185,16 @@ async function runMigration(
     throw new ConfigurationUsageError("--check and --write cannot be combined");
   const target = migrationTarget(options);
   const migration = migrateConfigSource(await Bun.file(target).text(), target);
+  const config = await resolveConfig({
+    cwd: options.file ? path.dirname(target) : path.resolve(options.root),
+  });
+  const format = selectOutputFormat(config, outputFormat, context.isTTY);
   const backupPath = await migrationBackup(options, migration, target);
-  write(
-    `${JSON.stringify(
-      migrationReport(options, migration, target, backupPath),
-      null,
-      2,
-    )}\n`,
+  writeCliOutput(
+    migrationReport(options, migration, target, backupPath),
+    format,
+    "Configuration migration",
+    write,
   );
   return options.check && migration.changed ? 2 : 0;
 }
@@ -183,7 +202,10 @@ async function runMigration(
 export async function runConfigCli(
   args: string[],
   write: (text: string) => void = stdout.write.bind(stdout),
+  context: CliOutputContext = {},
 ): Promise<number | undefined> {
+  const parsed = parseOutputArguments(args);
+  args = parsed.args;
   if (
     args.some(
       (token) =>
@@ -196,6 +218,7 @@ export async function runConfigCli(
   const tokens = normalizeTokens(args);
   const operation = configOperation(tokens.shift());
   const options = configOptions(tokens);
-  if (operation === "migrate") return runMigration(options, write);
-  await runConfigRead(operation, options, write);
+  if (operation === "migrate")
+    return runMigration(options, write, parsed.output, context);
+  await runConfigRead(operation, options, write, parsed.output, context);
 }

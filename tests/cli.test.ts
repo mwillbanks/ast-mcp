@@ -104,6 +104,50 @@ test("renders installer parser errors with subcommand help", async () => {
   expect(stderr[0]).toContain("ast-mcp install [options]");
 });
 
+test("validates global output flags before command routing or help", async () => {
+  const { handlers, calls, stderr } = harness();
+  await runCli(["--output", "yaml", "config", "show"], handlers);
+  await runCli(["skills", "--output=toml", "export", "dest"], handlers);
+  expect(calls).toEqual([
+    ["config", "show", "--output", "yaml"],
+    ["skills", "export", "dest", "--output", "toml"],
+  ]);
+  for (const args of [
+    ["--output", "invalid", "install"],
+    ["config", "show", "--output=json", "--output", "human"],
+    ["skills", "export", "dest", "--output"],
+    ["install", "--help", "--output=invalid"],
+    ["mcp", "--output=json"],
+    ["--output", "toml", "hook"],
+    ["mcp", "--help", "--output=yaml"],
+  ]) {
+    const before = calls.length;
+    expect(await runCli(args, handlers)).toBe(1);
+    expect(calls).toHaveLength(before);
+  }
+  expect(stderr.join("")).toContain(
+    "--output is not supported for protocol commands",
+  );
+});
+
+test("protocol commands reject output flags without protocol stdout", () => {
+  for (const command of ["mcp", "hook"]) {
+    const result = Bun.spawnSync(
+      [process.execPath, "bin/ast-mcp.ts", "--output=json", command],
+      {
+        cwd: process.cwd(),
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain(
+      "--output is not supported for protocol commands",
+    );
+  }
+});
+
 test("CLI executable prints help without a stack trace", () => {
   const result = Bun.spawnSync(["bun", "bin/ast-mcp.ts"], {
     cwd: process.cwd(),

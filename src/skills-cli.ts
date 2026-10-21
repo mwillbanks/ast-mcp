@@ -2,6 +2,13 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
+import {
+  parseOutputArguments,
+  selectOutputFormat,
+  writeCliOutput,
+  type CliOutputContext,
+} from "./cli-output";
+import { resolveConfig } from "./config";
 import { bundledSkills } from "./skills";
 
 export class SkillsUsageError extends Error {
@@ -69,7 +76,12 @@ export async function exportSkills(destination: string) {
   return { destination: root, written, preserved };
 }
 
-export async function runSkillsCli(args: string[]) {
+export async function runSkillsCli(
+  args: string[],
+  context: CliOutputContext = {},
+) {
+  const parsed = parseOutputArguments(args);
+  args = parsed.args;
   if (
     args.length !== 2 ||
     args[0] !== "export" ||
@@ -77,8 +89,13 @@ export async function runSkillsCli(args: string[]) {
     args[1].startsWith("-")
   )
     throw new SkillsUsageError("Use ast-mcp skills export <destination>");
+  const config = await resolveConfig();
+  const format = selectOutputFormat(config, parsed.output, context.isTTY);
   const result = await exportSkills(args[1]);
-  process.stdout.write(
-    `Exported ${result.written.length} skill files; preserved ${result.preserved.length} existing files in ${result.destination}\n`,
+  writeCliOutput(
+    { operation: "export", ...result },
+    format,
+    "Skill export",
+    context.write,
   );
 }

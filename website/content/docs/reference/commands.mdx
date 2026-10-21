@@ -23,7 +23,7 @@ Runtime formatting is disabled by default. Install a formatter separately only w
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all
 ```
 
-Installer output is JSON containing changed paths, the effective transport, HTTP endpoint, service identity/state, and a manual startup command when no service is managed.
+Installer results contain changed paths, the effective transport, HTTP endpoint, service identity/state, and a manual startup command when no service is managed. The shared CLI renderer selects the output format described below.
 
 ## Export the skill for unsupported clients
 
@@ -46,6 +46,23 @@ ast-mcp config migrate --global [--check|--write]
 ```
 
 `validate` and `show` resolve environment, project, global, and default layers. Migration defaults to preview; `--check` exits 0 when current, 2 when migration is required, and 1 for invalid input. `--write` performs atomic replacement and creates a `.v1.bak` unless disabled.
+
+## Output formats
+
+User-facing configuration, installer, and skills commands detect whether stdout is an interactive terminal. Interactive stdout defaults to readable human summaries and sections. Redirected or piped stdout defaults to JSON.
+
+```bash
+ast-mcp config show --output human
+ast-mcp config validate --output=json
+ast-mcp --output yaml config show
+ast-mcp skills export ./manual-skill --output toml
+```
+
+Both `--output <format>` and `--output=<format>` accept `human`, `json`, `yaml`, or `toml`. The flag can appear before or after the command. Explicit flags override [configured defaults](/docs/reference/configuration#cli-output). Invalid, missing, or duplicate output flags fail before command execution, including when help is requested.
+
+JSON preserves the existing configuration and installer result fields. Skills export returns `operation`, `destination`, `written`, and `preserved`. YAML and TOML use Bun's native serializers. TOML omits null and undefined object fields recursively. Unrepresentable array entries produce an error; select JSON or YAML instead. Diagnostics remain on stderr and command exit codes are unchanged.
+
+MCP and hook commands retain their protocol output and reject `--output`.
 
 ## Runtime
 

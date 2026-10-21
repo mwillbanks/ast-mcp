@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  cliSchema,
   createFormatterSchema,
   createHookSchema,
   dependenciesSchema,
@@ -113,6 +114,7 @@ const pathRuleV2Schema = z
 
 export const fileV2Schema = z
   .object({
+    cli: cliSchema.optional(),
     dependencies: dependenciesSchema.optional(),
     files: z
       .object({

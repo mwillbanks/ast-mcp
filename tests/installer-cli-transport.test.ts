@@ -79,6 +79,62 @@ test("parses HTTP installer options and reports the effective endpoint", async (
   ).toContain('url = "http://127.0.0.1:4912/mcp"');
 });
 
+test("installer output honors flags and rejects invalid output before host writes", async () => {
+  const root = await temporary("ast-mcp-installer-output-");
+  for (const extra of [
+    ["--output", "xml"],
+    ["--output=json", "--output=human"],
+  ]) {
+    await expect(
+      runInstallerCli([
+        "install",
+        "--root",
+        root,
+        "--target",
+        "codex",
+        ...extra,
+      ]),
+    ).rejects.toThrow("--output");
+    await expect(
+      access(path.join(root, ".codex/config.toml")),
+    ).rejects.toThrow();
+  }
+  const chunks: string[] = [];
+  await runInstallerCli(
+    [
+      "install",
+      "--root",
+      root,
+      "--target",
+      "codex",
+      "--transport",
+      "http",
+      "--port",
+      "4913",
+      "--output=yaml",
+    ],
+    {
+      isTTY: true,
+      write: (text) => chunks.push(text),
+    },
+  );
+  expect(Bun.YAML.parse(chunks.join(""))).toMatchObject({
+    operation: "install",
+    transport: "http",
+    endpoint: "http://127.0.0.1:4913/mcp",
+    service: { managed: false },
+  });
+  chunks.length = 0;
+  await runInstallerCli(
+    ["uninstall", "--root", root, "--target", "codex", "--output=human"],
+    {
+      isTTY: false,
+      write: (text) => chunks.push(text),
+    },
+  );
+  expect(chunks.join("")).toContain("Installation uninstall");
+});
+
 test("rejects invalid installer transport and service combinations before host writes", async () => {
   const root = await temporary("ast-mcp-installer-cli-invalid-");
   await expect(

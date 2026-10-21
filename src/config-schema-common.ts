@@ -1,5 +1,20 @@
 import { z } from "zod";
 
+export const cliOutputFormatSchema = z.enum(["human", "json", "yaml", "toml"]);
+export type CliOutputFormat = z.infer<typeof cliOutputFormatSchema>;
+
+export const cliSchema = z
+  .object({
+    output: z
+      .object({
+        interactive: cliOutputFormatSchema.optional(),
+        non_interactive: cliOutputFormatSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const toolNameSchema = z
   .string()
   .min(1)

@@ -34,6 +34,47 @@ afterEach(async () => {
   );
 });
 
+test("CLI output defaults and nested global/project precedence apply in both versions", async () => {
+  const root = await project("ast-mcp-cli-output-config-");
+  const home = path.join(root, "home");
+  const options = { cwd: root, env: {}, home, platform: "linux" as const };
+  const global = globalConfigPath(options);
+  await mkdir(path.dirname(global), { recursive: true });
+  await writeFile(
+    global,
+    'version = 2\n[cli.output]\ninteractive = "yaml"\nnon_interactive = "toml"\n',
+  );
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    'version = 2\n[cli.output]\nnon_interactive = "json"\n',
+  );
+  const config = await resolveConfig(options);
+  expect(config.cli.output).toEqual({
+    interactive: "yaml",
+    nonInteractive: "json",
+  });
+  expect(config.provenance["cli.output.interactive"]).toBe("global");
+  expect(config.provenance["cli.output.non_interactive"]).toBe("project");
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    '[cli.output]\ninteractive = "human"\n',
+  );
+  clearConfigCache();
+  const legacy = await resolveConfig(options);
+  expect(legacy.cli.output).toEqual({
+    interactive: "human",
+    nonInteractive: "toml",
+  });
+  for (const field of ["interactive", "non_interactive"]) {
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      `version = 2\n[cli.output]\n${field} = "xml"\n`,
+    );
+    clearConfigCache();
+    await expect(resolveConfig(options)).rejects.toThrow();
+  }
+});
+
 test("resolves defaults and platform global paths", async () => {
   const root = await project("ast-mcp-config-default-");
   const config = await resolveConfig({
@@ -43,6 +84,10 @@ test("resolves defaults and platform global paths", async () => {
     platform: "linux",
   });
   expect(config.projectRoot).toBe(root);
+  expect(config.cli.output).toEqual({
+    interactive: "human",
+    nonInteractive: "json",
+  });
   expect(config.workspace.roots).toEqual([root]);
   expect(config.safety).toMatchObject({
     allowAnyPath: false,

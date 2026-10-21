@@ -283,7 +283,42 @@ test("skills CLI validates usage", async () => {
   expect(usage).toBeInstanceOf(Error);
   expect(usage.toString()).toBe("SkillsUsageError: Invalid export destination");
   const destination = path.join(await temporary(), "cli-export");
-  await runSkillsCli(["export", destination]);
+  const output: string[] = [];
+  await runSkillsCli(["export", destination], {
+    isTTY: false,
+    write: (text) => output.push(text),
+  });
+  expect(JSON.parse(output.join(""))).toMatchObject({
+    operation: "export",
+    destination,
+    preserved: [],
+    written: expect.arrayContaining(["SKILL.md"]),
+  });
+  output.length = 0;
+  await runSkillsCli(["export", destination, "--output=toml"], {
+    write: (text) => output.push(text),
+  });
+  expect(Bun.TOML.parse(output.join(""))).toMatchObject({
+    operation: "export",
+    destination,
+    written: [],
+    preserved: expect.arrayContaining(["SKILL.md"]),
+  });
+  output.length = 0;
+  await runSkillsCli(["export", destination], {
+    isTTY: true,
+    write: (text) => output.push(text),
+  });
+  expect(output.join("")).toContain("Skill export");
+  for (const flags of [["--output=xml"], ["--output=json", "--output=human"]]) {
+    const invalidDestination = path.join(destination, "must-not-exist");
+    await expect(
+      runSkillsCli(["export", invalidDestination, ...flags]),
+    ).rejects.toThrow("--output");
+    expect(
+      await Bun.file(path.join(invalidDestination, "SKILL.md")).exists(),
+    ).toBeFalse();
+  }
   expect(await readFile(path.join(destination, "SKILL.md"), "utf8")).toContain(
     "name: ast-mcp",
   );
