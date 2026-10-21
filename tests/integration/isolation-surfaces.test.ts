@@ -311,7 +311,13 @@ test("skill and AGENTS surfaces contain the enforced contract and evals", async 
   expect(skill).toContain("file_hash");
   expect(skill).toContain("file_read");
   expect(agents).toContain("apply_patch");
-  expect(agents).toContain("CRITICAL INSTRUCTION");
+  expect(agents).toContain(
+    "Load and follow `$ast-mcp` before local repository",
+  );
+  expect(agents).toContain(
+    "Use AST-MCP tools for local files and code intelligence.",
+  );
+  expect(agents).toContain("Never switch to a fallback writer.");
   expect(primary.evals.length + fileHashEvals.length).toBeGreaterThanOrEqual(
     73,
   );

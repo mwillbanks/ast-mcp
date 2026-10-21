@@ -205,11 +205,23 @@ describe("installer", () => {
       expect(await readFile(path.join(root, file), "utf8")).toContain(expected);
   });
 
-  test("installs global target locations", async () => {
+  test("installs and refreshes global guidance without replacing user instructions", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-root-"));
     const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-home-"));
     created.push(root, home);
     const alias = await executable(path.join(home, ".bun/bin/ast-mcp"));
+    const guidancePaths = [
+      ".codex/AGENTS.md",
+      ".claude/CLAUDE.md",
+      ".copilot/copilot-instructions.md",
+    ];
+    for (const relative of guidancePaths) {
+      await mkdir(path.dirname(path.join(home, relative)), { recursive: true });
+      await writeFile(
+        path.join(home, relative),
+        "user prefix\n\n<!-- ast-mcp:begin -->\nstale guidance\n<!-- ast-mcp:end -->\n\nuser suffix\n",
+      );
+    }
     await install({
       home,
       root,
@@ -222,6 +234,27 @@ describe("installer", () => {
     expect(
       await readFile(path.join(home, ".claude/CLAUDE.md"), "utf8"),
     ).toContain("AST MCP");
+    await update({
+      home,
+      root,
+      scope: "global",
+      targets: ["codex", "claude", "copilot"],
+    });
+    const expectedGuidance = (
+      await readFile("templates/AGENTS.md", "utf8")
+    ).trim();
+    for (const relative of guidancePaths) {
+      const guidance = await readFile(path.join(home, relative), "utf8");
+      expect(guidance).toContain("user prefix");
+      expect(guidance).toContain("user suffix");
+      expect(guidance).not.toContain("stale guidance");
+      expect(guidance.match(/ast-mcp:begin/g)).toHaveLength(1);
+      expect(
+        guidance.match(
+          /<!-- ast-mcp:begin -->\n\n([\s\S]*?)\n\n<!-- ast-mcp:end -->/,
+        )?.[1],
+      ).toBe(expectedGuidance);
+    }
     const globalCopilot = JSON.parse(
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];

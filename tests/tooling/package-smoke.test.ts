@@ -1,4 +1,5 @@
 import { test as bunTest, expect } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
@@ -362,6 +363,69 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       preserved: [],
       written: expect.arrayContaining(["SKILL.md"]),
     });
+    const exportedDirectory = path.join(owned, "exported-skills");
+    const updateArguments = [
+      process.execPath,
+      executable,
+      "skills",
+      "update",
+      exportedDirectory,
+      "--output",
+      "json",
+    ];
+    const unchangedSkills = JSON.parse(await command(updateArguments, fixture));
+    expect(unchangedSkills).toMatchObject({
+      operation: "update",
+      written: [],
+      updated: [],
+      conflicts: [],
+    });
+    expect(unchangedSkills.unchanged).toContain("SKILL.md");
+    const skillPath = path.join(exportedDirectory, "SKILL.md");
+    const currentSkill = await readFile(skillPath, "utf8");
+    const exportManifestPath = path.join(
+      exportedDirectory,
+      ".ast-mcp-export.json",
+    );
+    const exportManifest = JSON.parse(
+      await readFile(exportManifestPath, "utf8"),
+    );
+    // Simulate a previously exported version with its matching managed baseline.
+    const previousSkill = "# Previous bundled skill\n";
+    await writeFile(skillPath, previousSkill);
+    exportManifest.files["SKILL.md"] = createHash("sha256")
+      .update(previousSkill)
+      .digest("hex");
+    await writeFile(exportManifestPath, JSON.stringify(exportManifest));
+    const refreshedSkills = JSON.parse(await command(updateArguments, fixture));
+    expect(refreshedSkills.updated).toEqual(["SKILL.md"]);
+    expect(refreshedSkills.conflicts).toEqual([]);
+    expect(await readFile(skillPath, "utf8")).toBe(currentSkill);
+    expect(
+      JSON.parse(await readFile(exportManifestPath, "utf8")).files["SKILL.md"],
+    ).toBe(createHash("sha256").update(currentSkill).digest("hex"));
+    const customized = currentSkill + "\nUser customization\n";
+    await writeFile(skillPath, customized);
+    const conflictProcess = Bun.spawn(updateArguments, {
+      cwd: fixture,
+      env: { ...process.env },
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout: 90_000,
+    });
+    const [conflictExit, conflictStdout, conflictStderr] = await Promise.all([
+      conflictProcess.exited,
+      new Response(conflictProcess.stdout).text(),
+      new Response(conflictProcess.stderr).text(),
+    ]);
+    expect(conflictExit).not.toBe(0);
+    expect(JSON.parse(conflictStdout)).toMatchObject({
+      operation: "update",
+      conflicts: ["SKILL.md"],
+      preserved: ["SKILL.md"],
+    });
+    expect(conflictStderr).toContain("Compare these files with a fresh export");
+    expect(await readFile(skillPath, "utf8")).toBe(customized);
     await exerciseSkillsStdio(executable, fixture);
     const stdio = new Client({ name: "package-stdio-smoke", version: "1" });
     const stdioTransport = new StdioClientTransport({

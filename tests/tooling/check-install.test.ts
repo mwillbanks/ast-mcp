@@ -854,10 +854,12 @@ test("checker detects stale managed guidance and hook payloads", async () => {
   await install({ home, root, scope: "local", targets: ["codex"] });
   const agentsFile = path.join(root, "AGENTS.md");
   const agents = await readFile(agentsFile, "utf8");
-  await writeFile(
-    agentsFile,
-    agents.replace("CRITICAL INSTRUCTION", "STALE INSTRUCTION"),
+  const staleAgents = agents.replace(
+    /<!-- ast-mcp:begin -->[\s\S]*?<!-- ast-mcp:end -->/,
+    "<!-- ast-mcp:begin -->\nSTALE INSTRUCTION\n<!-- ast-mcp:end -->",
   );
+  expect(staleAgents).not.toBe(agents);
+  await writeFile(agentsFile, staleAgents);
   await (async () => {
     const hookFile = path.join(root, ".codex/hooks.json");
     const hooks = JSON.parse(await readFile(hookFile, "utf8"));
