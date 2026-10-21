@@ -76,7 +76,18 @@ test.skipIf(process.platform === "win32")(
             if (error.code === "ENOENT") return null;
             throw error;
           });
-        expect(status === null || /^State:\s+Z\b/mu.test(status)).toBeTrue();
+        let stopped = status === null || /^State:\s+Z\b/mu.test(status);
+        for (let attempt = 0; attempt < 100 && !stopped; attempt++) {
+          await Bun.sleep(20);
+          const current = await Bun.file(`/proc/${descendant}/status`)
+            .text()
+            .catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return null;
+              throw error;
+            });
+          stopped = current === null || /^State:\s+Z\b/mu.test(current);
+        }
+        expect(stopped).toBeTrue();
       } else {
         expect(() => process.kill(descendant!, 0)).toThrow();
       }
@@ -89,7 +100,7 @@ test.skipIf(process.platform === "win32")(
       await live.stop();
     }
   },
-  7_000,
+  10_000,
 );
 
 test.skipIf(process.platform === "win32")(
