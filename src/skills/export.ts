@@ -192,14 +192,18 @@ async function createFile(target: string, bytes: Uint8Array, mode = 0o644) {
   if (!handle) return false;
   let failed = false;
   try {
-    await handle.writeFile(bytes);
-    await handle.sync();
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      await closeFile(handle, failed);
+    }
   } catch (error) {
-    failed = true;
     await unlink(target).catch(ignoreCleanupError);
     throw error;
-  } finally {
-    await closeFile(handle, failed);
   }
   return true;
 }

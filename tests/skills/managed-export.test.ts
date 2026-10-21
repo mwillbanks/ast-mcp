@@ -485,6 +485,56 @@ test("write failures preserve the original error when cleanup fails", async () =
   ).toBeFalse();
 });
 
+for (const phase of ["resource", "initial manifest"] as const) {
+  test(
+    "staging close failure cleans owned temporary files during " + phase,
+    async () => {
+      const root = await temporary();
+      if (phase === "resource")
+        await reconcileSkillExport(root, "export", [file("SKILL.md", "old")]);
+      else await fs.writeFile(path.join(root, "SKILL.md"), "old");
+      const manifestPath = path.join(root, SKILL_EXPORT_MANIFEST);
+      const manifest =
+        phase === "resource" ? await fs.readFile(manifestPath) : undefined;
+      const originalOpen = fs.open;
+      const open = spyOn(fs, "open").mockImplementation(
+        async (...args: Parameters<typeof fs.open>) => {
+          const handle = await originalOpen(...args);
+          if (String(args[0]).endsWith(".tmp")) {
+            const close = handle.close.bind(handle);
+            spyOn(handle, "close").mockImplementation(async () => {
+              await close();
+              throw new Error("staging close failed");
+            });
+          }
+          return handle;
+        },
+      );
+      try {
+        await expect(
+          reconcileSkillExport(
+            root,
+            phase === "resource" ? "update" : "export",
+            [file("SKILL.md", phase === "resource" ? "new" : "old")],
+          ),
+        ).rejects.toThrow("staging close failed");
+      } finally {
+        open.mockRestore();
+      }
+      expect(await fs.readFile(path.join(root, "SKILL.md"), "utf8")).toBe(
+        "old",
+      );
+      if (manifest) expect(await fs.readFile(manifestPath)).toEqual(manifest);
+      else expect(await Bun.file(manifestPath).exists()).toBeFalse();
+      expect(
+        (await fs.readdir(root)).some(
+          (name) => name.endsWith(".tmp") || name.endsWith(".lock"),
+        ),
+      ).toBeFalse();
+    },
+  );
+}
+
 test("successful writes report lock cleanup failure instead of false success", async () => {
   const root = await temporary();
   const originalUnlink = fs.unlink;
