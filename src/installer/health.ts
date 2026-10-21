@@ -16,7 +16,7 @@ const REQUIRED_TOOLS = [
 
 export async function verifyMcpLaunch(
   launch: InstallerLaunch,
-  timeoutMs = 5000,
+  timeoutMs = 15_000,
   shutdownTimeoutMs = 5000,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {

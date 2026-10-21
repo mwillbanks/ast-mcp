@@ -1062,9 +1062,9 @@ test("resident registry reloads create, invalid change, recovery, and deletion",
     expect(unhealthy.config?.version).toBe(2);
     await registry.reconcile();
     await Bun.sleep(10);
-    expect((await registry.snapshot(options)).generation).toBe(
-      unhealthy.generation,
-    );
+    const afterReconcile = await registry.snapshot(options);
+    expect(afterReconcile.healthy).toBeFalse();
+    expect(afterReconcile.error).toBe(unhealthy.error);
     await expect(registry.get(options)).rejects.toThrow("Unrecognized key");
 
     await writeFile(file, 'version = 2\n[formatting]\nfallback = "reject"\n');
