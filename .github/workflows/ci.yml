@@ -298,6 +298,8 @@ jobs:
       ]
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
+    secrets:
+      RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
     permissions:
       actions: write
       contents: write
