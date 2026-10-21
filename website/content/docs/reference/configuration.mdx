@@ -24,6 +24,10 @@ Version 2 is the long-term schema. Omitting `version` retains version 1 compatib
 ```toml
 version = 2
 
+[cli.output]
+interactive = "human"
+non_interactive = "json"
+
 [workspace]
 roots = [".", "../shared"]
 worktrees = "include" # include | request | ignore
@@ -89,6 +93,20 @@ workers = 1
 enabled = false
 ```
 
+## CLI output
+
+Configure interactive and non-interactive stdout independently:
+
+```toml
+[cli.output]
+interactive = "human"
+non_interactive = "json"
+```
+
+Each value accepts `human`, `json`, `yaml`, or `toml`. Defaults are human output when stdout is a TTY and JSON otherwise. Global and project values merge by field. For example, a project can override `non_interactive` while retaining the global `interactive` setting. Version 1 and version 2 accept this section.
+
+An explicit `--output <format>` or `--output=<format>` overrides configuration. It applies to configuration, installer, and skills commands. MCP and hook protocol commands reject the option. See [command output formats](/docs/reference/commands#output-formats) for serialization behavior and examples.
+
 ## Intelligence storage and models
 
 All index state uses LanceDB. Global placement shares content-addressed artifacts across repositories and revisions. Local placement stores data under one repository. Parent placement requires `levels`; explicit placement requires an absolute `path`. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
@@ -129,7 +147,7 @@ Project rules that broaden beyond the host baseline are reduced from `allow` to 
 
 Agents must use the grouped tools rather than rewriting `ast-mcp.toml` as a whole file:
 
-- `config_core` updates `workspace`, `telemetry`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
+- `config_core` updates `cli.output`, `workspace`, `telemetry`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, and `mcp.configuration`. Batch every key that belongs to those sections in one call. It does not change `[[paths]]` or `[[formatting.formatters]]`.
 - `config_paths` adds, updates, or removes `[[paths]]` rules in one operations batch. A single path rule can be fully specified in one add or update; partial `policies` updates merge with the existing rule. It does not change core sections.
 - `target` is `project` or `global` and defaults to `project`. Version 1 files must be migrated first.
 

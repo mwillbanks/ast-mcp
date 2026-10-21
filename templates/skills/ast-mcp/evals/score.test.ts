@@ -164,20 +164,20 @@ test("evaluates successful and failed direct evidence", async () => {
     }),
     record("response_item", {
       call_id: "valid-hash",
-      input: '// ast-mcp-eval:71\n{"filePaths":["src/server.ts"]}',
+      input: '// ast-mcp-eval:71\n{"filePaths":["src/server/index.ts"]}',
       name: "mcp__ast_mcp__file_hash",
       type: "custom_tool_call",
     }),
     record("response_item", {
       call_id: "valid-hash",
       output: [
-        { text: '{"filePath":"src/server.ts","sha256":"abc","size":1}' },
+        { text: '{"filePath":"src/server/index.ts","sha256":"abc","size":1}' },
       ],
       type: "custom_tool_call_output",
     }),
     record("response_item", {
       call_id: "failed-hash",
-      input: '// ast-mcp-eval:999\n{"filePaths":["src/server.ts"]}',
+      input: '// ast-mcp-eval:999\n{"filePaths":["src/server/index.ts"]}',
       name: "mcp__ast_mcp__file_hash",
       type: "custom_tool_call",
     }),

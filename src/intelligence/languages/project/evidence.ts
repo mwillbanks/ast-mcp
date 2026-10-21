@@ -1,13 +1,6 @@
 import { deepFreeze } from "../immutable.ts";
 
 export const projectFormatEvidence = deepFreeze({
-  graphify: {
-    inventoryPath: "graphify/detect.py",
-    inventorySha256:
-      "f6d71107e2c5092f73f5c1ba1d21898a44b6f06ada6ab7161aaae0cdaa7beece",
-    repository: "https://github.com/Graphify-Labs/graphify",
-    revision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
-  },
   matrix: {
     baseline: [
       ".sln",
@@ -21,7 +14,7 @@ export const projectFormatEvidence = deepFreeze({
       ".dfm",
     ],
     rationale:
-      "Graphify identifies the baseline project formats. Native parsing adds adjacent .NET and Lazarus manifests and resource files needed to materialize project, package, resource, and dependency relationships.",
+      "Native project fixtures cover .NET and Lazarus manifests and resource files needed to materialize project, package, resource, and dependency relationships.",
     supporting: [
       ".props",
       ".targets",
@@ -33,9 +26,9 @@ export const projectFormatEvidence = deepFreeze({
   },
   reproduction: {
     command:
-      "git clone https://github.com/Graphify-Labs/graphify && git -C graphify checkout 3f82bf7f837a07fb0f7668fbdbd5662801906942",
+      "bun run tests/fixtures/intelligence/languages/project/verify-golden.ts",
     mapping:
-      "Read CODE_EXTENSIONS in graphify/detect.py, then normalize project, package, resource, dependency, and exact UTF-8 evidence ranges into graphify-golden.json.",
+      "Verify complete native facts and exact UTF-8 evidence ranges against native-golden.json.",
   },
   schemaVersion: "ast-mcp.project-provenance.v1",
 });

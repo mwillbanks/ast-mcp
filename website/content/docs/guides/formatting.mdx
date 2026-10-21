@@ -84,7 +84,7 @@ Output is limited to 16 MiB. A failed formatter prevents the guarded batch from 
 
 ## Migrate from implicit dprint
 
-dprint is no longer a runtime dependency. Remove obsolete dprint trust commands from installation instructions. Install dprint yourself if you want to retain it.
+dprint is no longer a runtime dependency, and ast-mcp does not bundle a `dprint.json`. Remove obsolete dprint trust commands from installation instructions. Install dprint yourself if you want to retain it.
 
 Explicit compatibility remains available:
 
@@ -92,9 +92,18 @@ Explicit compatibility remains available:
 [formatting]
 enabled = true
 fallback = "dprint"
-dprint_config = "./dprint.json"
 ```
 
-Prepare the configured plugins separately. For mixed formatters, prefer explicit formatter entries and `fallback = "preserve"`. Use `fallback = "reject"` to reject unmatched files when formatting is enabled.
+With `fallback = "dprint"`, ast-mcp discovers the project-root `dprint.json` when `dprint_config` is not overridden. Set `dprint_config` only when the project uses a different path. Prepare dprint and its configured plugins separately.
+
+To remove an obsolete `dprint_config` override, call the configuration tool:
+
+```js
+config_core({ formatting: { dprint_config: null } });
+```
+
+Here, API `null` means remove the key. TOML has no null value, so do not write `dprint_config = null` in `ast-mcp.toml`.
+
+For mixed formatters, prefer explicit formatter entries and `fallback = "preserve"`. Use `fallback = "reject"` to reject unmatched files when formatting is enabled.
 
 Migration disables formatting when the previous configuration omitted its activation setting. Explicit activation remains explicit. Review the migrated settings before applying changes.

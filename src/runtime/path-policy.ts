@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { ResolvedConfig } from "../config";
-import type { PathPolicy } from "../config-v2-schema";
+import type { PathPolicy } from "../config/v2-schema";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import {
   assertUnrestrictedFilesystem,

@@ -43,7 +43,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 3,
-      "prompt": "Inspect the declarations and implementation of createServer in src/server.ts through file_read AST mode.",
+      "prompt": "Inspect the declarations and implementation of createServer in src/server/index.ts through file_read AST mode.",
       "required_tools": ["file_read"],
       "surface": "file_read",
       "variant": "ast-mode"
@@ -219,7 +219,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 14,
-      "prompt": "Digest bounded directories with private members, fields, and a max member limit.",
+      "prompt": "Digest bounded directories with full detail and a max_members limit.",
       "required_tools": ["digest"],
       "surface": "digest",
       "variant": "option-variant"
@@ -251,7 +251,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 16,
-      "prompt": "Show the implementation of handleRequest in src/server.ts.",
+      "prompt": "Show the implementation of createServer in src/server/index.ts.",
       "required_tools": ["show"],
       "surface": "show",
       "variant": "primary"
@@ -315,7 +315,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 20,
-      "prompt": "Find indirect subtypes of an interface using hierarchy options.",
+      "prompt": "Find implementations of an interface within explicit paths.",
       "required_tools": ["implements"],
       "surface": "implements",
       "variant": "option-variant"
@@ -363,7 +363,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 23,
-      "prompt": "Render the public API as a tree with a bounded recursion depth.",
+      "prompt": "Inspect the public API within a bounded source directory.",
       "required_tools": ["surface"],
       "surface": "surface",
       "variant": "option-variant"
@@ -395,7 +395,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 25,
-      "prompt": "List the transitive imports of src/server.ts.",
+      "prompt": "List the transitive imports of src/server/index.ts.",
       "required_tools": ["deps"],
       "surface": "deps",
       "variant": "primary"
@@ -411,7 +411,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 26,
-      "prompt": "Rebuild the dependency graph and traverse imports to depth two.",
+      "prompt": "Inspect imports of src/server/index.ts and hide external modules.",
       "required_tools": ["deps"],
       "surface": "deps",
       "variant": "option-variant"
@@ -427,7 +427,7 @@
       "files": [],
       "forbidden_tools": ["deps"],
       "id": 27,
-      "prompt": "List the files that import src/server.ts.",
+      "prompt": "List the files that import src/server/index.ts.",
       "required_tools": ["reverse_deps"],
       "surface": "deps",
       "variant": "near-miss"
@@ -491,7 +491,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 31,
-      "prompt": "Find import cycles and return JSON for a CI gate.",
+      "prompt": "Find import cycles within explicit paths for a CI gate.",
       "required_tools": ["cycles"],
       "surface": "cycles",
       "variant": "primary"
@@ -507,7 +507,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 32,
-      "prompt": "Find SCCs of size at least three after rebuilding.",
+      "prompt": "Find import cycles and hide ambiguous edges.",
       "required_tools": ["cycles"],
       "surface": "cycles",
       "variant": "option-variant"
@@ -555,7 +555,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 35,
-      "prompt": "Render JSON, hide external imports, and rebuild the graph cache.",
+      "prompt": "Inspect the module graph and hide external imports.",
       "required_tools": ["graph"],
       "surface": "graph",
       "variant": "option-variant"
@@ -603,7 +603,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 38,
-      "prompt": "Search only TypeScript/TSX for an exact symbol and return JSON.",
+      "prompt": "Search only TypeScript and TSX with a query and a bounded result limit.",
       "required_tools": ["search"],
       "surface": "search",
       "variant": "option-variant"
@@ -635,7 +635,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 40,
-      "prompt": "Find chunks related to src/server.ts line 42.",
+      "prompt": "Find code related to the src/server/index.ts path.",
       "required_tools": ["find_related"],
       "surface": "find_related",
       "variant": "primary"
@@ -651,7 +651,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 41,
-      "prompt": "Find the top three related chunks with an explicit root and result limit.",
+      "prompt": "Find the top three related results with an explicit root.",
       "required_tools": ["find_related"],
       "surface": "find_related",
       "variant": "option-variant"
@@ -683,7 +683,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 43,
-      "prompt": "Build the repository search index before discovery.",
+      "prompt": "Open the workspace, then build its index before indexed discovery.",
       "required_tools": ["index"],
       "surface": "index",
       "variant": "primary"
@@ -699,7 +699,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 44,
-      "prompt": "Report index statistics without changing source files.",
+      "prompt": "Inspect index status for an opened workspace without changing source files.",
       "required_tools": ["index"],
       "surface": "index",
       "variant": "option-variant"
@@ -747,7 +747,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 47,
-      "prompt": "Find callers to depth three with a result limit and ambiguity filtering.",
+      "prompt": "Find callers to depth three with a result limit.",
       "required_tools": ["callers"],
       "surface": "callers",
       "variant": "option-variant"
@@ -795,7 +795,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 50,
-      "prompt": "List only internal callees to depth two in JSON.",
+      "prompt": "List callees to depth two with full detail.",
       "required_tools": ["callees"],
       "surface": "callees",
       "variant": "option-variant"
@@ -811,7 +811,7 @@
       "files": [],
       "forbidden_tools": ["callees"],
       "id": 51,
-      "prompt": "Trace the path from handleRequest to writeResponse.",
+      "prompt": "Trace calls from handleRequest and inspect whether writeResponse appears.",
       "required_tools": ["trace"],
       "surface": "callees",
       "variant": "near-miss"
@@ -827,7 +827,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 52,
-      "prompt": "Trace how requestHandler reaches writeToDatabase.",
+      "prompt": "Trace calls from requestHandler with bounded depth.",
       "required_tools": ["trace"],
       "surface": "trace",
       "variant": "primary"
@@ -843,7 +843,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 53,
-      "prompt": "Trace between two symbols with a hop limit and rebuilt graph.",
+      "prompt": "Trace calls from a target symbol with a depth limit.",
       "required_tools": ["trace"],
       "surface": "trace",
       "variant": "option-variant"
@@ -891,7 +891,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 56,
-      "prompt": "Show only affected tests using a schema-valid impact mode.",
+      "prompt": "Inspect symbol impact with direct traversal and a bounded result limit.",
       "required_tools": ["impact"],
       "surface": "impact",
       "variant": "option-variant"
@@ -939,7 +939,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 59,
-      "prompt": "Build compact JSON context with a 500-token budget.",
+      "prompt": "Build context with signatures and a 2,000-byte budget.",
       "required_tools": ["context"],
       "surface": "context",
       "variant": "option-variant"
@@ -962,7 +962,7 @@
     },
     {
       "assertions": [
-        "Uses run for AST search and preview/write sequencing.",
+        "Uses run for bounded AST search without writes.",
         "Uses direct MCP tool run; never invents a proxy.",
         "Preserves no-direct-editor and no-shell-mutation rules."
       ],
@@ -971,24 +971,24 @@
       "files": [],
       "forbidden_tools": [],
       "id": 61,
-      "prompt": "Find TypeScript calls matching client.request($$ARGS) without changing files.",
+      "prompt": "Find TypeScript calls matching client.request($$$ARGS) without changing files.",
       "required_tools": ["run"],
       "surface": "run",
       "variant": "primary"
     },
     {
       "assertions": [
-        "Exercises a distinct run argument or recovery variant.",
-        "Uses schema-valid arguments for run.",
-        "Reports relevant verification."
+        "Uses run only for bounded search and rewrite preview.",
+        "Rejects write=true and commits through file_hash and file_patch.",
+        "Preserves guarded mutation and verifies changed content."
       ],
       "category": "variant",
-      "expected_output": "Uses run with the relevant option or recovery variant, then verifies the result.",
+      "expected_output": "Previews with run, explains that direct writes are disabled, then hashes and patches through file_patch.",
       "files": [],
       "forbidden_tools": [],
       "id": 62,
-      "prompt": "Preview a bounded structural rewrite, inspect the diff, then run write=true.",
-      "required_tools": ["run"],
+      "prompt": "Preview a bounded structural rewrite, then commit it safely. The caller suggests run write=true.",
+      "required_tools": ["run", "file_hash", "file_patch"],
       "surface": "run",
       "variant": "option-variant"
     },
@@ -1019,7 +1019,7 @@
       "files": [],
       "forbidden_tools": [],
       "id": 64,
-      "prompt": "Compress repetitive application logs from lines 10 through 80.",
+      "prompt": "Condense these supplied repetitive application log lines without reading files.",
       "required_tools": ["squeeze"],
       "surface": "squeeze",
       "variant": "primary"
@@ -1363,7 +1363,7 @@
       "files": [],
       "forbidden_tools": ["document_query"],
       "id": 179,
-      "prompt": "Show the createServer implementation in src/server.ts.",
+      "prompt": "Show the createServer implementation in src/server/index.ts.",
       "required_tools": ["show"],
       "surface": "document_query",
       "variant": "ast-near-miss"
@@ -1379,7 +1379,7 @@
       "files": [],
       "forbidden_tools": ["file_read"],
       "id": 183,
-      "prompt": "Return the SHA-256 for src/server.ts without reading its contents.",
+      "prompt": "Return the SHA-256 for src/server/index.ts without reading its contents.",
       "required_tools": ["file_hash"],
       "surface": "file_read",
       "variant": "hash-only-near-miss"
@@ -1911,6 +1911,112 @@
       "required_tools": ["index_status"],
       "surface": "generate",
       "variant": "near-miss"
+    },
+    {
+      "id": 217,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "disconnected-recovery",
+      "prompt": "The AST-MCP tools disconnected during a patch. Restore access and continue safely.",
+      "expected_output": "Stops mutation, separates package repair from host reconnect, and reinspects pending files.",
+      "assertions": [
+        "Stops local mutation while tools are disconnected.",
+        "Uses the installed package and host diagnostics without another writer.",
+        "Requires host reconnection and reinspection before resuming."
+      ],
+      "files": [],
+      "required_tools": [],
+      "forbidden_tools": []
+    },
+    {
+      "id": 218,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "stale-configuration-recovery",
+      "prompt": "The host points at an old AST-MCP command and runtime configuration is version 1. Upgrade safely.",
+      "expected_output": "Separates package upgrade, host update, configuration preview and backed-up migration, then reconnects.",
+      "assertions": [
+        "Distinguishes package upgrades from ast-mcp update host refresh.",
+        "Previews config migrate before --write and preserves the default backup.",
+        "Verifies schemas after host-controlled reconnection."
+      ],
+      "files": [],
+      "required_tools": [],
+      "forbidden_tools": []
+    },
+    {
+      "id": 219,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "manual-skill-recovery",
+      "prompt": "MCP Skills works, but my host selects an old project-local AST-MCP skill with custom changes.",
+      "expected_output": "Checks active selection and explicitly updates only the selected manual copy, preserving conflicts.",
+      "assertions": [
+        "Does not export disk copies when current MCP delivery suffices.",
+        "Uses skills update for an intentionally selected manual destination.",
+        "Preserves customized files and reports baseline conflicts."
+      ],
+      "files": [],
+      "required_tools": [],
+      "forbidden_tools": []
+    },
+    {
+      "id": 220,
+      "surface": "skill",
+      "category": "negative",
+      "variant": "remote-only",
+      "prompt": "Read a remote GitHub issue with its connector. Do not read or save local files.",
+      "expected_output": "Uses the remote connector without AST-MCP calls or local-file approval.",
+      "assertions": [
+        "Does not invoke local intelligence or file tools.",
+        "Does not request local-file approval for remote content.",
+        "Applies local policy only if a later task saves content locally."
+      ],
+      "files": [],
+      "required_tools": [],
+      "forbidden_tools": [
+        "config_status",
+        "config_core",
+        "config_paths",
+        "document_query",
+        "file_capabilities",
+        "policy_check",
+        "file_chattr",
+        "file_delete",
+        "file_rename",
+        "file_hash",
+        "file_patch",
+        "file_read",
+        "file_write",
+        "generate",
+        "map",
+        "digest",
+        "show",
+        "implements",
+        "surface",
+        "deps",
+        "reverse_deps",
+        "cycles",
+        "graph",
+        "graph_diff",
+        "graph_explain",
+        "graph_path",
+        "graph_query",
+        "search",
+        "find_related",
+        "index",
+        "index_status",
+        "callers",
+        "callees",
+        "trace",
+        "impact",
+        "context",
+        "run",
+        "retrieve",
+        "squeeze",
+        "workspace_open",
+        "workspace_status"
+      ]
     }
   ],
   "mcp_tools": [

@@ -16,9 +16,7 @@ const files = {
   systemverilog: "systemverilog.sv",
   verilog: "verilog.v",
 } as const;
-const golden = JSON.parse(
-  await readFile(`${root}/graphify-golden.json`, "utf8"),
-);
+const golden = JSON.parse(await readFile(`${root}/native-golden.json`, "utf8"));
 const cases: Record<string, unknown> = {};
 for (const [languageId, file] of Object.entries(files))
   cases[languageId] = await analyzeInfraLanguage({
@@ -28,7 +26,7 @@ for (const [languageId, file] of Object.entries(files))
 await closeInfraLanguageWorker();
 if (process.argv.includes("--write")) {
   await writeFile(
-    `${root}/graphify-golden.json`,
+    `${root}/native-golden.json`,
     `${JSON.stringify({ ...golden, cases }, null, 2)}\n`,
   );
 } else {

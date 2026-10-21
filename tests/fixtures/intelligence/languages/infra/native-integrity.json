@@ -1,0 +1,56 @@
+{
+  "fixtures": {
+    "bash.sh": "026f013b33126e39675a09edfccfa7079b304acbcfabe78408a7cdc33763025a",
+    "fortran.f90": "2e9d32613567189ee8e90719f8fcded6802ad4f571054ad353abac327e7b9b64",
+    "hcl.tf": "a96da53257691fd8ce5eb1daf4746c8a8b8e12a182f9fcb212c3fa053c9b72a3",
+    "malformed.sh": "e0ce7c078691cadbc4f6e36b5afe5f4e19a23601569df674165a633c5dfb4026",
+    "powershell.ps1": "6724e78daaa0c5c619c8d34a05ead4d742f6c8f97071d13e72750a5fb636c795",
+    "sql.sql": "4c692f55bfd7a476e7b9f31c2dc7c6c5d2630441e2751f6cf075976eadf9980b",
+    "systemverilog.sv": "d17b7d7d179ae08b64202a06257b91a63f865649eafa23b0a6f5c7de6037be14",
+    "verilog.v": "e27e7995a8009c646779653dcb90cddbfab7e566b82f3226c45f6b4acffb27ef",
+    "native-golden.json": "eb6ec572f303e52ca614594e4ce41b43c76acd8ef87fa508a568519b9a3d83c1"
+  },
+  "parsers": {
+    "bash": {
+      "asset": "out/bash/tree-sitter-bash.wasm",
+      "kind": "tree-sitter-wasm",
+      "sha256": "5daf3f2ac1cea01a64cfd6878ef7d247310925a4c62238eb4b8c1feb5dce355a",
+      "provider": "tree-sitter-wasm",
+      "version": "2.0.4"
+    },
+    "fortran": {
+      "kind": "purpose-built-structured",
+      "version": "ast-mcp-structured-parser-v1"
+    },
+    "hcl": {
+      "kind": "purpose-built-structured",
+      "version": "ast-mcp-structured-parser-v1"
+    },
+    "powershell": {
+      "asset": "out/powershell/tree-sitter-powershell.wasm",
+      "kind": "tree-sitter-wasm",
+      "sha256": "56b83930aff207664ee64e9341e79bd448645f43c8f37cd2fab861e0e6b9cac1",
+      "provider": "tree-sitter-wasm",
+      "version": "2.0.4"
+    },
+    "sql": {
+      "kind": "purpose-built-structured",
+      "version": "ast-mcp-structured-parser-v1"
+    },
+    "systemverilog": {
+      "asset": "tree-sitter-systemverilog.wasm",
+      "kind": "tree-sitter-wasm",
+      "sha256": "005dfb42ad39dc7d9673c3867f8dc9eeb4b0271c2c172080a23578c1c3532e02",
+      "provider": "tree-sitter-systemverilog",
+      "version": "0.4.1"
+    },
+    "verilog": {
+      "asset": "tree-sitter-systemverilog.wasm",
+      "kind": "tree-sitter-wasm-subset",
+      "sha256": "005dfb42ad39dc7d9673c3867f8dc9eeb4b0271c2c172080a23578c1c3532e02",
+      "provider": "tree-sitter-systemverilog",
+      "version": "0.4.1"
+    }
+  },
+  "schemaVersion": "ast-mcp.native-integrity.v1"
+}

@@ -26,7 +26,7 @@ bun run dev:http
 bun run inspect
 ```
 
-Tests live in `tests/`. Keep stdio output protocol-safe: server diagnostics belong on stderr, never stdout.
+Tests mirror source domains beneath `tests/`; use `tests/integration/` for cross-domain behavior and `tests/tooling/` for repository tooling. Keep shared fixtures and helpers under `tests/fixtures/` and `tests/support/`. Application modules live under `src/config`, `src/cli`, `src/installer`, `src/http`, `src/server`, `src/hooks`, and `src/skills`, alongside `src/intelligence`, `src/runtime`, `src/patch`, and `src/tools`. Operational scripts are grouped under `scripts/build`, `scripts/release`, `scripts/validation`, `scripts/testing`, and `scripts/benchmark`; host-smoke implementation belongs under `scripts/testing`. Keep stdio output protocol-safe: server diagnostics belong on stderr, never stdout.
 
 Before opening a pull request, run:
 
@@ -74,13 +74,13 @@ for %I in ("%USERPROFILE%") do @set "TEMP=%~sI\AppData\Local\Temp"
 set "TMP=%TEMP%"
 bun --version
 set AST_MCP_SKIP_PACKAGE_SMOKE=1
-bun test --max-concurrency=1 --timeout=30000 tests/config.test.ts tests/config-cli.test.ts tests/format-config.test.ts tests/git-worktrees.test.ts tests/workspace-concurrency.test.ts
-bun scripts/test-shard.ts --shard 0 --shards 3
-bun scripts/test-shard.ts --shard 1 --shards 3
-bun scripts/test-shard.ts --shard 2 --shards 3
+bun test --max-concurrency=1 --timeout=30000 tests/config/index.test.ts tests/cli/config.test.ts tests/runtime/format-config.test.ts tests/runtime/git-worktrees.test.ts tests/intelligence/workspace/concurrency.test.ts
+bun scripts/testing/test-shard.ts --shard 0 --shards 3
+bun scripts/testing/test-shard.ts --shard 1 --shards 3
+bun scripts/testing/test-shard.ts --shard 2 --shards 3
 bun test --dots --max-concurrency=1 --timeout=30000
 bun run intelligence:qualify
-bun test tests/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+bun test tests/integration/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
 ```
 
 An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from `%USERPROFILE%` and checks its version. Run tests without `--bail` during diagnosis so every failure appears. The multi-call native MCP test has a 30-second budget because a healthy Windows run can approach Bun's default five seconds. Use `git fetch` and an isolated worktree to test a pushed fix on the same runner. Use SSH keepalives for long suites. If SSH disconnects, inspect `tasklist` for an orphaned Bun suite and stop only its exact PID before restarting. Run one Windows suite at a time. Cancel automatically triggered package CI runs during diagnosis. Remove the debug workflow and run required Actions checks once after native proof. If Actions still disagree, return to a native reproducer before patching.
@@ -95,4 +95,4 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 
 ## Releases
 
-Releases are automated from `main`. Release Please opens and maintains the release pull request; merging it creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.
+Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the trusted, installed Oxfmt and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.

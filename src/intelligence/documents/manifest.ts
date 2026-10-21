@@ -17,7 +17,6 @@ const formats: readonly DocumentFormat[] = [
 const rewriteFormats = new Set<DocumentFormat>(["json", "jsonc"]);
 
 export const DOCUMENT_GOLDEN_PROVENANCE = Object.freeze({
-  graphifyRevision: "3f82bf7f837a07fb0f7668fbdbd5662801906942",
   schemaVersion: "ast-mcp.document-goldens.v1",
 });
 

@@ -1,7 +1,7 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
-import { createProcessServer as createServer } from "./lifecycle";
-import { BatchingStdioServerTransport } from "./stdio";
+import { createProcessServer as createServer } from "./server/lifecycle";
+import { BatchingStdioServerTransport } from "./server/stdio";
 
 const transport = new BatchingStdioServerTransport();
 const start = transport.start.bind(transport);

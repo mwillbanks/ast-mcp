@@ -52,7 +52,6 @@ jobs:
               - '.oxlintrc.json'
               - 'bun.lock'
               - 'bunfig.toml'
-              - 'dprint.json'
               - 'docker/**'
               - 'fallow.toml'
               - 'logo.svg'
@@ -72,7 +71,6 @@ jobs:
               - '.release-please-manifest.json'
               - '.github/workflows/release.yml'
               - 'bin/**'
-              - 'dprint.json'
               - 'package.json'
               - 'scripts/**'
               - 'src/**'
@@ -139,7 +137,7 @@ jobs:
       - name: Check dead code
         run: bun run fallow
       - name: Build and exercise extracted distribution once
-        run: bun test tests/package-smoke.test.ts --bail
+        run: bun test tests/tooling/package-smoke.test.ts --bail
 
   package-coverage:
     name: Package tests and 95% coverage (Linux)
@@ -208,7 +206,7 @@ jobs:
       - name: Test package shard
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
-        run: bun scripts/test-shard.ts --shard ${{ matrix.shard }} --shards 3
+        run: bun scripts/testing/test-shard.ts --shard ${{ matrix.shard }} --shards 3
 
   package-native:
     name: Native package qualification (${{ matrix.os }})
@@ -244,9 +242,9 @@ jobs:
           AST_MCP_QUALIFY_EMBEDDINGS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: bun run intelligence:qualify
       - name: Verify CLI MCP stdio handshake
-        run: bun test tests/mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
+        run: bun test tests/integration/mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
       - name: Verify native MCP stdio handshake
-        run: bun test tests/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+        run: bun test tests/integration/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
 
   website:
     name: Website validation

@@ -3,7 +3,7 @@ import path from "node:path";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
-import { configRegistry } from "../config-registry";
+import { configRegistry } from "../config/registry";
 import type {
   RevisionSelector,
   StoragePlacement,

@@ -25,7 +25,7 @@ Coding agents need more than a text editor. They need a way to understand code r
 
 - **Structural intelligence:** Directory digests, symbols, search, context, calls, dependencies, cycles, impact, and public API inspection.
 - **Guarded file operations:** Batched hashes, bounded reads, deterministic creation, exact patches, attributes, and reference-aware deletion.
-- **Root isolation:** One path policy covers file and intelligence operations, symlink rejection, and explicit external roots.
+- **Local filesystem boundary:** File authorization applies to local files; intelligence workspace roots remain separate. Use web or connected tools for remote content, and apply normal file policy when saving it locally.
 - **Safe commits:** Fresh hashes, deterministic locks, candidate formatting, hash rechecks, and atomic replacement.
 - **Agent routing:** Best-effort hooks, MCP-delivered skill instructions, and idempotent host configuration for Codex, Claude, Copilot, and VS Code.
 
@@ -57,6 +57,8 @@ Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power co
 ## Install
 
 Install the MCP server, best-effort routing hooks, and managed instructions into the current repository. Hosts that support MCP Skills can load the canonical skill from the server; other clients can use an explicit local export with `ast-mcp skills export <destination>`. See the [MCP Skills guide](https://mwillbanks.github.io/ast-mcp/docs/guides/skills/) for details.
+
+For a manual skill, run `ast-mcp skills update <destination>` after a package upgrade. It updates unchanged managed files and preserves customizations. Conflicts require manual reconciliation and return a nonzero exit. MCP Skills clients need no disk refresh unless they select a local copy. Check host selection when an old local copy shadows current MCP instructions.
 
 The hooks nudge common direct editor and manual mutation attempts toward ast-mcp. They are not a security boundary and deliberately leave Git operations, output redirection, repository scripts, and arbitrary execution to the host framework and sandbox.
 
@@ -108,6 +110,10 @@ Install or update ast-mcp to create `ast-mcp.toml`. The installer migrates versi
 ```toml
 version = 2
 
+[cli.output]
+interactive = "human"
+non_interactive = "json"
+
 [workspace]
 roots = ["."]
 
@@ -138,6 +144,8 @@ port = 3768
 ```
 
 Resolution is deterministic: environment overrides, project `ast-mcp.toml`, the platform global `ast-mcp/ast-mcp.toml`, then built-in defaults. The server uses MCP client workspace roots when available, so one global installation automatically selects the connected project. Existing environment variables remain supported as explicit overrides.
+
+User-facing config, installer, and skills commands default to `human` when stdout is a terminal and `json` when redirected. Set `[cli.output]` defaults or override them with `--output human|json|yaml|toml`. See the [commands reference](https://mwillbanks.github.io/ast-mcp/docs/reference/commands/#output-formats).
 
 Formatting is disabled by default. Enable it only with an installed external formatter configured for the target files. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for dprint, Prettier, oxfmt, Biome, and other formatter setups. File access is restricted by default; see [filesystem access modes](https://mwillbanks.github.io/ast-mcp/docs/guides/filesystem-access/) before enabling unrestricted access. Unrestricted file access does not change intelligence workspace roots. Mutation tools expose a declared `files` batch. In restricted mode, version 2 requires explicit `[[paths]]` rules for file access outside the host baseline, including temporary paths.
 

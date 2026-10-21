@@ -2,8 +2,8 @@ import type {
   EmbeddingModelConfig,
   EmbeddingProvider,
 } from "../../../src/intelligence/retrieval/index.ts";
-import { createServer } from "../../../src/server.ts";
-import { BatchingStdioServerTransport } from "../../../src/stdio.ts";
+import { createServer } from "../../../src/server/index.ts";
+import { BatchingStdioServerTransport } from "../../../src/server/stdio.ts";
 
 class FixtureEmbeddingProvider implements EmbeddingProvider {
   constructor(readonly config: EmbeddingModelConfig) {}

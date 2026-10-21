@@ -1,40 +1,94 @@
-# Patch state machine
+# Guarded file operations
 
-The server distinguishes AST inspection from structural rewrite support. AST-capable files use `map`, `show`, `search`, `context`, or `run` for content discovery; a rewrite target is structurally capable only when its language supports `run` and the native parser reports no error diagnostics.
+## Select the route
 
-## Route selection
+1. Call `file_capabilities` when read or patch support is uncertain.
+2. Choose a reported effective method. Configuration can narrow intrinsic support.
+3. Use `file_read.mode: "ast"` for symbols or structured-document selectors.
+4. Use `mode: "text"` for bounded exact text. Use `auto` for AST-first selection.
+5. Choose `ast` for structural changes or `aider_block` for small text changes with unique context.
 
-1. Call `file_capabilities` when the route is uncertain. It is the authoritative contract shared by `file_read`, `run`, and `file_patch`, and reports intrinsic support separately from configuration-filtered methods.
-2. Choose `file_read.mode` explicitly when intent matters: `ast` returns a source map/requested symbols or RFC 6901-selected structured-document values, `text` returns a bounded slice, and `auto` prefers AST when available. Text remains selectable for AST-capable files.
-3. Choose `file_patch.patchStrategy` per target. `ast` and `aider_block` are both valid for parseable source when reported by `file_capabilities`; prefer AST for semantic or repeated structural changes and Aider for a small, exact, uniquely anchored text replacement. Configuration may narrow either method but never silently changes the agent's selection.
-4. Preview every ordered AST rule with `run`; for the full guarded dry run, use the same keyed `file_patch` entry with `preview: true`. Preview does not format; commit, including `previewReceipt` commit, formats. Then obtain one fresh `file_hash` per keyed path immediately before mutation. Aider patches also support the guarded preview receipt workflow.
-5. Use one `file_patch({ files: { ... } })` object for one or more files. Each path value declares exactly one `patchStrategy`, the corresponding ordered `astRules` or `aiderBlocks`, optional `preview`, and normally one fresh `expectedSha256`.
-6. Use one `file_write({ files: { ... } })` object for new files or explicit whole-file replacement where permitted. Use the shared `chattr` object for chmod/chown metadata. The complete batch policy preflight finishes before filesystem preparation.
-7. Use `file_rename`, `file_chattr`, and `file_delete` for their dedicated operations. Rename requires source `delete` and destination `write`; guarded mutations honor `safety.require_hash` and supplied hashes are always enforced.
-8. Operations for one path are serialized under one lock and one atomic commit. A preview returns a bounded diff and leaves that path unchanged; a failed rule also leaves it unchanged.
-9. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; normal agent mutations belong to `file_patch`.
+## Preview and commit
 
-MCP transport requests may contain a JSON-RPC array of requests and notifications. Preserve request IDs and expect one response per request, with notifications omitted.
+1. Preview each AST pattern with `run({ pattern, paths: [absolutePath], json: true })`.
+2. Inspect every match. Narrow capped results before proceeding.
+3. Preview the complete patch with `file_patch` and `preview: true`.
+4. Call `file_hash` immediately before mutation.
+5. Supply each file's `expectedSha256` and ordered operations in one `files` object.
+6. Verify each keyed result, then inspect the changed content.
 
-## Structural rule discipline
+`run.write: true` fails with `use_file_patch`. Never use it as a mutation escape hatch.
+Preview returns an unformatted candidate. Commit runs enabled formatters.
+A receipt commit supplies `previewReceipt` without `patchStrategy`, patch operations, or `preview`.
+Receipts bind the inspected candidate and effective context. Rebuild a stale receipt rather than bypassing it.
 
-- Pattern the smallest complete syntax node that uniquely expresses the change.
-- Use `$NODE` for one node and `$$NODES` for zero or more nodes.
-- Preview with the same language, explicit paths, and optional glob.
-- Inspect search matches, then use `file_patch` with `preview: true` for the full guarded diff; keep direct `run.write` for exceptional lower-level rewrites only.
-- Every native AST rule declares its expected match count; reject ambiguous patterns before mutation.
-- Split declarations, calls, and type references into separate rules.
+Each file has one lock and an atomic replacement.
+Batch preflight checks all targets before committing entries. Do not assume crash atomicity across files.
+Existing hashes remain mandatory by default. Always supply a fresh hash for guarded edits.
 
-## Aider block discipline
+## Structural rules
 
-Version 2 enables exact, whitespace-normalized, relative-indentation, and diff-match-patch matching by default. Repositories may narrow `[files.patch].aider_matchers` when they intentionally want a stricter matching policy. Use `file_read` with `mode: "text"` to identify the smallest unique surrounding block, expand the slice and block on ambiguity, and select Aider only when the capability result permits it. Matcher ambiguity or a disabled fallback is a safe stop, never a reason to broaden the patch silently.
+- Match the smallest complete syntax node.
+- Use `$NODE` for one node and `$$$NODES` for a variadic sequence.
+- Separate declarations, calls, and references into ordered rules.
+- Supply `pattern`, `fix`, and an optional positive `expectedMatches` for each rule.
+- Prefer narrow, one-match rules with explicit counts. Do not widen a count to hide ambiguity.
 
-## Rejections
+```json
+{
+  "files": {
+    "/repo/src/service.ts": {
+      "expectedSha256": "<fresh SHA-256>",
+      "patchStrategy": "ast",
+      "astRules": [
+        {
+          "pattern": "oldName($$$ARGS)",
+          "fix": "newName($$$ARGS)",
+          "expectedMatches": 1
+        }
+      ]
+    }
+  }
+}
+```
 
-- `Stale file context`: refresh `file_hash`, re-inspect through the correct AST or bounded non-AST route, and rebuild the patch.
-- `read_mode_unavailable` or `patch_strategy_unavailable`: call `file_capabilities`, then make a supported explicit selection; do not retry a different method blindly.
-- `matched N nodes; expected M`: inspect the returned bounded locations and narrow the rule.
-- `first match per file`: narrow `file_patch` to one structural node or use a bounded direct run only when the lower-level rewrite is intentional.
-- capped preview or read: narrow paths, glob, pattern, line ranges, or byte caps.
-- formatter preflight failure: the explicitly enabled external formatter failed or rejected the target; no write occurs. Formatting defaults to disabled through `[formatting].enabled = false`. No file operation downloads a formatter.
-- path or symlink rejection: use a real path permitted by the effective host baseline and top-level `[[paths]]` rules. Version 2 grants no implicit OS-temporary access; add a narrow explicit path rule when it is required. Legacy `safety.allow_temp_directory`, `safety.allow_any_path`, and `safety.follow_symlinks` apply only to version 1. In version 2, both a link and its resolved target must be authorized and the winning rule must set `follow_symlinks = true`.
+## Text blocks
+
+Read a bounded text slice, then select unique surrounding context.
+Each Aider block has `search` and `replace` strings.
+Version 2 enables exact, whitespace, relative-indentation, and diff-match-patch matchers by default.
+Configuration can narrow these matchers.
+An ambiguous match must stop the operation. Expand unique context after reinspection.
+
+## Other operations
+
+Use `file_write` for new files or permitted whole-file replacement.
+Existing AST-capable files can require structural patches instead.
+Use shared `chattr` metadata for permissions or ownership; do not add independent chmod or chown fields.
+
+Use `file_rename` for moves.
+Hash every source and verify each absent destination.
+The tool checks source delete policy and destination write policy.
+Moves never replace destinations. Ordinary failures attempt rollback; moves are not crash-atomic.
+
+Use `file_delete` for files.
+The tool checks references before deletion; referenced source requires explicit `forceReferences`.
+Cleanup removes empty ancestors only after successful file deletion.
+
+## Rejection recovery
+
+| Result                 | Action                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| Stale hash             | Hash and inspect again. Rebuild the patch against current bytes.                           |
+| Stale preview receipt  | Repeat inspection and preview. Commit the new receipt.                                     |
+| Unexpected match count | Inspect returned locations and narrow the rule.                                            |
+| Ambiguous Aider block  | Read more unique context and rebuild the block.                                            |
+| Unavailable method     | Inspect `file_capabilities` and select a supported method.                                 |
+| Capped output          | Narrow paths, patterns, ranges, or byte limits.                                            |
+| Policy denial          | Inspect `policy_check` and effective configuration. Request only authorized access.        |
+| OS permission failure  | Report the OS restriction. Unrestricted mode cannot bypass it.                             |
+| Formatter failure      | Inspect `config_status` and the installed formatter. Repair configuration before retrying. |
+| Missing file           | Confirm the path and workspace. Do not treat it as a permission error.                     |
+
+Formatting defaults to disabled. File operations never download formatters.
+Load [configuration.md](configuration.md) for formatter selection, path rules, approvals, and immutable revisions.

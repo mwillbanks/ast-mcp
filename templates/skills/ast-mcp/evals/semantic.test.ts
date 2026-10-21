@@ -504,3 +504,57 @@ test("semantic evaluator reports every validation failure class", () => {
     "assertion not proven: Reports each source and destination result.",
   );
 });
+
+test("native evidence follows current argument alternatives and rejects direct writes", () => {
+  for (const [tool, valid, invalid] of [
+    [
+      "trace",
+      { target: "handleRequest" },
+      { from: "handleRequest", to: "writeResponse" },
+    ],
+    ["find_related", { query: "request handler" }, { line: 20 }],
+    ["squeeze", { text: "repeated log entries" }, { path: "log.txt" }],
+    ["deps", { path: "src/index.ts" }, { target: "server" }],
+    [
+      "run",
+      { pattern: "old($$$ARGS)", rewrite: "new($$$ARGS)" },
+      { pattern: "old($$$ARGS)", write: true },
+    ],
+  ] as const) {
+    const fixture = { ...evaluation, assertions: [], required_tools: [tool] };
+    const verify = (input: object) =>
+      verifyEvaluation(
+        fixture,
+        [{ index: 0, input: JSON.stringify(input), tool }],
+        "verification output",
+        ["/workspace"],
+      );
+    expect(verify(valid)).not.toContain(
+      `${tool} has empty or schema-incomplete input`,
+    );
+    expect(verify(invalid)).toContain(
+      `${tool} has empty or schema-incomplete input`,
+    );
+  }
+});
+
+test("native evidence permits default selections and alternate roots", () => {
+  for (const [tool, input] of [
+    ["show", { file: "src/index.ts" }],
+    ["map", { root: "/workspace" }],
+    ["digest", { file: "src/index.ts" }],
+    ["implements", { target: "Repository", root: "/workspace" }],
+    ["workspace_status", {}],
+    ["map", {}],
+  ] as const) {
+    const errors = verifyEvaluation(
+      { ...evaluation, assertions: [], required_tools: [tool] },
+      [{ index: 0, input: JSON.stringify(input), tool }],
+      "verification output",
+      ["/workspace"],
+    );
+    expect(errors).not.toContain(
+      `${tool} has empty or schema-incomplete input`,
+    );
+  }
+});

@@ -1,0 +1,12 @@
+{
+  "checksums": {
+    "apex.cls": "21ef68bbd38dc7e55cfec451c5237d54e3cf3850da21f12d9d468479a2a8ed8f",
+    "csharp.cs": "ab7fa53de192923a2d489cddc97e07dae9c301e7d19aa2da761f42e84e7c8cd7",
+    "groovy.groovy": "dbb070e55f005f0ce63006320191e2c2033e7ba9999314deb9167c3afd2673a7",
+    "java.java": "2bc647aa86df3ff0611a4f9d0b5559be0ff298d28a953a2dd8da55afd29827d5",
+    "kotlin.kt": "85e5a249bde9e52346e766769c5b73e0585e89bad7bfdbf0fad01f3b48b81723",
+    "scala.scala": "cb1952ed90555f24af613bde4a4c0e9f5ea745840828e5aad94a55aa0ebc8163",
+    "native-golden.json": "7f444eb145b28258b1cec428fb4255733e972d90881e6546ad4fa6993c5ed010"
+  },
+  "schemaVersion": "ast-mcp.native-integrity.v1"
+}

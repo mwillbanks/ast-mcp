@@ -1,167 +1,86 @@
 ---
 name: ast-mcp
-description: Use ast-mcp when exploring unfamiliar code, tracing symbols or dependencies, reading and hashing files, creating files, or editing existing code under AST-isolated write rules. Also use when ast-mcp tools are missing and the MCP, hooks, or skill need local or global installation.
+description: Use for local repository exploration, code intelligence, guarded file operations, and AST-MCP installation or recovery. Use when tools disconnect, configuration needs migration, or selected manual skills need updates. Do not use for remote-only research, supplied text, or general AST explanations.
 ---
 
 # AST MCP
 
-Treat ast-mcp as the only code-intelligence and filesystem boundary. Do not call direct editors, `apply_patch`, shell mutation utilities, or interpreter write scripts.
+Use AST-MCP for local files and local code intelligence.
+Use web or connector tools for remote content without local-file approval.
+Apply local file policy when you save remote content locally.
+Never use direct editors, shell writers, or interpreter writes to bypass this boundary.
 
-## Skill delivery and compatibility
+## Load the correct instructions
 
-Discover this skill through the `io.modelcontextprotocol/skills` MCP extension. Use `skills/list`, then `skills/get` with `skill://ast-mcp/SKILL.md`. Read supporting files through their exact manifest URIs using `resources/read`; validate the advertised SHA-256 digest and byte size. Preserve all frontmatter fields. Honor `ttlMs`, `cacheScope`, and pagination cursors. Unknown or modified URIs are rejected.
+The host selects and activates the skill.
+For disk delivery, resolve relative links from the active skill directory, whether global or project-local.
+For MCP delivery, request each reference through its exact manifest URI.
+Do not invent a `$ast-mcp/references/...` filesystem path.
+Reading a resource does not activate a skill.
 
-Clients using protocol 2026-07-28 must include the required protocol-version and client-capabilities request metadata. Legacy clients retain ordinary tools. If the host cannot load MCP Skills, run `ast-mcp skills export <destination>` and load that directory manually. The destination is the skill directory itself. Export preserves existing files, including customized skills, and rejects symlink directories. Installation and updates no longer copy skills to disk; uninstall preserves legacy skill directories.
+- Load [tool-catalog.md](references/tool-catalog.md) for tool inputs, workspace selection, indexing, retrieval, and graph operations.
+- Load [patch-state-machine.md](references/patch-state-machine.md) before file mutations or recovery from rejected patches.
+- Load [installation.md](references/installation.md) for missing tools, disconnections, upgrades, stale instructions, or configuration migration.
+- Load [configuration.md](references/configuration.md) for path rules, approvals, formatting, telemetry, and CLI output.
 
-## Start with availability
+## Check availability
 
-1. Confirm that `file_hash`, `file_read`, `file_write`, `file_patch`, and the direct intelligence tools are callable.
-2. If any are unavailable, stop mutation and follow [installation.md](references/installation.md). Run `scripts/check-install.ts` to diagnose the configured host when Bun and this skill directory are available.
-3. After installation, ask the host to reconnect or restart MCP servers, then list tools again. Never fall back to another writer.
+1. Confirm that file tools and direct intelligence tools are callable.
+2. If tools are missing or disconnected, stop mutation and load the installation reference.
+3. Let the host reconnect the server, then verify discovery and a bounded read.
+4. Reinspect pending files after any connection failure. Never switch to another writer.
 
-## Explore before editing
+## Explore local code
 
-- Start unfamiliar work with `digest`, use `map` for one file's shape, and use `show` for exact symbols. When a file workflow is uncertain, call `file_capabilities` once for all relevant paths; `file_read`, `run`, and `file_patch` enforce that same result.
-- Use `search` when names are unknown and `find_related` for code similar to a known location.
-- Use `context` for a symbol plus nearby calls; use `impact` before changing a public or shared symbol.
-- Use `deps`, `reverse_deps`, `graph`, or `cycles` for module relationships.
-- Use `callers`, `callees`, or `trace` for execution flow; use `implements` for type hierarchies.
-- Use `surface` for exported API shape, `index` for search-index maintenance, and `squeeze` only for repetitive logs or text.
-- `file_read` accepts an agent-selected `mode`: `ast` returns a source map/requested symbols or RFC 6901-selected structured-document values, `text` returns a bounded zero-based end-exclusive slice, and `auto` prefers AST when supported. Use `symbols` for source and `selectors` for JSON, JSONC, TOML, or YAML. Text mode remains available for AST-capable files when exact source text is necessary. Batch multiple files in one call.
-- Use ast-mcp intelligence as the primary repository search route. Never invoke `ast-grep` directly and never use `sed` for repository reads or edits. `rg` is permitted only as a discouraged fallback for exact literals, identifiers, non-AST formats, or discovery unavailable through ast-mcp; external transcript analysis, Git metadata, validation, and live-runtime reproduction are exceptions.
+1. Start unfamiliar work with `digest`. Use `map` for file structure and `show` for symbols.
+2. Use `search` or `find_related` for discovery, and `context` for nearby calls.
+3. Use `impact` before shared API changes. Use callers, dependencies, and graph tools to check affected code.
+4. Batch independent reads when schemas permit. Keep overlapping writes and dependent operations sequential.
+5. Keep native intelligence requests within one project root. Use absolute paths for linked worktrees.
+6. Use `file_read` with explicit `mode` when intent matters.
+7. Use source `symbols`, structured-document `selectors`, or bounded text ranges.
+8. Use `document_query` for bounded JSON, JSONC, TOML, and YAML values.
 
-Read [tool-catalog.md](references/tool-catalog.md) for exact arguments and combinations.
+Use AST-MCP as the primary repository search route.
+Do not invoke `ast-grep` directly or use `sed` for repository reads.
+Use `rg` only for exact literals, identifiers, non-AST formats, or discovery unavailable through AST-MCP.
+Git metadata, validation, external transcripts, and runtime reproduction remain permitted exceptions.
 
-## Batch and parallelize safely
+## Select a workspace
 
-- Batch paths, symbols, selectors, and keyed files into one call whenever the tool schema supports them. Prefer one bounded multi-target call over repeated single-target calls.
-- Issue independent read-only calls in the same model turn or host executor, and return all parallel results together when the host protocol requires it.
-- Keep each AST intelligence request within one project root. Split cross-root work into root-specific calls; independent read-only calls may run in parallel.
-- Linked git worktrees of the config-bearing repository are authorized according to `workspace.worktrees` (`include` by default). Pass absolute paths into a worktree; if `PWD` is a linked worktree, relative paths resolve there. Do not treat a toml-less worktree as a different project root.
-- Keep dependent and overlapping work sequential: inspect, preview, hash, then mutate. Never parallelize writes that can touch the same path, configuration generation, or dependency chain.
-- Call `config_status` before the first mutation when formatter selection, path policy, configuration health, or generation is uncertain. Use `policy_check` to preflight read, write, and delete decisions without side effects.
-- Change `ast-mcp.toml` only through grouped `config_core` and batched `config_paths`. Do not rewrite the whole file with `file_write` or `file_patch`. Host elicitation is required by default (`mcp.configuration.require_approval = true`). Changing `[mcp.configuration]` always requires approval, including disabling the surface. Successful writes invalidate the in-process registry so the new generation applies without restarting the MCP server.
-- Use `document_query` for bounded JSON, JSONC, TOML, and YAML inspection instead of attempting whole-file reads of structured manifests.
+1. Call `workspace_open` for the exact checkout and revision.
+2. Pass its `workspaceId` to indexed tools and subsequent workspace-scoped calls.
+3. Use `workspace_status` to inspect open workspaces.
+4. Build or refresh the index before indexed retrieval when necessary.
+5. Treat commit, branch, tag, and index revisions as immutable.
+6. Preserve evidence and citation ranges when using retrieval or optional generation.
 
-## Use workspace intelligence
+Modern HTTP has no implicit workspace selection across requests.
+Keep the returned `workspaceId` and pass it explicitly.
 
-- Call `workspace_open` for the exact checkout or worktree. Pass its `workspaceId` to every graph and index request.
-- Use `index` to build, refresh, verify, collect, or inspect the LanceDB index. Use `index_status` for read-only status.
-- Use `retrieve` for bounded revision-scoped evidence. Enable semantic retrieval explicitly when a pinned embedding model is available.
-- Use `generate` only when optional generation is configured. Supply explicit indexed evidence and preserve returned citation ranges.
-- Use `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` for evidence-backed graph work. Follow returned pagination and coverage metadata.
-- Select global, local, parent, or explicit storage when opening a workspace. Global is the default and reuses content-addressed artifacts.
-- Set graph-diff federation explicitly for cross-repository comparisons. Keep ordinary requests within one repository.
-- Treat `run` as search and rewrite preview only. Commit reviewed changes through hash-guarded `file_patch`.
+## Write through guarded tools
 
-## Mutate through declared file batches
+1. Inspect each target. Call `file_capabilities` when method support is uncertain.
+2. Select `ast` for structural patches or `aider_block` for small, uniquely anchored text changes.
+3. Preview AST matches with bounded `run` calls. Reject capped output.
+4. Use `file_patch` with `preview: true` for a guarded dry run.
+5. Call `file_hash` immediately before the guarded mutation.
+6. Send one path-keyed `files` batch with each target's fresh `expectedSha256`.
+7. Use ordered `astRules` or `aiderBlocks` with the selected `patchStrategy`.
+8. Use `file_write` for new files or permitted whole-file replacement.
+9. Use `file_rename` for guarded moves. Destinations must not exist.
+10. Use `file_chattr` for metadata and `file_delete` for deletion.
+11. Verify changed files, then run repository validation.
 
-1. Inspect with `map`, `show`, `context`, a bounded `run`, or `file_read`. Call `file_capabilities` before choosing a read or patch method when intrinsic support or effective configuration is uncertain.
-2. Select `file_read.mode` explicitly when intent matters. Use `ast` with `symbols` for source structure or with RFC 6901 `selectors` for structured documents; use `text` for a bounded exact slice. `auto` is suitable when AST-first behavior is desired.
-3. Select `file_patch.patchStrategy` per file. Prefer `ast` for semantic, repeated, or structurally anchored changes; prefer `aider_block` for a small exact text replacement with unique context. Both remain selectable for parseable source whenever `file_capabilities` reports them, and configuration may narrow the effective choices.
-4. Preview every AST rule with `run({ pattern, paths: [filePath], lang?, json: true })`; inspect all matches and reject capped output before mutation. For a contract-level dry run of either strategy, send the same `file_patch` file entry with `preview: true`. Preview returns the unformatted strategy candidate and does not run formatters; formatting occurs only at commit, including `previewReceipt` commit.
-5. Call one batched `file_hash({ filePaths: [...] })` immediately before guarded edits. Keep one returned hash per file. The runtime can make hashes optional through `safety.require_hash = false`, but the normal agent workflow should still supply them whenever current-state protection matters.
-6. Mutation tools accept a declared `files` property whose value is a path-keyed object. Use one `file_patch({ files: { ... } })` call for one or more files with exactly one explicit strategy and its matching ordered operations. Each path runs under one lock; preview never commits and normal mode commits atomically.
-7. Use one `file_write({ files: { ... } })` batch for new files or permitted SHA-guarded whole-file replacement. Supply the shared `chattr` object when chmod/chown metadata is required. The complete batch policy preflight finishes first; in-place formatter staging may transiently create, revalidate, and remove missing parents before the guarded commit recreates them, without writing the live target.
-8. Use one `file_rename({ files: { ... } })` batch for hash-guarded moves; validate every source and destination, reject existing destinations, and use no-replace moves. Ordinary failures roll back completed entries when possible; the operation is not crash-atomic.
-9. Use `file_chattr({ files: { ... } })` for metadata-only changes. Use hash-guarded `file_delete({ files: { ... } })` for deletion; it preflights all targets and AST import references before any deletion, requires an explicit `forceReferences` override for referenced source, and removes empty ancestor directories after lock release.
-10. Use direct `run` with `rewrite` and `write: true` only for an intentionally bounded lower-level rewrite; it is not the normal agent patch route and still rewrites only the first match per file.
-11. Verify results with `show`, `map`, `run`, or bounded `file_read` slices, then run repository validation.
+`run` supports search and rewrite previews only. `write: true` fails with `use_file_patch`.
+Use narrow one-match AST rules where practical. `expectedMatches` is optional; explicit counts protect reviewed intent.
+Preview does not format. Commit applies enabled formatting, including receipt commits.
+Batch preflight checks all targets. Do not assume whole-batch crash atomicity.
 
-Version 2 grants no implicit OS-temporary access. Express every exception through the narrowest top-level `[[paths]]` rule; `request` access must be approved through the host and model arguments can never bypass policy. Legacy v1 booleans remain readable only for compatibility and should be migrated with `ast-mcp config migrate`.
+## Stop and recover
 
-Example batched AST patch:
-
-```json
-file_patch({
-  "files": {
-    "/repo/src/service.ts": {
-      "expectedSha256": "<from file_hash>",
-      "patchStrategy": "ast",
-      "astRules": [
-        { "pattern": "oldName($$$ARGS)", "fix": "newName($$$ARGS)", "expectedMatches": 1 },
-        { "pattern": "oldFlag", "fix": "newFlag", "expectedMatches": 1 }
-      ]
-    }
-  }
-})
-```
-
-Example batched Aider patch:
-
-```json
-file_patch({
-  "files": {
-    "/repo/notes.md": {
-      "expectedSha256": "<from file_hash>",
-      "patchStrategy": "aider_block",
-      "aiderBlocks": [{ "search": "old paragraph", "replace": "new paragraph" }]
-    }
-  }
-})
-```
-
-Example batched file write:
-
-```json
-file_write({
-  "files": {
-    "/repo/new-a.txt": { "content": "alpha\\n" },
-    "/repo/existing.txt": { "content": "beta\\n", "expectedSha256": "<from file_hash>" }
-  }
-})
-```
-
-MCP transport requests may use a single JSON-RPC array containing requests and notifications. The stdio transport expands the array, preserves request IDs, and emits one line per request response. The live streamable HTTP transport uses SSE by default and emits one event per request response. Neither transport emits a response for notifications; do not assume that live HTTP returns a JSON array unless `enableJsonResponse` was explicitly configured.
-
-Read [patch-state-machine.md](references/patch-state-machine.md) for routing and rejection recovery.
-
-## Update configuration through MCP
-
-Use `config_core` for grouped core sections (`workspace`, `safety`, `files`, `formatting`, `intelligence`, `http`, `dependencies`, `telemetry`, `mcp.configuration`) and `config_paths` for batched `[[paths]]` add, update, or remove operations. Batch related keys in one group; do not send a whole-file rewrite or one call per individual key. `target` defaults to `project` and may be `global`. Version 1 files must be migrated first. When `mcp.configuration.enabled = false`, both tools fail closed.
-
-```json
-config_core({
-  "safety": { "require_hash": false },
-  "workspace": { "worktrees": "request" }
-})
-```
-
-```json
-config_paths({
-  "operations": [
-    {
-      "op": "add",
-      "rule": {
-        "id": "docs",
-        "path": "./docs",
-        "policies": { "read": "allow", "write": "request" }
-      }
-    },
-    { "op": "update", "id": "workspace", "rule": { "excludes": [".git/**"] } }
-  ]
-})
-```
-
-## Formatting, telemetry, and filesystem access
-
-Formatting is disabled by default. `[formatting] enabled = false` is the master switch. Enable formatting only when requested, configure an installed external formatter, and select its extensions and stdout or in-place mode. dprint, Prettier, oxfmt, Biome, and other executable formatters are supported. File operations never download formatters. Respect each project’s formatter configuration.
-
-Telemetry is enabled by default. Set `[telemetry] enabled = false` globally to prevent initialization and network activity, or in a project to suppress project events. Collection includes tool names, durations, outcomes, error codes, versions, build identifiers, anonymous session IDs, and sanitized package stacks. It excludes source, filesystem paths, arguments, responses, agent intent, and identifying client metadata.
-
-`[safety] filesystem = "restricted"` is the default. `"unrestricted"` bypasses path boundaries and symlink policies while preserving OS permissions, hashes, atomic operations, and immutable revisions. Project activation requires trusted session-scoped host approval tied to the effective configuration. It does not change intelligence roots, indexing, storage, or workspace selection. Modern HTTP requests have no transport session; requested approvals fail closed with `approval_required`. Use explicit global rules or a host connection with stable approval scope. Always pass the returned `workspaceId` on subsequent modern HTTP requests; no workspace is implicitly selected across requests.
-
-## Recover safely
-
-- Stale SHA: refresh `file_hash`, re-inspect with the selected AST or text mode, and rebuild the patch.
-- Zero or excess matches: narrow each AST rule; every astRules item must match exactly one node because each guarded AST rule has an explicit match count, while ordered arrays let one declared `file_patch.files` entry apply multiple reviewed operations.
-- Capped direct preview: narrow paths, glob, or pattern before writing.
-- Unavailable method: call `file_capabilities` and select a reported read or patch method. Aider ambiguity or a disabled matcher is a safe stop; request a larger `mode: "text"` slice and expand the search block with unique surrounding context.
-- Formatter preflight failure: call `config_status`, inspect the selected formatter and fallback, and do not write until stdout or staged in-place formatting succeeds. A v2 `preserve` fallback deliberately keeps unmatched content unchanged.
-- MCP loss mid-task: stop writing, restore the server, then re-inspect touched and pending files through their correct AST or non-AST routes.
-
-## Completion check
-
-Confirm the old structure is absent through AST search, callers are correct, touched files were verified through their proper route, configured formatter-backed writes succeeded (or formatting is explicitly disabled), repository validation passes, and no direct-write or whole-file-read bypass was used.
-
-Use `evals:check` for fixture-matrix integrity. `evals:measure` inventories batch density, parallel read-only execution, validation-error codes, calls per recorded model-tool turn, direct MCP transcript records and statically visible `tools.mcp__ast_mcp__*` calls inside top-level Codex `exec` source. Put exactly one `ast-mcp-eval:<id>` marker in the user evaluation prompt, or in a direct record input supplied by an evaluation harness, to associate the following direct MCP records with that case. An outer `exec` result cannot prove each nested call, so marked nested calls and multi-marker evidence fail closed. Scoring validates schema-relevant inputs, transcript workspace roots, required order, expected output evidence, assertions, and successful per-call outputs. When the measured run used non-default file safety, pass the validated scorer options `--allow-any-path` and/or `--no-temp-directory`; the scorer does not infer layered project configuration from a transcript. Use `evals:score --strict` only for a complete marked matrix; transcript scoring is matched task-execution evidence, not a blanket agent-quality claim.
+Stop on stale hashes, ambiguous matches, stale receipts, capped reads, permission failures, or formatter failures.
+Reinspect the target and rebuild the operation through the supported route.
+Distinguish path policy from OS permissions. Do not broaden access without authorization.
+Change `ast-mcp.toml` through `config_core` and `config_paths`, never whole-file writers.
+Host approval is required by default. Model arguments cannot grant approval.

@@ -2,7 +2,7 @@
 # fixtures are dynamically loaded by source-owned tests as test runtime roots.
 entry = [
   "bin/ast-mcp.ts",
-  "scripts/regenerate-document-goldens.ts",
+  "scripts/testing/regenerate-document-goldens.ts",
   # Spawned collection generation and Tailwind CLI inputs.
   "website/scripts/generate-data.ts",
   "website/src/styles/app.css",

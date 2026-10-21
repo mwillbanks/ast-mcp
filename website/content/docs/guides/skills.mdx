@@ -22,8 +22,36 @@ A host without MCP Skills support can use a local copy:
 ast-mcp skills export <destination>
 ```
 
-The destination is the skill root and contains `SKILL.md`. Export preserves files already present, including customized copies. Review and reconcile customizations manually when updating; export does not overwrite them. The command rejects symlink destinations and symlinked support directories.
+The destination is the skill root and contains `SKILL.md`. Export preserves files already present, including customized copies. It records managed file hashes in `.ast-mcp-export.json`. The command rejects symlink destinations and symlinked support directories.
 
 New installations do not automatically install skill files on disk. Export only when a client needs a filesystem-based skill directory. The export does not configure the host or activate the skill; follow that host's instructions to load the directory.
 
 Legacy skill directories from previous installations remain in place during migration. Manage or remove those files using the host's normal skill-management controls after checking for local customizations.
+
+## Update a manual skill
+
+Use this command only for a manually selected skill directory:
+
+```bash
+ast-mcp skills update <destination>
+```
+
+The command updates managed files only when their bytes still match their recorded hashes. It adds missing resources. It preserves customized, untracked, and obsolete files.
+
+For legacy exports, the command adopts files that match the current bundled bytes. Other existing files remain unchanged and appear as conflicts. Export a fresh comparison copy, then reconcile those conflicts manually.
+
+Both commands return `written`, `updated`, `unchanged`, `preserved`, `obsolete`, and `conflicts` arrays. Update exits nonzero when conflicts require attention. Structured results remain on stdout. Error instructions go to stderr.
+
+The manifest uses versioned SHA-256 baselines. Keep it with the skill directory. Do not edit hashes to force an update. Invalid manifests fail before resource writes.
+
+An interrupted update can leave some files updated. Rerun the same command after resolving the interruption. The command adopts files that already match the current bundle.
+
+Only one export or update can hold the destination lock. If a process stops unexpectedly, inspect `.ast-mcp-export.lock`. Confirm that no export or update still runs before removing that lock. Never remove an active lock.
+
+## Choose MCP or local delivery
+
+A host with MCP Skills support loads current instructions from the connected server. It needs no disk refresh unless you select a local skill copy.
+
+Host selection rules can let an older local copy shadow the MCP skill. Check which skill location the host selected. Preserve customized copies. Use the host controls to select MCP delivery, or explicitly update the chosen local directory.
+
+Package upgrades, host configuration updates, and manual skill updates are separate operations. After upgrading the package, reconnect the server through the host. Use `ast-mcp update` to refresh managed host configuration. Use `ast-mcp skills update <destination>` only for manual skills.

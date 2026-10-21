@@ -1,64 +1,244 @@
-# Direct tool catalog
+# Tool catalog
 
-All tools are implemented and exposed directly by ast-mcp. Do not shell out to third-party intelligence binaries.
+Call tools directly by name. There is no intelligence proxy.
+The table lists every accepted top-level input. A question mark marks an optional schema property.
+Conditional runtime requirements follow the table.
+Do not transfer options between tools.
 
-## MCP Skills
+## Callable tools
 
-On protocol 2026-07-28, `server/discover` advertises `io.modelcontextprotocol/skills` and resources. Include protocol-version and client-capabilities metadata on every request. Use `skills/list({cursor?})`, `skills/get({uri})`, and `resources/read({uri})` with exact manifest URIs. Lists and gets return complete frontmatter and resource manifests. Verify resource SHA-256 digests and byte sizes; honor `ttlMs`, `cacheScope`, and pagination cursors. Directory reads remain unavailable. Use `ast-mcp skills export <destination>` for unsupported hosts; existing files remain intact.
+| Tool                | Inputs                                                                                                                                                                                                         | Purpose                                    |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `workspace_open`    | `directory`, `revision?`, `storage?`                                                                                                                                                                           | Open an exact checkout and revision.       |
+| `workspace_status`  | `workspaceId?`                                                                                                                                                                                                 | Inspect selected or known workspaces.      |
+| `map`               | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `detail?`, `max_members?`                                    | Inspect source structure.                  |
+| `digest`            | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `detail?`, `max_members?`                                    | Summarize a bounded project.               |
+| `show`              | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `symbols?`, `target?`, `detail?`                             | Read exact symbols.                        |
+| `implements`        | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`                                                    | Find implementations.                      |
+| `surface`           | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`                                                               | Inspect exported APIs.                     |
+| `deps`              | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `hide_ambiguous?`, `hide_external?`                          | Inspect outgoing imports.                  |
+| `reverse_deps`      | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `hide_ambiguous?`, `hide_external?`                          | Inspect importing modules.                 |
+| `cycles`            | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `hide_ambiguous?`, `hide_external?`                          | Find import cycles.                        |
+| `graph`             | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `hide_ambiguous?`, `hide_external?`                          | Inspect module relationships.              |
+| `search`            | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `query?`, `target?`                                          | Find symbols or source text.               |
+| `find_related`      | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `query?`, `target?`                                          | Find related source.                       |
+| `callers`           | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`, `depth?`, `direct?`, `detail?`                    | Find incoming calls.                       |
+| `callees`           | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`, `depth?`, `direct?`, `detail?`                    | Find outgoing calls.                       |
+| `trace`             | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`, `depth?`, `direct?`, `detail?`                    | Trace calls from a target.                 |
+| `impact`            | `paths?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`, `depth?`, `direct?`, `detail?`, `hide_ambiguous?`, `hide_external?` | Inspect shared-symbol impact.              |
+| `context`           | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`, `depth?`, `direct?`, `detail?`                    | Read a symbol and nearby calls.            |
+| `run`               | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `pattern?`, `rewrite?`, `write?`, `json?`                    | Search AST patterns and preview rewrites.  |
+| `squeeze`           | `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `text?`, `query?`                                                                                                                                | Condense supplied text.                    |
+| `config_status`     | `revision?`, `workspaceId?`                                                                                                                                                                                    | Inspect effective configuration.           |
+| `policy_check`      | `checks`, `revision?`, `workspaceId?`                                                                                                                                                                          | Check local file policy without writes.    |
+| `document_query`    | `filePath`, `revision?`, `selectors`, `workspaceId?`                                                                                                                                                           | Read selected structured-document values.  |
+| `config_core`       | `cli?`, `dependencies?`, `files?`, `formatting?`, `intelligence?`, `http?`, `mcp?`, `safety?`, `telemetry?`, `target?`, `workspace?`                                                                           | Edit grouped core configuration.           |
+| `config_paths`      | `operations`, `target?`                                                                                                                                                                                        | Edit ordered path rules.                   |
+| `file_read`         | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Read bounded text or AST values.           |
+| `file_capabilities` | `filePaths`, `revision?`, `workspaceId?`                                                                                                                                                                       | Inspect supported and effective methods.   |
+| `file_hash`         | `filePaths`, `revision?`, `workspaceId?`                                                                                                                                                                       | Hash whole-file bytes.                     |
+| `file_write`        | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Create or replace permitted files.         |
+| `file_patch`        | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Commit guarded patches.                    |
+| `file_chattr`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Change file metadata.                      |
+| `file_delete`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Delete guarded files.                      |
+| `file_rename`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Move guarded files without replacement.    |
+| `graph_query`       | `workspaceId`, `budget?`, `cursor?`, `direction?`, `edgeKinds?`, `operation?`, `resolutionStatuses?`, `startNodeIds`                                                                                           | Traverse or inspect indexed graphs.        |
+| `graph_path`        | `workspaceId`, `budget?`, `direction?`, `edgeKinds?`, `resolutionStatuses?`, `sourceNodeId`, `targetNodeId`                                                                                                    | Find an indexed path.                      |
+| `graph_explain`     | `workspaceId`, `budget?`, `cursor?`, `nodeId`, `pageSize?`                                                                                                                                                     | Explain an indexed entity.                 |
+| `graph_diff`        | `base`, `budget?`, `cursor?`, `federation?`, `pageSize?`, `target`                                                                                                                                             | Compare published generations.             |
+| `retrieve`          | `workspaceId`, `budget?`, `deniedPaths?`, `exactSymbols?`, `includedPaths?`, `intent?`, `languages?`, `query`, `semantic?`                                                                                     | Retrieve scoped evidence.                  |
+| `generate`          | `workspaceId`, `allowedCorpusArtifactIds`, `budget?`, `evidence`, `prompt`                                                                                                                                     | Generate an answer from explicit evidence. |
+| `index`             | `workspaceId`, `action?`, `collection?`                                                                                                                                                                        | Maintain the workspace index.              |
+| `index_status`      | `workspaceId`, `maxRowsPerTable?`, `timeoutMs?`                                                                                                                                                                | Read index status.                         |
 
-Modern HTTP preserves workspace handles across requests when callers supply `workspaceId`. It does not implicitly select or enumerate another request’s workspaces. Requested approvals return `approval_required` without a trusted persistent host scope; explicit global policies still apply. Stable stdio connections retain approval support.
+## File inputs and limits
 
-## File boundary
+Use absolute paths when workspace selection or the working directory could be unclear.
+File inspection batches accept 1–50 paths or read targets.
+Mutation `files` objects contain 1–50 path-keyed entries.
+File tools accept optional `workspaceId` and `revision`.
 
-- `file_hash({ filePaths })`: batch up to 50 AST or non-AST paths and stream each whole file into SHA-256 without returning source content.
-- `file_capabilities({ filePaths })`: batch up to 50 paths and return file kind, language, parse health, configuration generation, intrinsic read/patch/search support, and effective methods after configuration filtering.
-- `file_read({ files })`: batch up to 50 files. Each request accepts `mode: "auto" | "ast" | "text"`, optional source `symbols`, structured-document RFC 6901 `selectors`, and `language`, plus `range: { start, end }`; the numeric zero-based, end-exclusive `lines: [start, end]` tuple remains a permanent compatibility alias. AST mode returns a source map/requested symbols or selected JSON, JSONC, TOML, or YAML values; text mode returns a bounded slice, and auto prefers AST when available.
-- `file_chattr({ files: { "/repo/a.txt": { chattr, expectedSha256? } } })`: applies the shared `chattr` contract (`chmod?`, same-owner `chown?`) under deterministic locks and reports the effective attributes.
-- `file_write({ files: { "/repo/a.txt": { content, chattr? }, "/repo/b.txt": { content, expectedSha256?, chattr? } } })`: create or replace multiple files in one declared batch; existing replacements remain limited to non-AST-rewritable files. The complete batch policy preflight runs first. For a new nested target, in-place formatter staging may transiently create, revalidate, and remove missing parents before the guarded commit recreates them; the live target is not written before commit.
-- `file_patch({ files: { "/repo/src/a.ts": { expectedSha256?, patchStrategy: "ast" | "aider_block", astRules?: [...], aiderBlocks?: [...], chattr?, preview? } } })`: patch one or more files in one declared batch with an explicit agent-selected strategy supported by `file_capabilities`. A preview returns an opaque one-use `previewReceipt` for the unformatted strategy candidate and does not run formatters; commit with `{ previewReceipt }` to format that candidate and reuse it after session, policy, generation, and source-hash rechecks.
-- `file_rename({ files: { "/repo/a.txt": { destination, expectedSha256? } } })`: renames multiple regular files in one file-operation-root-bounded batch, locks every source and destination, rejects cross-root and duplicate/existing destinations, uses no-replace moves, rolls back prior moves when a later move fails, and reports a per-file result. Crash-atomic recovery is not guaranteed.
-- `file_delete({ files: { "/repo/a.txt": { expectedSha256?, forceReferences? } } })`: preflights all targets and AST import references before any deletion, rejects referenced source unless explicitly overridden, and removes empty ancestor directories within the allowed operation root. Reference verification requires effective AST read access; disabling it returns `reference_verification_failed` for AST-capable targets before parsing. A reviewed `forceReferences: true` override preserves authorization and hash guards.
-- `expectedSha256` is required by the secure default for patch, existing-file write, rename, and delete. `safety.require_hash = false` makes it optional; supplied hashes are always verified.
-- Mutation tools use a declared `files` input object, preflight the complete batch, and return a `files` result map. Version 2 grants no implicit temporary access; use explicit top-level `[[paths]]` rules and approval policies. MCP transport also accepts JSON-RPC request/notification arrays and returns one response per request ID.
-- `config_status({})` returns redacted effective configuration, source provenance, generation, health, and formatter selection. `workspace.worktrees` reports `include`, `request`, or `ignore`; discovered linked worktree paths are listed as paths only.
-- Agents working in a git worktree should pass absolute paths. Start the MCP against the config-bearing checkout; the server loads `ast-mcp.toml` from that checkout and authorizes linked worktrees of the same repository when `workspace.worktrees` is `include` or `request`. A toml-less worktree is not a different project root.
-- `policy_check({ checks })` explains batched read/write/delete decisions without side effects.
-- `document_query({ filePath, selectors })` returns bounded RFC 6901-selected JSON, JSONC, TOML, or YAML values plus the whole-file hash.
-- `config_core({ target?, workspace?, safety?, files?, formatting?, http?, dependencies?, telemetry?, mcp? })` updates grouped version 2 core sections without rewriting the file or changing `[[paths]]`. Default `target` is `project`. Host approval is required unless `mcp.configuration.require_approval = false`; `[mcp.configuration]` changes always require approval. Disabled when `mcp.configuration.enabled = false`.
-- `config_paths({ target?, operations })` adds, updates, or removes `[[paths]]` rules in one batch by `id`. Does not change core sections. Same approval and enablement contract as `config_core`.
+A read target accepts `filePath`, `mode`, `language`, `lines`, `range`, `maxBytes`, `selectors`, and `symbols`.
+Only `filePath` is required.
+Modes are `auto`, `ast`, and `text`.
+`lines: [0, 100]` and `range: { start: 0, end: 100 }` are zero-based, end-exclusive alternatives.
+Do not supply both forms.
+Text defaults to 100 lines, with limits of 1,000 lines and 1 MiB.
+`maxBytes` must be positive and cannot exceed 1 MiB.
+Use up to 100 source `symbols` or structured-document RFC 6901 `selectors`, never both.
+Structured documents include JSON, JSONC, TOML, and YAML.
 
-## Shape and source
+| Tool          | Each keyed file entry                                                                                |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `file_write`  | Required `content`; optional `expectedSha256`, `chattr`.                                             |
+| `file_patch`  | `expectedSha256`, `patchStrategy`, `astRules`, `aiderBlocks`, `chattr`, `preview`, `previewReceipt`. |
+| `file_rename` | Required `destination`; optional `expectedSha256`.                                                   |
+| `file_chattr` | Required `chattr`; optional `expectedSha256`.                                                        |
+| `file_delete` | Optional `expectedSha256`, `forceReferences`.                                                        |
 
-- `digest({ paths, include_private?, include_fields?, max_members?, json? })`: compact map of unfamiliar directories.
-- `map({ paths, glob?, no_private?, no_fields?, no_docs?, no_attrs?, no_lines?, json? })`: signatures, parse error counts, and line ranges.
-- `show({ path, symbols, limit?, json? })`: v2 source extraction for files, directories, and glob targets. JSON uses `ast-mcp.show.v1` with `files[]`, `files_scanned`, `total`, `shown`, `truncated`, coverage metadata, truncation details, and Markdown frontmatter symbols. Glob fixed prefixes and every match remain workspace-policy checked; authorized zero-match globs are valid.
-- `surface({ path, tree?, include_chain?, include_private?, max_depth?, lang?, json? })`: public API and re-exports.
+Existing files require fresh SHA-256 values by default.
+A supplied hash always remains enforced, even when configuration makes hashes optional.
+Patch entries require `patchStrategy` unless they commit a `previewReceipt`.
+Strategies are `ast` and `aider_block`.
+Each AST rule has `pattern`, `fix`, and optional positive `expectedMatches`.
+Each Aider block has `search` and `replace`.
+Each operation array accepts at most 50 entries.
+Receipt commits cannot include operations, a strategy, or preview mode.
+The shared `chattr` object accepts optional numeric `chmod` (0–511) and `chown: { uid, gid }`.
+Ownership IDs must be nonnegative integers.
+Load [patch-state-machine.md](patch-state-machine.md) before mutation.
 
-## Discovery, dependencies, and calls
+## Native intelligence inputs
 
-- `search({ query, path?, top_k?, alpha?, languages?, json? })`, `find_related({ path, line, root?, top_k?, json? })`, `context({ target, path?, budget?, json? })`, `index({ path?, rebuild?, stats?, json? })`.
-- `deps({ file, ... })`, `reverse_deps({ file, ... })`, `graph({ path?, ... })`, `cycles({ path?, ... })`.
-- `callers({ target, ... })`, `callees({ target, ... })`, `trace({ from, to, ... })`, `implements({ target, paths?, direct?, json? })`.
-- `impact({ target, path?, mode?, depth?, limit?, tests?, exclude_tests?, hide_ambiguous?, json? })`: combined blast radius. Valid modes are `all`, `deps`, `dependents`, and `tests`.
+Bound each request to one project root.
+Use `paths` for up to 50 targets, or `file`/`path` for a single target when supported.
+Use `root`, `glob`, `lang`, `languages`, and `scan_limit` to narrow discovery.
+`languages` accepts at most 64 entries; `scan_limit` cannot exceed 10,000.
+Output bounds are `budget` ≤1,000,000 bytes, `limit` ≤10,000, and `top_k` ≤1,000.
+`timeout_ms` cannot exceed 300,000.
+All these numeric bounds require positive integers.
+`detail` accepts `names`, `signatures`, or `full`.
+`max_members` accepts 0–10,000. `depth` accepts 1–32.
+`symbols` accepts at most 100 entries.
+`direct`, `hide_external`, and `hide_ambiguous` are booleans.
 
-## Structural run
+`callers`, `callees`, `trace`, `impact`, `context`, and `implements` require `target`.
+`deps` and `reverse_deps` require `file` or `path`.
+`search` and `find_related` require `query`, `target`, or `path`.
+`run` requires `pattern`; `rewrite` previews a replacement.
+`run.write: true` fails with `use_file_patch`; commit through `file_patch`.
+`squeeze` requires supplied `text` or `query`. It does not read a file path.
+`impact` accepts `paths`, but rejects singular `file` and `path`.
 
-`run({ pattern, paths?, lang?, glob?, rewrite?, write?, json? })` provides:
+## Workspaces and revisions
 
-- search when `rewrite` is omitted, including location and matched text;
-- dry-run per-file diffs when `rewrite` is present and `write` is false or omitted;
-- disk rewrite when both `rewrite` and `write: true` are present.
+`workspace_open.directory` identifies the exact checkout or linked worktree.
+Keep its returned `workspaceId`.
+`workspace_status({})` lists known workspaces; supply `workspaceId` for one workspace.
 
-Native `run` is read-only and previews structural matches. Use hash-guarded `file_patch` for writes; batches are capped at 50 files and report each committed file. Through ast-mcp, paths are root-checked, search is repeated as a non-capped safety preview, enabled external formatters validate candidates, and each rewritten file commits atomically. Formatting defaults to disabled. Narrow rules to one intended match per file.
+Revision selectors are:
 
-- `squeeze({ path, start?, end?, raw?, json? })`: compression for repetitive logs/text, not source code.
+- `{ kind: "working" }`
+- `{ kind: "index" }`
+- `{ kind: "commit", oid: "<40- or 64-character lowercase hex>" }`
+- `{ kind: "branch", name: "<branch>" }`
+- `{ kind: "tag", name: "<tag>" }`
 
-## Common sequences
+Only working revisions permit mutation.
+A hash does not authorize writes to immutable revisions.
+Storage selectors are `{ kind: "global" }`, `{ kind: "local" }`, or `{ kind: "parent", levels: 1 }`.
+Explicit storage uses `{ kind: "explicit", path: "<absolute path>" }`.
+Parent levels range from 1 to 32. Global storage is the default.
 
-- Rename: `impact` → `show`/`context` → `run` search → `run` dry diff → bounded `run.write` → AST absence check.
-- Atomic single-file edit: `file_capabilities` when uncertain → select AST or Aider → preview → `file_hash` → `file_patch` → matching AST or text verification.
-- Exact text edit: batched `file_read` with `mode: "text"` → `file_hash` → unique Aider block → bounded text verification.
-- Structured manifest: `document_query` with multiple selectors → targeted edit workflow; do not request the whole manifest.
-- Uncertain mutation policy: `config_status` → batched `policy_check` → preview → hash → mutation.
-- Configuration: `config_status` → grouped `config_core` and/or batched `config_paths` (never a whole-file rewrite) → `config_status` to confirm the new generation.
-- Refactor module: `surface` → `deps` + `reverse_deps` → `impact` → edits → `cycles`.
+## Indexed tools
+
+Every indexed request needs a workspace ID.
+`graph_diff` supplies IDs inside `base` and `target`.
+Build or refresh the index when no suitable published generation exists.
+
+`index.action` accepts `build`, `refresh`, `verify`, `collect`, or `status`; status is the default.
+Optional collection fields are `keepFailedJobsForDays`, `keepPublishedGenerations`, `maxDeletesPerTable`, `pinGraceSeconds`, and `unreachableArtifactDays`.
+Day fields accept 0–3,650; generation count accepts 1–10,000.
+Deletion count accepts 1–100,000; grace accepts 0–86,400 seconds.
+`index_status.maxRowsPerTable` accepts 1–100,000; `timeoutMs` accepts 1–120,000.
+
+`retrieve.query` is required and accepts 1–1,000,000 characters.
+Optional filters are `deniedPaths`, `includedPaths`, `exactSymbols`, and `languages`.
+Paths are repository-relative.
+`intent` accepts `implementation`, `behavior`, or `documentation`.
+`semantic` defaults to false and requires configured embedding support when enabled.
+
+| Retrieval budget field | Default   | Maximum     |
+| ---------------------- | --------- | ----------- |
+| `maxBytes`             | 128,000   | 100,000,000 |
+| `maxCandidates`        | 500       | 100,000     |
+| `maxDepth`             | 2         | 32          |
+| `maxGraphBytes`        | 2,000,000 | 100,000,000 |
+| `maxItems`             | 50        | 10,000      |
+| `maxNodes`             | 500       | 100,000     |
+| `maxVectorCandidates`  | 200       | 100,000     |
+| `maxVectorScan`        | 5,000     | 1,000,000   |
+| `timeoutMs`            | 5,000     | 120,000     |
+
+Budget fields require positive integers, except `maxDepth`, which permits zero.
+
+`generate` requires configured optional generation, `prompt`, `allowedCorpusArtifactIds`, and explicit `evidence`.
+Each evidence entry contains `artifactId`, `entityId`, `path`, `range`, and `text`.
+Ranges contain `startByte`, `endByte`, and zero-based `start`/`end` line and column objects.
+Preserve retrieved artifact IDs, text, and ranges.
+Artifact and entity IDs accept 1–1,024 characters; paths accept 1–4,096.
+Evidence text permits 10,000,000 characters; prompts accept 1–1,000,000.
+Do not add a `scope` property to tool evidence.
+
+| Generation budget field | Default | Maximum    |
+| ----------------------- | ------- | ---------- |
+| `maxEvidenceBytes`      | 128,000 | 10,000,000 |
+| `maxEvidenceItems`      | 50      | 1,000      |
+| `maxOutputBytes`        | 32,000  | 10,000,000 |
+| `maxOutputTokens`       | 2,048   | 100,000    |
+| `timeoutMs`             | 10,000  | 120,000    |
+
+## Indexed graphs
+
+Graph budgets contain positive integer limits, except `maxDepth`, which permits zero.
+
+| Graph budget field | Default   | Maximum    |
+| ------------------ | --------- | ---------- |
+| `maxBytes`         | 1,000,000 | 67,108,864 |
+| `maxDepth`         | 8         | 1,000      |
+| `maxEdges`         | 10,000    | 1,000,000  |
+| `maxMilliseconds`  | 5,000     | 120,000    |
+| `maxNodes`         | 5,000     | 1,000,000  |
+| `pageSize`         | 100       | 10,000     |
+
+`graph_query.startNodeIds` accepts 1–1,000 node IDs.
+Its `operation` accepts `traverse`, `impact`, or `components`; traversal is the default.
+`graph_path` requires `sourceNodeId` and `targetNodeId`.
+Both tools accept `direction: "forward" | "reverse"`, `edgeKinds` (up to 32), and `resolutionStatuses` (up to eight).
+Forward is the default direction.
+Edge kinds are `contains`, `declares`, `references`, `imports`, `exports`, `calls`, `inherits`, `implements`, `overrides`, `reads`, `writes`, `documents`, `links`, and `depends-on`.
+Resolution statuses are `explicit`, `resolved`, `inferred`, `ambiguous`, and `unresolved`.
+
+`graph_explain` requires `nodeId`. Its integer `cursor` defaults to zero.
+Its `pageSize` accepts 1–1,000 and defaults to 50.
+`graph_diff.base` and `target` each contain `workspaceId` and `generationId`.
+Set `federation: true` explicitly for cross-repository comparisons.
+Its `pageSize` accepts 1–10,000 and defaults to 100.
+Query and diff cursors are opaque strings of 1–8,192 characters.
+Use returned cursors unchanged and inspect coverage metadata.
+
+## Configuration inputs
+
+`policy_check.checks` accepts 1–50 objects with `path` and `operation: "read" | "write" | "delete"`.
+`document_query.selectors` accepts 1–100 RFC 6901 pointers.
+Its structured result cannot exceed 256 KiB.
+`config_status` reports effective configuration, policies, and formatter selection.
+
+`config_core` edits only supplied groups. `target` accepts `project` (default) or `global`.
+Groups include `cli`, `dependencies`, `files`, `formatting`, `intelligence`, `http`, `mcp`, `safety`, `telemetry`, and `workspace`.
+Load [configuration.md](configuration.md) for supported settings and approval rules.
+
+`config_paths.operations` accepts 1–50 ordered operations:
+
+- Add: `{ op: "add", rule: { id, path, policies, includes?, excludes?, follow_symlinks? } }`.
+- Update: `{ op: "update", id, rule: { path?, policies?, includes?, excludes?, follow_symlinks? } }`.
+- Remove: `{ op: "remove", id }`.
+
+Add policies require `read` and `write`; `delete` is optional.
+Update policies contain only changed fields.
+Policy values are `allow`, `deny`, or `request`.
+Rule IDs accept 1–128 characters.
+
+## MCP protocol methods
+
+These methods are not callable tools.
+Supporting hosts negotiate `io.modelcontextprotocol/skills`.
+Use `skills/list`, then `skills/get` for `skill://ast-mcp/SKILL.md`.
+Use `resources/read` with exact resource URIs from the returned manifest.
+Honor pagination, `ttlMs`, `cacheScope`, advertised byte sizes, and SHA-256 digests.
+Do not infer resource paths or use directory reads.
+Protocol 2026-07-28 clients supply required protocol-version and client-capabilities request metadata.
+Legacy clients retain ordinary tools.
+
+The host activates the returned skill. Resource retrieval alone does not activate it.
+Load [installation.md](installation.md) when the host needs manual skill delivery or reconnection.

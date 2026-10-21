@@ -1,5 +1,5 @@
-import type { ResolvedConfig } from "../../config.ts";
-import { currentConfig } from "../../config.ts";
+import type { ResolvedConfig } from "../../config/index.ts";
+import { currentConfig } from "../../config/index.ts";
 import {
   ParserWorkerPool,
   type ParseSourceRequest,
