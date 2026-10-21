@@ -376,6 +376,109 @@ test("replacement preserves installed file permissions", async () => {
   expect((await fs.stat(path.join(root, "SKILL.md"))).mode & 0o777).toBe(0o600);
 });
 
+test("replacement staging does not follow a swapped support directory", async () => {
+  const root = await temporary();
+  const outside = await temporary();
+  await reconcileSkillExport(root, "export", [
+    file("references/tools.md", "old"),
+  ]);
+  const originalOpen = fs.open;
+  let swapped = false;
+  const stagingParents: string[] = [];
+  const open = spyOn(fs, "open").mockImplementation(
+    async (...args: Parameters<typeof fs.open>) => {
+      if (String(args[0]).endsWith(".tmp")) {
+        if (!swapped) {
+          swapped = true;
+          await fs.rename(
+            path.join(root, "references"),
+            path.join(root, "saved-references"),
+          );
+          await fs.symlink(
+            outside,
+            path.join(root, "references"),
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        }
+        stagingParents.push(await fs.realpath(path.dirname(String(args[0]))));
+      }
+      return originalOpen(...args);
+    },
+  );
+  try {
+    await expect(
+      reconcileSkillExport(root, "update", [
+        file("references/tools.md", "new"),
+      ]),
+    ).rejects.toThrow("symbolic links");
+  } finally {
+    open.mockRestore();
+  }
+  expect(stagingParents).toEqual([await fs.realpath(root)]);
+  expect(await fs.readdir(outside)).toEqual([]);
+  expect(
+    await fs.readFile(path.join(root, "saved-references/tools.md"), "utf8"),
+  ).toBe("old");
+  expect(
+    (await fs.readdir(root)).some(
+      (name) => name.endsWith(".tmp") || name.endsWith(".lock"),
+    ),
+  ).toBeFalse();
+});
+
+test("fresh resources recheck parents after directory preparation", async () => {
+  const root = await temporary();
+  const outside = await temporary();
+  const references = path.join(root, "references");
+  const originalMkdir = fs.mkdir;
+  const originalLstat = fs.lstat;
+  let preparing = false;
+  let swapped = false;
+  const mkdir = spyOn(fs, "mkdir").mockImplementation((async (
+    ...args: Parameters<typeof fs.mkdir>
+  ) => {
+    const result = await originalMkdir(...args);
+    if (path.basename(String(args[0])) === "references") preparing = true;
+    return result;
+  }) as typeof fs.mkdir);
+  const lstat = spyOn(fs, "lstat").mockImplementation((async (
+    ...args: Parameters<typeof fs.lstat>
+  ) => {
+    const result = await originalLstat(...args);
+    if (
+      preparing &&
+      !swapped &&
+      path.basename(String(args[0])) === "references"
+    ) {
+      swapped = true;
+      await fs.rename(references, path.join(root, "saved-references"));
+      await fs.symlink(
+        outside,
+        references,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    }
+    return result;
+  }) as typeof fs.lstat);
+  try {
+    await expect(
+      reconcileSkillExport(root, "export", [
+        file("references/tools.md", "new"),
+      ]),
+    ).rejects.toThrow("symbolic links");
+  } finally {
+    mkdir.mockRestore();
+    lstat.mockRestore();
+  }
+  expect(swapped).toBeTrue();
+  expect(await fs.readdir(outside)).toEqual([]);
+  expect(
+    (await fs.readdir(root)).some(
+      (name) => name.endsWith(".tmp") || name.endsWith(".lock"),
+    ),
+  ).toBeFalse();
+});
+
 test("staging collisions preserve the preexisting file", async () => {
   const root = await temporary();
   await reconcileSkillExport(root, "export", [file("SKILL.md", "old")]);

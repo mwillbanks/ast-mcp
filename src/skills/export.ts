@@ -215,12 +215,10 @@ async function replaceFile(
   expected: string | undefined,
 ) {
   const target = path.join(root, relative);
-  const temporary = path.join(
-    path.dirname(target),
-    ".ast-mcp-" + randomUUID() + ".tmp",
-  );
+  const temporary = path.join(root, ".ast-mcp-" + randomUUID() + ".tmp");
   let staged = false;
   try {
+    await inspectParents(root, relative);
     const original = await metadata(target);
     staged = await createFile(
       temporary,
@@ -257,6 +255,7 @@ async function reconcileFile(
   const nextHash = hash(file.bytes);
   if (!entry) {
     await createParents(root, file.relative);
+    await inspectParents(root, file.relative);
     if (!(await createFile(target, file.bytes)))
       throw new Error(
         "Skill export file appeared during creation: " + file.relative,
