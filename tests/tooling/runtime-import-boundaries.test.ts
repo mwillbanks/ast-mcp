@@ -24,7 +24,14 @@ async function lintFixture(files: Record<string, string>) {
       await writeFile(file, source);
     }
     const child = Bun.spawn(
-      [process.execPath, executable, "--deny-warnings", "."],
+      [
+        process.execPath,
+        executable,
+        "--format",
+        "default",
+        "--deny-warnings",
+        ".",
+      ],
       {
         cwd: directory,
         env: { ...process.env },
