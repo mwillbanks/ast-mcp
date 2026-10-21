@@ -29,9 +29,52 @@ test("eval matrix covers every registered MCP surface", async () => {
 
   try {
     await client.connect(transport);
-    const registered = (await client.listTools()).tools.map(
-      (tool) => tool.name,
+    const discovered = (await client.listTools()).tools;
+    const registered = discovered.map((tool) => tool.name);
+    const catalog = await readFile(
+      path.resolve(root, "templates/skills/ast-mcp/references/tool-catalog.md"),
+      "utf8",
     );
+    const toolTable = catalog
+      .split("## Callable tools")[1]
+      .split("## File inputs")[0];
+    const rows = [
+      ...toolTable.matchAll(/^\|\s+`([a-z_]+)`\s+\|\s+([^|]+)\|/gm),
+    ];
+    expect(rows.map((row) => row[1]).sort()).toEqual([...registered].sort());
+    for (const tool of discovered) {
+      const row = rows.find((candidate) => candidate[1] === tool.name)!;
+      const fields = [...row[2].matchAll(/`([A-Za-z_]+)(\?)?`/g)];
+      expect(fields.map((field) => field[1]).sort()).toEqual(
+        Object.keys(tool.inputSchema.properties ?? {}).sort(),
+      );
+      expect(
+        fields
+          .filter((field) => !field[2])
+          .map((field) => field[1])
+          .sort(),
+      ).toEqual([...(tool.inputSchema.required ?? [])].sort());
+    }
+    const nativeSection = catalog
+      .split("## Native intelligence inputs")[1]
+      .split("## Workspaces")[0];
+    const documentedDepth = nativeSection.match(/`depth` accepts (\d+)–(\d+)/);
+    expect(documentedDepth).not.toBeNull();
+    for (const tool of discovered) {
+      const depth = tool.inputSchema.properties?.depth as
+        | {
+            type?: string;
+            minimum?: number;
+            exclusiveMinimum?: number;
+            maximum?: number;
+          }
+        | undefined;
+      if (!depth) continue;
+      expect(depth.type).toBe("integer");
+      const minimum = depth.minimum ?? depth.exclusiveMinimum! + 1;
+      expect(Number(documentedDepth![1])).toBe(minimum);
+      expect(Number(documentedDepth![2])).toBe(depth.maximum!);
+    }
     const suite = await (async () => {
       const evalDirectory = path.resolve(
         root,

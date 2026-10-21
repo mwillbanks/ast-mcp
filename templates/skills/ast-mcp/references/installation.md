@@ -1,65 +1,187 @@
 # Installation and recovery
 
-Use this only when the ast-mcp tools are absent, incomplete, or disconnected. Do not continue with a different editor.
+Load this reference when tools disconnect, installation is incomplete, or selected instructions are stale.
+Stop local mutation until the required MCP tools work.
+Never use another writer to bypass the boundary.
 
-## Diagnose
+## Identify the failing layer
 
-From an explicitly exported skill directory or the canonical package skill directory, run the read-only checker:
+Package upgrades, host configuration, runtime configuration, reconnection, and manual skills are separate operations.
+Do not assume one operation repairs the others.
+
+| Symptom                                              | Check and action                                                                             |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Tools disconnect or disappear                        | Inspect host stderr and package startup. Repair the package or host command, then reconnect. |
+| Tools reject current fields                          | Compare discovered schemas with the catalog. Upgrade the server package and reconnect.       |
+| Host starts an old executable                        | Refresh the managed host entry with the correct local or global CLI.                         |
+| Runtime configuration is outdated                    | Preview configuration migration, then write it with a backup.                                |
+| Selected skill contains old instructions             | Identify its active location. Update a manual copy only when the host selects that copy.     |
+| MCP resources are current but instructions are stale | Check host caches and local skill shadowing. Let the host select the intended skill.         |
+
+Inspect pending files again after reconnection.
+A failed response does not prove that no file changed.
+
+## Diagnose the host
+
+When this skill exists on disk and Bun is available, run its read-only checker from the active skill directory:
 
 `bun run scripts/check-install.ts --scope local --target codex`
 
-Replace `codex` with `claude` or `copilot`. Pass `--scope global` for a global installation. Pass the HTTP address and port for HTTP installations. The checker validates guidance, MCP definitions, hooks, managed services, initialization, and the native intelligence tool surface. Verify skill delivery separately through MCP discovery and resource retrieval. It also detects stable package-manager aliases and duplicate handlers. It rejects package-internal or stale commands. It prints an exact install, update, or dependency-repair command.
+Pass `--root <absolute-project-path>` when the active skill directory is outside the project.
+Replace `codex` with `claude` or `copilot`.
+Use `--scope global` for a global installation.
+For HTTP, pass `--transport http --host <address> --port <port>`.
+Add `--service` only for a managed HTTP service.
 
-## Install from this package checkout
+The checker inspects managed guidance, host definitions, hooks, services, startup, and selected intelligence tools.
+It reports repair commands and stale executable paths.
+It does not prove complete tool coverage or MCP skill activation.
+Verify those separately.
 
-When the `@mwillbanks/ast-mcp` source checkout is already available, install its dependencies and build the stable CLI before configuring a host:
+For MCP-only skill delivery, do not assume scripts have local paths.
+Use host diagnostics and the installed CLI instead.
+Run `bun run tools:check` only from an available AST-MCP source checkout.
 
-`bun install && bun run build`
+## Install or upgrade the package
 
-`bun run bin/ast-mcp.ts install --scope local --target all`
+Obtain authorization before a package download unless the task already authorizes installation.
+Choose the package manager and installation scope already used by the project.
 
-For one host globally:
+Local npm installation or upgrade:
 
-`bun run bin/ast-mcp.ts install --scope global --target codex`
+`npm install --save-dev @mwillbanks/ast-mcp@latest`
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Stdio is the default transport. Use the HTTP options for HTTP host entries. Add `--service` to manage a macOS LaunchAgent or Linux systemd user unit.
+Use `./node_modules/.bin/ast-mcp` for subsequent local commands.
+For a persistent global npm installation or upgrade:
 
-## Install from the published package
+`npm install --global @mwillbanks/ast-mcp@latest`
 
-If the package is not already installed, obtain user authorization before allowing a package manager to download or install it. Install it into the repository so native intelligence dependencies remain available, then run the installed CLI:
+Use the discovered global `ast-mcp` executable for subsequent global commands.
+Do not configure ephemeral package-runner paths or internal package files.
+Yarn 2+ installations must use a project-local package.
 
-```npm
-npm install --save-dev @mwillbanks/ast-mcp
-```
+For an existing source checkout, install dependencies and build before configuring a host:
 
-`./node_modules/.bin/ast-mcp install --scope local --target all`
+`bun install`
 
-For a global host surface, use the package manager's persistent global install:
+`bun run build`
 
-```npm
-npm install --global @mwillbanks/ast-mcp
-```
+Use `bun run bin/ast-mcp.ts` as the CLI prefix for that checkout.
+AST-MCP uses native Bun implementations on macOS, Linux, and Windows.
 
-Then run `ast-mcp install --scope global --target codex`. Use a project-local installation with Yarn 2+. Yarn 2+ does not provide the Yarn Classic global workflow. Formatting is disabled by default. Install and configure your preferred formatter separately; ast-mcp does not install or download formatters during file operations.
+## Refresh host configuration
 
-Local MCP, hook, service, and repair surfaces always use `./node_modules/.bin/ast-mcp`. Global surfaces use a discovered Bun, npm, pnpm, or Yarn global-bin alias and reject package-internal paths. The runtime checks package binaries, package metadata, global bins, and `PATH`. The installer uses the stable CLI and its `mcp` and `hook` subcommands. Run the local binary for local updates and removal. Run `ast-mcp update` or `ast-mcp uninstall` for global installations.
+For a new local host installation:
 
-The native Bun implementation supports macOS, Linux, and Windows without a Rust or Cargo prerequisite. The installer verifies the MCP surface before reporting a healthy host configuration.
+`./node_modules/.bin/ast-mcp install --scope local --target codex`
 
-## Skills delivery and migration
+For existing local managed configuration:
 
-The server advertises `io.modelcontextprotocol/skills` through `server/discover` on protocol 2026-07-28. Fetch `skills/list`, `skills/get`, and each exact `resources/read` manifest URI. Include required protocol-version and client-capabilities request metadata. Verify byte sizes and SHA-256 digests; honor cache metadata and resource pagination. Legacy clients can still use ordinary tools.
+`./node_modules/.bin/ast-mcp update --scope local --target codex`
 
-For a host without MCP Skills support, run `ast-mcp skills export <destination>`. Supply the exact skill directory, such as `.codex/skills/ast-mcp`, then enable that directory in the host. Export preserves every existing file; compare customized files manually. It rejects symbolic-link directories. Install and update do not copy skills automatically, and uninstall preserves existing legacy skills.
+For global managed configuration:
 
-Modern HTTP does not use transport sessions. Reuse workspaces through explicit `workspaceId` values. Host approvals requiring a stable session return `approval_required`; configure explicit global rules or use a stable stdio host connection. Global unrestricted access still respects OS permissions, hashes, and immutable revisions.
+`ast-mcp update --scope global --target codex`
 
-## Activate and verify
+Targets are `codex`, `claude`, `copilot`, and `all`.
+The default transport is stdio.
+Use `--transport http --host <address> --port <port>` for HTTP.
+Use `--service` to manage a supported macOS or Linux user service.
 
-1. Run `ast-mcp config validate` before reconnecting. Use `ast-mcp config show` when the effective source is unclear. `--root` remains deprecated for one release.
-2. Restart or reconnect MCP servers in the host. A skill file cannot make MCP tools callable. `SIGHUP` requests graceful cleanup; the host controls whether and when the process restarts.
-3. Confirm `file_hash`, `file_read`, `file_write`, and `file_patch` are present.
-4. Confirm direct intelligence tools such as `digest`, `map`, `show`, `context`, and `impact` are present; there is no proxy tool.
-5. Verify that read and mutation tools accept their current batch fields. Reject dictionary-only mutation schemas and the legacy whole-file read schema.
-6. Rerun `check-install.ts` if the tool list remains incomplete.
-7. Run `bun run tools:check` from the package checkout when startup fails. Report the missing dependency or startup error. Preserve the write boundary.
+`update` refreshes managed host entries, hooks, and guidance blocks.
+It preserves surrounding user guidance.
+It does not upgrade the package or refresh manual skills.
+Uninstall also preserves manual skill directories.
+For malformed runtime configuration, explicit output permits removal without loading output defaults:
+
+`ast-mcp uninstall --scope global --target codex --output json`
+
+Use the local CLI and local scope for local removal.
+Do not uninstall merely to refresh instructions.
+
+## Migrate runtime configuration
+
+Inspect the effective configuration:
+
+`ast-mcp config show --output json`
+
+Validate it:
+
+`ast-mcp config validate --output json`
+
+Preview version migration:
+
+`ast-mcp config migrate --output json`
+
+Write the reviewed migration:
+
+`ast-mcp config migrate --write --output json`
+
+Use `--global` for global configuration or `--file <path>` for an explicit migration target.
+Migration previews by default.
+Writing creates a `.v1.bak` backup unless `--no-backup` explicitly disables it.
+Preserve the backup during recovery.
+`--check` exits with code 2 when migration is required.
+Migration does not repair arbitrary malformed or unknown settings.
+Inspect diagnostics and use an authorized repair route. Never bypass local file policy.
+Use `config_core` and `config_paths` for supported version 2 edits when MCP remains available.
+
+## Select and update skills
+
+Prefer MCP Skills when the host supports `io.modelcontextprotocol/skills`.
+Upgrade the server package and reconnect to obtain current bundled resources.
+Do not export or refresh disk copies unnecessarily.
+
+The host negotiates the extension and activates the skill.
+It uses `skills/list`, `skills/get`, and exact manifest resource URIs through `resources/read`.
+These are protocol methods, not tools.
+Verify advertised sizes and SHA-256 values, pagination, and cache metadata.
+Resource retrieval alone does not activate instructions.
+A selected local copy can shadow current MCP instructions.
+Inspect the host-selected skill location before changing any copy.
+
+For unsupported hosts, export to the exact skill directory:
+
+`ast-mcp skills export .codex/skills/ast-mcp --output json`
+
+Then let the host activate that directory.
+For a selected existing manual copy:
+
+`ast-mcp skills update .codex/skills/ast-mcp --output json`
+
+Use the actual global, agent-local, or project-local destination.
+Explicit `--output json` also permits these commands when malformed runtime configuration blocks output defaults.
+
+Export never overwrites existing files.
+The destination-local `.ast-mcp-export.json` records managed file baselines.
+Update replaces tracked files only when their current hashes match those baselines.
+It adds missing resources and preserves customized, untracked, and obsolete files.
+Legacy files matching current bundled bytes can become tracked.
+Other existing legacy files produce conflicts.
+
+Inspect structured `written`, `updated`, `unchanged`, `preserved`, `obsolete`, and `conflicting` results.
+Conflicts or operational failures produce a nonzero exit code.
+Do not delete custom files or edit baseline hashes to force an update.
+Reconcile conflicts through an authorized guarded workflow.
+Malformed manifests and symlink traversal fail closed.
+Interrupted updates can leave completed files; rerun only after inspecting the reported state.
+Do not remove an export lock until you verify that its owner has stopped.
+
+Inside the skill, resolve relative links from its active directory.
+For MCP delivery, use exact manifest URIs.
+Do not treat `$ast-mcp/references/...` as a filesystem expansion.
+
+## Reconnect and verify
+
+1. Ask the host to reconnect or restart its MCP server.
+2. Confirm initialization and compare discovered tools with [tool-catalog.md](tool-catalog.md).
+3. Verify current `files` batch schemas and a bounded `file_read`.
+4. For MCP Skills, verify the manifest and resource hashes, then confirm host activation.
+5. Inspect the selected manual skill if stale instructions remain.
+6. Reinspect touched and pending files before resuming mutation.
+
+A skill cannot start or reconnect the server.
+`SIGHUP` requests graceful cleanup; the host decides whether to restart it.
+Modern HTTP requires explicit `workspaceId` values across requests.
+Session-dependent approvals fail closed with `approval_required`.
+Use authorized global rules or a stable host approval scope.

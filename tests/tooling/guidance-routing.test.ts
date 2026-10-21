@@ -14,14 +14,14 @@ test("guidance routes normal AST and Aider mutations through file_patch", async 
       readFile("templates/skills/ast-mcp/evals/batch.evals.json", "utf8"),
     ]);
 
-  for (const guidance of [agents, skill]) {
+  for (const guidance of [agents]) {
     expect(guidance).toContain("file_patch");
     expect(guidance).toContain("astRules");
     expect(guidance).toContain("aiderBlocks");
     expect(guidance).toContain("not the normal agent patch route");
   }
 
-  for (const guidance of [agents, templateAgents, skill, agentReference]) {
+  for (const guidance of [agents, templateAgents, agentReference]) {
     expect(guidance).toContain("connected tools for remote content");
     expect(guidance).toContain("without requesting local");
     expect(guidance).toContain("saved locally");
@@ -36,7 +36,16 @@ test("guidance routes normal AST and Aider mutations through file_patch", async 
     agents.indexOf("<!-- ast-mcp:end -->"),
   );
   expect(templateAgents).not.toContain("## Test layout");
-  expect(skill).toContain("Mutate through declared file batches");
+  const references = [...skill.matchAll(/\]\((references\/[^)]+)\)/g)].map(
+    (match) => match[1],
+  );
+  expect(new Set(references).size).toBe(4);
+  for (const reference of references) {
+    expect(reference).not.toContain("..");
+    expect(
+      await readFile(`templates/skills/ast-mcp/${reference}`, "utf8"),
+    ).not.toBeEmpty();
+  }
   expect(evals).toContain('"variant": "ordered-ast-rules"');
   expect(evals).toContain(
     "Uses run only to preview or verify and sends the mutation through file_patch.",

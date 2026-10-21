@@ -24,22 +24,13 @@ const toolKeys: Record<string, string[]> = {
   callees: ["target"],
   callers: ["target"],
   context: ["target"],
-  deps: ["file"],
-  digest: ["paths"],
   document_query: ["filePath", "selectors"],
   file_hash: ["filePaths"],
   file_read: ["files"],
-  find_related: ["path", "line"],
   impact: ["target"],
-  implements: ["paths", "target"],
-  map: ["paths"],
+  implements: ["target"],
   policy_check: ["checks"],
-  reverse_deps: ["file"],
-  run: ["pattern"],
-  search: ["query"],
-  show: ["path", "symbols"],
-  squeeze: ["path"],
-  trace: ["from", "to"],
+  trace: ["target"],
 };
 
 function hasKey(input: string, key: string) {
@@ -130,6 +121,15 @@ const hasDeclaredFileBatch = (input: string) => {
   return declaredFileBatchExpression.test(withoutComments(input));
 };
 const inputValidators: Record<string, InputValidator> = {
+  deps: (input) => hasKey(input, "file") || hasKey(input, "path"),
+  reverse_deps: (input) => hasKey(input, "file") || hasKey(input, "path"),
+  find_related: (input) =>
+    ["query", "target", "path"].some((key) => hasKey(input, key)),
+  search: (input) =>
+    ["query", "target", "path"].some((key) => hasKey(input, key)),
+  squeeze: (input) => hasKey(input, "text") || hasKey(input, "query"),
+  run: (input) => hasKey(input, "pattern") && !hasBoolean(input, "write", true),
+
   file_chattr: (input) =>
     hasKey(input, "chattr") && hasDeclaredFileBatch(input),
   file_delete: (input) =>
@@ -149,7 +149,18 @@ const inputValidators: Record<string, InputValidator> = {
 
 function meaningfulInput(invocation: Invocation) {
   const input = withoutComments(invocation.input).trim();
-  if (!input || input === "{}") return invocation.tool === "config_status";
+  if (!input) return false;
+  if (input === "{}")
+    return [
+      "config_status",
+      "workspace_status",
+      "map",
+      "digest",
+      "show",
+      "surface",
+      "graph",
+      "cycles",
+    ].includes(invocation.tool);
   const validator = inputValidators[invocation.tool];
   if (validator) return validator(input);
   return (toolKeys[invocation.tool] ?? []).every((key) => hasKey(input, key));

@@ -5,7 +5,11 @@ import { checkMarkdown } from "./check-prose";
 
 const root = path.resolve(import.meta.dir, "../..");
 const targets = [
+  path.join(root, "templates/skills/ast-mcp/SKILL.md"),
   path.join(root, "templates/skills/ast-mcp/references/installation.md"),
+  path.join(root, "templates/skills/ast-mcp/references/patch-state-machine.md"),
+  path.join(root, "templates/skills/ast-mcp/references/tool-catalog.md"),
+  path.join(root, "templates/skills/ast-mcp/references/configuration.md"),
 ];
 const issues = (
   await Promise.all(
