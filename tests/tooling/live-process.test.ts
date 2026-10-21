@@ -73,7 +73,7 @@ test.skipIf(process.platform === "win32")(
         const status = await Bun.file(`/proc/${descendant}/status`)
           .text()
           .catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return null;
+            if (error.code === "ENOENT" || error.code === "ESRCH") return null;
             throw error;
           });
         let stopped = status === null || /^State:\s+Z\b/mu.test(status);
@@ -82,7 +82,8 @@ test.skipIf(process.platform === "win32")(
           const current = await Bun.file(`/proc/${descendant}/status`)
             .text()
             .catch((error: NodeJS.ErrnoException) => {
-              if (error.code === "ENOENT") return null;
+              if (error.code === "ENOENT" || error.code === "ESRCH")
+                return null;
               throw error;
             });
           stopped = current === null || /^State:\s+Z\b/mu.test(current);
