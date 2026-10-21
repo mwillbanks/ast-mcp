@@ -13,6 +13,7 @@ type Job = {
   uses?: string;
   needs?: string | string[];
   permissions?: Record<string, string>;
+  secrets?: Record<string, string>;
   outputs?: Record<string, string>;
   steps?: Step[];
   strategy?: { matrix?: { os?: string[] } };
@@ -124,13 +125,19 @@ describe("release workflow contracts", () => {
     expect(job(ci, "release").permissions?.actions).toBe("write");
     expect(ci.permissions?.actions).toBeUndefined();
   });
-  test("creator hands PR metadata and GITHUB_TOKEN to dispatcher", () => {
+  test("creator uses a workflow-scoped token and passes PR metadata", () => {
+    expect(release.on.workflow_call).toEqual({
+      secrets: { RELEASE_PLEASE_TOKEN: { required: true } },
+    });
+    expect(job(ci, "release").secrets).toEqual({
+      RELEASE_PLEASE_TOKEN: "${{ secrets.RELEASE_PLEASE_TOKEN }}",
+    });
     const creator = job(release, "release");
     expect(
       creator.steps?.find((s) =>
         s.uses?.startsWith("googleapis/release-please-action@"),
       )?.with?.token,
-    ).toBe("${{ secrets.GITHUB_TOKEN }}");
+    ).toBe("${{ secrets.RELEASE_PLEASE_TOKEN }}");
     expect(creator.outputs?.prs).toBe("${{ steps.release.outputs.prs }}");
     const dispatch = job(release, "dispatch-ci").steps?.find(
       (s) => s.run === "bun scripts/release/dispatch-release-ci.ts",
