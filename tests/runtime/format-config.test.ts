@@ -224,13 +224,12 @@ test("external formatter glob matches a directory beginning with two dots", asyn
 
 test("external formatter failures and timeouts are actionable", async () => {
   const root = await project("ast-mcp-format-errors-");
-  await configure(
+  await scriptConfig(
     root,
-    formatterToml({
-      args: ["-e", "console.error('formatter exploded'); process.exit(7)"],
-      command: process.execPath,
-      extensions: [".txt"],
-    }),
+    "console.error('formatter exploded'); process.exit(7)",
+    {
+      fallback: "reject",
+    },
   );
   await expect(
     withConfig(hermeticConfig(root), () =>
@@ -238,17 +237,10 @@ test("external formatter failures and timeouts are actionable", async () => {
     ),
   ).rejects.toThrow(/formatter exploded/);
 
-  await configure(
+  await scriptConfig(
     root,
-    formatterToml({
-      args: [
-        "-e",
-        "await Bun.sleep(250); process.stdout.write(await Bun.stdin.text())",
-      ],
-      command: process.execPath,
-      extensions: [".txt"],
-      timeoutMs: 20,
-    }),
+    "await Bun.sleep(250); process.stdout.write(await Bun.stdin.text())",
+    { fallback: "reject", timeout: 20 },
   );
   await expect(
     withConfig(hermeticConfig(root), () =>
@@ -264,6 +256,7 @@ async function scriptConfig(
     mode?: "stdout" | "in_place";
     enabled?: boolean;
     formatterEnabled?: boolean;
+    fallback?: "preserve" | "dprint" | "reject";
     command?: string;
     timeout?: number;
     args?: string[];
@@ -275,7 +268,7 @@ async function scriptConfig(
       "version = 2",
       "[formatting]",
       `enabled = ${options.enabled ?? true}`,
-      'fallback = "preserve"',
+      `fallback = ${JSON.stringify(options.fallback ?? "preserve")}`,
       'dprint_config = "./missing-unused.json"',
       "[[formatting.formatters]]",
       'id = "test"',
@@ -348,7 +341,7 @@ test.each([
   "returns typed diagnostics for %s",
   async (_name, script, options, code) => {
     const root = await project("ast-mcp-formatter-diagnostic-");
-    await scriptConfig(root, script, options);
+    await scriptConfig(root, script, { ...options, fallback: "reject" });
     await expect(
       withConfig(hermeticConfig(root), () =>
         formatContent(path.join(root, "value.txt"), "unchanged"),
@@ -358,6 +351,24 @@ test.each([
       retryable: false,
       suggestedNextCall: "config_status",
     });
+  },
+);
+
+test.each(["stdout", "in_place"] as const)(
+  "preserves content after a %s formatter timeout by default",
+  async (mode) => {
+    const root = await project("ast-mcp-format-timeout-preserve-");
+    const target = path.join(root, "value.txt");
+    await scriptConfig(root, "await Bun.sleep(10000)", {
+      mode,
+      timeout: 20,
+    });
+    expect(
+      await withConfig(hermeticConfig(root), () =>
+        formatContent(target, "unchanged"),
+      ),
+    ).toBe("unchanged");
+    expect((await readdir(root)).sort()).toEqual([".git", "ast-mcp.toml"]);
   },
 );
 
@@ -406,7 +417,7 @@ test.each([
   await scriptConfig(
     root,
     `const fs=await import("node:fs/promises");const file=process.argv[1];${action}`,
-    { mode: "in_place" },
+    { mode: "in_place", fallback: "reject" },
   );
   await expect(
     withConfig(hermeticConfig(root), () =>
@@ -424,7 +435,7 @@ test("formatter failure preserves atomic batches and removes newly created paren
   await scriptConfig(
     root,
     `const fs=await import("node:fs/promises");const file=process.argv[1]; if(file.endsWith("second.txt")){console.error("second rejected");process.exit(2)} await fs.writeFile(file,"formatted");`,
-    { mode: "in_place" },
+    { mode: "in_place", fallback: "reject" },
   );
   await expect(
     withConfig(hermeticConfig(root), () =>
@@ -453,7 +464,7 @@ test("formatter failure cleans created parents when mkdir returns a physical ali
   await scriptConfig(
     root,
     'console.error("original formatter failure");process.exit(2)',
-    { mode: "in_place" },
+    { mode: "in_place", fallback: "reject" },
   );
   const filesystem = await import("node:fs/promises");
   const originalMkdir = filesystem.mkdir;
@@ -582,7 +593,7 @@ test.skipIf(process.platform === "win32")(
     await scriptConfig(
       root,
       `const fs=await import("node:fs/promises");const path=await import("node:path");const file=process.argv[1];await fs.unlink(file);await fs.symlink(path.join(process.argv[3],"external.txt"),file)`,
-      { mode: "in_place" },
+      { mode: "in_place", fallback: "reject" },
     );
     await expect(
       withConfig(hermeticConfig(root), () =>
@@ -594,25 +605,28 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
-  ["success", "", "formatter_cleanup_failed"],
-  ["rejection", "process.exit(7)", "formatter_rejected"],
-])("cleanup failure preserves %s outcome", async (_name, exit, code) => {
-  const root = await project("ast-mcp-format-cleanup-");
-  await scriptConfig(
-    root,
-    `const fs=await import("node:fs/promises");await fs.chmod(process.argv[3],0o500);${exit}`,
-    { mode: "in_place" },
-  );
-  try {
-    await expect(
-      withConfig(hermeticConfig(root), () =>
-        formatContent(path.join(root, "value.txt"), "candidate"),
-      ),
-    ).rejects.toMatchObject({ code });
-  } finally {
-    await chmod(root, 0o700);
-  }
-});
+  ["success", ""],
+  ["rejection", "process.exit(7)"],
+])(
+  "cleanup failure stops %s under the default fallback",
+  async (_name, exit) => {
+    const root = await project("ast-mcp-format-cleanup-");
+    await scriptConfig(
+      root,
+      `const fs=await import("node:fs/promises");await fs.chmod(process.argv[3],0o500);${exit}`,
+      { mode: "in_place" },
+    );
+    try {
+      await expect(
+        withConfig(hermeticConfig(root), () =>
+          formatContent(path.join(root, "value.txt"), "candidate"),
+        ),
+      ).rejects.toMatchObject({ code: "formatter_cleanup_failed" });
+    } finally {
+      await chmod(root, 0o700);
+    }
+  },
+);
 
 test("installed oxfmt formats staged package.json with filename-sensitive configuration", async () => {
   const root = await project("ast-mcp-format-oxfmt-");
@@ -626,6 +640,7 @@ test("installed oxfmt formats staged package.json with filename-sensitive config
     command,
     args: ["--write", "{file}"],
     mode: "in_place",
+    timeout: 10_000,
   });
   const output = await withConfig(hermeticConfig(root), () =>
     formatContent(target, source),

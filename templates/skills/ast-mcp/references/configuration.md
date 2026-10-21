@@ -73,8 +73,10 @@ Optional fields are `args`, `enabled`, `mode`, and `timeout_ms`.
 Extensions start with a dot. Selector and argument arrays accept at most 64 entries.
 Timeouts accept 1–120,000 milliseconds.
 Respect project configuration discovery and formatter arguments.
-Formatting failures stop the guarded commit.
-A `preserve` fallback keeps unmatched content unchanged.
+A `preserve` fallback keeps unmatched or failed formatter content unchanged.
+A `reject` fallback stops the guarded commit on formatter failure.
+A `dprint` fallback tries dprint after a matching formatter fails.
+Staging cleanup failures always stop the guarded commit.
 Preview does not format; normal commits and receipt commits do.
 
 ## Telemetry

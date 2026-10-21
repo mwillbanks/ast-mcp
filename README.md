@@ -46,7 +46,7 @@ LanceDB stores metadata, graph records, lexical data, jobs, revisions, and vecto
 5. Apply ordered `astRules` or `aiderBlocks` through a keyed `file_patch` batch.
 6. Verify the resulting structure and run the repository's own quality gates.
 
-A stale hash, ambiguous match, capped preview, unsupported route, formatter rejection, or lost MCP connection stops the write. ast-mcp never chooses a weaker editor path to force an edit through.
+A stale hash, ambiguous match, capped preview, unsupported route, or lost MCP connection stops the write. Formatter failures preserve candidate content by default; explicit reject mode stops the write. ast-mcp never chooses a weaker editor path to force an edit through.
 
 ## Distribution
 
