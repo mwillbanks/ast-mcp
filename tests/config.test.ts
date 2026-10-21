@@ -49,6 +49,11 @@ test("resolves defaults and platform global paths", async () => {
     allowExternalRoots: false,
     allowTempDirectory: true,
   });
+  expect(config.formatting).toMatchObject({
+    dprintConfig: path.join(root, "dprint.json"),
+    enabled: false,
+    fallback: "preserve",
+  });
   expect(config.http).toEqual({
     host: "127.0.0.1",
     port: 3768,
@@ -78,6 +83,51 @@ test("resolves defaults and platform global paths", async () => {
       platform: "win32",
     }),
   ).toBe(path.join(root, "home", "AppData/Roaming/ast-mcp/ast-mcp.toml"));
+});
+
+test("explicit external dprint fallback discovers the project configuration", async () => {
+  const root = await project("ast-mcp-config-local-dprint-");
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    'version = 2\n[formatting]\nenabled = true\nfallback = "dprint"\n',
+  );
+  await expect(resolveConfig({ cwd: root, env: {} })).rejects.toThrow(
+    `formatting.dprint_config does not exist: ${path.join(root, "dprint.json")}`,
+  );
+  await writeFile(path.join(root, "dprint.json"), "{}\n");
+  const config = await resolveConfig({ cwd: root, env: {} });
+  expect(config.formatting.dprintConfig).toBe(path.join(root, "dprint.json"));
+  expect(config.formatting.enabled).toBeTrue();
+  expect(config.formatting.fallback).toBe("dprint");
+});
+
+test("inactive project-default dprint paths preserve compatible multi-root requests", async () => {
+  const first = await project("ast-mcp-config-default-format-a-");
+  const second = await project("ast-mcp-config-default-format-b-");
+  const roots = [first, second];
+  const options = {
+    clientRoots: roots,
+    cwd: first,
+    env: {},
+    requestPaths: roots.map((root) => path.join(root, "example.ts")),
+  };
+  for (const root of roots)
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      'version = 2\n[formatting]\nenabled = true\nfallback = "preserve"\n',
+    );
+  expect((await resolveConfig(options)).projectRoot).toBe(first);
+
+  for (const root of roots) {
+    await writeFile(path.join(root, "dprint.json"), "{}\n");
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      'version = 2\n[formatting]\nenabled = true\nfallback = "dprint"\n',
+    );
+  }
+  await expect(resolveConfig(options)).rejects.toThrow(
+    "conflicting ast-mcp policies",
+  );
 });
 
 test("validates and resolves intelligence placement, retrieval, and generation", async () => {

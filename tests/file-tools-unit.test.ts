@@ -1,12 +1,15 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
+import { resolveConfig, withConfig } from "../src/config";
 import {
   structuredUpstreamToolResult,
   toolFailure,
 } from "../src/helpers/mcp-schema";
 import registerFileTools from "../src/tools/files";
+import { hermeticConfig } from "./support/hermetic-config";
 
 type RegisteredTool = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -206,8 +209,14 @@ test("file tool handlers execute keyed batches without transport indirection", a
 });
 
 test("file patch preserves unformatted content by default and batch output", async () => {
-  const folder = await mkdtemp(path.join(process.cwd(), ".tmp-file-tools-"));
+  const folder = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-file-tools-default-"),
+  );
   try {
+    await mkdir(path.join(folder, ".git"));
+    await writeFile(path.join(folder, "ast-mcp.toml"), "version = 2\n");
+    const options = hermeticConfig(folder);
+    expect((await resolveConfig(options)).formatting.enabled).toBeFalse();
     const notes = path.join(folder, "notes.ts");
     await writeFile(notes, "const alpha=1;\nconst beta=2;\n");
     const registered = new Map<string, RegisteredTool>();
@@ -220,7 +229,9 @@ test("file patch preserves unformatted content by default and batch output", asy
         registered.set(name, handler);
       },
     };
-    registerFileTools(server as never);
+    registerFileTools(server as never, async (_args, operation) =>
+      withConfig(options, operation),
+    );
     const original = await Bun.file(notes).text();
     const expectedSha256 = new Bun.CryptoHasher("sha256")
       .update(original)

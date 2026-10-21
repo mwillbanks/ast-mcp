@@ -90,6 +90,34 @@ export function setTomlSectionKey(
   );
 }
 
+export function removeTomlSectionKey(
+  source: string,
+  header: string,
+  key: string,
+): string {
+  const range = sectionRange(source, header);
+  if (!range) return source;
+  const body = source.slice(range.bodyStart, range.end);
+  const keyPattern = new RegExp(
+    `^[\\t ]*(?:${key}|"${key}"|'${key}')[\\t ]*=`,
+    "m",
+  );
+  const match = keyPattern.exec(body);
+  if (!match) return source;
+  let end = body.indexOf("\n", match.index);
+  while (true) {
+    if (end < 0) end = body.length;
+    try {
+      Bun.TOML.parse(body.slice(match.index, end));
+      const after = end < body.length ? end + 1 : end;
+      return `${source.slice(0, range.bodyStart)}${body.slice(0, match.index)}${body.slice(after)}${source.slice(range.end)}`;
+    } catch (error) {
+      if (end === body.length) throw error;
+      end = body.indexOf("\n", end + 1);
+    }
+  }
+}
+
 function pathBlocks(source: string): Array<{
   end: number;
   id?: string;

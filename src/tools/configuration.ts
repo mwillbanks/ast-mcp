@@ -577,7 +577,7 @@ export default function registerConfigurationTools(
             .optional(),
           formatting: z
             .object({
-              dprint_config: z.string().min(1).optional(),
+              dprint_config: z.string().min(1).nullable().optional(),
               enabled: z.boolean().optional(),
               fallback: z.enum(["preserve", "dprint", "reject"]).optional(),
               formatters: z.array(formatterV2Schema).max(64).optional(),

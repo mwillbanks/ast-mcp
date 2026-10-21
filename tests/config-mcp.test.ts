@@ -49,3 +49,59 @@ test("stdio resolves project TOML from client-advertised roots", async () => {
     await rm(root, { force: true, recursive: true });
   }
 });
+
+test("stdio config_core clears optional dprint configuration through its public schema", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-clear-dprint-"));
+  const file = path.join(root, "ast-mcp.toml");
+  await mkdir(path.join(root, ".git"));
+  await writeFile(
+    file,
+    `version = 2
+[formatting]
+enabled = false
+dprint_config = "./retired.json"
+# preserve this formatter policy
+fallback = "preserve"
+[mcp.configuration]
+require_approval = false
+[telemetry]
+enabled = false
+`,
+  );
+  const client = new Client({ name: "clear-dprint-test", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    args: [path.resolve(import.meta.dir, "../src/index.ts")],
+    command: process.execPath,
+    cwd: root,
+    env: {
+      ...process.env,
+      APPDATA: path.join(root, "state"),
+      XDG_CONFIG_HOME: path.join(root, "state"),
+    },
+    stderr: "pipe",
+  });
+  try {
+    await client.connect(transport);
+    const result = await client.callTool({
+      arguments: { formatting: { dprint_config: null } },
+      name: "config_core",
+    });
+    expect(result.isError).not.toBeTrue();
+    expect(result.structuredContent).toMatchObject({ ok: true });
+    const source = await Bun.file(file).text();
+    expect(source).not.toContain("dprint_config");
+    expect(source).toContain("# preserve this formatter policy");
+    expect(source).toContain('fallback = "preserve"');
+    const status = await client.callTool({
+      arguments: {},
+      name: "config_status",
+    });
+    expect(status.structuredContent).toMatchObject({
+      data: { healthy: true },
+      ok: true,
+    });
+  } finally {
+    await client.close();
+    await rm(root, { force: true, recursive: true });
+  }
+});

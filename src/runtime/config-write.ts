@@ -5,6 +5,7 @@ import {
   pathTableIds,
   readConfigSource,
   removePathTable,
+  removeTomlSectionKey,
   setTomlSectionKey,
   type TomlValue,
   updatePathTable,
@@ -31,7 +32,7 @@ export interface ConfigCorePatch {
     read?: { modes?: Array<"ast" | "text"> };
   };
   formatting?: {
-    dprint_config?: string;
+    dprint_config?: string | null;
     enabled?: boolean;
     fallback?: "dprint" | "preserve" | "reject";
     formatters?: Array<{
@@ -222,8 +223,10 @@ function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   next = applyObjectKeys(next, "files.patch", patch.files?.patch);
   if (patch.formatting?.formatters !== undefined)
     next = removeFormatterTables(next);
+  if (patch.formatting?.dprint_config === null)
+    next = removeTomlSectionKey(next, "formatting", "dprint_config");
   next = applyObjectKeys(next, "formatting", {
-    dprint_config: patch.formatting?.dprint_config,
+    dprint_config: patch.formatting?.dprint_config ?? undefined,
     enabled: patch.formatting?.enabled,
     fallback: patch.formatting?.fallback,
     formatters: patch.formatting?.formatters?.map((formatter) =>

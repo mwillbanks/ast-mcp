@@ -306,9 +306,6 @@ const dprintConfigCache = new Map<
   { fingerprint: string; promise: Promise<string> }
 >();
 
-function packageDprintConfig() {
-  return path.resolve(import.meta.dir, "../dprint.json");
-}
 async function validateDprintConfig(filePath: string): Promise<string> {
   const metadata = await stat(filePath).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -880,11 +877,14 @@ function matchedProjectRoots(
   return matched.length ? matched : [candidates[0] as string];
 }
 
-function defaultInternalConfig(candidates: string[]): InternalConfig {
+function defaultInternalConfig(
+  candidates: string[],
+  projectRoot: string,
+): InternalConfig {
   return {
     dependencies: {},
     formatting: {
-      dprint_config: packageDprintConfig(),
+      dprint_config: path.join(projectRoot, "dprint.json"),
       enabled: false,
       fallback: "preserve",
       formatters: [],
@@ -1219,11 +1219,12 @@ async function loadResolutionLayers(
   ]);
 }
 
-async function resolvedDprint(value: InternalConfig) {
+async function resolvedDprint(value: InternalConfig, projectRoot: string) {
   const enabled =
     value.formatting?.enabled === true &&
     value.formatting.fallback === "dprint";
-  const config = value.formatting?.dprint_config ?? packageDprintConfig();
+  const config =
+    value.formatting?.dprint_config ?? path.join(projectRoot, "dprint.json");
   const fingerprint = enabled ? await validateDprintConfig(config) : "disabled";
   return { config, fingerprint };
 }
@@ -1340,7 +1341,7 @@ async function resolveForProject(
     (options.clientRoots?.length ?? 0) > 0,
   );
   const layers: ConfigLayer[] = [
-    { name: "default", value: defaultInternalConfig(candidates) },
+    { name: "default", value: defaultInternalConfig(candidates, projectRoot) },
     { name: "global", value: global.value ?? {} },
     { name: "project", value: project.value ?? {} },
     { name: "environment", value: environment.value },
@@ -1350,7 +1351,7 @@ async function resolveForProject(
     (version): version is 1 | 2 => version !== undefined,
   );
   if (sourceVersions.includes(1)) value.version = 1;
-  const dprint = await resolvedDprint(value);
+  const dprint = await resolvedDprint(value, projectRoot);
   const key = resolutionCacheKey({
     candidates,
     cwd,
@@ -1410,7 +1411,14 @@ function policy(config: ResolvedConfig) {
   return JSON.stringify({
     dependencies: config.dependencies,
     files: config.files,
-    formatting: config.formatting,
+    formatting: {
+      ...config.formatting,
+      dprintConfig:
+        config.provenance["formatting.dprint_config"] === "default" &&
+        (!config.formatting.enabled || config.formatting.fallback !== "dprint")
+          ? null
+          : config.formatting.dprintConfig,
+    },
     mcp: config.mcp.configuration,
     safety: config.safety,
     telemetry: config.telemetry,

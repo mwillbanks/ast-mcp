@@ -12,6 +12,7 @@ import {
 import {
   existingPathPolicies,
   pathTableIds,
+  removeTomlSectionKey,
   validateConfigSource,
   writeConfigSource,
 } from "../src/config-edit";
@@ -131,6 +132,66 @@ test("config_core updates a section while preserving paths and comments", async 
   expect(source).toContain("require_hash = false");
   const config = await resolveConfig(options);
   expect(config.safety.requireHash).toBeFalse();
+});
+
+test("config_core clears an optional formatter configuration without rewriting sections", async () => {
+  const root = await project("ast-mcp-config-write-clear-");
+  const file = path.join(root, "ast-mcp.toml");
+  const source = `${v2Source()}
+[formatting]
+# keep formatter controls
+enabled = false
+dprint_config = "./old.json" # remove this entry
+fallback = "preserve"
+
+[http]
+port = 4321
+`;
+  await writeFile(file, source);
+  const options = hermeticConfig(root);
+  await withConfig(options, async () => {
+    await approveNext(() =>
+      applyConfigCore({ formatting: { dprint_config: null } }),
+    );
+    const cleared = await readFile(file, "utf8");
+    expect(cleared).toBe(
+      source.replace('dprint_config = "./old.json" # remove this entry\n', ""),
+    );
+    await approveNext(() =>
+      applyConfigCore({ formatting: { dprint_config: null } }),
+    );
+    expect(await readFile(file, "utf8")).toBe(cleared);
+    expect((await resolveConfig(options)).formatting.enabled).toBeFalse();
+  });
+});
+
+test("optional formatter removal preserves unrelated keys and multiline values", () => {
+  expect(
+    removeTomlSectionKey("version = 2\n", "formatting", "dprint_config"),
+  ).toBe("version = 2\n");
+  const absent = "[formatting]\nenabled = false\n";
+  expect(removeTomlSectionKey(absent, "formatting", "dprint_config")).toBe(
+    absent,
+  );
+  const source =
+    '[formatting]\n"dprint_config" = """\nold.json\n"""\n# keep this\nenabled = false\n[http]\nport = 4321\n';
+  expect(removeTomlSectionKey(source, "formatting", "dprint_config")).toBe(
+    "[formatting]\n# keep this\nenabled = false\n[http]\nport = 4321\n",
+  );
+  expect(
+    removeTomlSectionKey(
+      "[formatting]\n'dprint_config' = 'old.json'",
+      "formatting",
+      "dprint_config",
+    ),
+  ).toBe("[formatting]\n");
+  expect(() =>
+    removeTomlSectionKey(
+      '[formatting]\ndprint_config = "unterminated',
+      "formatting",
+      "dprint_config",
+    ),
+  ).toThrow();
 });
 
 test("config_paths batches add, update, and remove", async () => {
