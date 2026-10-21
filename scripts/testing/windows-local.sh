@@ -61,9 +61,9 @@ else
         cd /workspace
         wine /opt/bun/bun.exe ci
         wine /opt/bun/bun.exe test --max-concurrency=1 --timeout=30000 \
-          tests/host-smoke.test.ts tests/runtime-subprocess.test.ts
+          tests/tooling/host-smoke.test.ts tests/runtime/subprocess.test.ts
         wine /opt/bun/bun.exe run intelligence:qualify
-        wine /opt/bun/bun.exe test tests/mcp.test.ts \
+        wine /opt/bun/bun.exe test tests/integration/mcp.test.ts \
           --test-name-pattern "calls native code intelligence through the server"
         if [ "$WINDOWS_LOCAL_STAGE" = full ]; then
           wine /opt/bun/bun.exe test --max-concurrency=1 --timeout=30000
