@@ -5,6 +5,12 @@ on:
     secrets:
       RELEASE_PLEASE_TOKEN:
         required: true
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Published release tag to validate and publish
+        required: true
+        type: string
 
 permissions: {}
 
@@ -16,16 +22,51 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs.release_created || steps.recover.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name || steps.recover.outputs.tag_name }}
       prs_created: ${{ steps.release.outputs.prs_created }}
       prs: ${{ steps.release.outputs.prs }}
     steps:
+      - name: Require main for manual recovery
+        if: github.event_name == 'workflow_dispatch'
+        run: test "$GITHUB_REF" = refs/heads/main
       - uses: googleapis/release-please-action@v5
         id: release
+        if: github.event_name != 'workflow_dispatch'
+        continue-on-error: true
         with:
           # Workflow changes in the release target require a workflow-scoped token.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      - uses: actions/checkout@v7
+        if: github.event_name == 'workflow_dispatch' || steps.release.outcome == 'failure'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Recover an existing release
+        id: recover
+        if: github.event_name == 'workflow_dispatch' || steps.release.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            RELEASE_TAG="ast-mcp-v$(jq -r .version package.json)"
+          fi
+          [[ "$RELEASE_TAG" =~ ^ast-mcp-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          test "$(jq -r .draft <<<"$release")" = false
+          target=$(jq -r .target_commitish <<<"$release")
+          tag_commit=$(git rev-list -n 1 "$RELEASE_TAG")
+          test "$tag_commit" = "$target"
+          git merge-base --is-ancestor "$tag_commit" HEAD
+          test "$(git show "$RELEASE_TAG:package.json" | jq -r .version)" = "${RELEASE_TAG#ast-mcp-v}"
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            test "$tag_commit" = "$GITHUB_SHA"
+          fi
+          echo "release_created=true" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   dispatch-ci:
     needs: release
