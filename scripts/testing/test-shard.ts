@@ -38,6 +38,7 @@ export function selectTestShard(
 export function runTestShard(
   args = process.argv.slice(2),
   root = process.cwd(),
+  output: "inherit" | "ignore" = "inherit",
 ): number {
   if (args.length !== 4 || args[0] !== "--shard" || args[2] !== "--shards") {
     throw new Error(
@@ -48,21 +49,23 @@ export function runTestShard(
   const shards = Number(args[3]);
   const files = selectTestShard(discoverTestFiles(root), shard, shards);
   if (files.length === 0) throw new Error(`Test shard ${shard} is empty`);
-  console.log(
-    `Running test shard ${shard + 1}/${shards}: ${files.length} files`,
-  );
+  if (output === "inherit")
+    console.log(
+      `Running test shard index ${shard} of ${shards}: ${files.length} files`,
+    );
   const result = Bun.spawnSync({
     cwd: root,
     cmd: [
       process.execPath,
       "test",
+      "--dots",
       "--max-concurrency=1",
       "--timeout=30000",
       ...files,
     ],
-    stderr: "inherit",
+    stderr: output,
     stdin: "inherit",
-    stdout: "inherit",
+    stdout: output,
   });
   return result.exitCode ?? 1;
 }

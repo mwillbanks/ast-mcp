@@ -199,10 +199,10 @@ async function inPlaceContent(
   try {
     await rm(directory, { force: true, recursive: true });
   } catch (error) {
-    primaryError ??= new FormatterError(
+    primaryError = new FormatterError(
       "formatter_cleanup_failed",
       `Failed to remove formatter staging directory ${directory}: ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
+      { cause: primaryError ?? error },
     );
   }
   if (primaryError) throw primaryError;
@@ -221,19 +221,29 @@ export async function formatContent(
       matchesFormatter(config, filePath, candidate),
   );
   if (formatter) {
-    if (formatter.mode === "in_place")
-      return inPlaceContent(config, filePath, content, formatter);
-    return (
-      await invokeFormatter(
-        formatter.command,
-        formatterArgs(config, filePath, filePath, formatter.args),
-        content,
-        {
-          cwd: formatterRoot(config, filePath),
-          timeoutMs: formatter.timeoutMs,
-        },
+    try {
+      if (formatter.mode === "in_place")
+        return await inPlaceContent(config, filePath, content, formatter);
+      return (
+        await invokeFormatter(
+          formatter.command,
+          formatterArgs(config, filePath, filePath, formatter.args),
+          content,
+          {
+            cwd: formatterRoot(config, filePath),
+            timeoutMs: formatter.timeoutMs,
+          },
+        )
+      ).stdout;
+    } catch (error) {
+      if (
+        !(error instanceof FormatterError) ||
+        error.code === "formatter_cleanup_failed" ||
+        config.formatting.fallback === "reject"
       )
-    ).stdout;
+        throw error;
+      if (config.formatting.fallback === "preserve") return content;
+    }
   }
   if (config.formatting.fallback === "preserve") return content;
   if (config.formatting.fallback === "reject")

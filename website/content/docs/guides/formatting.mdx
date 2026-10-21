@@ -80,7 +80,7 @@ ast-mcp stages the candidate in a private sibling directory and retains its base
 
 Missing executables return `formatter_unavailable`. Timeouts return `formatter_timeout`. Invalid UTF-8, oversized output, removed output, and nonregular output return `formatter_invalid_output`. Formatter rejections return `formatter_rejected`.
 
-Output is limited to 16 MiB. A failed formatter prevents the guarded batch from committing. Hash guards, atomic writes, and OS permissions still apply. Inspect `config_status`, correct the installed command or configuration, and retry with fresh hashes.
+Output is limited to 16 MiB. With the default `fallback = "preserve"`, a failed formatter leaves the candidate content unchanged and the guarded write continues. Set `fallback = "reject"` to stop the write and return a typed formatter error. Set `fallback = "dprint"` to try the configured dprint formatter after a matching formatter fails. A staging cleanup failure always stops the write. Hash guards, atomic writes, and OS permissions still apply.
 
 ## Migrate from implicit dprint
 
@@ -104,6 +104,6 @@ config_core({ formatting: { dprint_config: null } });
 
 Here, API `null` means remove the key. TOML has no null value, so do not write `dprint_config = null` in `ast-mcp.toml`.
 
-For mixed formatters, prefer explicit formatter entries and `fallback = "preserve"`. Use `fallback = "reject"` to reject unmatched files when formatting is enabled.
+For mixed formatters, prefer explicit formatter entries and `fallback = "preserve"`. Use `fallback = "reject"` to reject unmatched files or failed matching formatters when formatting is enabled.
 
 Migration disables formatting when the previous configuration omitted its activation setting. Explicit activation remains explicit. Review the migrated settings before applying changes.

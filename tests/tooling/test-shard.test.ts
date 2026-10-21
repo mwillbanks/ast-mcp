@@ -72,12 +72,16 @@ describe("package test shards", () => {
         fixture,
         'import { expect, test } from "bun:test"; test("fixture", () => expect(1).toBe(1));',
       );
-      expect(runTestShard(["--shard", "0", "--shards", "1"], root)).toBe(0);
+      expect(
+        runTestShard(["--shard", "0", "--shards", "1"], root, "ignore"),
+      ).toBe(0);
       await writeFile(
         fixture,
         'import { test } from "bun:test"; test("fixture", () => { throw new Error("intentional shard failure"); });',
       );
-      expect(runTestShard(["--shard", "0", "--shards", "1"], root)).not.toBe(0);
+      expect(
+        runTestShard(["--shard", "0", "--shards", "1"], root, "ignore"),
+      ).not.toBe(0);
       expect(() =>
         runTestShard(["--shard", "1", "--shards", "2"], root),
       ).toThrow("Test shard 1 is empty");

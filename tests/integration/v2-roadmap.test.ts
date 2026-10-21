@@ -798,16 +798,12 @@ test("v2 formatting supports selective stdout and adjacent in-place staging", as
   );
   expect(await readFile(nested, "utf8")).toBe("hello!");
 
-  const failedParent = path.join(root, "failed/missing");
-  await expect(
-    withConfig(options, () =>
-      writeFileSafely({
-        content: "hello",
-        filePath: path.join(failedParent, "value.fail"),
-      }),
-    ),
-  ).rejects.toThrow();
-  expect(await Bun.file(failedParent).exists()).toBeFalse();
+  const fallbackParent = path.join(root, "failed/missing");
+  const fallbackTarget = path.join(fallbackParent, "value.fail");
+  await withConfig(options, () =>
+    writeFileSafely({ content: "hello", filePath: fallbackTarget }),
+  );
+  expect(await readFile(fallbackTarget, "utf8")).toBe("hello");
   const stagingFiles = (await readdir(root, { recursive: true })).filter(
     (entry) => path.basename(entry).startsWith(".ast-mcp-format-"),
   );
