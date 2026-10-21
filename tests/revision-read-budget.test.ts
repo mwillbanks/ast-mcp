@@ -152,6 +152,65 @@ test("commit and index reads enforce byte limits without whole-stream materializ
   }
 });
 
+test("buffered Git output preserves cancellation ahead of a simultaneous byte limit", async () => {
+  const { root, git } = await fixture();
+  try {
+    const repositoryId = createRepositoryId({
+      canonicalGitCommonDirectory: git.commonGitDirectory!,
+    });
+    for (const selector of [
+      { kind: "commit", oid: git.headOid! },
+      { kind: "index" },
+    ] as const) {
+      const revision = await resolveRevision(git, repositoryId, selector);
+      const controller = new AbortController();
+      const reason = new Error("Buffered revision read cancelled");
+      const getReader = ReadableStream.prototype.getReader;
+      let bufferedBytes = 0;
+      const acquire = spyOn(
+        ReadableStream.prototype,
+        "getReader",
+      ).mockImplementation(function (this: ReadableStream<Uint8Array>) {
+        const reader = getReader.call(
+          this,
+        ) as ReadableStreamDefaultReader<Uint8Array>;
+        const read = reader.read.bind(reader);
+        reader.read = async () => {
+          // Buffer the actual small Git blob to reproduce output already queued at cancellation.
+          const chunks: Uint8Array[] = [];
+          for (;;) {
+            const chunk = await read();
+            if (chunk.done) break;
+            chunks.push(chunk.value);
+          }
+          const bytes = Buffer.concat(chunks);
+          bufferedBytes = bytes.byteLength;
+          controller.abort(reason);
+          return { done: false, value: bytes };
+        };
+        return reader;
+      } as typeof ReadableStream.prototype.getReader);
+      try {
+        await expect(
+          readGitRevisionFile(
+            git,
+            revision,
+            path.join(root, "small.ts"),
+            controller.signal,
+            1,
+          ),
+        ).rejects.toBe(reason);
+        expect(bufferedBytes).toBe(Buffer.byteLength(small));
+        expect(acquire).toHaveBeenCalledTimes(1);
+      } finally {
+        acquire.mockRestore();
+      }
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 for (const transportKind of ["stdio", "http"] as const) {
   test(`${transportKind} historical source limits leave the MCP connection usable`, async () => {
     const { root, git } = await fixture();

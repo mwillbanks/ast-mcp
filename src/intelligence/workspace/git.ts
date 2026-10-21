@@ -110,6 +110,9 @@ export async function runGitRaw(
     ]);
     assertNotAborted(signal);
     return { code, stderr: stderr.trim(), stdout };
+  } catch (error) {
+    assertNotAborted(signal);
+    throw error;
   } finally {
     signal?.removeEventListener("abort", terminate);
     if (termination) await termination;
