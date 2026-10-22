@@ -1,12 +1,20 @@
 ---
 title: Root isolation
-description: Keep every intelligence and filesystem path inside the repository boundary.
+description: Understand restricted file access and the separate intelligence workspace boundary.
 icon: ShieldCheck
 ---
 
 The effective `workspace.roots` list comes from environment overrides, project and global TOML, or the selected MCP workspace roots. When no source configures roots, the selected project root is the only boundary.
 
-## Resolution rules
+## Filesystem safety modes
+
+`safety.filesystem` defaults to `"restricted"`. Restricted file operations apply the host baseline, path rules, and symlink checks described below.
+
+`"unrestricted"` bypasses those file restrictions while retaining OS permissions, configured hash guards, mutation capabilities, and immutable revision protection. A global setting is a host grant. A project setting requires approval bound to a trusted session, canonical project, and effective safety configuration. Modern stateless HTTP cannot retain that approval and fails closed for approval-required calls.
+
+Intelligence workspace roots remain bounded in either mode. Unrestricted file access does not extend indexing or storage scope. See [Filesystem access modes](/docs/guides/filesystem-access) and the complete [configuration reference](/docs/reference/configuration#safety).
+
+## Restricted resolution rules
 
 - Server-side top-level `paths` rules are authoritative; client-advertised MCP roots provide only a host baseline.
 - Exact files outrank directories, then the deepest directory/include literal prefix wins. Equal specificity resolves `deny`, then `request`, then `allow`.

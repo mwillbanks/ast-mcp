@@ -25,7 +25,7 @@ const highlights = [
   },
   {
     description:
-      "Every path is root-bounded, symlink-aware, and validated before code intelligence or filesystem work begins.",
+      "File access is restricted by default, with explicit unrestricted access and separate intelligence workspace boundaries.",
     icon: ShieldCheck,
     title: "Zero-trust boundaries",
   },
