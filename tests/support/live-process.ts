@@ -64,6 +64,13 @@ export function spawnLiveProcess(
   let stopPromise: Promise<void> | undefined;
   const timeoutMs = options.timeoutMs ?? 10_000;
 
+  async function settleOutput(deadline: number) {
+    await Promise.race([
+      outputDrained,
+      Bun.sleep(Math.min(1_000, Math.max(0, deadline - Date.now()))),
+    ]);
+  }
+
   async function waitFor<T>(
     description: string,
     inspect: () => T | undefined,
@@ -74,10 +81,7 @@ export function spawnLiveProcess(
       const result = inspect();
       if (result !== undefined) return result;
       if (processHandle.exitCode !== null) {
-        await Promise.race([
-          outputDrained,
-          Bun.sleep(Math.min(1_000, Math.max(0, deadline - Date.now()))),
-        ]);
+        await settleOutput(deadline);
         const finalResult = inspect();
         if (finalResult !== undefined) return finalResult;
         throw new Error(
@@ -132,11 +136,14 @@ export function spawnLiveProcess(
       await stopPromise;
     },
     async waitForExit(waitMs = timeoutMs) {
-      return waitFor(
+      const deadline = Date.now() + waitMs;
+      const exitCode = await waitFor(
         "Waiting for process exit",
         () => processHandle.exitCode ?? undefined,
         waitMs,
       );
+      await settleOutput(deadline);
+      return exitCode;
     },
     async waitForStderr(pattern, waitMs = timeoutMs) {
       return waitFor(

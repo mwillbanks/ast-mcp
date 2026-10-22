@@ -37,10 +37,10 @@ test("live process reports bounded waiting and premature exit diagnostics", asyn
   const exited = spawnLiveProcess(process.execPath, ["-e", fastFailure]);
   try {
     expect(await exited.waitForExit()).toBe(7);
+    expect(exited.diagnostics()).toContain("startup failed");
     await expect(exited.readStdoutLine()).rejects.toThrow(
       "process exited with code 7",
     );
-    expect(exited.diagnostics()).toContain("startup failed");
   } finally {
     await exited.stop();
   }
