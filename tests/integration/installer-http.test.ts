@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { globalConfigPath } from "../../src/config";
+import { managedAstMcpHookEntry } from "../../src/hooks/managed";
 import { install, uninstall } from "../../src/installer";
 import { checkInstall } from "../../templates/skills/ast-mcp/scripts/check-install";
 
@@ -28,6 +29,98 @@ async function temporary(prefix: string) {
   created.push(folder);
   return folder;
 }
+
+type CodexHookDocument = {
+  hooks: {
+    PreToolUse: Array<{
+      hooks: Array<{ command: string; type: string }>;
+      matcher: string;
+    }>;
+  };
+};
+
+function managedCodexHooks(source: string) {
+  const document = JSON.parse(source) as CodexHookDocument;
+  const commands = document.hooks.PreToolUse.flatMap(
+    (group) => group.hooks,
+  ).filter(
+    (hook) =>
+      hook.type === "command" &&
+      managedAstMcpHookEntry(hook.command) !== undefined,
+  );
+  expect(commands.length).toBeGreaterThan(0);
+  return { document, commands };
+}
+
+function expectHookAlias(
+  source: string,
+  expected: string,
+  platform = process.platform,
+) {
+  const { document, commands } = managedCodexHooks(source);
+  const normalize = (value: string) =>
+    platform === "win32"
+      ? path.win32.normalize(value).toLowerCase()
+      : path.posix.normalize(value);
+  for (const command of commands)
+    expect(normalize(managedAstMcpHookEntry(command.command)!)).toBe(
+      normalize(expected),
+    );
+  return { document, commands };
+}
+
+function replaceHookAlias(
+  source: string,
+  expected: string,
+  replacement: string,
+  platform = process.platform,
+) {
+  const { document, commands } = expectHookAlias(source, expected, platform);
+  for (const command of commands)
+    command.command = `${JSON.stringify(replacement)} hook`;
+  return JSON.stringify(document, null, 2) + "\n";
+}
+
+test("hook fixture mutation decodes and reserializes Windows and POSIX command paths", () => {
+  for (const [platform, alias, expected, replacement] of [
+    [
+      "win32",
+      String.raw`C:\Users\RUNNER~1\home with spaces\.bun\bin\ast-mcp.CMD`,
+      String.raw`C:\Users\RUNNER~1\home with spaces\.bun\bin\ast-mcp.cmd`,
+      String.raw`C:\Users\RUNNER~1\manager with spaces\ast-mcp.cmd`,
+    ],
+    [
+      "linux",
+      "/tmp/home with spaces/.bun/bin/ast-mcp",
+      "/tmp/home with spaces/.bun/bin/ast-mcp",
+      "/tmp/manager with spaces/ast-mcp",
+    ],
+  ] as const) {
+    const source = JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            matcher: ".*",
+            hooks: [
+              { type: "command", command: `${JSON.stringify(alias)} hook` },
+              { type: "command", command: "echo unrelated" },
+            ],
+          },
+        ],
+      },
+    });
+    const changed = replaceHookAlias(source, expected, replacement, platform);
+    const { document, commands } = expectHookAlias(
+      changed,
+      replacement,
+      platform,
+    );
+    expect(managedAstMcpHookEntry(commands[0]!.command)).toBe(replacement);
+    expect(document.hooks.PreToolUse[0]!.hooks[1]!.command).toBe(
+      "echo unrelated",
+    );
+  }
+});
 
 test("installs, diagnoses, and uninstalls global HTTP host entries", async () => {
   const root = await temporary("ast-mcp-http-global-root-");
@@ -90,21 +183,9 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
     await chmod(managerAlias, 0o755);
     const hookFile = path.join(home, ".codex/hooks.json");
     const hooks = await readFile(hookFile, "utf8");
-    const encodedAlias = JSON.stringify(globalAlias).slice(1, -1);
-    const nativeCase = (value: string) =>
-      process.platform === "win32" ? value.toLowerCase() : value;
-    const aliasIndex = nativeCase(hooks).indexOf(nativeCase(encodedAlias));
-    expect(aliasIndex).toBeGreaterThanOrEqual(0);
-    const installedAlias = hooks.slice(
-      aliasIndex,
-      aliasIndex + encodedAlias.length,
-    );
     await writeFile(
       hookFile,
-      hooks.replaceAll(
-        installedAlias,
-        JSON.stringify(managerAlias).slice(1, -1),
-      ),
+      replaceHookAlias(hooks, globalAlias, managerAlias),
     );
     discovery.mockImplementation(((args: string[]) => ({
       exitCode: args.join(" ") === "bun pm bin -g" ? 0 : 1,
@@ -137,9 +218,7 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
       port: 4891,
       cliEntry: managerAlias,
     });
-    expect(nativeCase(await readFile(hookFile, "utf8"))).toContain(
-      nativeCase(JSON.stringify(managerAlias).slice(1, -1)),
-    );
+    expectHookAlias(await readFile(hookFile, "utf8"), managerAlias);
     await writeFile(hookFile, hooks);
 
     await uninstall({
