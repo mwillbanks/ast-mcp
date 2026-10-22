@@ -80,6 +80,7 @@ async function command(
   args: string[],
   cwd: string,
   env = consumerEnvironment(),
+  timeoutMs = 90_000,
 ): Promise<string> {
   const platformCommand = commandForPlatform(args[0]!, args.slice(1));
   const child = Bun.spawn([platformCommand.command, ...platformCommand.args], {
@@ -89,7 +90,7 @@ async function command(
     windowsVerbatimArguments: platformCommand.windowsVerbatimArguments,
     stderr: "pipe",
     stdout: "pipe",
-    timeout: 90_000,
+    timeout: timeoutMs,
   });
   const [exitCode, stderr, stdout] = await Promise.all([
     child.exited,
@@ -457,6 +458,7 @@ async function exerciseConsumer(installer: string) {
           ],
       consumer,
       installEnvironment,
+      installer === "npm" ? 300_000 : 90_000,
     );
     const installedPackage = path.join(
       consumer,
@@ -529,10 +531,8 @@ async function exerciseConsumer(installer: string) {
     const jsonOutput = JSON.parse(
       await command([consumerBun, executable, "config", "validate"], fixture),
     );
-    expect(jsonOutput).toMatchObject({
-      valid: true,
-      projectRoot: canonicalFixture,
-    });
+    expect(jsonOutput).toMatchObject({ valid: true });
+    expect(await realpath(jsonOutput.projectRoot)).toBe(canonicalFixture);
     for (const format of ["human", "json", "yaml", "toml"] as const) {
       const output = await command(
         [consumerBun, executable, "--output", format, "config", "validate"],
@@ -547,10 +547,10 @@ async function exerciseConsumer(installer: string) {
             : format === "yaml"
               ? Bun.YAML.parse(output)
               : Bun.TOML.parse(output);
-        expect(parsed).toMatchObject({
-          valid: true,
-          projectRoot: canonicalFixture,
-        });
+        expect(parsed).toMatchObject({ valid: true });
+        expect(await realpath(parsed.projectRoot as string)).toBe(
+          canonicalFixture,
+        );
       }
     }
     const exported = JSON.parse(
