@@ -545,7 +545,7 @@ describe("installed changelog formatter", () => {
       })) as typeof Bun.spawn);
     try {
       await expect(formatReleaseChangelog(unformatted)).rejects.toThrow(
-        "Oxfmt",
+        "Bun changelog formatting failed",
       );
     } finally {
       failure.mockRestore();

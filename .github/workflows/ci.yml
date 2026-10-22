@@ -60,7 +60,6 @@ jobs:
               - 'README.md'
               - 'bin/**'
               - '.oxfmtrc.json'
-              - '.oxlintrc.json'
               - 'bun.lock'
               - 'bunfig.toml'
               - 'docker/**'
@@ -75,6 +74,7 @@ jobs:
               - 'tsconfig.json'
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
+              - '.github/workflows/package-consumers.yml'
             release:
               - 'bun.lock'
               - 'bunfig.toml'
@@ -124,8 +124,6 @@ jobs:
       - run: bun run tools:check
       - run: bun run templates:check
       - run: bun run prose:check
-      - run: bun run format:check
-      - run: bun run typecheck
       - run: bun run lint
       - name: Validate skill
         if: ${{ needs.changes.outputs.templates == 'true' }}
@@ -147,8 +145,26 @@ jobs:
           key: website-bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'website/package.json', 'website/bun.lock') }}-v1
       - name: Check dead code
         run: bun run fallow
-      - name: Build and exercise extracted distribution once
-        run: bun test tests/tooling/package-smoke.test.ts --bail
+      - name: Build one package archive
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/package-artifact"
+          bun pm pack --filename "$RUNNER_TEMP/package-artifact/ast-mcp.tgz"
+          bun -e 'const path = process.env.RUNNER_TEMP + "/package-artifact/ast-mcp.tgz"; await Bun.write(path + ".sha256", new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex") + "\n")'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package-candidate
+          path: ${{ runner.temp }}/package-artifact/*
+          if-no-files-found: error
+          retention-days: 7
+
+  package-consumers:
+    name: Packed package consumers
+    needs: [changes, package-static]
+    if: ${{ needs.changes.outputs.package == 'true' }}
+    uses: ./.github/workflows/package-consumers.yml
+    with:
+      artifact_name: package-candidate
 
   package-coverage:
     name: Package tests and 95% coverage (Linux)
@@ -283,10 +299,6 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: website-bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'website/package.json', 'website/bun.lock') }}-v1
-      - name: Check website formatting
-        run: bun run --cwd website format:check
-      - name: Typecheck website
-        run: bun run --cwd website typecheck
       - name: Lint website
         run: bun run --cwd website lint
       - name: Test website
@@ -302,12 +314,13 @@ jobs:
       [
         changes,
         package-static,
+        package-consumers,
         package-coverage,
         package-platform-tests,
         package-native,
         website,
       ]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-consumers.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
     with:
       recovery_tag: ${{ inputs.recovery_tag }}

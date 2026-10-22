@@ -1,0 +1,73 @@
+name: Packed package qualification
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  consumers:
+    name: Consumer (${{ matrix.platform.os }}, ${{ matrix.installer }}, Bun ${{ matrix.platform.bun }})
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [bun, npm]
+        platform:
+          - { os: macos-15, platform: darwin, arch: arm64, bun: "1.4.4" }
+          - { os: ubuntu-24.04-arm, platform: linux, arch: arm64, bun: "1.4.4" }
+          - { os: ubuntu-24.04, platform: linux, arch: x64, bun: "1.4.4" }
+          - { os: windows-2025, platform: win32, arch: x64, bun: "1.4.4" }
+          - { os: macos-15, platform: darwin, arch: arm64, bun: "1.4.3" }
+          - { os: ubuntu-24.04-arm, platform: linux, arch: arm64, bun: "1.4.3" }
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.platform.bun }}
+      - name: Preserve consumer runtime
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/consumer-bun"
+          cp "$(command -v bun)" "$RUNNER_TEMP/consumer-bun/bun${{ runner.os == 'Windows' && '.exe' || '' }}"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Verify runtime architecture and GNU libc
+        env:
+          EXPECTED_PLATFORM: ${{ matrix.platform.platform }}
+          EXPECTED_ARCH: ${{ matrix.platform.arch }}
+        run: |
+          bun -e 'if (process.platform !== process.env.EXPECTED_PLATFORM || process.arch !== process.env.EXPECTED_ARCH) throw new Error("Runner architecture mismatch"); if (process.platform === "linux" && !process.report.getReport().header.glibcVersionRuntime) throw new Error("GNU libc is required")'
+      - name: Install test runner dependencies
+        run: bun ci
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ runner.temp }}/package-artifact
+      - name: Configure isolated artifact test
+        env:
+          CONSUMER_VERSION: ${{ matrix.platform.bun }}
+        run: |
+          bun -e 'import { appendFileSync } from "node:fs"; import { join } from "node:path"; const runtime = join(process.env.RUNNER_TEMP, "consumer-bun", process.platform === "win32" ? "bun.exe" : "bun"); const version = Bun.spawnSync([runtime, "--version"]); if (version.exitCode || version.stdout.toString().trim() !== process.env.CONSUMER_VERSION) throw new Error("Consumer Bun version mismatch"); appendFileSync(process.env.GITHUB_ENV, "AST_MCP_PACKAGE_ARCHIVE=" + join(process.env.RUNNER_TEMP, "package-artifact", "ast-mcp.tgz") + "\nAST_MCP_CONSUMER_BUN=" + runtime + "\n")'
+      - name: Verify archive checksum
+        run: |
+          bun -e 'import { join } from "node:path"; const root = join(process.env.RUNNER_TEMP, "package-artifact"); const expected = (await Bun.file(join(root, "ast-mcp.tgz.sha256")).text()).trim(); const actual = new Bun.CryptoHasher("sha256").update(await Bun.file(process.env.AST_MCP_PACKAGE_ARCHIVE).arrayBuffer()).digest("hex"); if (actual !== expected) throw new Error("Package archive checksum mismatch")'
+      - name: Qualify packed production installation
+        env:
+          AST_MCP_SKIP_PACKAGE_SMOKE: "0"
+          AST_MCP_CONSUMER_INSTALLER: ${{ matrix.installer }}
+        run: bun test tests/tooling/package-smoke.test.ts --bail

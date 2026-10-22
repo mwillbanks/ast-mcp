@@ -26,8 +26,6 @@ jobs:
         run: bun ci --cwd website
       - name: Lint documentation
         run: bun run --cwd website lint
-      - name: Typecheck documentation
-        run: bun run --cwd website typecheck
       - name: Test documentation
         run: bun run --cwd website test
       - name: Build static documentation

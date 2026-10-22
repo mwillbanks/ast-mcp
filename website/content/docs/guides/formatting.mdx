@@ -28,6 +28,7 @@ enabled = true
 fallback = "preserve"
 
 [[formatting.formatters]]
+id = "prettier"
 enabled = true
 command = "prettier"
 args = ["--stdin-filepath", "{source_file}"]
@@ -67,6 +68,7 @@ For a formatter that requires a file, select `mode = "in_place"`. For example:
 
 ```toml
 [[formatting.formatters]]
+id = "oxfmt-in-place"
 command = "oxfmt"
 args = ["--write", "{file}"]
 extensions = [".ts", ".tsx", ".json"]

@@ -6,6 +6,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { graphNodeIdentity } from "../../src/intelligence/contracts/graph.ts";
+import { LanceGraphRepository } from "../../src/intelligence/graph/repository.ts";
 import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
 import {
   type WorkspaceHandle,
@@ -342,6 +343,69 @@ test("native index and graph tools stay bound to a worktree generation", async (
       expect(explanation.relationships).toHaveLength(1);
       expect(explanation.evidence).toHaveLength(1);
       expect(explanation.page.exhaustive).toBeTrue();
+
+      await expect(
+        defaultIntelligenceToolService.graphExplain(
+          GraphExplainInputSchema.parse({
+            nodeId: nodeA,
+            workspaceId: selected.workspaceId,
+          }),
+          selected,
+        ),
+      ).rejects.toMatchObject({
+        code: "graph_node_not_found",
+        retryable: false,
+      });
+      await expect(
+        defaultIntelligenceToolService.graphExplain(
+          GraphExplainInputSchema.parse({
+            nodeId: repositoryNodeId,
+            cursor: 10_000,
+            workspaceId: selected.workspaceId,
+          }),
+          selected,
+        ),
+      ).rejects.toMatchObject({
+        code: "invalid_graph_cursor",
+        retryable: false,
+      });
+
+      const originalLoad = LanceGraphRepository.prototype.load;
+      let clockSpy:
+        | ReturnType<typeof spyOn<typeof performance, "now">>
+        | undefined;
+      const expireAfterLoad = spyOn(
+        LanceGraphRepository.prototype,
+        "load",
+      ).mockImplementation(async function (
+        this: LanceGraphRepository,
+        ...args
+      ) {
+        const graph = await originalLoad.apply(this, args);
+        clockSpy = spyOn(performance, "now").mockReturnValue(
+          Number.MAX_SAFE_INTEGER,
+        );
+        return graph;
+      });
+      try {
+        const expired = await defaultIntelligenceToolService.graphExplain(
+          GraphExplainInputSchema.parse({
+            nodeId: repositoryNodeId,
+            workspaceId: selected.workspaceId,
+          }),
+          selected,
+        );
+        expect(expired).toMatchObject({
+          node: null,
+          relationships: [],
+          evidence: [],
+          coverage: { exhaustedReasons: ["milliseconds"], truncated: true },
+          page: { cursor: null, exhaustive: false, truncated: true },
+        });
+      } finally {
+        clockSpy?.mockRestore();
+        expireAfterLoad.mockRestore();
+      }
 
       const oneByte = (await defaultIntelligenceToolService.graphExplain(
         GraphExplainInputSchema.parse({

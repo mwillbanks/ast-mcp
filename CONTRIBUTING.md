@@ -4,7 +4,7 @@ Thanks for helping improve ast-mcp. Changes should preserve its core promise: re
 
 ## Prerequisites
 
-- Bun 1.4.3 or newer
+- Bun 1.4.4 or newer
 - Node.js 22.19 or newer when running MCP Inspector commands
 - native intelligence dependencies installed by `bun install`
 - a checkout with no unrelated changes in files you plan to edit
@@ -33,14 +33,12 @@ Before opening a pull request, run:
 ```bash
 bun run format
 bun run tools:check
-bun run typecheck
+bun run lint
 bun run test
 bun run skill:check
 bun run evals:check
 bun run fallow
 bun run build
-bun run --cwd website format:check
-bun run --cwd website typecheck
 bun run --cwd website lint
 bun run --cwd website test
 BASE_PATH=/ast-mcp/ bun run --cwd website build
@@ -48,7 +46,7 @@ bun run --cwd website test:browser
 bun pm pack --dry-run
 ```
 
-The repository's `bun run format` command applies Oxfmt to project files; this development formatter is separate from ast-mcp's optional runtime formatting. Runtime formatting defaults to disabled and never downloads formatter binaries. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for external formatter configuration. Oxlint treats every warning as a failure. Typechecking uses Bun's native check command. The root check script uses the --check spelling to avoid its package-script name collision.
+The repository's `bun run format` command runs `bun fmt`; `bun run format:check` runs `bun fmt --check`. This development formatter is separate from ast-mcp's optional runtime formatting. Runtime formatting defaults to disabled and never downloads formatter binaries. See the [formatting guide](https://mwillbanks.github.io/ast-mcp/docs/guides/formatting/) for external formatter configuration. The `lint` script combines formatting checks, Bun typechecking, and runtime import-boundary validation. Use `bun check --no-script` to invoke Bun's native checker without the repository's aggregate `check` script. General Oxlint diagnostics beyond these gates are no longer enabled.
 
 ### Optional live host smoke checks
 
@@ -66,7 +64,7 @@ The default timeout is 60 seconds. Set `AST_MCP_HOST_SMOKE_TIMEOUT_MS` to change
 
 Use a local Windows VM when one is available. If storage prevents that, create one temporary, isolated Windows debug workflow and connect to its runner before changing Windows code. The key-only OpenSSH and Bore workflow used for PR #18 is recorded at commit `f39a5d1` (`.github/workflows/windows-debug.yml`). Restrict it to the intended PR and actor. Fetch only that actor's registered GitHub SSH keys, disable password authentication, validate `sshd_config`, and restart `sshd` before exposing port 2222. Verify the pinned Bore ZIP SHA-256 before starting the tunnel. Delete the temporary workflow after native proof; do not make shell access a release gate.
 
-Windows Actions runners can expose the profile through an 8.3 alias. The caller's path spelling must remain native for config values and formatter arguments. Resolve aliases separately when checking authorization, containment, and locks. Use this command prompt recipe in the PR checkout with Bun 1.4.3 and dependencies installed:
+Windows Actions runners can expose the profile through an 8.3 alias. The caller's path spelling must remain native for config values and formatter arguments. Resolve aliases separately when checking authorization, containment, and locks. Use this command prompt recipe in the PR checkout with Bun 1.4.4 and dependencies installed:
 
 ```cmd
 set "PATH=%USERPROFILE%\.bun\bin;%PATH%"
@@ -95,4 +93,4 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 
 ## Releases
 
-Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the trusted, installed Oxfmt and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release, builds the single `ast-mcp` Bun executable, and publishes the package to npm with provenance.
+Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the pinned Bun formatter and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release and builds one package archive. Clean Bun and npm production installations qualify those exact bytes on macOS ARM64, Linux ARM64 GNU, Linux x64, and Windows x64. ARM64 consumers also test the Bun 1.4.3 runtime minimum. Archive checksum verification and all consumer jobs must pass before npm publication with provenance. The publish job downloads the qualified archive and does not rebuild it.

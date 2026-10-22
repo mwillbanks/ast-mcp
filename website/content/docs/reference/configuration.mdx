@@ -15,7 +15,7 @@ The effective value of each field is selected in this order:
 
 The project file is the nearest `ast-mcp.toml` from the selected workspace root up to its Git boundary. The global file is `${XDG_CONFIG_HOME:-~/.config}/ast-mcp/ast-mcp.toml` on POSIX and `%APPDATA%\ast-mcp\ast-mcp.toml` on Windows. Project selection prefers roots advertised by the MCP client, then `AST_MCP_PROJECT_ROOT`, legacy `AST_MCP_ROOTS`, and finally the process working directory.
 
-Objects merge by field and arrays replace the lower-precedence array. Relative paths are resolved from the TOML file that declares them. Unknown sections or keys, unsupported versions, malformed TOML, and invalid values fail with the source path and dotted key instead of being ignored.
+Objects merge by field and arrays replace the lower-precedence array, except that global and project `[[paths]]` rules are both retained for policy evaluation. Workspace roots, path-rule anchors, dprint configuration, and relative executable paths resolve from the TOML file that declares them. Use an absolute embedding `local_path` to avoid process-working-directory ambiguity. Unknown sections or keys, unsupported versions, malformed TOML, and invalid values fail with the source path and dotted key instead of being ignored.
 
 ## Schema
 
@@ -47,6 +47,7 @@ fallback = "preserve"
 enabled = true # default; set false to opt out
 
 [safety]
+filesystem = "restricted" # restricted | unrestricted
 require_hash = true
 
 [[paths]]
@@ -93,6 +94,121 @@ workers = 1
 enabled = false
 ```
 
+## Complete version 2 reference
+
+The tables list every accepted version 2 field. Defaults apply when all configuration layers omit a field. Required fields apply only when their containing entry or provider is configured. TOML cannot represent `null`; omit optional fields to use their defaults.
+
+### Workspace, output, and file methods
+
+| Field                        | Default                       | Accepted values and behavior                                                                 |
+| ---------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
+| `version`                    | v1 compatibility when omitted | Set `2` for this schema.                                                                     |
+| `cli.output.interactive`     | `"human"`                     | `human`, `json`, `yaml`, or `toml`.                                                          |
+| `cli.output.non_interactive` | `"json"`                      | Same output formats for non-TTY stdout.                                                      |
+| `workspace.roots`            | Selected host roots           | Nonempty array of paths; relative paths resolve from the declaring TOML file.                |
+| `workspace.worktrees`        | `"include"`                   | `include`, `request`, or `ignore`; see linked-worktree behavior below.                       |
+| `files.read.modes`           | `["ast", "text"]`             | At most two entries; an empty list disables both explicit read methods.                      |
+| `files.patch.strategies`     | `["ast", "aider_block"]`      | At most two entries; an empty list disables both patch strategies.                           |
+| `files.patch.aider_matchers` | All four matchers             | `exact`, `whitespace`, `relative-indentation`, and `diff-match-patch`; at most four entries. |
+
+### Safety and path rules
+
+| Field                                | Default          | Accepted values and behavior                                                                                                      |
+| ------------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `safety.filesystem`                  | `"restricted"`   | `restricted` enforces file boundaries; `unrestricted` bypasses file path and symlink policies after required activation approval. |
+| `safety.require_hash`                | `true`           | Require mutation hashes; supplied hashes are checked even when false.                                                             |
+| `safety.hook.enabled`                | `true`           | Enable the host routing hook. This is separate from server file authorization.                                                    |
+| `safety.hook.allow_tools`            | `[]`             | Additional allowed tool names; at most 128.                                                                                       |
+| `safety.hook.block_tools`            | `[]`             | Additional blocked tool names; at most 128. A name cannot appear in both lists, ignoring case.                                    |
+| `paths[].id`                         | Required         | Rule identifier, 1–128 characters. At most 256 rules per file.                                                                    |
+| `paths[].path`                       | Required         | Exact file or directory anchor, 1–4096 characters. Use selectors for globs.                                                       |
+| `paths[].policies.read`              | Required         | `allow`, `request`, or `deny`.                                                                                                    |
+| `paths[].policies.write`             | Required         | `allow`, `request`, or `deny`.                                                                                                    |
+| `paths[].policies.delete`            | Inherits `write` | `allow`, `request`, or `deny`.                                                                                                    |
+| `paths[].follow_symlinks`            | `false`          | Require authorization for both the link and its resolved target when true.                                                        |
+| `paths[].includes`                   | `["**/*"]`       | Up to 256 glob selectors, each 1–4096 characters.                                                                                 |
+| `paths[].excludes`                   | `[]`             | Up to 256 glob selectors; exclusions win within the rule.                                                                         |
+| `mcp.configuration.enabled`          | `true`           | Enable grouped configuration edits; tools remain registered when false.                                                           |
+| `mcp.configuration.require_approval` | `true`           | Require approval for ordinary grouped edits; changes to this configuration surface always require approval.                       |
+
+Hook names contain letters, digits, underscores, dots, colons, or hyphens, with 1–200 characters each. File access modes do not grant operating-system permissions. See [Safety](#safety) for activation and protected configuration files.
+
+### Formatting and dependency binaries
+
+| Field                                | Default                              | Accepted values and behavior                                                                          |
+| ------------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `formatting.enabled`                 | `false`                              | Master switch for formatting candidates.                                                              |
+| `formatting.fallback`                | `"preserve"`                         | `preserve`, `reject`, or `dprint`; applies to unmatched files and formatter failures.                 |
+| `formatting.dprint_config`           | Project-root `dprint.json`           | Nonempty path; relative paths resolve from the declaring file. No bundled configuration is installed. |
+| `formatting.formatters[].id`         | Required                             | Identifier, 1–128 characters; at most 64 entries.                                                     |
+| `formatting.formatters[].command`    | Required                             | Executable name or path, 1–4096 characters; invoked without a shell.                                  |
+| `formatting.formatters[].args`       | `[]`                                 | At most 64 arguments, each at most 4096 characters; supports documented placeholders.                 |
+| `formatting.formatters[].enabled`    | Enabled unless false                 | Per-entry switch, subordinate to the master switch.                                                   |
+| `formatting.formatters[].mode`       | `"stdout"`                           | `stdout` or staged `in_place`.                                                                        |
+| `formatting.formatters[].extensions` | `[]`                                 | At most 64 extensions beginning with a dot, such as `.ts`.                                            |
+| `formatting.formatters[].globs`      | `[]`                                 | At most 64 selectors, each 1–4096 characters.                                                         |
+| `formatting.formatters[].timeout_ms` | `30000`                              | Integer from 1 to 120000 milliseconds.                                                                |
+| `dependencies.dprint_binary`         | Automatic installed-binary discovery | Nonempty executable path override for dprint compatibility.                                           |
+
+Each formatter requires at least one extension or glob. Selectors use OR matching; the first enabled matching entry runs. See [Optional formatting](/docs/guides/formatting) for valid complete entries.
+
+### Intelligence storage, retrieval, and generation
+
+| Field                                          | Default                                               | Accepted values and behavior                                                                                                 |
+| ---------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `intelligence.storage.placement.kind`          | `"global"`                                            | `global`, `local`, `parent`, or `explicit`.                                                                                  |
+| `intelligence.storage.placement.levels`        | Required for `parent`                                 | Integer from 1 to 32; rejected for other placement kinds.                                                                    |
+| `intelligence.storage.placement.path`          | Required for `explicit`                               | Path, 1–4096 characters; relative paths use the server working directory. Prefer an absolute path. Rejected for other kinds. |
+| `intelligence.federation.enabled`              | `false`                                               | Opt into cross-repository federation.                                                                                        |
+| `intelligence.retrieval.semantic`              | `false`                                               | Opt into embedding-based retrieval.                                                                                          |
+| `intelligence.retrieval.embedding.model_id`    | `"onnx-community/granite-embedding-30m-english-ONNX"` | Model identifier, 1–512 characters.                                                                                          |
+| `intelligence.retrieval.embedding.revision`    | `"a141ffafe5810d8ee499de14086b5259527ed6ff"`          | Pinned model revision, 1–512 characters.                                                                                     |
+| `intelligence.retrieval.embedding.dimensions`  | `384`                                                 | Integer from 1 to 65536; must match model output.                                                                            |
+| `intelligence.retrieval.embedding.dtype`       | `"q8"`                                                | `fp32`, `fp16`, `q8`, or `q4`.                                                                                               |
+| `intelligence.retrieval.embedding.pooling`     | `"mean"`                                              | `mean` or `cls`.                                                                                                             |
+| `intelligence.retrieval.embedding.device`      | `"cpu"`                                               | `auto`, `cpu`, `gpu`, `wasm`, or `webgpu`; backend support depends on platform.                                              |
+| `intelligence.retrieval.embedding.workers`     | `1`                                                   | Integer from 1 to 32.                                                                                                        |
+| `intelligence.retrieval.embedding.batch_size`  | `8`                                                   | Integer from 1 to 256.                                                                                                       |
+| `intelligence.retrieval.embedding.max_queue`   | `256`                                                 | Integer from 1 to 100000.                                                                                                    |
+| `intelligence.retrieval.embedding.local_path`  | No override                                           | Nonempty local model-artifact path; prefer an absolute path.                                                                 |
+| `intelligence.generation.enabled`              | `false`                                               | Enable optional model generation.                                                                                            |
+| `intelligence.generation.provider.kind`        | No provider                                           | `http` or `mcp`; each kind accepts only its own fields.                                                                      |
+| `intelligence.generation.provider.model`       | Required for either provider                          | Model identifier, 1–512 characters.                                                                                          |
+| `intelligence.generation.provider.endpoint`    | Required for `http`                                   | Valid URL, at most 4096 characters.                                                                                          |
+| `intelligence.generation.provider.api_key_env` | Omitted                                               | HTTP-only environment-variable name, 1–256 characters; keep the secret out of TOML.                                          |
+| `intelligence.generation.provider.server_id`   | `"host"`                                              | MCP-only server identifier, 1–512 characters.                                                                                |
+
+Storage placement and generation providers are discriminated choices. Configure only the fields permitted for the selected kind:
+
+```toml
+version = 2
+
+[intelligence.storage.placement]
+kind = "parent"
+levels = 1
+
+[intelligence.generation]
+enabled = true
+
+[intelligence.generation.provider]
+kind = "http"
+endpoint = "https://models.example.com/v1/chat/completions"
+model = "your-model"
+api_key_env = "MODEL_API_KEY"
+```
+
+For MCP sampling, replace the provider table with `kind = "mcp"`, `model = "your-model"`, and optional `server_id = "host"`. Enabling generation requires a provider. Omitting a provider keeps the resolved provider empty.
+
+### Transport and telemetry
+
+| Field                            | Default       | Accepted values and behavior                                                             |
+| -------------------------------- | ------------- | ---------------------------------------------------------------------------------------- |
+| `http.host`                      | `"127.0.0.1"` | Nonempty bind address.                                                                   |
+| `http.port`                      | `3768`        | Integer from 1 to 65535.                                                                 |
+| `http.session_timeout_ms`        | `1800000`     | Positive integer milliseconds for legacy HTTP session expiry.                            |
+| `http.session_sweep_interval_ms` | `60000`       | Positive integer milliseconds between legacy session sweeps.                             |
+| `telemetry.enabled`              | `true`        | Global opt-out is a ceiling; project configuration can suppress but cannot re-enable it. |
+
 ## CLI output
 
 Configure interactive and non-interactive stdout independently:
@@ -109,7 +225,7 @@ An explicit `--output <format>` or `--output=<format>` overrides configuration. 
 
 ## Intelligence storage and models
 
-All index state uses LanceDB. Global placement shares content-addressed artifacts across repositories and revisions. Local placement stores data under one repository. Parent placement requires `levels`; explicit placement requires an absolute `path`. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
+All index state uses LanceDB. Global placement shares content-addressed artifacts across repositories and revisions. Local placement stores data under one repository. Parent placement requires `levels`; explicit placement requires `path`. Relative explicit storage paths use the server process working directory, so prefer an absolute path. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
 
 Semantic retrieval is optional. The default pinned Granite embedding profile is small and CPU-oriented. Override the model, revision, dimensions, dtype, pooling, device, workers, queue, batch size, and local artifact path together. Generation is disabled by default and never blocks structural tools. MCP providers use the active host sampling capability; HTTP providers require an explicit endpoint, model, and optional environment-variable name for the API key.
 
@@ -130,6 +246,28 @@ Telemetry defaults to enabled. Set `enabled = false` in global configuration to 
 Formatting is disabled by default, and the master switch overrides individual formatter entries. When enabled, configure an already-installed external formatter; ast-mcp does not download one during file operations. Configure a command, argument array, mode, timeout, and extension or glob selectors. The first enabled matching formatter runs. In `stdout` mode, candidate content enters stdin and stdout becomes the formatted result. In `in_place` mode, ast-mcp stages the candidate beside the target, gives the formatter the staged path as `{file}`, reads its output, and removes the stage; the live target is never passed to the formatter. `{source_file}` names the logical target and `{project_root}` names the selected project. The default `fallback = "preserve"` keeps candidate content when a formatter fails or times out. `fallback = "reject"` stops the write, while `fallback = "dprint"` tries dprint. Staging cleanup failures always stop the write. See the [optional formatting guide](/docs/guides/formatting) for dprint, Prettier, oxfmt, Biome, and other formatters.
 
 ## Safety
+
+Configure file access explicitly under `[safety]`:
+
+```toml
+version = 2
+
+[safety]
+filesystem = "restricted" # restricted | unrestricted
+require_hash = true
+```
+
+| Control                                             | Restricted                       | Unrestricted                                                               |
+| --------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| File path boundaries and `[[paths]]` policies       | Enforced                         | Bypassed after required activation approval                                |
+| File symlink restrictions                           | Enforced                         | Bypassed                                                                   |
+| Project activation approval                         | Path grants may require approval | Required once per trusted session and effective safety configuration       |
+| Global mode                                         | Host configuration               | Host configuration                                                         |
+| OS permissions and immutable revisions              | Enforced                         | Enforced                                                                   |
+| Mutation hashes and atomic operations               | Retained                         | Retained; `require_hash` still controls whether callers must supply hashes |
+| Intelligence workspace roots, indexing, and storage | Unchanged                        | Unchanged                                                                  |
+
+Unrestricted mode does not disable protected configuration-file approval or mutation capability checks. It does not disable deletion reference checks or configured formatting. Hook routing remains a separate host integration.
 
 File access defaults to `filesystem = "restricted"`. Restricted mode applies the host baseline, top-level `[[paths]]` rules, and symlink checks. Global configuration can select `filesystem = "unrestricted"` as a host setting. Project configuration requires session-scoped host approval tied to the canonical project and effective safety configuration. Modern stateless HTTP has no trusted caller session for host approval, so approval-required operations fail closed; explicit global permissions remain usable. Use stdio or a legacy HTTP session for approval flows. Unrestricted mode bypasses ast-mcp path policies, boundaries, and symlink restrictions for file operations while preserving OS permissions, hash guards, atomic operations, and immutable revision protection. It does not change intelligence workspace roots, indexing, or storage. See the [filesystem access guide](/docs/guides/filesystem-access).
 
@@ -153,20 +291,36 @@ Agents must use the grouped tools rather than rewriting `ast-mcp.toml` as a whol
 
 A successful write validates version 2 schema, replaces the file atomically, invalidates the process-wide registry, and returns the new generation so later tool calls use the updated snapshot without restarting the MCP server. Elicitation-capable stdio and legacy HTTP hosts receive a standard `request` approval. Modern stateless HTTP has no trusted caller session for host approval, and hosts without elicitation also fail closed with `approval_required`.
 
+## Version 1 compatibility fields
+
+Version 1 accepts the shared output, workspace, dependency, HTTP, telemetry, hook, and filesystem settings. Its formatter entries have no `id`, `enabled`, or `mode`; migration adds these fields. Version 2 introduces explicit path rules, file methods, formatting fallback, intelligence, and MCP configuration-tool controls.
+
+These additional safety fields are accepted only in version 1:
+
+| Field                         | V1 default | Version 2 replacement                                                                                |
+| ----------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
+| `safety.allow_any_path`       | `false`    | Explicit catch-all path rule during migration; review it or select `safety.filesystem` deliberately. |
+| `safety.allow_external_roots` | `false`    | Explicit external `[[paths]]` grants.                                                                |
+| `safety.allow_temp_directory` | `true`     | Explicit OS temporary-directory rule; version 2 grants no implicit temporary access.                 |
+| `safety.follow_symlinks`      | `false`    | Per-rule `paths[].follow_symlinks`.                                                                  |
+
+Version 2 rejects these legacy keys. See [configuration migration](/docs/guides/configuration-migration) before removing or translating them.
+
 ## Environment compatibility
 
-| Variable                            | Configuration field              |
-| ----------------------------------- | -------------------------------- |
-| `AST_MCP_ROOTS`                     | `workspace.roots`                |
-| `AST_MCP_ALLOW_ANY_PATH`            | v1 deprecated compatibility      |
-| `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | v1 deprecated compatibility      |
-| `AST_MCP_ALLOW_TEMP_DIRECTORY`      | v1 deprecated compatibility      |
-| `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`       |
-| `DPRINT_BINARY`                     | `dependencies.dprint_binary`     |
-| `AST_MCP_HTTP_HOST`                 | `http.host`                      |
-| `PORT`                              | `http.port`                      |
-| `AST_MCP_SESSION_TIMEOUT_MS`        | `http.session_timeout_ms`        |
-| `AST_MCP_SESSION_SWEEP_INTERVAL_MS` | `http.session_sweep_interval_ms` |
+| Variable                            | Configuration field                         |
+| ----------------------------------- | ------------------------------------------- |
+| `AST_MCP_EMBEDDING_MODEL`           | `intelligence.retrieval.embedding.model_id` |
+| `AST_MCP_ROOTS`                     | `workspace.roots`                           |
+| `AST_MCP_ALLOW_ANY_PATH`            | v1 deprecated compatibility                 |
+| `AST_MCP_ALLOW_EXTERNAL_ROOTS`      | v1 deprecated compatibility                 |
+| `AST_MCP_ALLOW_TEMP_DIRECTORY`      | v1 deprecated compatibility                 |
+| `AST_MCP_DPRINT_CONFIG`             | `formatting.dprint_config`                  |
+| `DPRINT_BINARY`                     | `dependencies.dprint_binary`                |
+| `AST_MCP_HTTP_HOST`                 | `http.host`                                 |
+| `PORT`                              | `http.port`                                 |
+| `AST_MCP_SESSION_TIMEOUT_MS`        | `http.session_timeout_ms`                   |
+| `AST_MCP_SESSION_SWEEP_INTERVAL_MS` | `http.session_sweep_interval_ms`            |
 
 Boolean environment values accept `1`, `0`, `true`, or `false`. Invalid explicit overrides are errors.
 

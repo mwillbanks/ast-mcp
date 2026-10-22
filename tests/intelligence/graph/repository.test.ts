@@ -10,6 +10,7 @@ import {
 } from "../../../src/intelligence/contracts/common.ts";
 import {
   graphEvidenceIdentity,
+  graphNodeIdentity,
   revisionMembershipIdentity,
 } from "../../../src/intelligence/contracts/graph.ts";
 import {
@@ -755,6 +756,131 @@ describe("LanceDB graph repository", () => {
     expect(containsHierarchy(restored, parent, child)).toBe(true);
     expect(containsHierarchy(restored, projectParent, projectChild)).toBe(true);
     await reopened.shutdownCoordinator();
+  });
+
+  test("loads legacy node versions and rejects corrupt stored coordinates", async () => {
+    const { snapshot, scope, workspace } = fixture();
+    const node = required(snapshot.nodes[0]);
+    const encoded = Buffer.from(
+      JSON.stringify([node.canonicalName, node.nodeId]),
+    ).toString("base64url");
+    const cases = [
+      { canonicalName: node.canonicalName, valid: true },
+      {
+        canonicalName:
+          "graph-node-version:v1:" + encoded + ":" + node.contentFingerprint,
+        valid: true,
+      },
+      {
+        canonicalName: "graph-node-version:v1:missing-separator",
+        valid: false,
+      },
+      {
+        canonicalName:
+          "graph-node-version:v1:" +
+          Buffer.from("{").toString("base64url") +
+          ":" +
+          node.contentFingerprint,
+        valid: false,
+      },
+      {
+        canonicalName:
+          "graph-node-version:v1:" +
+          Buffer.from(JSON.stringify({ name: node.canonicalName })).toString(
+            "base64url",
+          ) +
+          ":" +
+          node.contentFingerprint,
+        valid: false,
+      },
+      {
+        canonicalName: "graph-node-version:v2:missing-separators",
+        valid: false,
+      },
+      {
+        canonicalName:
+          "graph-node-version:v2:" +
+          Buffer.from("invalid-node-id").toString("base64url") +
+          ":" +
+          node.contentFingerprint +
+          ":" +
+          Buffer.from(node.canonicalName).toString("base64url"),
+        valid: false,
+      },
+    ];
+    for (const scenario of cases) {
+      const store = await LanceIntelligenceStore.open(await domain());
+      try {
+        const storedId = graphNodeIdentity({
+          canonicalName: scenario.canonicalName,
+          kind: node.kind,
+        });
+        await store.putRows("graph_nodes", [
+          {
+            canonical_name: scenario.canonicalName,
+            content_fingerprint: node.contentFingerprint,
+            created_at: "2026-09-10T00:00:00.000Z",
+            kind: node.kind,
+            node_id: storedId,
+            properties_json: JSON.stringify(node.properties),
+          },
+        ]);
+        await store.putRows("revision_membership", [
+          {
+            created_at: "2026-09-10T00:00:00.000Z",
+            entity_id: storedId,
+            entity_kind: "node",
+            generation_id: scope.generationId,
+            revision_id: scope.revisionId,
+            membership_id: revisionMembershipIdentity({
+              entityId: storedId,
+              entityKind: "node",
+              generationId: scope.generationId,
+              revisionId: scope.revisionId,
+            }),
+          },
+        ]);
+        const reader = {
+          pin: {
+            generationId: scope.generationId,
+            revisionId: scope.revisionId,
+            workspaceId: scope.workspaceId,
+          },
+          rows: (...args: Parameters<LanceIntelligenceStore["rows"]>) =>
+            store.rows(...args),
+        } as unknown as PinnedGenerationReader;
+        const loaded = new LanceGraphRepository(store).load(
+          reader,
+          scope,
+          workspace,
+        );
+        if (scenario.valid) {
+          expect((await loaded).nodes).toEqual([node]);
+          const selected = await new LanceGraphRepository(store).load(
+            reader,
+            scope,
+            workspace,
+            {
+              budget: {
+                deadline: performance.now() + 5_000,
+                maxBytes: 100_000,
+                maxEdges: 10,
+                maxNodes: 10,
+              },
+              nodeIds: [node.nodeId],
+              state: createGraphLoadState(),
+            },
+          );
+          expect(selected.nodes).toEqual([node]);
+        } else {
+          await expect(loaded).rejects.toThrow(
+            "invalid_stored_graph_node_version",
+          );
+        }
+      } finally {
+        await store.shutdownCoordinator();
+      }
+    }
   });
 
   test("rejects unauthorized coordinates and malformed persistent rows", async () => {

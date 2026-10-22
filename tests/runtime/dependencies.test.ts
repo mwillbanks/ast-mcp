@@ -1,12 +1,22 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { withConfig } from "../../src/config";
 import {
+  configuredDprintBinary,
   resolveDependencyBinary,
   resolveGlobalBinaryAlias,
 } from "../../src/runtime/dependencies";
+import { hermeticConfig } from "../support/hermetic-config";
 
 const created: string[] = [];
 
@@ -142,10 +152,59 @@ test.skipIf(process.platform === "win32")(
 
 test("resolves executable paths declared by package metadata", () => {
   expect(
-    resolveDependencyBinary("oxfmt", "oxfmt", {
+    resolveDependencyBinary("tsc", "typescript", {
       globalBinDirectories: [],
       packageRoot: path.join(os.tmpdir(), "missing-package-root"),
       pathValue: "",
     }),
-  ).toContain(path.join("oxfmt", "bin", "oxfmt"));
+  ).toContain(path.join("typescript", "bin", "tsc"));
+});
+
+test("reads string bin declarations and ignores packages without executable metadata", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-package-bin-"));
+  created.push(root);
+  const binary = await executable(path.join(root, "cli"));
+  const manifest = path.join(root, "package.json");
+  const options = {
+    packageRoot: path.join(root, "missing"),
+    pathValue: "",
+    globalBinDirectories: [],
+  };
+  await writeFile(manifest, JSON.stringify({ bin: "cli" }));
+  const resolved = resolveDependencyBinary("fixture", root, options);
+  expect(resolved).toBeDefined();
+  expect(await realpath(resolved!)).toBe(await realpath(binary));
+  await writeFile(manifest, JSON.stringify({ name: "fixture" }));
+  expect(resolveDependencyBinary("fixture", root, options)).toBeUndefined();
+});
+
+test("dprint resolution prefers explicit configuration, then environment, then its fallback", async () => {
+  const root = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-dprint-resolution-"),
+  );
+  created.push(root);
+  const previous = process.env.DPRINT_BINARY;
+  try {
+    process.env.DPRINT_BINARY = path.join(root, "environment-dprint");
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      'version = 2\n[dependencies]\ndprint_binary = "./configured-dprint"\n',
+    );
+    await withConfig(hermeticConfig(root), async () => {
+      expect(await configuredDprintBinary()).toBe(
+        path.join(root, "configured-dprint"),
+      );
+    });
+    await rm(path.join(root, "ast-mcp.toml"));
+    await withConfig(hermeticConfig(root), async () => {
+      expect(await configuredDprintBinary()).toBe(process.env.DPRINT_BINARY!);
+      delete process.env.DPRINT_BINARY;
+      expect(await configuredDprintBinary()).toBe(
+        resolveDependencyBinary("dprint", "dprint") ?? "dprint",
+      );
+    });
+  } finally {
+    if (previous === undefined) delete process.env.DPRINT_BINARY;
+    else process.env.DPRINT_BINARY = previous;
+  }
 });

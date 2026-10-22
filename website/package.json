@@ -1,7 +1,7 @@
 {
   "name": "ast-mcp-docs",
   "private": true,
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "engines": {
     "bun": ">=1.4.3"
   },
@@ -13,14 +13,14 @@
   "scripts": {
     "build": "bun run scripts/build.ts",
     "dev": "bun run scripts/dev.ts",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
-    "lint": "oxlint --deny-warnings .",
+    "format": "bun fmt .",
+    "format:check": "bun fmt --check .",
+    "lint": "bun run format:check && bun run typecheck",
     "preview": "bun run scripts/preview.ts",
     "prepare": "bun run scripts/generate.ts",
     "test": "bun test --bail tests",
     "test:browser": "bun run scripts/test-browser.ts",
-    "typecheck": "bun run prepare && bun check"
+    "typecheck": "bun run prepare && bun check --no-script"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.170.45",
@@ -40,8 +40,6 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "tailwindcss": "4.3.3",
-    "typescript": "^7.0.2",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0"
+    "typescript": "^7.0.2"
   }
 }

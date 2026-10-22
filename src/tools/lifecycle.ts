@@ -195,7 +195,12 @@ export default function registerLifecycleTools(
                         try {
                           await applyFileChattr(
                             filePath,
-                            snapshots.get(filePath)?.attributes,
+                            process.platform === "win32"
+                              ? {
+                                  chmod:
+                                    snapshots.get(filePath)?.attributes.chmod,
+                                }
+                              : snapshots.get(filePath)?.attributes,
                             fence,
                           );
                         } catch (rollbackError) {

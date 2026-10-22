@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -96,4 +96,28 @@ describe("package test shards", () => {
     expect(() => selectTestShard(["one"], 3, 3)).toThrow();
     expect(() => selectTestShard(["one"], 0, 0)).toThrow();
   });
+});
+
+test("reports an empty inventory and announces inherited-output execution", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ast-mcp-empty-shard-"));
+  try {
+    await mkdir(join(root, "tests"));
+    await mkdir(join(root, "templates"));
+    expect(() => discoverTestFiles(root)).toThrow("No package test files");
+    await writeFile(
+      join(root, "tests/fixture.test.ts"),
+      'import {test} from "bun:test"; test("fixture", () => {});',
+    );
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(runTestShard(["--shard", "0", "--shards", "1"], root)).toBe(0);
+      expect(log).toHaveBeenCalledWith(
+        "Running test shard index 0 of 1: 1 files",
+      );
+    } finally {
+      log.mockRestore();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

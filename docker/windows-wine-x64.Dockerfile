@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1.7
 FROM --platform=linux/amd64 debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
-ARG BUN_VERSION=1.4.3
-ARG BUN_SHA256=0bf84e808552beea67bf1202a287a35c6c825d837b287b3f8e9dd513dba35d3d
+ARG BUN_VERSION=1.4.4
+ARG BUN_SHA256=cd2c0fccc78f3ede1f50ca827a15f063eda13d4d150a3d0674f4f6e323d864a5
 
 ENV DEBIAN_FRONTEND=noninteractive
 

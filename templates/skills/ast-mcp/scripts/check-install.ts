@@ -434,21 +434,27 @@ async function matchingSourceLaunch(
   return { command: receipt.runtime, args: [receipt.script, "mcp"] };
 }
 
+function* installedBinaryCandidates(root: string | undefined, home: string) {
+  const names = executableNames("ast-mcp", process.platform);
+  for (const discover of root ? [false] : [false, true]) {
+    const directories = root
+      ? [path.join(root, "node_modules/.bin")]
+      : globalBinDirectories("ast-mcp", process.platform, home, discover);
+    for (const candidate of directoryBinaryCandidates(directories, names))
+      if (isExecutable(candidate, process.platform)) yield candidate;
+  }
+}
+
 async function astMcpEntry(
   entry: unknown,
   root?: string,
   home = os.homedir(),
 ): Promise<boolean> {
   if (typeof entry !== "string") return false;
-  const directories = root
-    ? [path.join(root, "node_modules/.bin")]
-    : globalBinDirectories("ast-mcp", process.platform, home);
-  const expected = directoryBinaryCandidates(
-    directories,
-    executableNames("ast-mcp", process.platform),
-  ).filter((candidate) => isExecutable(candidate, process.platform));
   const configured = root ? path.resolve(root, entry) : path.resolve(entry);
-  return expected.some((candidate) => sameNativePath(configured, candidate));
+  for (const candidate of installedBinaryCandidates(root, home))
+    if (sameNativePath(configured, candidate)) return true;
+  return false;
 }
 
 function samePhysicalPath(left: string, right: string, filesOnly = false) {
@@ -638,14 +644,7 @@ async function matchingStdioBinary(
   home = os.homedir(),
 ) {
   if (!entry || !Array.isArray(entry.args)) return undefined;
-  const directories = root
-    ? [path.join(root, "node_modules/.bin")]
-    : globalBinDirectories("ast-mcp", process.platform, home);
-  const binaries = directoryBinaryCandidates(
-    directories,
-    executableNames("ast-mcp", process.platform),
-  ).filter((candidate) => isExecutable(candidate, process.platform));
-  for (const binary of binaries) {
+  for (const binary of installedBinaryCandidates(root, home)) {
     const configured = root
       ? `./${path.relative(root, binary).split(path.sep).join("/")}`
       : binary;

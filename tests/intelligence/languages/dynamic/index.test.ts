@@ -791,7 +791,7 @@ describe.serial("dynamic language WASM adapters", () => {
     await expect(
       analyzeDynamicLanguage({
         languageId: "python",
-        source: "x = 1",
+        source: "x = 1\n".repeat(100_000),
         timeoutMs: 0,
       }),
     ).rejects.toMatchObject({ code: "timeout" });
