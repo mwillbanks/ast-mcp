@@ -324,6 +324,44 @@ describe("LanceDB storage coordination", () => {
     await store.shutdownCoordinator();
   });
 
+  test("rejects competing persistent writers and conflicting storage domains", async () => {
+    const storage = await domain();
+    const store = await LanceIntelligenceStore.open(storage);
+    const raw = await lancedb.connect(storage.storagePath, {
+      readConsistencyInterval: 0,
+    });
+    try {
+      expect(() =>
+        StorageCoordinator.forStorageDirectory(
+          raw,
+          "other-domain",
+          storage.storagePath,
+        ),
+      ).toThrow("multiple storage domains");
+      const table = await raw.openTable("coordinator_recovery");
+      try {
+        const rows = await table.query().toArray();
+        expect(rows).toHaveLength(1);
+        await table.add([{ ...rows[0], owner_id: "competing-writer" }]);
+      } finally {
+        table.close();
+      }
+      await expect(
+        store.serializeMigration(
+          "reject competing leases",
+          async () => "must not execute",
+        ),
+      ).rejects.toMatchObject({
+        code: "coordinator_unavailable",
+        retryable: true,
+      });
+      expect(await store.count("coordinator_recovery")).toBe(2);
+    } finally {
+      raw.close();
+      await store.shutdownCoordinator();
+    }
+  });
+
   test("uses bounded jittered retry and reports exhaustion", async () => {
     const delays: number[] = [];
     let attempts = 0;

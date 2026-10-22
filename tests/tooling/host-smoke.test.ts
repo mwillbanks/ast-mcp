@@ -258,3 +258,22 @@ describe("optional live host smoke checks", () => {
     ).resolves.toEqual(["local"]);
   });
 });
+
+test("oversized host output terminates the command and reports the read failure", async () => {
+  await expect(
+    runHostSmokeChecks([
+      {
+        command: [
+          process.execPath,
+          "-e",
+          "process.stdout.write(Buffer.alloc(17*1024*1024,65)); await Bun.sleep(10000);",
+        ],
+        expect: [],
+        name: "overflow",
+        timeoutMs: 5000,
+      },
+    ]),
+  ).rejects.toThrow(
+    'Host smoke "overflow" could not start: command output exceeded',
+  );
+});

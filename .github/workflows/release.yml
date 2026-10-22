@@ -93,12 +93,14 @@ jobs:
         run: bun scripts/release/dispatch-release-ci.ts
 
   validate:
+    permissions:
+      contents: read
     needs: release
     if: ${{ needs.release.outputs.release_created == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -125,25 +127,64 @@ jobs:
           AST_MCP_QUALIFY_EMBEDDINGS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: bun run intelligence:qualify
       - name: Mandatory CLI MCP stdio handshake
-        run: bun test mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
+        run: bun test tests/integration/mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"
       - name: Mandatory native MCP stdio initialize, tools, and workspace handshake
-        run: bun test mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
+        run: bun test tests/integration/mcp.test.ts --test-name-pattern "calls native code intelligence through the server"
 
-  publish:
-    needs: [release, validate]
-    if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  build:
     permissions:
       contents: read
-      id-token: write
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.tag_name }}
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - run: bun ci
+      - name: Validate tagged source
+        env:
+          AST_MCP_SKIP_PACKAGE_SMOKE: "1"
+        run: bun run check
+      - run: bun run skill:check
+      - run: bun run evals:check
+      - name: Build one package archive
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/package-artifact"
+          bun pm pack --filename "$RUNNER_TEMP/package-artifact/ast-mcp.tgz"
+          bun -e 'const path = process.env.RUNNER_TEMP + "/package-artifact/ast-mcp.tgz"; await Bun.write(path + ".sha256", new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex") + "\n")'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-candidate
+          path: ${{ runner.temp }}/package-artifact/*
+          if-no-files-found: error
+          retention-days: 7
+
+  consumers:
+    permissions:
+      contents: read
+    needs: [release, build]
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/package-consumers.yml
+    with:
+      artifact_name: release-candidate
+      ref: ${{ needs.release.outputs.tag_name }}
+
+  publish:
+    needs: [release, validate, build, consumers]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' && needs.consumers.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -151,21 +192,11 @@ jobs:
           package-manager-cache: false
       - name: Use npm with trusted publishing support
         run: npm install --global npm@12.2.0
-      - uses: actions/cache/restore@v6
-        id: bun_cache
+      - uses: actions/download-artifact@v8
         with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
-      - run: bun ci
-      - uses: actions/cache/save@v6
-        if: steps.bun_cache.outputs.cache-hit != 'true'
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'bun.lock') }}-v1
-      - name: Verify tagged package and build extracted distribution
-        env:
-          AST_MCP_SKIP_PACKAGE_SMOKE: "0"
-        run: bun run check
-      - run: bun run skill:check
-      - run: bun run evals:check
-      - run: npm publish --access public --provenance --ignore-scripts
+          name: release-candidate
+          path: package-artifact
+      - name: Verify qualified archive checksum
+        run: |
+          node -e 'const fs = require("node:fs"); const crypto = require("node:crypto"); const archive = fs.readFileSync("package-artifact/ast-mcp.tgz"); const expected = fs.readFileSync("package-artifact/ast-mcp.tgz.sha256", "utf8").trim(); if (crypto.createHash("sha256").update(archive).digest("hex") !== expected) throw new Error("Package archive checksum mismatch")'
+      - run: npm publish package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts

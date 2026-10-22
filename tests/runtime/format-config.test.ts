@@ -628,17 +628,14 @@ test.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([
   },
 );
 
-test("installed oxfmt formats staged package.json with filename-sensitive configuration", async () => {
-  const root = await project("ast-mcp-format-oxfmt-");
+test("native Bun formatter formats staged package.json with filename-sensitive configuration", async () => {
+  const root = await project("ast-mcp-format-bun-");
   const target = path.join(root, "package.json");
   const source = '{"trustedDependencies":["a","b"]}';
-  const command = Bun.which("oxfmt", {
-    PATH: path.resolve(import.meta.dir, "../../node_modules/.bin"),
-  });
-  if (!command) throw new Error("Repository oxfmt executable is missing");
+  const command = process.execPath;
   await scriptConfig(root, "", {
     command,
-    args: ["--write", "{file}"],
+    args: ["fmt", "--write", "{file}"],
     mode: "in_place",
     timeout: 10_000,
   });

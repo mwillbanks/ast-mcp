@@ -82,14 +82,10 @@ function validatePullRequest(
 /** Use only the installed formatter and configuration from this trusted checkout. */
 export async function formatReleaseChangelog(content: string): Promise<string> {
   const root = path.resolve(import.meta.dir, "../..");
-  const executable = path.join(
-    path.dirname(Bun.resolveSync("oxfmt/package.json", root)),
-    "bin/oxfmt",
-  );
   const child = Bun.spawn(
     [
       process.execPath,
-      executable,
+      "fmt",
       "--stdin-filepath=CHANGELOG.md",
       `--config=${path.join(root, ".oxfmtrc.json")}`,
       "--disable-nested-config",
@@ -107,7 +103,7 @@ export async function formatReleaseChangelog(content: string): Promise<string> {
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
-  if (status !== 0) throw new Error("Oxfmt changelog formatting failed");
+  if (status !== 0) throw new Error("Bun changelog formatting failed");
   return stdout;
 }
 

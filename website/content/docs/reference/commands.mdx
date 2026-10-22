@@ -83,15 +83,14 @@ Runtime HTTP flags have highest precedence. `--host` and `--port` are rejected f
 ```bash
 bun run tools:check
 bun run format
-bun run format:check
-bun run typecheck
+bun run lint
 bun run test
 bun run skill:check
 bun run evals:check
 bun run fallow
 ```
 
-`bun run format` executes `oxfmt .`. The check-only command runs `oxfmt --check .`, while `bun run lint` runs Oxlint and treats warnings as failures.
+Development uses Bun 1.4.4. `bun run format` executes `bun fmt .`; `bun run format:check` runs `bun fmt --check .`. The `lint` script combines formatting checks, Bun typechecking, and runtime import-boundary validation. Use `bun check --no-script` to run Bun's native checker without the aggregate `check` script.
 
 ## Distribution
 
@@ -108,7 +107,6 @@ The Bun build bundles `bin/ast-mcp.ts` into `dist/ast-mcp.js` as a Bun-targeted 
 bun install --cwd website
 bun run --cwd website dev
 bun run --cwd website lint
-bun run --cwd website typecheck
 bun run --cwd website test
 BASE_PATH=/ast-mcp/ bun run --cwd website build
 ```

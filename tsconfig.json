@@ -23,6 +23,7 @@
     "scripts/validation/check-prose.ts",
     "scripts/validation/check-prose-cli.ts",
     "scripts/validation/check-template-drift.ts",
+    "scripts/validation/check-runtime-imports.ts",
     "scripts/release/dispatch-release-ci.ts",
     "scripts/testing/test-shard.ts",
     "scripts/testing/host-smoke.ts",

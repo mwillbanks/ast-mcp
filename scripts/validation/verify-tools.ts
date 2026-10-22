@@ -8,12 +8,14 @@ function run(command: string[]): string {
   return result.stdout.toString().trim();
 }
 
-// Repository quality gates use installed development tools; runtime formatters are optional.
-for (const tool of ["oxfmt", "oxlint"]) {
-  const executable = Bun.which(tool, {
-    PATH: `${import.meta.dir}/../../node_modules/.bin${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`,
-  });
-  if (!executable)
-    throw new Error(`Missing repository tool: ${tool}; run bun install`);
-  console.log(run([executable, "--version"]));
-}
+// Quality gates use Bun's native formatter and TypeScript checker.
+const manifest = await Bun.file(
+  new URL("../../package.json", import.meta.url),
+).json();
+const expected = manifest.packageManager.replace(/^bun@/, "");
+if (Bun.version !== expected)
+  throw new Error(
+    `Repository tooling requires Bun ${expected}; running ${Bun.version}`,
+  );
+run([process.execPath, "fmt", "--help"]);
+run([process.execPath, "check", "--help"]);

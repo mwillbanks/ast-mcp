@@ -782,6 +782,154 @@ describe("retrieval embedding provider", () => {
 });
 
 describe("LanceDB hybrid retrieval", () => {
+  test("associates zero-width chunks and declarations at matching source coordinates", async () => {
+    const point = {
+      start: { line: 0, column: 0 },
+      end: { line: 0, column: 0 },
+      startByte: 0,
+      endByte: 0,
+    };
+    for (const [chunkRange, occurrenceRange] of [
+      [point, point],
+      [point, RANGE],
+      [RANGE, point],
+    ]) {
+      const { scope, store, workspace } = await harness("zero-width");
+      try {
+        const corpus = chunks().slice(0, 2);
+        const first = corpus[0];
+        if (!first || !chunkRange || !occurrenceRange)
+          throw new Error("missing range fixture");
+        const candidate = { ...first, range: chunkRange };
+        corpus[0] = {
+          ...candidate,
+          artifactId: syntheticChunkArtifactId(candidate),
+        };
+        await publishRetrievalChunks(store, scope, corpus, workspace);
+        const graphCorpus = [
+          { ...corpus[0]!, range: occurrenceRange },
+          corpus[1]!,
+        ];
+        const response = await retrieve(
+          store,
+          await fakeReader(store, scope),
+          {
+            scope,
+            query: "publishOrder",
+            exactSymbols: ["publishOrder"],
+            includedPaths: [],
+            deniedPaths: [],
+            semantic: false,
+          },
+          {
+            graph: graphFor(scope, graphCorpus),
+            workspace,
+            textSearch: "local",
+          },
+        );
+        expect(response.results[0]?.path).toBe("src/publish.ts");
+        expect(response.results[0]?.range).toEqual(chunkRange);
+        expect(response.coverage.corruptChunks).toBe(0);
+      } finally {
+        await store.shutdownCoordinator();
+      }
+    }
+  });
+
+  test("propagates storage failures instead of reporting a timeout", async () => {
+    const { scope, store, workspace } = await harness("read-error");
+    try {
+      const corpus = chunks().slice(0, 2);
+      await publishRetrievalChunks(store, scope, corpus, workspace);
+      const pinned = await fakeReader(store, scope);
+      const reader = {
+        pin: pinned.pin,
+        rows: async () => {
+          throw new Error("storage access denied");
+        },
+      } as unknown as PinnedGenerationReader;
+      await expect(
+        retrieve(
+          store,
+          reader,
+          {
+            scope,
+            query: "publishOrder",
+            exactSymbols: [],
+            includedPaths: [],
+            deniedPaths: [],
+            semantic: false,
+          },
+          { graph: graphFor(scope, corpus), workspace },
+        ),
+      ).rejects.toThrow("storage access denied");
+    } finally {
+      await store.shutdownCoordinator();
+    }
+  });
+
+  test("counts corrupt persisted chunks without returning malformed evidence", async () => {
+    const { scope, store, workspace } = await harness("corrupt-chunks");
+    try {
+      const corpus = chunks().slice(0, 2);
+      await publishRetrievalChunks(store, scope, corpus, workspace);
+      const pinned = await fakeReader(store, scope);
+      const base = (await store.rows("chunks"))[0];
+      if (!base) throw new Error("missing stored fixture");
+      const payload = JSON.parse(String(base.payload_json));
+      const badPayloads = [
+        null,
+        "null",
+        "[]",
+        JSON.stringify({ ...payload, range: null }),
+        JSON.stringify({
+          ...payload,
+          range: { ...payload.range, endByte: -1 },
+        }),
+        JSON.stringify({ ...payload, symbols: [null] }),
+        JSON.stringify({ ...payload, language: null }),
+      ];
+      const corrupt = badPayloads.map((payload_json, index) => ({
+        ...base,
+        artifact_id: "corrupt-" + index,
+        payload_json,
+      }));
+      const reader = {
+        pin: pinned.pin,
+        rows: async (table: Parameters<PinnedGenerationReader["rows"]>[0]) =>
+          table === "chunks"
+            ? [...corrupt, ...(await store.rows(table))]
+            : pinned.rows(table),
+      } as unknown as PinnedGenerationReader;
+      const response = await retrieve(
+        store,
+        reader,
+        {
+          scope,
+          query: "publishOrder",
+          exactSymbols: [],
+          includedPaths: [],
+          deniedPaths: [],
+          semantic: false,
+        },
+        { graph: graphFor(scope, corpus), workspace, textSearch: "local" },
+      );
+      expect(response.coverage.corruptChunks).toBe(corrupt.length);
+      expect(response.coverage.degraded).toBe(true);
+      expect(response.results.map((item) => item.path)).toEqual([
+        "src/publish.ts",
+        "docs/search.md",
+      ]);
+      expect(
+        response.results.every(
+          (item) => !item.artifactId.startsWith("corrupt-"),
+        ),
+      ).toBe(true);
+    } finally {
+      await store.shutdownCoordinator();
+    }
+  });
+
   test("publishes FTS and filters paths, languages, revisions, and worktrees", async () => {
     const { scope, store, workspace } = await harness();
     const corpus = chunks();

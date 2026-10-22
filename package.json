@@ -52,8 +52,6 @@
     "@types/node": "^26.6.5",
     "apache-arrow-18": "npm:apache-arrow@18.1.0",
     "fallow": "^3.34.1",
-    "oxfmt": "0.74.0",
-    "oxlint": "1.89.0",
     "typescript": "^7.0.2"
   },
   "engines": {
@@ -91,7 +89,7 @@
   "overrides": {
     "sharp": "0.35.5"
   },
-  "packageManager": "bun@1.4.3",
+  "packageManager": "bun@1.4.4",
   "preferUnplugged": true,
   "publishConfig": {
     "access": "public"
@@ -102,8 +100,8 @@
   },
   "scripts": {
     "build": "bun run scripts/build/build.ts",
-    "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run lint && bun run test",
-    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run format:check && bun run typecheck && bun run lint && bun run test:coverage",
+    "check": "bun run tools:check && bun run templates:check && bun run prose:check && bun run lint && bun run test",
+    "check:coverage": "bun run tools:check && bun run templates:check && bun run prose:check && bun run lint && bun run test:coverage",
     "dev": "bun run --watch src/index.ts",
     "dev:http": "bun run --watch src/http/entry.ts",
     "evals:check": "bun run templates/skills/ast-mcp/evals/validate.ts",
@@ -111,14 +109,14 @@
     "evals:score": "bun run templates/skills/ast-mcp/evals/measure.ts --strict",
     "fallow": "fallow --skip health",
     "fallow:health": "fallow health",
-    "format": "oxfmt .",
-    "format:check": "oxfmt --check .",
-    "format:files": "oxfmt",
+    "format": "bun fmt .",
+    "format:check": "bun fmt --check .",
+    "format:files": "bun fmt",
     "inspect": "bunx @modelcontextprotocol/inspector bun run src/index.ts",
     "inspect:http": "bunx @modelcontextprotocol/inspector",
     "intelligence:measure": "bun run scripts/benchmark/benchmark-intelligence-baseline.ts",
     "intelligence:qualify": "bun run scripts/validation/qualify-intelligence-deps.ts",
-    "lint": "oxlint --deny-warnings .",
+    "lint": "bun run format:check && bun run typecheck && bun run boundaries:check",
     "prepack": "bun run build",
     "prose:check": "bun run scripts/validation/check-prose-cli.ts",
     "skill:check": "bunx skills-ref validate templates/skills/ast-mcp",
@@ -130,7 +128,8 @@
     "test": "bun test --dots --bail --max-concurrency=1 --timeout=30000",
     "test:coverage": "bun test --coverage --dots --bail --max-concurrency=1 --timeout=30000",
     "tools:check": "bun run scripts/validation/verify-tools.ts",
-    "typecheck": "bun --check"
+    "typecheck": "bun check --no-script",
+    "boundaries:check": "bun run scripts/validation/check-runtime-imports.ts"
   },
   "sideEffects": false,
   "type": "module",

@@ -19,17 +19,45 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Language, Parser } from "web-tree-sitter";
 
 import { wasmGrammarAssets } from "../../src/intelligence/languages/shared/wasm-assets";
-import { spawnHttpMcpProcess } from "../support/live-process";
+import { commandForPlatform } from "../../src/runtime/subprocess";
+import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
 import {
   exerciseSkillsHttp,
-  exerciseSkillsStdio,
+  exerciseSkillsRequests,
   exerciseModernWorkspaceHttp,
 } from "../support/skills-protocol";
 
-async function command(args: string[], cwd: string): Promise<string> {
-  const child = Bun.spawn(args, {
+const consumerBun = process.env.AST_MCP_CONSUMER_BUN || process.execPath;
+
+function consumerEnvironment(): Record<string, string> {
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key, value]) =>
+        value !== undefined &&
+        !/^(?:NODE_PATH|NODE_OPTIONS|BUN_OPTIONS|BUN_INSTALL|NAPI_RS_NATIVE_LIBRARY_PATH|AST_MCP_)/i.test(
+          key,
+        ),
+    ),
+  ) as Record<string, string>;
+  environment.PATH = [path.dirname(consumerBun), environment.PATH]
+    .filter(Boolean)
+    .join(path.delimiter);
+  environment.BUN_CONFIG_NO_AUTO_INSTALL = "1";
+  environment.DO_NOT_TRACK = "1";
+  return environment;
+}
+
+async function command(
+  args: string[],
+  cwd: string,
+  env = consumerEnvironment(),
+): Promise<string> {
+  const platformCommand = commandForPlatform(args[0]!, args.slice(1));
+  const child = Bun.spawn([platformCommand.command, ...platformCommand.args], {
     cwd,
-    env: { ...process.env },
+    env,
+    stdin: "ignore",
+    windowsVerbatimArguments: platformCommand.windowsVerbatimArguments,
     stderr: "pipe",
     stdout: "pipe",
     timeout: 90_000,
@@ -39,8 +67,14 @@ async function command(args: string[], cwd: string): Promise<string> {
     new Response(child.stderr).text(),
     new Response(child.stdout).text(),
   ]);
-  if (exitCode !== 0)
-    throw new Error(`${args.join(" ")} failed: ${stderr.trim()}`);
+  if (exitCode !== 0) {
+    const dependencyDiagnostics = args.includes("audit")
+      ? await command(["npm", "ls", "sharp", "--all"], cwd, env).catch(String)
+      : "";
+    throw new Error(
+      `${args.join(" ")} failed (exit ${exitCode}): ${stderr.trim()}\n${stdout.trim()}\n${dependencyDiagnostics}`,
+    );
+  }
   return stdout.trim();
 }
 
@@ -88,6 +122,7 @@ async function exercisePackage(
   const id = workspaceId(opened.structuredContent);
   const mapped = toolData<{
     files: Array<{ symbols: Array<{ name: string }> }>;
+    scan: { parsed: number; omitted: number };
   }>(
     await callPackageTool(client, "map", {
       paths: ["entry.ts"],
@@ -97,6 +132,52 @@ async function exercisePackage(
   expect(
     mapped.files.flatMap((file) => file.symbols.map((symbol) => symbol.name)),
   ).toContain("publish");
+
+  expect(mapped.scan.parsed).toBe(1);
+  expect(mapped.scan.omitted).toBe(0);
+  const searched = toolData<{
+    items: unknown[];
+    scan: { parsed: number; omitted: number };
+  }>(
+    await callPackageTool(client, "run", {
+      paths: ["entry.ts"],
+      pattern: "export function publish($$$ARGS) { $$$BODY }",
+      lang: "typescript",
+      json: true,
+      workspaceId: id,
+    }),
+  );
+  expect(searched.items.length).toBeGreaterThan(0);
+  expect(searched.scan.parsed).toBe(1);
+  expect(searched.scan.omitted).toBe(0);
+  for (const filename of ["grammar.toml", "grammar.yaml", "grammar.md"]) {
+    const grammar = toolData<{
+      scan: { parsed: number; omitted: number };
+      files: unknown[];
+    }>(
+      await callPackageTool(client, "map", {
+        paths: [filename],
+        workspaceId: id,
+      }),
+    );
+    expect(grammar.scan.parsed, filename).toBe(1);
+    expect(grammar.scan.omitted, filename).toBe(0);
+    expect(grammar.files, filename).toHaveLength(1);
+    expect(grammar.files[0], filename).toMatchObject({
+      diagnostics: [],
+      partial: false,
+    });
+  }
+  const astRead = toolData<{
+    files: Array<{ resolvedMode: string; content: unknown }>;
+  }>(
+    await callPackageTool(client, "file_read", {
+      files: [{ filePath: "entry.ts", mode: "ast" }],
+      workspaceId: id,
+    }),
+  );
+  expect(astRead.files[0]?.resolvedMode).toBe("ast");
+  expect(JSON.stringify(astRead)).toContain("publish");
 
   const built = toolData<{ generation: string }>(
     await callPackageTool(client, "index", {
@@ -140,6 +221,22 @@ async function exercisePackage(
       workspaceId: id,
     }),
   );
+  const patch = {
+    [writable]: {
+      aiderBlocks: [{ replace: "updated\n", search: "original\n" }],
+      expectedSha256: hashed.files[0]?.sha256,
+      patchStrategy: "aider_block",
+    },
+  };
+  toolData(
+    await callPackageTool(client, "file_patch", {
+      files: { [writable]: { ...patch[writable], preview: true } },
+      workspaceId: id,
+    }),
+  );
+  expect(await readFile(path.join(fixture, writable), "utf8")).toBe(
+    "original\n",
+  );
   toolData(
     await callPackageTool(client, "file_patch", {
       files: {
@@ -155,14 +252,28 @@ async function exercisePackage(
   expect(await readFile(path.join(fixture, writable), "utf8")).toBe(
     "updated\n",
   );
+  // Refresh the workspace identity so this rejects the old hash, not overlay drift.
+  const reopened = await callPackageTool(client, "workspace_open", {
+    directory: fixture,
+    storage: { kind: "explicit", path: storagePath },
+  });
+  const stale = await callPackageTool(client, "file_patch", {
+    files: patch,
+    workspaceId: workspaceId(reopened.structuredContent),
+  });
+  expect(stale.isError).toBeTrue();
+  expect(JSON.stringify(stale)).toContain("hash");
+  expect(await readFile(path.join(fixture, writable), "utf8")).toBe(
+    "updated\n",
+  );
 }
 
 async function startHttpServer(executable: string, fixture: string) {
-  const server = await spawnHttpMcpProcess(
-    process.execPath,
-    [executable, "mcp"],
-    { cwd: fixture, timeoutMs: 30_000 },
-  );
+  const server = await spawnHttpMcpProcess(consumerBun, [executable, "mcp"], {
+    cwd: fixture,
+    env: consumerEnvironment(),
+    timeoutMs: 30_000,
+  });
   const client = new Client({ name: "package-http-smoke", version: "1" });
   try {
     await client.connect(new StreamableHTTPClientTransport(server.url), {
@@ -186,27 +297,38 @@ async function startHttpServer(executable: string, fixture: string) {
 
 const test = bunTest.skipIf(process.env.AST_MCP_SKIP_PACKAGE_SMOKE === "1");
 
-test("extracted package supports stdio and HTTP lifecycle operations", async () => {
+const selectedInstaller = process.env.AST_MCP_CONSUMER_INSTALLER;
+if (
+  selectedInstaller &&
+  selectedInstaller !== "bun" &&
+  selectedInstaller !== "npm"
+)
+  throw new Error("AST_MCP_CONSUMER_INSTALLER must be bun or npm");
+async function exerciseConsumer(installer: string) {
   const repository = path.resolve(import.meta.dir, "../..");
   const owned = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-package-smoke-"));
   const fixture = path.join(owned, "fixture");
   try {
-    await command(["bun", "run", "build"], repository);
-    const packed = await command(
-      [
-        "bun",
-        "pm",
-        "pack",
-        "--ignore-scripts",
-        "--destination",
-        owned,
-        "--quiet",
-      ],
-      repository,
-    );
-    const archive = path.isAbsolute(packed)
-      ? packed
-      : path.join(owned, path.basename(packed));
+    let archive = process.env.AST_MCP_PACKAGE_ARCHIVE;
+    if (!archive) {
+      await command([process.execPath, "run", "build"], repository);
+      const packed = await command(
+        [
+          process.execPath,
+          "pm",
+          "pack",
+          "--ignore-scripts",
+          "--destination",
+          owned,
+          "--quiet",
+        ],
+        repository,
+      );
+      archive = path.isAbsolute(packed)
+        ? packed
+        : path.join(owned, path.basename(packed));
+    }
+    archive = path.resolve(archive);
     const archivedPaths = await command(["tar", "-tzf", archive], repository);
     expect(archivedPaths).not.toContain("node_modules");
     await command(["tar", "-xzf", archive, "-C", owned], repository);
@@ -243,6 +365,22 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
         path.join(fixture, "Main.java"),
         "public final class Main { public static void run() {} }\n",
       ),
+      writeFile(
+        path.join(fixture, "grammar.toml"),
+        '[packageFixture]\nname = "native grammar"\n',
+      ),
+      writeFile(
+        path.join(fixture, "grammar.yaml"),
+        "packageFixture:\n  name: native grammar\n",
+      ),
+      writeFile(
+        path.join(fixture, "grammar.md"),
+        "# packageFixture\n\nNative grammar **content**.\n",
+      ),
+      writeFile(
+        path.join(fixture, "bunfig.toml"),
+        '[install]\nauto = "disable"\n',
+      ),
       writeFile(path.join(fixture, "stdio.txt"), "original\n"),
       writeFile(path.join(fixture, "http.txt"), "original\n"),
       writeFile(path.join(fixture, "modern.txt"), "original\n"),
@@ -263,6 +401,12 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     );
 
     const consumer = path.join(owned, "consumer");
+    // Fresh caches prevent local-tarball cache entries from masking changed bytes.
+    const installEnvironment = {
+      ...consumerEnvironment(),
+      BUN_INSTALL_CACHE_DIR: path.join(owned, "bun-cache"),
+      npm_config_cache: path.join(owned, "npm-cache"),
+    };
     await mkdir(consumer);
     await writeFile(
       path.join(consumer, "package.json"),
@@ -272,16 +416,19 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
       }),
     );
     await command(
-      ["bun", "install", "--production", "--ignore-scripts"],
+      installer === "bun"
+        ? [process.execPath, "install", "--production", "--ignore-scripts"]
+        : [
+            "npm",
+            "install",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+          ],
       consumer,
+      installEnvironment,
     );
-    await command(
-      ["bun", "install", "--lockfile-only", "--ignore-scripts"],
-      consumer,
-    );
-    expect(
-      JSON.parse(await command(["bun", "audit", "--json"], consumer)),
-    ).toEqual({});
     const installedPackage = path.join(
       consumer,
       "node_modules",
@@ -291,6 +438,31 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     const installedManifest = JSON.parse(
       await readFile(path.join(installedPackage, "package.json"), "utf8"),
     );
+    if (installer === "bun") {
+      await command(
+        [process.execPath, "install", "--lockfile-only", "--ignore-scripts"],
+        consumer,
+        installEnvironment,
+      );
+      expect(
+        JSON.parse(
+          await command(
+            [process.execPath, "audit", "--json"],
+            consumer,
+            installEnvironment,
+          ),
+        ),
+      ).toEqual({});
+    } else {
+      const audit = JSON.parse(
+        await command(
+          ["npm", "audit", "--omit=dev", "--json"],
+          consumer,
+          installEnvironment,
+        ),
+      );
+      expect(audit.metadata.vulnerabilities.total).toBe(0);
+    }
     expect(installedManifest.dependencies["@lancedb/lancedb"]).toBeUndefined();
     expect(installedManifest.devDependencies["@lancedb/lancedb"]).toBe(
       "0.40.0",
@@ -307,13 +479,26 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
         "utf8",
       ),
     ).rejects.toMatchObject({ code: "ENOENT" });
+    const launcherCandidates = (
+      process.platform === "win32"
+        ? ["ast-mcp.exe", "ast-mcp.cmd", "ast-mcp"]
+        : ["ast-mcp"]
+    ).map((name) => path.join(consumer, "node_modules", ".bin", name));
+    const launcher = (
+      await Promise.all(
+        launcherCandidates.map(async (candidate) =>
+          (await Bun.file(candidate).exists()) ? candidate : undefined,
+        ),
+      )
+    ).find(Boolean);
+    if (!launcher)
+      throw new Error("Consumer installation omitted the ast-mcp launcher");
+    // An ignored stdin reproduces startup with immediate EOF through the real launcher.
+    expect(await command([launcher, "mcp"], fixture)).toBe("");
     const executable = path.join(installedPackage, "dist", "ast-mcp.js");
     const canonicalFixture = await realpath(fixture);
     const jsonOutput = JSON.parse(
-      await command(
-        [process.execPath, executable, "config", "validate"],
-        fixture,
-      ),
+      await command([consumerBun, executable, "config", "validate"], fixture),
     );
     expect(jsonOutput).toMatchObject({
       valid: true,
@@ -321,14 +506,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     });
     for (const format of ["human", "json", "yaml", "toml"] as const) {
       const output = await command(
-        [
-          process.execPath,
-          executable,
-          "--output",
-          format,
-          "config",
-          "validate",
-        ],
+        [consumerBun, executable, "--output", format, "config", "validate"],
         fixture,
       );
       if (format === "human")
@@ -349,7 +527,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     const exported = JSON.parse(
       await command(
         [
-          process.execPath,
+          consumerBun,
           executable,
           "skills",
           "export",
@@ -365,7 +543,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     });
     const exportedDirectory = path.join(owned, "exported-skills");
     const updateArguments = [
-      process.execPath,
+      consumerBun,
       executable,
       "skills",
       "update",
@@ -408,7 +586,7 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     await writeFile(skillPath, customized);
     const conflictProcess = Bun.spawn(updateArguments, {
       cwd: fixture,
-      env: { ...process.env },
+      env: consumerEnvironment(),
       stderr: "pipe",
       stdout: "pipe",
       timeout: 90_000,
@@ -426,11 +604,44 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
     });
     expect(conflictStderr).toContain("Compare these files with a fresh export");
     expect(await readFile(skillPath, "utf8")).toBe(customized);
-    await exerciseSkillsStdio(executable, fixture);
+    const skills = spawnLiveProcess(consumerBun, [executable, "mcp"], {
+      cwd: fixture,
+      env: consumerEnvironment(),
+      timeoutMs: 30_000,
+    });
+    let requestId = 0;
+    try {
+      await exerciseSkillsRequests(async (method, params = {}) => {
+        const id = ++requestId;
+        skills.process.stdin.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            method,
+            params: {
+              ...params,
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            },
+          }) + "\n",
+        );
+        for (;;) {
+          const message = JSON.parse(await skills.readStdoutLine());
+          if (message.id === id) return message;
+        }
+      });
+      skills.process.stdin.end();
+      expect(await skills.waitForExit()).toBe(0);
+    } finally {
+      await skills.stop();
+    }
     const stdio = new Client({ name: "package-stdio-smoke", version: "1" });
     const stdioTransport = new StdioClientTransport({
       args: [executable, "mcp"],
-      command: process.execPath,
+      command: consumerBun,
+      env: consumerEnvironment(),
       cwd: fixture,
       stderr: "pipe",
     });
@@ -477,4 +688,10 @@ test("extracted package supports stdio and HTTP lifecycle operations", async () 
   } finally {
     await rm(owned, { force: true, recursive: true });
   }
-}, 180_000);
+}
+
+test.each(selectedInstaller ? [selectedInstaller] : ["bun", "npm"])(
+  "%s production package supports stdio and HTTP lifecycle operations",
+  exerciseConsumer,
+  360_000,
+);

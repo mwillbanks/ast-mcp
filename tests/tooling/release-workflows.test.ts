@@ -18,7 +18,14 @@ type Job = {
   with?: Record<string, string>;
   outputs?: Record<string, string>;
   steps?: Step[];
-  strategy?: { matrix?: { os?: string[] } };
+  strategy?: {
+    "fail-fast"?: boolean;
+    matrix?: {
+      os?: string[];
+      installer?: string[];
+      platform?: { os: string; platform: string; arch: string; bun: string }[];
+    };
+  };
 };
 type Workflow = {
   on: Record<string, unknown>;
@@ -34,6 +41,7 @@ async function workflow(name: string): Promise<Workflow> {
 }
 const ci = await workflow("ci");
 const release = await workflow("release");
+const consumers = await workflow("package-consumers");
 function job(source: Workflow, name: string): Job {
   const result = source.jobs[name];
   if (!result) throw new Error(`Missing job ${name}`);
@@ -128,7 +136,18 @@ describe("release workflow contracts", () => {
     expect(job(release, "publish").if).toContain(
       "needs.validate.result == 'success'",
     );
-    expect(job(release, "publish").needs).toEqual(["release", "validate"]);
+    expect(job(release, "publish").needs).toEqual([
+      "release",
+      "validate",
+      "build",
+      "consumers",
+    ]);
+    expect(job(release, "publish").if).toContain(
+      "needs.consumers.result == 'success'",
+    );
+    expect(job(ci, "release").if).toContain(
+      "needs.package-consumers.result == 'success'",
+    );
   });
   test("release recovery verifies a published tag before validation", () => {
     const creator = job(release, "release");
@@ -230,25 +249,97 @@ describe("release workflow contracts", () => {
       false,
     );
   });
-  test("publishing preserves tags platforms and provenance", () => {
-    expect(job(release, "validate").strategy?.matrix?.os).toEqual([
-      "ubuntu-latest",
-      "macos-latest",
-      "windows-latest",
+  test("packed qualification covers actual platforms, installers, and minimum Bun", () => {
+    const qualification = job(consumers, "consumers");
+    expect(qualification.strategy?.["fail-fast"]).toBe(false);
+    expect(qualification.strategy?.matrix?.installer).toEqual(["bun", "npm"]);
+    expect(qualification.strategy?.matrix?.platform).toEqual([
+      { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.4" },
+      {
+        os: "ubuntu-24.04-arm",
+        platform: "linux",
+        arch: "arm64",
+        bun: "1.4.4",
+      },
+      { os: "ubuntu-24.04", platform: "linux", arch: "x64", bun: "1.4.4" },
+      { os: "windows-2025", platform: "win32", arch: "x64", bun: "1.4.4" },
+      { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.3" },
+      {
+        os: "ubuntu-24.04-arm",
+        platform: "linux",
+        arch: "arm64",
+        bun: "1.4.3",
+      },
     ]);
-    const handshakes = job(release, "validate").steps?.filter((step) =>
-      step.run?.startsWith("bun test mcp.test.ts --test-name-pattern"),
+    const steps = qualification.steps ?? [];
+    const architecture = steps.find((s) => s.env?.EXPECTED_ARCH);
+    expect(architecture?.run).toContain(
+      "process.arch !== process.env.EXPECTED_ARCH",
     );
-    expect(handshakes?.map((step) => step.run)).toEqual([
-      `bun test mcp.test.ts --test-name-pattern "CLI mcp subcommand remains alive for a stdio handshake"`,
-      `bun test mcp.test.ts --test-name-pattern "calls native code intelligence through the server"`,
+    expect(architecture?.run).toContain(
+      "process.platform !== process.env.EXPECTED_PLATFORM",
+    );
+    expect(architecture?.run).toContain("glibcVersionRuntime");
+    const configure = steps.find((s) => s.env?.CONSUMER_VERSION);
+    expect(configure?.run).toContain("AST_MCP_CONSUMER_BUN=");
+    expect(configure?.run).toContain("AST_MCP_PACKAGE_ARCHIVE=");
+    expect(configure?.run).toContain("Consumer Bun version mismatch");
+    const smoke = steps.find((s) => s.run?.startsWith("bun test"));
+    expect(smoke?.run).toBe(
+      "bun test tests/tooling/package-smoke.test.ts --bail",
+    );
+    expect(smoke?.env?.AST_MCP_SKIP_PACKAGE_SMOKE).toBe("0");
+    expect(smoke?.env?.AST_MCP_CONSUMER_INSTALLER).toBe(
+      "${{ matrix.installer }}",
+    );
+    expect(steps.some((s) => s.run?.includes("checksum mismatch"))).toBe(true);
+    for (const [source, name, artifact] of [
+      [ci, "package-consumers", "package-candidate"],
+      [release, "consumers", "release-candidate"],
+    ] as const) {
+      expect(job(source, name).uses).toBe(
+        "./.github/workflows/package-consumers.yml",
+      );
+      expect(job(source, name).with?.artifact_name).toBe(artifact);
+    }
+  });
+  test("publishing uses the qualified archive without rebuilding", () => {
+    expect(job(release, "validate").strategy?.matrix?.os).toEqual([
+      "ubuntu-24.04",
+      "ubuntu-24.04-arm",
+      "macos-15",
+      "windows-2025",
     ]);
-    for (const name of ["validate", "publish"])
+    const sourceChecks = job(release, "validate").steps ?? [];
+    expect(
+      sourceChecks.filter((s) =>
+        s.run?.startsWith("bun test tests/integration/mcp.test.ts"),
+      ).length,
+    ).toBe(2);
+    for (const name of ["validate", "build"])
       expect(
         job(release, name).steps?.find((s) =>
           s.uses?.startsWith("actions/checkout@"),
         )?.with?.ref,
       ).toBe("${{ needs.release.outputs.tag_name }}");
+    expect(job(release, "consumers").with?.ref).toBe(
+      "${{ needs.release.outputs.tag_name }}",
+    );
+    const producer = job(release, "build").steps ?? [];
+    expect(producer.filter((s) => s.run?.includes("bun pm pack")).length).toBe(
+      1,
+    );
+    expect(
+      producer.some(
+        (s) =>
+          s.env?.AST_MCP_SKIP_PACKAGE_SMOKE === "1" &&
+          s.run === "bun run check",
+      ),
+    ).toBe(true);
+    expect(
+      producer.find((s) => s.uses?.startsWith("actions/upload-artifact@"))?.with
+        ?.name,
+    ).toBe("release-candidate");
     expect(job(release, "publish").permissions).toEqual({
       contents: "read",
       "id-token": "write",
@@ -258,12 +349,27 @@ describe("release workflow contracts", () => {
       true,
     );
     expect(
-      steps.some((s) =>
-        s.run?.includes(
-          "npm publish --access public --provenance --ignore-scripts",
-        ),
+      steps.find((s) => s.uses?.startsWith("actions/download-artifact@"))?.with
+        ?.name,
+    ).toBe("release-candidate");
+    expect(
+      steps.some((s) => s.run?.includes("Package archive checksum mismatch")),
+    ).toBe(true);
+    expect(
+      steps.some(
+        (s) =>
+          s.run ===
+          "npm publish package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
       ),
     ).toBe(true);
+    expect(
+      steps.some((s) =>
+        /bun ci|bun run|bun pm pack|npm pack/.test(s.run ?? ""),
+      ),
+    ).toBe(false);
+    expect(steps.some((s) => s.uses?.startsWith("actions/checkout@"))).toBe(
+      false,
+    );
     expect(
       steps.find((s) => s.uses?.startsWith("actions/setup-node@"))?.with?.[
         "node-version"
@@ -271,7 +377,7 @@ describe("release workflow contracts", () => {
     ).toBe(24);
   });
   test("actions use major references", () => {
-    for (const source of [ci, release])
+    for (const source of [ci, release, consumers])
       for (const candidate of Object.values(source.jobs))
         for (const step of candidate.steps ?? [])
           if (step.uses) expect(step.uses).toMatch(/^[\w.-]+\/[\w./-]+@v\d+$/);

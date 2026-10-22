@@ -1,12 +1,15 @@
 # Documentation website
 
-Use Bun 1.4.3 or newer. Install the website dependencies with `bun install`.
+Use Bun 1.4.4. Install the website dependencies with `bun install`.
 
 ## Commands
 
 - `bun run dev`: start Bun's HTML development server and Tailwind watcher on port 3000.
 - `bun run build`: generate collections, bundle browser modules, and prerender the website.
 - `bun run preview`: serve the generated website on port 3000.
+- `bun run format`: format source and documentation with `bun fmt`.
+- `bun run format:check`: check formatting with `bun fmt --check`.
+- `bun run lint`: check formatting and types.
 - `bun run typecheck`: generate collection types and check them with `bun check`.
 - `bun run test`: validate deployment path handling.
 - `bun run test:browser`: build and test root and project deployments with Chromium.

@@ -43,6 +43,14 @@ const providerMetadata = {
 const root = path.resolve(import.meta.dir, "../..");
 const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
+// Preserve package-relative native binaries and grammar assets at runtime.
+// Bundle the LanceDB facade to exclude its obsolete optional embedding providers.
+const nativeExternals = [
+  "@ast-grep/napi",
+  "@ast-grep/napi-*",
+  "@ast-grep/lang-*",
+  "@lancedb/lancedb-*",
+];
 const workers = [
   {
     client: "src/tools/code-intelligence.ts",
@@ -125,7 +133,7 @@ assertBuild(
   "CLI",
   await Bun.build({
     entrypoints: [path.join(root, "bin/ast-mcp.ts")],
-    external: ["@lancedb/lancedb-*"],
+    external: nativeExternals,
     define: providerMetadata,
     format: "esm",
     minify: true,
@@ -141,6 +149,7 @@ for (const worker of workers) {
     worker.output,
     await Bun.build({
       entrypoints: [path.join(root, worker.entrypoint)],
+      external: nativeExternals,
       define: providerMetadata,
       format: "esm",
       minify: true,
@@ -150,6 +159,22 @@ for (const worker of workers) {
       target: "bun",
     }),
   );
+}
+
+// Inspect executable JavaScript only; source maps retain original source paths.
+for (const artifact of [
+  "ast-mcp.js",
+  ...workers.map((worker) => `workers/${worker.output}`),
+]) {
+  const source = await Bun.file(path.join(outdir, artifact)).text();
+  if (/Cannot require module[\s"' +]*@(?:ast-grep|lancedb)\//u.test(source))
+    throw new Error(`Native throwing stub in ${artifact}`);
+  if (
+    /(?:[A-Za-z]:[\\/]|\/)[^"'\r\n]*node_modules[\\/]@ast-grep[\\/]lang-/u.test(
+      source,
+    )
+  )
+    throw new Error(`Build-machine grammar path in ${artifact}`);
 }
 
 const treeSitterAssets = path.join(root, "node_modules", "tree-sitter-wasm");
