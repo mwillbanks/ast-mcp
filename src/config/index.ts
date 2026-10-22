@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -444,10 +445,10 @@ async function normalizeLayer(
   };
 }
 
-async function parseLayerValue(filePath: string): Promise<AstMcpFileConfig> {
+function parseLayerValue(filePath: string, source: string): AstMcpFileConfig {
   let parsed: unknown;
   try {
-    parsed = Bun.TOML.parse(await Bun.file(filePath).text());
+    parsed = Bun.TOML.parse(source);
   } catch (error) {
     throw new ConfigurationError(
       `${filePath}: invalid TOML: ${error instanceof Error ? error.message : String(error)}`,
@@ -475,18 +476,20 @@ async function loadLayer(filePath: string): Promise<LoadedLayer> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   });
-  const fingerprint = metadata
-    ? `${metadata.mtimeMs}:${metadata.size}`
-    : "missing";
+  const source = metadata ? await Bun.file(filePath).text() : undefined;
+  const fingerprint =
+    source === undefined
+      ? "missing"
+      : createHash("sha256").update(source).digest("hex");
   const cached = layerCache.get(filePath);
   if (cached?.fingerprint === fingerprint) return cached.promise;
 
   const promise = (async () => {
-    if (!metadata) return { fingerprint, path: filePath };
+    if (source === undefined) return { fingerprint, path: filePath };
     return {
       fingerprint,
       path: await canonicalConfigurationPath(filePath),
-      value: await normalizeLayer(await parseLayerValue(filePath), filePath),
+      value: await normalizeLayer(parseLayerValue(filePath, source), filePath),
     };
   })();
   layerCache.set(filePath, { fingerprint, promise });

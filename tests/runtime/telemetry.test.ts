@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -224,15 +224,12 @@ describe("telemetry configuration", () => {
   });
   test("legacy configuration accepts opt-out and invalid telemetry fails closed", async () => {
     const options = await fixture();
-    await writeFile(
-      path.join(options.cwd, "ast-mcp.toml"),
-      "version = 1\n[telemetry]\nenabled = false\n",
-    );
+    const configPath = path.join(options.cwd, "ast-mcp.toml");
+    await writeFile(configPath, "version = 1\n[telemetry]\nenabled = false\n");
     expect((await resolveConfig(options)).telemetry.enabled).toBe(false);
-    await writeFile(
-      path.join(options.cwd, "ast-mcp.toml"),
-      "version = 2\n[telemetry]\nenabled = 'bad'\n",
-    );
+    const { atime, mtime } = await stat(configPath);
+    await writeFile(configPath, "version = 2\n[telemetry]\nenabled = 'bad'\n");
+    await utimes(configPath, atime, mtime);
     await expect(resolveConfig(options)).rejects.toThrow();
     expect(await globalTelemetryEnabled()).toBe(false);
   });
