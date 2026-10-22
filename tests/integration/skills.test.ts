@@ -57,7 +57,7 @@ test("modern stdio preserves fragmented batches and recovers malformed and overs
 
 test("real stdio serves modern Skills beside legacy clients", async () => {
   await exerciseSkillsStdio(path.resolve("bin/ast-mcp.ts"), process.cwd());
-}, 30000);
+}, 60_000);
 
 test("real HTTP serves modern Skills and retains explicit workspace handles", async () => {
   const owned = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-modern-"));

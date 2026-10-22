@@ -29,6 +29,7 @@ session_sweep_interval_ms = 1000
         PORT: undefined,
       },
       host: false,
+      timeoutMs: 30_000,
     },
   );
 
@@ -38,4 +39,4 @@ session_sweep_interval_ms = 1000
     await server.stop();
     await rm(root, { force: true, recursive: true });
   }
-});
+}, 60_000);

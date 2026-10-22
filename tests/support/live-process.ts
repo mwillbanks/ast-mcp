@@ -59,9 +59,17 @@ export function spawnLiveProcess(
   const stderr: string[] = [];
   const stdoutDrain = drain(processHandle.stdout, stdout);
   const stderrDrain = drain(processHandle.stderr, stderr);
+  const outputDrained = Promise.all([stdoutDrain, stderrDrain]);
   let stdoutOffset = 0;
   let stopPromise: Promise<void> | undefined;
   const timeoutMs = options.timeoutMs ?? 10_000;
+
+  async function settleOutput(deadline: number) {
+    await Promise.race([
+      outputDrained,
+      Bun.sleep(Math.min(1_000, Math.max(0, deadline - Date.now()))),
+    ]);
+  }
 
   async function waitFor<T>(
     description: string,
@@ -72,10 +80,14 @@ export function spawnLiveProcess(
     while (Date.now() < deadline) {
       const result = inspect();
       if (result !== undefined) return result;
-      if (processHandle.exitCode !== null)
+      if (processHandle.exitCode !== null) {
+        await settleOutput(deadline);
+        const finalResult = inspect();
+        if (finalResult !== undefined) return finalResult;
         throw new Error(
           `${description} failed because the process exited with code ${processHandle.exitCode}: ${capturedOutput(stdout, stderr)}`,
         );
+      }
       await Bun.sleep(10);
     }
     throw new Error(
@@ -103,17 +115,16 @@ export function spawnLiveProcess(
     async stop() {
       stopPromise ??= (async () => {
         await terminateProcessTree(processHandle, { graceMs: 2_000 });
-        const drains = Promise.all([stdoutDrain, stderrDrain]);
         if (
           !(await Promise.race([
-            drains.then(() => true),
+            outputDrained.then(() => true),
             Bun.sleep(2_000).then(() => false),
           ]))
         ) {
           await terminateProcessTree(processHandle, { force: true });
           if (
             !(await Promise.race([
-              drains.then(() => true),
+              outputDrained.then(() => true),
               Bun.sleep(2_000).then(() => false),
             ]))
           )
@@ -125,11 +136,14 @@ export function spawnLiveProcess(
       await stopPromise;
     },
     async waitForExit(waitMs = timeoutMs) {
-      return waitFor(
+      const deadline = Date.now() + waitMs;
+      const exitCode = await waitFor(
         "Waiting for process exit",
         () => processHandle.exitCode ?? undefined,
         waitMs,
       );
+      await settleOutput(deadline);
+      return exitCode;
     },
     async waitForStderr(pattern, waitMs = timeoutMs) {
       return waitFor(

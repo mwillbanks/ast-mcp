@@ -2,6 +2,9 @@ import { expect, test } from "bun:test";
 
 import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
 
+const fastFailure =
+  'import { writeSync } from "node:fs";writeSync(2,"startup failed\\n");process.exit(7)';
+
 test("live process captures both streams and supports repeated teardown", async () => {
   const live = spawnLiveProcess(process.execPath, [
     "-e",
@@ -31,16 +34,13 @@ test("live process reports bounded waiting and premature exit diagnostics", asyn
   } finally {
     await silent.stop();
   }
-  const exited = spawnLiveProcess(process.execPath, [
-    "-e",
-    'console.error("startup failed");process.exit(7)',
-  ]);
+  const exited = spawnLiveProcess(process.execPath, ["-e", fastFailure]);
   try {
     expect(await exited.waitForExit()).toBe(7);
+    expect(exited.diagnostics()).toContain("startup failed");
     await expect(exited.readStdoutLine()).rejects.toThrow(
       "process exited with code 7",
     );
-    expect(exited.diagnostics()).toContain("startup failed");
   } finally {
     await exited.stop();
   }
@@ -48,11 +48,9 @@ test("live process reports bounded waiting and premature exit diagnostics", asyn
 
 test("HTTP startup failure closes the process and preserves diagnostics", async () => {
   await expect(
-    spawnHttpMcpProcess(
-      process.execPath,
-      ["-e", 'console.error("startup failed");process.exit(7)', "--"],
-      { host: false },
-    ),
+    spawnHttpMcpProcess(process.execPath, ["-e", fastFailure, "--"], {
+      host: false,
+    }),
   ).rejects.toThrow("startup failed");
 });
 
