@@ -91,6 +91,81 @@ for (const [surface, binaries] of [
     }
   });
 
+  test(`${surface} resolves known aliases before probing managers and retains manager fallback`, async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-known-alias-"));
+    const name = "ast-mcp-fixture";
+    const extension = process.platform === "win32" ? ".CMD" : "";
+    const known = path.join(home, ".bun/bin", name + extension);
+    const manager = path.join(home, "manager", name + extension);
+    const previous = process.env.PATHEXT;
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation(() => {
+      throw new Error("manager must not run for a known alias");
+    });
+    try {
+      process.env.PATHEXT = ".CMD";
+      for (const alias of [known, manager]) {
+        await mkdir(path.dirname(alias), { recursive: true });
+        await writeFile(alias, "#!/bin/sh\nexit 0\n");
+        await chmod(alias, 0o755);
+      }
+      expect(binaries.resolveGlobalBinaryAlias(name, { home })).toBe(known);
+      expect(spawn).not.toHaveBeenCalled();
+      await rm(known);
+      spawn.mockImplementation(((args: string[]) => ({
+        exitCode: args.join(" ") === "bun pm bin -g" ? 0 : 1,
+        stdout: Buffer.from(path.dirname(manager)),
+      })) as never);
+      expect(binaries.resolveGlobalBinaryAlias(name, { home })).toBe(manager);
+      expect(spawn).toHaveBeenCalledTimes(5);
+    } finally {
+      spawn.mockRestore();
+      if (previous === undefined) delete process.env.PATHEXT;
+      else process.env.PATHEXT = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test(`${surface} bounds stalled manager discovery and continues after timeout`, () => {
+    const execute = Bun.spawnSync;
+    let calls = 0;
+    const base = path.resolve(os.tmpdir(), "ast-mcp-stalled-manager");
+    const spawn = spyOn(Bun, "spawnSync").mockImplementation(((
+      args: string[],
+      options: NonNullable<Parameters<typeof Bun.spawnSync>[1]>,
+    ) => {
+      calls++;
+      expect(options).toMatchObject({
+        stdin: "ignore",
+        timeout: 1000,
+        killSignal: "SIGKILL",
+        maxBuffer: 65536,
+      });
+      if (calls === 1)
+        return execute(
+          [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+          options,
+        );
+      return {
+        exitCode: args[0] === "pnpm" ? 0 : 1,
+        stdout: Buffer.from(base),
+      };
+    }) as never);
+    try {
+      const started = performance.now();
+      expect(
+        binaries.globalBinDirectories(
+          "ast-mcp-fixture",
+          process.platform,
+          base,
+        ),
+      ).toContain(base);
+      expect(calls).toBe(5);
+      expect(performance.now() - started).toBeLessThan(5000);
+    } finally {
+      spawn.mockRestore();
+    }
+  });
+
   test(`${surface} discovers manager-specific global installations without installing packages`, () => {
     const previous = {
       BUN_INSTALL: process.env.BUN_INSTALL,

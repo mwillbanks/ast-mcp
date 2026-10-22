@@ -74,8 +74,12 @@ export function isExecutable(
 function commandOutput(command: string, args: string[]) {
   try {
     const result = Bun.spawnSync([command, ...args], {
+      stdin: "ignore",
       stderr: "ignore",
       stdout: "pipe",
+      timeout: 1000,
+      killSignal: "SIGKILL",
+      maxBuffer: 64 * 1024,
     });
     return result.exitCode === 0 ? result.stdout.toString().trim() : "";
   } catch {
@@ -87,12 +91,13 @@ export function globalBinDirectories(
   binaryName: string,
   platform: NodeJS.Platform,
   home = os.homedir(),
+  discover = true,
 ) {
   const directories = new Set<string>();
   const add = (value: string | undefined) => {
     if (value) directories.add(path.resolve(value));
   };
-  const yarnBinary = commandOutput("yarn", ["bin", binaryName]);
+  const yarnBinary = discover ? commandOutput("yarn", ["bin", binaryName]) : "";
   if (yarnBinary) add(path.dirname(yarnBinary));
   add(process.env.BUN_INSTALL && path.join(process.env.BUN_INSTALL, "bin"));
   add(process.env.PNPM_HOME);
@@ -104,6 +109,7 @@ export function globalBinDirectories(
   );
   add(path.join(home, ".bun/bin"));
   add(path.join(home, ".bun/install/global/node_modules/.bin"));
+  if (!discover) return [...directories];
   add(commandOutput("bun", ["pm", "bin", "-g"]));
   add(commandOutput("pnpm", ["bin", "-g"]));
   add(commandOutput("yarn", ["global", "bin"]));
@@ -153,14 +159,22 @@ export function resolveGlobalBinaryAlias(
   options: GlobalBinaryResolutionOptions = {},
 ) {
   const platform = options.platform ?? process.platform;
+  const names = executableNames(binaryName, platform);
+  if (!options.globalBinDirectories) {
+    const known = executableCandidate(
+      directoryBinaryCandidates(
+        globalBinDirectories(binaryName, platform, options.home, false),
+        names,
+      ),
+      platform,
+    );
+    if (known) return known;
+  }
   const directories =
     options.globalBinDirectories ??
     globalBinDirectories(binaryName, platform, options.home);
   return executableCandidate(
-    directoryBinaryCandidates(
-      directories,
-      executableNames(binaryName, platform),
-    ),
+    directoryBinaryCandidates(directories, names),
     platform,
   );
 }

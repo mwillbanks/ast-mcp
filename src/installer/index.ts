@@ -99,16 +99,26 @@ function configuredCliEntry(
       "No local ast-mcp executable or shipped CLI was found. Build or install ast-mcp, then rerun the installer.",
     );
   }
-  const directories =
-    options.globalBinDirectories ??
-    globalBinDirectories("ast-mcp", platform, home);
-  const resolved =
-    stableGlobalCliEntry(options.cliEntry, directories, platform) ??
-    resolveGlobalBinaryAlias("ast-mcp", {
+  for (const discover of options.globalBinDirectories
+    ? [false]
+    : [false, true]) {
+    const directories =
+      options.globalBinDirectories ??
+      globalBinDirectories("ast-mcp", platform, home, discover);
+    const preferred = stableGlobalCliEntry(
+      options.cliEntry,
+      directories,
+      platform,
+    );
+    if (preferred) return preferred;
+    if (options.cliEntry && !discover && !options.globalBinDirectories)
+      continue;
+    const resolved = resolveGlobalBinaryAlias("ast-mcp", {
       globalBinDirectories: directories,
       platform,
     });
-  if (resolved) return resolved;
+    if (resolved) return resolved;
+  }
   throw new Error(
     "No executable global ast-mcp package-manager alias was found. Install @mwillbanks/ast-mcp globally with Bun, npm, pnpm, or Yarn, then rerun the installer.",
   );

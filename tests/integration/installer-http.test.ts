@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmod,
   mkdir,
@@ -45,23 +45,67 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
       : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"))} "$@"\n`,
   );
   await chmod(globalAlias, 0o755);
-  await install({
-    home,
-    host: "127.0.0.1",
-    port: 4891,
-    root,
-    scope: "global",
-    targets: ["codex", "claude", "copilot"],
-    transport: "http",
-  });
+  const discovery = spyOn(Bun, "spawnSync");
+  try {
+    await install({
+      home,
+      host: "127.0.0.1",
+      port: 4891,
+      root,
+      scope: "global",
+      targets: ["codex", "claude", "copilot"],
+      transport: "http",
+    });
 
-  for (const target of ["codex", "claude", "copilot"] as const) {
-    const result = await checkInstall(
+    for (const target of ["codex", "claude", "copilot"] as const) {
+      const result = await checkInstall(
+        [
+          "--scope",
+          "global",
+          "--target",
+          target,
+          "--transport",
+          "http",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "4891",
+        ],
+        home,
+      );
+      expect(result.installed).toBeTrue();
+      expect(result.transport).toBe("http");
+      expect(result.url).toBe("http://127.0.0.1:4891/mcp");
+    }
+
+    expect(discovery).not.toHaveBeenCalled();
+
+    const managerAlias = path.join(
+      home,
+      "manager-bin",
+      path.basename(globalAlias),
+    );
+    await mkdir(path.dirname(managerAlias), { recursive: true });
+    await writeFile(managerAlias, await readFile(globalAlias));
+    await chmod(managerAlias, 0o755);
+    const hookFile = path.join(home, ".codex/hooks.json");
+    const hooks = await readFile(hookFile, "utf8");
+    const encodedAlias = JSON.stringify(globalAlias).slice(1, -1);
+    expect(hooks).toContain(encodedAlias);
+    await writeFile(
+      hookFile,
+      hooks.replaceAll(encodedAlias, JSON.stringify(managerAlias).slice(1, -1)),
+    );
+    discovery.mockImplementation(((args: string[]) => ({
+      exitCode: args.join(" ") === "bun pm bin -g" ? 0 : 1,
+      stdout: Buffer.from(path.dirname(managerAlias)),
+    })) as never);
+    const configuredManager = await checkInstall(
       [
         "--scope",
         "global",
         "--target",
-        target,
+        "codex",
         "--transport",
         "http",
         "--host",
@@ -71,21 +115,36 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
       ],
       home,
     );
-    expect(result.installed).toBeTrue();
-    expect(result.transport).toBe("http");
-    expect(result.url).toBe("http://127.0.0.1:4891/mcp");
-  }
+    expect(configuredManager.installed).toBeTrue();
+    expect(discovery).toHaveBeenCalled();
+    await install({
+      home,
+      root,
+      scope: "global",
+      targets: ["codex"],
+      transport: "http",
+      host: "127.0.0.1",
+      port: 4891,
+      cliEntry: managerAlias,
+    });
+    expect(await readFile(hookFile, "utf8")).toContain(
+      JSON.stringify(managerAlias).slice(1, -1),
+    );
+    await writeFile(hookFile, hooks);
 
-  await uninstall({
-    home,
-    root,
-    scope: "global",
-    targets: ["codex", "claude", "copilot"],
-  });
-  expect(await readFile(globalConfigPath({ env: {}, home }), "utf8")).toContain(
-    "port = 4891",
-  );
-  expect(await readFile(path.join(home, ".codex/config.toml"), "utf8")).toBe(
-    "",
-  );
+    await uninstall({
+      home,
+      root,
+      scope: "global",
+      targets: ["codex", "claude", "copilot"],
+    });
+    expect(
+      await readFile(globalConfigPath({ env: {}, home }), "utf8"),
+    ).toContain("port = 4891");
+    expect(await readFile(path.join(home, ".codex/config.toml"), "utf8")).toBe(
+      "",
+    );
+  } finally {
+    discovery.mockRestore();
+  }
 });
