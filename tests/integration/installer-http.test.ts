@@ -91,10 +91,20 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
     const hookFile = path.join(home, ".codex/hooks.json");
     const hooks = await readFile(hookFile, "utf8");
     const encodedAlias = JSON.stringify(globalAlias).slice(1, -1);
-    expect(hooks).toContain(encodedAlias);
+    const nativeCase = (value: string) =>
+      process.platform === "win32" ? value.toLowerCase() : value;
+    const aliasIndex = nativeCase(hooks).indexOf(nativeCase(encodedAlias));
+    expect(aliasIndex).toBeGreaterThanOrEqual(0);
+    const installedAlias = hooks.slice(
+      aliasIndex,
+      aliasIndex + encodedAlias.length,
+    );
     await writeFile(
       hookFile,
-      hooks.replaceAll(encodedAlias, JSON.stringify(managerAlias).slice(1, -1)),
+      hooks.replaceAll(
+        installedAlias,
+        JSON.stringify(managerAlias).slice(1, -1),
+      ),
     );
     discovery.mockImplementation(((args: string[]) => ({
       exitCode: args.join(" ") === "bun pm bin -g" ? 0 : 1,
@@ -127,8 +137,8 @@ test("installs, diagnoses, and uninstalls global HTTP host entries", async () =>
       port: 4891,
       cliEntry: managerAlias,
     });
-    expect(await readFile(hookFile, "utf8")).toContain(
-      JSON.stringify(managerAlias).slice(1, -1),
+    expect(nativeCase(await readFile(hookFile, "utf8"))).toContain(
+      nativeCase(JSON.stringify(managerAlias).slice(1, -1)),
     );
     await writeFile(hookFile, hooks);
 
