@@ -198,4 +198,4 @@ jobs:
       - name: Verify qualified archive checksum
         run: |
           node -e 'const fs = require("node:fs"); const crypto = require("node:crypto"); const archive = fs.readFileSync("package-artifact/ast-mcp.tgz"); const expected = fs.readFileSync("package-artifact/ast-mcp.tgz.sha256", "utf8").trim(); if (crypto.createHash("sha256").update(archive).digest("hex") !== expected) throw new Error("Package archive checksum mismatch")'
-      - run: npm publish package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts
+      - run: npm publish ./package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts

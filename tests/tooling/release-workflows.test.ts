@@ -362,7 +362,7 @@ describe("release workflow contracts", () => {
       steps.some(
         (s) =>
           s.run ===
-          "npm publish package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
+          "npm publish ./package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
       ),
     ).toBe(true);
     expect(
