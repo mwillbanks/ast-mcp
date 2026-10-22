@@ -29,23 +29,52 @@ import {
 
 const consumerBun = process.env.AST_MCP_CONSUMER_BUN || process.execPath;
 
-function consumerEnvironment(): Record<string, string> {
+function consumerEnvironment(inherited = process.env): Record<string, string> {
+  const inheritedPath = Object.entries(inherited).find(
+    ([key]) => key.toUpperCase() === "PATH",
+  )?.[1];
   const environment = Object.fromEntries(
-    Object.entries(process.env).filter(
+    Object.entries(inherited).filter(
       ([key, value]) =>
         value !== undefined &&
+        key.toUpperCase() !== "PATH" &&
         !/^(?:NODE_PATH|NODE_OPTIONS|BUN_OPTIONS|BUN_INSTALL|NAPI_RS_NATIVE_LIBRARY_PATH|AST_MCP_)/i.test(
           key,
         ),
     ),
   ) as Record<string, string>;
-  environment.PATH = [path.dirname(consumerBun), environment.PATH]
+  environment.PATH = [path.dirname(consumerBun), inheritedPath]
     .filter(Boolean)
     .join(path.delimiter);
   environment.BUN_CONFIG_NO_AUTO_INSTALL = "1";
   environment.DO_NOT_TRACK = "1";
   return environment;
 }
+
+bunTest(
+  "consumer environments preserve Windows Path while removing runtime overrides",
+  () => {
+    const environment = consumerEnvironment({
+      Path: "system-bin",
+      NODE_PATH: "repository-modules",
+      NODE_OPTIONS: "--require=repository-hook",
+      NAPI_RS_NATIVE_LIBRARY_PATH: "native-override",
+      AST_MCP_PACKAGE_ARCHIVE: "archive",
+    });
+    expect(environment.PATH).toBe(
+      [path.dirname(consumerBun), "system-bin"].join(path.delimiter),
+    );
+    expect(environment.Path).toBeUndefined();
+    for (const key of [
+      "NODE_PATH",
+      "NODE_OPTIONS",
+      "NAPI_RS_NATIVE_LIBRARY_PATH",
+      "AST_MCP_PACKAGE_ARCHIVE",
+    ])
+      expect(environment[key]).toBeUndefined();
+    expect(environment.BUN_CONFIG_NO_AUTO_INSTALL).toBe("1");
+  },
+);
 
 async function command(
   args: string[],

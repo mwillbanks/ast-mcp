@@ -174,7 +174,6 @@ jobs:
     uses: ./.github/workflows/package-consumers.yml
     with:
       artifact_name: release-candidate
-      ref: ${{ needs.release.outputs.tag_name }}
 
   publish:
     needs: [release, validate, build, consumers]

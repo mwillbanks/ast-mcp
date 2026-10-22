@@ -165,7 +165,6 @@ jobs:
     uses: ./.github/workflows/package-consumers.yml
     with:
       artifact_name: package-candidate
-      ref: ${{ inputs.expected_sha || github.sha }}
 
   package-coverage:
     name: Package tests and 95% coverage (Linux)

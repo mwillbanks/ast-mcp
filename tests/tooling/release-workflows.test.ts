@@ -272,6 +272,11 @@ describe("release workflow contracts", () => {
       },
     ]);
     const steps = qualification.steps ?? [];
+    const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with?.ref).toBe("${{ github.sha }}");
+    expect(consumers.on.workflow_call).toEqual({
+      inputs: { artifact_name: { required: true, type: "string" } },
+    });
     const architecture = steps.find((s) => s.env?.EXPECTED_ARCH);
     expect(architecture?.run).toContain(
       "process.arch !== process.env.EXPECTED_ARCH",
@@ -301,6 +306,7 @@ describe("release workflow contracts", () => {
         "./.github/workflows/package-consumers.yml",
       );
       expect(job(source, name).with?.artifact_name).toBe(artifact);
+      expect(job(source, name).with?.ref).toBeUndefined();
     }
   });
   test("publishing uses the qualified archive without rebuilding", () => {
@@ -322,9 +328,6 @@ describe("release workflow contracts", () => {
           s.uses?.startsWith("actions/checkout@"),
         )?.with?.ref,
       ).toBe("${{ needs.release.outputs.tag_name }}");
-    expect(job(release, "consumers").with?.ref).toBe(
-      "${{ needs.release.outputs.tag_name }}",
-    );
     const producer = job(release, "build").steps ?? [];
     expect(producer.filter((s) => s.run?.includes("bun pm pack")).length).toBe(
       1,
