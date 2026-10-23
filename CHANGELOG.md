@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.4](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.3...ast-mcp-v0.6.4) (2026-10-23)
+
+### 🐛 Fixes
+
+- align mutation surfaces and guidance ([df73039](https://github.com/mwillbanks/ast-mcp/commit/df7303919bfeb2a1eb9ae17eae6f44dfc4aa85c5))
+- guard metadata and failure diagnostics ([db4a37e](https://github.com/mwillbanks/ast-mcp/commit/db4a37ed4991eeef484c42a0a3a6a94700812fac))
+- guard move and write parent directories ([48c4d21](https://github.com/mwillbanks/ast-mcp/commit/48c4d219faaac60d6ae24c49f4bc98d20b4dd8fe))
+- preserve receipts across safe retries ([fdd4799](https://github.com/mwillbanks/ast-mcp/commit/fdd4799e42f07d974e4749f4f391c55f05e852d3))
+- return honest bounded scan results ([80041ba](https://github.com/mwillbanks/ast-mcp/commit/80041babb28e7a4c8ba4a207984d07e8e79f685c))
+- **runtime:** make mutation batches reliable ([#47](https://github.com/mwillbanks/ast-mcp/issues/47)) ([96043c7](https://github.com/mwillbanks/ast-mcp/commit/96043c7c58c092c985041b3d08a074c09519c059))
+- validate and scope mutation journals ([12c3b47](https://github.com/mwillbanks/ast-mcp/commit/12c3b47bd57c4791a2c4a4b4a896c5427bbac0c7))
+
+### ⚡ Performance
+
+- reuse batch lock discovery ([2604675](https://github.com/mwillbanks/ast-mcp/commit/26046753d87c25cb35da05eca5ba8537385fbf30))
+- scan delete references once per batch ([6e66769](https://github.com/mwillbanks/ast-mcp/commit/6e667697281bb4c1ea7b0247d48c76433877f457))
+
+### 🔧 Maintenance
+
+- sync release metadata ([fa2508a](https://github.com/mwillbanks/ast-mcp/commit/fa2508a1766db9d021c6700fec4c289f5e40df52))
+
+### 🧪 Tests
+
+- cover mutation recovery and parent races ([b0d99ff](https://github.com/mwillbanks/ast-mcp/commit/b0d99ffc1ba707df50d990b8acb1a9c44fadec37))
+
 ## [0.6.3](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.2...ast-mcp-v0.6.3) (2026-10-23)
 
 ### 🐛 Fixes
