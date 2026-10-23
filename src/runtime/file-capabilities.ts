@@ -1,9 +1,12 @@
-import { lstat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
+  ParserError,
   type ParserLanguageId,
+  type ParserWorkerPool,
   parseSource,
 } from "../intelligence/parser/index.ts";
 import { detectAstLanguage } from "../patch/languages";
@@ -62,30 +65,56 @@ function intersection<T extends string>(left: T[], right: T[]): T[] {
   return left.filter((value) => permitted.has(value));
 }
 
-async function binaryFile(filePath: string, size: number): Promise<boolean> {
-  const bytes = Buffer.from(
-    await Bun.file(filePath).slice(0, Math.min(size, 8192)).arrayBuffer(),
-  );
-  return bytes.includes(0);
+async function binaryFile(
+  filePath: string,
+  size: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  if (size === 0) return false;
+  const stream = createReadStream(filePath, {
+    end: Math.min(size, 8192) - 1,
+    signal,
+  });
+  try {
+    for await (const chunk of stream)
+      if (Buffer.from(chunk).includes(0)) return true;
+    return false;
+  } finally {
+    stream.destroy();
+  }
 }
 
-async function parseState(filePath: string, language: string | undefined) {
+async function parseState(
+  filePath: string,
+  language: string | undefined,
+  signal?: AbortSignal,
+  parse?: ParserWorkerPool["parse"],
+) {
+  signal?.throwIfAborted();
   const extension = path.extname(filePath).toLowerCase();
   if (documentExtensions.has(extension)) {
     try {
-      parseStructuredDocument(filePath, await Bun.file(filePath).text());
+      parseStructuredDocument(
+        filePath,
+        await readFile(filePath, { encoding: "utf8", signal }),
+      );
       return { errorCount: 0, status: "parseable" as const };
     } catch {
+      signal?.throwIfAborted();
       return { errorCount: 1, status: "invalid" as const };
     }
   }
   if (!language)
     return { errorCount: undefined, status: "unsupported" as const };
   try {
-    const facts = parseSource({
+    const request = {
       languageId: language as ParserLanguageId,
-      source: await Bun.file(filePath).text(),
-    });
+      source: await readFile(filePath, { encoding: "utf8", signal }),
+    };
+    const facts = parse
+      ? await parse(request, { signal })
+      : parseSource(request);
     const errorCount = facts.diagnostics.filter(
       (diagnostic) => diagnostic.severity === "error",
     ).length;
@@ -93,7 +122,15 @@ async function parseState(filePath: string, language: string | undefined) {
       errorCount,
       status: errorCount === 0 ? ("parseable" as const) : ("invalid" as const),
     };
-  } catch {
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (
+      parse &&
+      error instanceof ParserError &&
+      error.code !== "invalid-language" &&
+      error.code !== "source-too-large"
+    )
+      throw error;
     return { errorCount: undefined, status: "unsupported" as const };
   }
 }
@@ -102,10 +139,13 @@ async function capabilityParseState(
   isBinary: boolean,
   filePath: string,
   language: string | undefined,
+  signal?: AbortSignal,
+  parse?: ParserWorkerPool["parse"],
 ) {
+  signal?.throwIfAborted();
   if (isBinary)
     return { errorCount: undefined, status: "unsupported" as const };
-  return parseState(filePath, language);
+  return parseState(filePath, language, signal, parse);
 }
 
 function supportsAstRead(
@@ -160,15 +200,31 @@ function classifyFile(
 export async function inspectFileCapabilities(
   filePath: string,
   languageOverride?: string,
+  signal?: AbortSignal,
+  parse?: ParserWorkerPool["parse"],
 ): Promise<FileCapabilities> {
+  signal?.throwIfAborted();
   const metadata = await lstat(filePath);
+  signal?.throwIfAborted();
   if (!metadata.isFile()) throw new Error(`Not a regular file: ${filePath}`);
   const config = await currentConfig();
   const configured = configuredMethods(config);
   const language = languageOverride ?? detectAstLanguage(filePath);
   const extension = path.extname(filePath).toLowerCase();
-  const isBinary = await binaryFile(filePath, metadata.size);
-  const state = await capabilityParseState(isBinary, filePath, language);
+  const isBinary = await binaryFile(filePath, metadata.size, signal);
+  const state = await capabilityParseState(
+    isBinary ||
+      Boolean(
+        parse &&
+        metadata.size >
+          (documentExtensions.has(extension) ? 1024 * 1024 : 2 * 1024 * 1024),
+      ),
+    filePath,
+    language,
+    signal,
+    parse,
+  );
+  signal?.throwIfAborted();
   const isDocument = documentExtensions.has(extension);
   const intrinsic = intrinsicMethods(
     isBinary,

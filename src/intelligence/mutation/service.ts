@@ -7,12 +7,14 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { sha256 } from "../../runtime/hash.ts";
-import { withFileLocks } from "../../runtime/locks.ts";
+import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import { createIdentity } from "../contracts/common.ts";
+import { ParserWorkerPool } from "../parser/pool.ts";
 import { LanceIntelligenceStore } from "../storage/store.ts";
 import {
   currentWorkspace,
@@ -68,6 +70,11 @@ async function assertRecoveryPath(
 async function restoreMutationRecord(
   workspace: WorkspaceHandle,
   record: MutationJournalRecord,
+  options: {
+    deadline?: Date | number;
+    fence?: () => Promise<void>;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<void> {
   for (const file of record.files) {
     await assertRecoveryPath(workspace, file.filePath);
@@ -81,6 +88,7 @@ async function restoreMutationRecord(
     record.files.map((file) => file.filePath),
     async (leases) => {
       const fence = async () => {
+        await options.fence?.();
         for (const lease of leases) await lease.fence();
       };
       const fencePath = async (filePath: string) => {
@@ -186,6 +194,10 @@ async function restoreMutationRecord(
         }
       }
     },
+    {
+      deadline: options.deadline ?? Date.now() + 10_000,
+      signal: options.signal,
+    },
   );
 }
 
@@ -197,19 +209,34 @@ export class LanceMutationLifecycle implements MutationLifecycle {
     private readonly store: LanceIntelligenceStore,
     private readonly workspace: WorkspaceHandle,
     private readonly refresh: typeof refreshMutationIntelligence = refreshMutationIntelligence,
+    private readonly options: {
+      deadline?: Date | number;
+      fence?: () => Promise<void>;
+      refreshTimeoutMs?: number;
+      signal?: AbortSignal;
+    } = {},
   ) {
     this.journal = new LanceMutationJournal(store);
   }
 
   async recover(): Promise<void> {
-    await this.journal.recover(this.workspace.workspaceId, (record) =>
-      restoreMutationRecord(this.workspace, record),
+    await this.options.fence?.();
+    const checkoutRoot = await canonicalizePath(this.workspace.checkoutRoot);
+    await this.journal.recover(
+      this.workspace.workspaceId,
+      (record) => restoreMutationRecord(this.workspace, record, this.options),
+      checkoutRoot,
     );
-    if ((await this.journal.unfinished(this.workspace.workspaceId)).length > 0)
+    if (
+      (await this.journal.unfinished(this.workspace.workspaceId, checkoutRoot))
+        .length > 0
+    )
       throw new Error("mutation_recovery_required");
   }
 
   async begin(plan: MutationBatchPlan): Promise<void> {
+    this.options.signal?.throwIfAborted();
+    await this.options.fence?.();
     if (
       !plan.workspace ||
       plan.workspace.workspaceId !== this.workspace.workspaceId ||
@@ -230,6 +257,7 @@ export class LanceMutationLifecycle implements MutationLifecycle {
   ): Promise<void> {
     if (!this.#plans.has(operationId))
       throw new Error("mutation_operation_unknown");
+    await this.options.fence?.();
     await this.journal.committed(operationId, file);
   }
 
@@ -239,22 +267,51 @@ export class LanceMutationLifecycle implements MutationLifecycle {
   ): Promise<MutationRefreshResult> {
     const plan = this.#plans.get(operationId);
     if (!plan) throw new Error("mutation_operation_unknown");
+    await this.options.fence?.();
     await this.journal.transition(operationId, "refreshing");
+    const timeout = new AbortController();
+    const timeoutError = Object.assign(
+      new Error("Mutation intelligence refresh timed out"),
+      {
+        code: "intelligence_refresh_timeout",
+        retryable: true,
+        suggestedNextCall: "Run index explicitly before retrying this mutation",
+      },
+    );
+    const timer = setTimeout(
+      () => timeout.abort(timeoutError),
+      this.options.refreshTimeoutMs ?? 30_000,
+    );
+    const signal = this.options.signal
+      ? AbortSignal.any([this.options.signal, timeout.signal])
+      : timeout.signal;
+    const parsers = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
     try {
       const result = await this.refresh({
+        parse: (request, options) => parsers.parse(request, options),
+        signal,
         store: this.store,
         workspace: this.workspace,
       });
+      signal.throwIfAborted();
+      await this.options.fence?.();
       await this.journal.transition(operationId, "succeeded");
       this.#plans.delete(operationId);
       return result;
     } catch (error) {
+      const failure =
+        timeout.signal.aborted && !this.options.signal?.aborted
+          ? timeoutError
+          : error;
       await this.journal.transition(
         operationId,
         "recovery-required",
-        errorCode(error),
+        errorCode(failure),
       );
-      throw error;
+      throw failure;
+    } finally {
+      clearTimeout(timer);
+      await parsers.close();
     }
   }
 
@@ -272,16 +329,66 @@ export class LanceMutationLifecycle implements MutationLifecycle {
 
 export async function withLanceMutationLifecycle<T>(
   operation: () => Promise<T>,
+  options: {
+    deadline?: Date | number;
+    preview?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<T> {
-  if (activeMutationLifecycle()) return operation();
+  options.signal?.throwIfAborted();
+  if (options.preview || activeMutationLifecycle()) return operation();
   const workspace = currentWorkspace();
   if (!workspace) return operation();
-  const store = await LanceIntelligenceStore.open(workspace.storageDomain);
-  try {
-    const lifecycle = new LanceMutationLifecycle(store, workspace);
-    await lifecycle.recover();
-    return await withMutationLifecycle(lifecycle, operation);
-  } finally {
-    await store.shutdownCoordinator();
-  }
+  // Workspace IDs change with revision and overlay state. The checkout lock must
+  // cover recovery and the entire transaction across requests and processes.
+  const checkout = await canonicalizePath(workspace.checkoutRoot);
+  return withFileLock(
+    path.join(os.tmpdir(), `ast-mcp-transaction-${sha256(checkout)}`),
+    async (lease) => {
+      options.signal?.throwIfAborted();
+      const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+      try {
+        const indexed = await store.latestGeneration(workspace.workspaceId);
+        // Overlay and configuration changes produce new workspace IDs. Retain
+        // freshness when this repository already has a published manifest.
+        const repositoryIndexed =
+          indexed ||
+          (
+            await store.rows(
+              "revision_manifests",
+              `repository_id = '${workspace.repositoryId.replaceAll("'", "''")}'`,
+              { limit: 1 },
+            )
+          ).length > 0;
+        const refresh: typeof refreshMutationIntelligence = repositoryIndexed
+          ? refreshMutationIntelligence
+          : async () => ({
+              dirtyOverlayId: workspace.dirtyOverlayId,
+              generationId: null,
+              indexedAt: new Date().toISOString(),
+              parsedFiles: [],
+              skippedFiles: [],
+            });
+        const lifecycle = new LanceMutationLifecycle(
+          store,
+          workspace,
+          refresh,
+          {
+            deadline: options.deadline,
+            fence: () => lease.fence(),
+            signal: options.signal,
+          },
+        );
+        await lifecycle.recover();
+        options.signal?.throwIfAborted();
+        return await withMutationLifecycle(lifecycle, operation);
+      } finally {
+        await store.shutdownCoordinator();
+      }
+    },
+    {
+      deadline: options.deadline ?? Date.now() + 10_000,
+      signal: options.signal,
+    },
+  );
 }

@@ -56,6 +56,7 @@ const EXPECTED_CODES = new Set([
   "workspace_mismatch",
   "workspace_required",
   "intelligence_budget_exceeded",
+  "intelligence_refresh_timeout",
   "reference_verification_failed",
   "graph_budget_exhausted",
   "document_too_large",
@@ -63,6 +64,7 @@ const EXPECTED_CODES = new Set([
   "deprecated_root_environment",
   "aborted",
   "timeout",
+  "tool_stalled",
   "use_file_patch",
   "generation_unavailable",
   "cross_repository_federation_required",
@@ -161,6 +163,7 @@ export interface TelemetryOptions {
   maxPending?: number;
   shutdownMs?: number;
   requestTimeoutMs?: number;
+  slowToolMs?: number;
   now?: () => number;
 }
 
@@ -239,7 +242,11 @@ export function filterTelemetryEvent(
   sessionId: string,
   knownTools: ReadonlySet<string>,
 ): EventMessage | null {
-  if (event.event !== "$mcp_tool_call" && event.event !== "$exception")
+  if (
+    event.event !== "$mcp_tool_call" &&
+    event.event !== "$mcp_tool_stalled" &&
+    event.event !== "$exception"
+  )
     return null;
   const input = record(event.properties);
   const outcome = input.outcome;
@@ -339,6 +346,7 @@ export class Telemetry {
   #sessionId = Bun.randomUUIDv7();
   #sessionStarted: number;
   readonly #pending = new Set<Promise<void>>();
+  readonly #watchdogs = new Set<ReturnType<typeof setTimeout>>();
   readonly #globalEnabled: () => Promise<boolean>;
   #sdk: Promise<Sdk | undefined> | undefined;
   #closed = false;
@@ -373,6 +381,17 @@ export class Telemetry {
     const scope: { policy?: Policy } = {};
     const start = performance.now();
     return this.#scope.run(scope, async () => {
+      const watchdog = setTimeout(() => {
+        this.#watchdogs.delete(watchdog);
+        this.#enqueue(tool, performance.now() - start, scope.policy, {
+          error: Object.assign(new Error("Tool is still running"), {
+            code: "tool_stalled",
+          }),
+          stalled: true,
+        });
+      }, this.options.slowToolMs ?? 15_000);
+      watchdog.unref?.();
+      this.#watchdogs.add(watchdog);
       try {
         const result = await operation();
         const cleanup =
@@ -405,6 +424,9 @@ export class Telemetry {
       } catch (error) {
         this.#enqueue(tool, performance.now() - start, scope.policy, { error });
         throw error;
+      } finally {
+        clearTimeout(watchdog);
+        this.#watchdogs.delete(watchdog);
       }
     });
   }
@@ -428,7 +450,7 @@ export class Telemetry {
     tool: string,
     duration: number,
     policy?: Policy,
-    failure?: { error: unknown },
+    failure?: { error: unknown; stalled?: boolean },
   ): void {
     if (
       this.#closed ||
@@ -446,7 +468,7 @@ export class Telemetry {
   async #capture(
     tool: string,
     duration: number,
-    thrown?: { error: unknown },
+    thrown?: { error: unknown; stalled?: boolean },
   ): Promise<void> {
     if (this.#terminated || !(await this.#globalEnabled()) || this.#terminated)
       return;
@@ -471,14 +493,26 @@ export class Telemetry {
         ? exceptionProperties(thrown?.error)
         : {}),
     };
-    sdk.captureToolCall({
-      toolName: this.#knownTools.has(tool) ? tool : "unknown",
-      durationMs: duration,
-      isError: thrown !== undefined,
-      errorType: failure.code,
-      sessionId: this.#sessionId,
-      properties,
-    });
+    if (thrown?.stalled) {
+      sdk.capture({
+        event: "$mcp_tool_stalled",
+        distinctId: this.#sessionId,
+        properties: {
+          ...properties,
+          $mcp_tool_name: this.#knownTools.has(tool) ? tool : "unknown",
+          $mcp_duration_ms: duration,
+        },
+      });
+    } else {
+      sdk.captureToolCall({
+        toolName: this.#knownTools.has(tool) ? tool : "unknown",
+        durationMs: duration,
+        isError: thrown !== undefined,
+        errorType: failure.code,
+        sessionId: this.#sessionId,
+        properties,
+      });
+    }
     if (failure.outcome === "unexpected_error") {
       sdk.capture({
         event: "$exception",
@@ -596,6 +630,8 @@ export class Telemetry {
   }
   close(): Promise<void> {
     this.#closed = true;
+    for (const watchdog of this.#watchdogs) clearTimeout(watchdog);
+    this.#watchdogs.clear();
     this.#closing ??= this.#close();
     return this.#closing;
   }

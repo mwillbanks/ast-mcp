@@ -11,11 +11,17 @@ import tools from "../tools";
 import type { ExecutionOptions } from "../tools/configured";
 import { createIntelligenceToolService } from "../tools/intelligence.ts";
 
+export interface ServerOptions {
+  approvalTimeoutMs?: number;
+}
+
 export function createServer(
   intelligenceOptions: IntelligenceRuntimeOptions = {},
   telemetryOptions: TelemetryOptions = {},
   execution: ExecutionOptions = {},
+  options: ServerOptions = {},
 ) {
+  const approvalTimeoutMs = options.approvalTimeoutMs ?? 60_000;
   const server = new McpServer(
     {
       name: "ast-mcp",
@@ -23,8 +29,32 @@ export function createServer(
     },
     {
       supportedProtocolVersions: ["2026-07-28", ...SUPPORTED_PROTOCOL_VERSIONS],
+      inputRequired: { maxRounds: 128, roundTimeoutMs: approvalTimeoutMs },
     },
   );
+
+  // The legacy input-required shim bypasses elicitInput and sends requests directly.
+  const request = server.server.request.bind(server.server);
+  server.server.request = ((...args: unknown[]) => {
+    if ((args[0] as { method?: string }).method === "elicitation/create") {
+      const optionsIndex = args.length >= 3 ? 2 : 1;
+      const requestOptions = args[optionsIndex] as
+        | Parameters<typeof server.server.elicitInput>[1]
+        | undefined;
+      const timeout = AbortSignal.timeout(approvalTimeoutMs);
+      args[optionsIndex] = {
+        ...requestOptions,
+        maxTotalTimeout: Math.min(
+          requestOptions?.maxTotalTimeout ?? approvalTimeoutMs,
+          approvalTimeoutMs,
+        ),
+        signal: requestOptions?.signal
+          ? AbortSignal.any([requestOptions.signal, timeout])
+          : timeout,
+      };
+    }
+    return Reflect.apply(request, undefined, args);
+  }) as typeof server.server.request;
 
   const telemetry = new Telemetry(telemetryOptions);
   const intelligence = createIntelligenceToolService(intelligenceOptions);

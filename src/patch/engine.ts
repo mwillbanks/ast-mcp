@@ -38,6 +38,7 @@ import { formatContent } from "../runtime/format";
 import { sha256 } from "../runtime/hash";
 import {
   type FileLockLease,
+  type FileLockOptions,
   withFencedFileLock,
   withFencedFileLocks,
 } from "../runtime/locks";
@@ -832,7 +833,9 @@ async function executePreparedFileBatch<T, Prepared>(
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
   fence: () => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
+  signal?.throwIfAborted();
   const snapshots = await captureBatchSnapshots(entries);
   const prepared = await prepareFileBatch(entries, preflight);
   const files: Record<string, unknown> = {};
@@ -870,6 +873,7 @@ async function executePreparedFileBatch<T, Prepared>(
     : randomUUID();
   let began = false;
   try {
+    signal?.throwIfAborted();
     if (plannedEntries.length > 0) {
       await beginMutation({
         files: sourcePlan,
@@ -883,12 +887,16 @@ async function executePreparedFileBatch<T, Prepared>(
       index,
       { inputPath, request, resolvedPath },
     ] of entries.entries()) {
+      signal?.throwIfAborted();
       if (mutates(request)) await fence();
       const result = await handler(
         resolvedPath,
         request,
         prepared[index] as Prepared,
-        fence,
+        async () => {
+          signal?.throwIfAborted();
+          await fence();
+        },
       );
       files[inputPath] = result;
       if (mutates(request)) {
@@ -905,6 +913,7 @@ async function executePreparedFileBatch<T, Prepared>(
       filePath: resolvedPath,
       sha256: String(result.sha256),
     }));
+    signal?.throwIfAborted();
     const intelligenceRefresh =
       began && commits.length > 0
         ? await completeMutation(operationId, commits)
@@ -937,7 +946,9 @@ async function processFileBatch<T, Prepared>(
   ) => Promise<Record<string, unknown>>,
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
+  options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
+  options.signal?.throwIfAborted();
   const entries = Object.entries(requests);
   if (entries.length < 1 || entries.length > FILE_READ_MAX_BATCH)
     throw new Error(
@@ -962,12 +973,15 @@ async function processFileBatch<T, Prepared>(
         async () => {
           for (const lease of leases) await lease.fence();
         },
+        options.signal,
       ),
+    { ...options, deadline: options.deadline ?? Date.now() + 10_000 },
   );
 }
 
 export async function patchFiles(
   requests: PatchBatch,
+  options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
   return processFileBatch(
     "file_patch",
@@ -975,6 +989,7 @@ export async function patchFiles(
     applyPreparedPatch,
     preflightPatchBatch,
     (request) => request.preview !== true,
+    options,
   );
 }
 
@@ -1021,6 +1036,7 @@ export async function writeFileSafely(args: {
 
 export async function writeFilesSafely(
   requests: FileWriteBatch,
+  options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
   return processFileBatch(
     "file_write",
@@ -1038,5 +1054,6 @@ export async function writeFilesSafely(
       ),
     preflightFileWrite,
     () => true,
+    options,
   );
 }

@@ -108,7 +108,7 @@ export default function registerFileTools(
         return toolSuccess({
           files: await execute(
             { files, revision, workspaceId },
-            () => readFilesSafely(files),
+            (signal) => readFilesSafely(files, { signal }),
             context,
             "file_read",
           ),
@@ -144,7 +144,8 @@ export default function registerFileTools(
         return toolSuccess({
           files: await execute(
             { filePaths, revision, workspaceId },
-            () => inspectWorkspaceFileCapabilitiesSafely(filePaths),
+            (signal) =>
+              inspectWorkspaceFileCapabilitiesSafely(filePaths, { signal }),
             context,
             "file_capabilities",
           ),
@@ -179,7 +180,7 @@ export default function registerFileTools(
         return toolSuccess({
           files: await execute(
             { filePaths, revision, workspaceId },
-            () => hashFilesSafely(filePaths),
+            (signal) => hashFilesSafely(filePaths, { signal }),
             context,
             "file_hash",
           ),
@@ -213,7 +214,11 @@ export default function registerFileTools(
         return toolSuccess(
           await execute(
             { files, revision, workspaceId },
-            () => withLanceMutationLifecycle(() => writeFilesSafely(files)),
+            (signal) =>
+              withLanceMutationLifecycle(
+                () => writeFilesSafely(files, { signal }),
+                { signal },
+              ),
             context,
             "file_write",
           ),
@@ -280,7 +285,13 @@ export default function registerFileTools(
         return toolSuccess(
           await execute(
             { files, revision, workspaceId },
-            () => withLanceMutationLifecycle(() => patchFiles(files)),
+            (signal) =>
+              withLanceMutationLifecycle(() => patchFiles(files, { signal }), {
+                signal,
+                preview: Object.values(files).every(
+                  (file) => file.preview === true,
+                ),
+              }),
             context,
             "file_patch",
           ),

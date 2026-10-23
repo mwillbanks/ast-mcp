@@ -61,6 +61,20 @@ Local scope uses the current directory and writes `ast-mcp.toml`. Global scope w
 
 The Bun-native server supports macOS, Linux, and Windows without a Cargo prerequisite. The installer checks the MCP handshake before reporting a healthy host surface. Restart or reconnect the server through the host after package or launch configuration changes; the host owns stdio process restarts. See the [installation guide](/docs/getting-started/installation) for Linux, Windows, and macOS Intel instructions, and the [connection diagnosis guide](/docs/guides/connection-diagnosis) when tools are unavailable.
 
+## Codex approval prompts
+
+Codex install and update enable MCP elicitation in top-level and named profile approval policies.
+A `never` policy becomes a granular policy that allows MCP elicitation and rejects every other approval category.
+Existing granular policies retain their other category values.
+Local installations preserve inherited global approval settings when enabling prompts.
+
+The installer preserves `on-request` and legacy `untrusted` policies because they already allow elicitation.
+Malformed or unsupported approval policies stop installation before the Codex configuration is written.
+Uninstall retains approval policy settings.
+
+Reconnect Codex after updating its configuration.
+Command-line or managed policy overrides can still prevent prompts.
+
 ## Routing hooks
 
 Codex and Claude installations expose the same strict tool schemas, structured results, annotations, line-range compatibility, and configuration tools over stdio or Streamable HTTP. Host approvals work over stdio and legacy stateful HTTP; modern stateless HTTP fails closed for operations that require host approval.

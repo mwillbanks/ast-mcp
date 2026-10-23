@@ -41,6 +41,8 @@ Telemetry uses a fixed allowlist. It records:
 - An anonymous UUIDv7 session identifier. Each telemetry controller generates a new identifier and rotates it after 23 hours of operation. Stdio normally uses one controller per process. Modern stateless HTTP does not retain MCP sessions between requests; legacy HTTP sessions have isolated controllers. Restarting the relevant server or legacy session renews the identifier. It does not identify a person.
 - For unexpected exceptions only, an allowlisted error type, a fixed message, and bounded line and column locations from sanitized ast-mcp package stack frames.
 
+An enabled operation still running after 15 seconds emits one `$mcp_tool_stalled` event with `error_code: tool_stalled`. This event uses the same privacy allowlist. It is separate from the completed `$mcp_tool_call` event and does not cancel the operation. Watchdogs stop on completion or shutdown. Unresolved request policies suppress these events. An event-loop stall or an approval wait handled outside tool execution can prevent this diagnostic from appearing.
+
 Expected operational conflicts, such as denied paths or stale hashes, are recorded as tool outcomes. They are not sent as exception reports. Unexpected exceptions omit the original error message and retain only the sanitized fields above.
 
 ## What telemetry excludes
