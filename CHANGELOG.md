@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.3](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.2...ast-mcp-v0.6.3) (2026-10-23)
+
+
+### 🐛 Fixes
+
+* eliminate concurrency and shutdown races ([a9b9891](https://github.com/mwillbanks/ast-mcp/commit/a9b9891a44166c68526b64049ffde51d2a1ffb7e))
+* **runtime:** prevent MCP stalls and recovery races ([e16f03b](https://github.com/mwillbanks/ast-mcp/commit/e16f03ba017b3cb292d946ba4be6cb36a5ab2183))
+
+
+### 🚦 Automation
+
+* **release:** resolve the qualified archive locally ([#43](https://github.com/mwillbanks/ast-mcp/issues/43)) ([515147b](https://github.com/mwillbanks/ast-mcp/commit/515147b885fcba8a95f59890355cf4c2c7059028))
+
 ## [0.6.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.1...ast-mcp-v0.6.2) (2026-10-22)
 
 ### 🐛 Fixes
