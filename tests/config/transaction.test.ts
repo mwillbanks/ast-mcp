@@ -126,7 +126,7 @@ test("missing and broken configuration targets fail safely without staging bytes
   const missing = path.join(root, "missing.toml");
   const target = await configWriteTarget(missing, true);
   expect(target.target).toBe(
-    path.join(await fs.realpath(root), "missing.toml"),
+    path.join(fsSync.realpathSync(root), "missing.toml"),
   );
   expect(target.mode).toBe(0o600);
   let called = false;
@@ -287,7 +287,7 @@ test("persistent approval cannot be overwritten by an in-flight configuration ed
     )[0]!;
   }
   const actual = fs.writeFile;
-  const directory = await fs.realpath(path.dirname(file));
+  const directory = fsSync.realpathSync(path.dirname(file));
   let approved = false;
   const writer = spyOn(fs, "writeFile").mockImplementation(
     async (...args: Parameters<typeof fs.writeFile>) => {

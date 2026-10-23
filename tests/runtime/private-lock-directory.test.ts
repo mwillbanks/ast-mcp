@@ -13,60 +13,45 @@ import {
   systemAccount,
 } from "../../src/runtime/private-lock-directory.ts";
 
-test("Windows account lookup uses the system known folder and rejects an unknown system root", () => {
-  const command = accountLookupCommand("win32", {
-    SystemRoot: "C:\\Windows",
-    HOME: "Z:\\untrusted",
-    USERPROFILE: "Z:\\untrusted",
-  });
-  expect(command[0]).toBe(
-    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
-  );
-  expect(command).toContain("-NoProfile");
-  expect(command.at(-1)).toContain("$PSModuleAutoLoadingPreference = 'None'");
-  expect(command.at(-1)).toContain("[Console]::WriteLine");
-  expect(command.at(-1)).not.toContain("ConvertTo-Json");
-  expect(command.at(-1)).not.toContain("|");
-  expect(command.at(-1)).toContain("[Environment+SpecialFolder]::UserProfile");
-  expect(command.join(" ")).not.toContain("untrusted");
-  expect(accountLookupCommand("win32", { systemroot: "C:\\Windows" })).toEqual(
-    command,
-  );
-  expect(() => accountLookupCommand("win32", {})).toThrow(
-    "system directory is unavailable",
-  );
-  expect(() =>
-    accountLookupCommand("win32", { SystemRoot: "relative" }),
-  ).toThrow("system directory is unavailable");
+test("account lookup uses the current runtime and clears native home overrides inside its child", () => {
+  const command = accountLookupCommand();
+  expect(command[0]).toBe(process.execPath);
+  expect(command[1]).toBe("--eval");
+  expect(command[2]).toContain("delete process.env[key]");
+  expect(command[2]).toContain("USERPROFILE");
+  expect(command[2]).toContain("os.userInfo()");
+  expect(command.join(" ")).not.toContain("powershell");
 });
 
 test.skipIf(process.platform !== "win32")(
-  "Windows native lookup completes without module discovery",
+  "Windows native lookup ignores home overrides restored by process creation",
   async () => {
     const root = await mkdtemp(
-      path.join(os.tmpdir(), "ast-mcp-account-no-modules-"),
+      path.join(os.tmpdir(), "ast-mcp-account-native-"),
     );
     const original = Bun.spawn;
+    const baseline = await readSystemAccount();
     const command = accountLookupCommand();
-    const query = command.at(-1)!;
     const spawned: ReturnType<typeof Bun.spawn>[] = [];
     const spawn = spyOn(Bun, "spawn").mockImplementation(((_args, options) => {
       const child = original(command, {
         ...options,
         env: {
           ...options?.env,
-          PSModulePath: path.join(root, "absent-modules"),
+          HOME: root,
+          USERPROFILE: root,
+          HOMEDRIVE: path.parse(root).root,
+          HOMEPATH: root,
         },
       });
       spawned.push(child);
       return child;
     }) as typeof Bun.spawn);
     try {
-      // This executes the production query in fresh hosts with no usable module catalog.
-      expect(query).toContain("$PSModuleAutoLoadingPreference = 'None'");
       const first = await readSystemAccount();
-      expect(path.isAbsolute(first.homedir)).toBe(true);
-      expect(await readSystemAccount()).toEqual(first);
+      expect(first).toEqual(baseline);
+      expect(first.homedir.toLowerCase()).not.toBe(root.toLowerCase());
+      expect(await readSystemAccount()).toEqual(baseline);
     } finally {
       spawn.mockRestore();
       for (const child of spawned) {
@@ -105,9 +90,6 @@ test("account lookup removes environment home and runtime options with mixed cas
   try {
     for (const name of names) process.env[name] = "untrusted";
     await readSystemAccount();
-    expect(environment?.PSModuleAnalysisCachePath).toBe(
-      process.platform === "win32" ? "NUL" : "/dev/null",
-    );
     for (const name of names) {
       expect(
         Object.keys(environment!).some(

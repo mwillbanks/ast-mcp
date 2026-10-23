@@ -18,7 +18,7 @@ interface SystemAccount {
   uid: number;
 }
 const ACCOUNT_QUERY =
-  'import os from "node:os"; const {homedir,uid}=os.userInfo(); console.log(JSON.stringify({homedir,uid}));';
+  'import os from "node:os"; const homes=new Set(["HOME","USERPROFILE","HOMEDRIVE","HOMEPATH"]); for(const key of Object.keys(process.env)) { if(homes.has(key.toUpperCase())) delete process.env[key]; } const {homedir,uid}=os.userInfo(); console.log(JSON.stringify({homedir,uid}));';
 let accountPromise: Promise<SystemAccount> | undefined;
 let resolvedAccount: SystemAccount | undefined;
 function accountEnvironment(): NodeJS.ProcessEnv {
@@ -30,42 +30,15 @@ function accountEnvironment(): NodeJS.ProcessEnv {
     "HOMEPATH",
     "NODE_OPTIONS",
     "BUN_OPTIONS",
-    "PSMODULEANALYSISCACHEPATH",
   ]);
   for (const key of Object.keys(env))
     if (excluded.has(key.toUpperCase())) delete env[key];
-  // Disable PowerShell background module-cache discovery before its host starts.
-  env.PSModuleAnalysisCachePath =
-    process.platform === "win32" ? "NUL" : "/dev/null";
   return env;
 }
 
-/** Windows Bun userInfo can follow environment homes; query the Windows known folder instead. */
-export function accountLookupCommand(
-  platform: NodeJS.Platform = process.platform,
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
-  if (platform !== "win32") return [process.execPath, "--eval", ACCOUNT_QUERY];
-  const systemRoot = Object.entries(env).find(
-    ([key]) => key.toUpperCase() === "SYSTEMROOT",
-  )?.[1];
-  if (!systemRoot || !path.win32.isAbsolute(systemRoot))
-    throw new Error("The Windows system directory is unavailable");
-  return [
-    path.win32.join(
-      systemRoot,
-      "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "powershell.exe",
-    ),
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
-    // Use only built-in language and .NET APIs: cmdlets trigger cold module discovery.
-    "$PSModuleAutoLoadingPreference = 'None'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile); if (-not $profilePath) { exit 1 }; [Console]::WriteLine('{\"homedir\":\"' + $profilePath.Replace('\\', '\\\\').Replace('\"', '\\\"') + '\",\"uid\":-1}')",
-  ];
+/** Clear inherited native Windows home overrides inside the child before querying its account. */
+export function accountLookupCommand(): string[] {
+  return [process.execPath, "--eval", ACCOUNT_QUERY];
 }
 function parseAccount(output: string): SystemAccount {
   const account: unknown = JSON.parse(output);
