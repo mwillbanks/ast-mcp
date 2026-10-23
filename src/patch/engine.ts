@@ -1,15 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  realpath,
-  rename,
-  rmdir,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { currentConfig } from "../config";
@@ -44,6 +35,11 @@ import {
   withFencedFileLock,
   withFencedFileLocks,
 } from "../runtime/locks";
+import {
+  ensureParentDirectories,
+  removeCreatedDirectories,
+  revalidateWritePath,
+} from "../runtime/parent-directories";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
 import {
@@ -113,46 +109,10 @@ async function removeTemporary(filePath: string) {
   } catch {}
 }
 
-async function ensureParent(filePath: string): Promise<string[]> {
-  const parent = path.dirname(filePath);
-  const first = await mkdir(parent, { recursive: true });
-  const revalidated = await resolveWritablePath(filePath);
-  if (revalidated !== filePath)
-    throw new Error("Parent creation changed the resolved write path");
-  if (!first) return [];
-  // Recursive mkdir can return a different physical alias on Windows.
-  const [canonicalFirst, canonicalParent] = await Promise.all([
-    realpath(first),
-    realpath(parent),
-  ]);
-  const relative = path.relative(canonicalFirst, canonicalParent);
-  if (
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    throw new Error(
-      "Created parent directory escaped its first created ancestor",
-    );
-  const created = [canonicalFirst];
-  let current = canonicalFirst;
-  for (const segment of relative.split(path.sep)) {
-    if (!segment) continue;
-    current = path.join(current, segment);
-    created.push(current);
-  }
-  return created;
-}
-
 async function ignoreFailure(operation: Promise<unknown>): Promise<void> {
   try {
     await operation;
   } catch {}
-}
-
-async function removeCreatedDirectories(directories: string[]): Promise<void> {
-  for (const directory of [...directories].reverse())
-    await ignoreFailure(rmdir(directory));
 }
 
 async function commit(
@@ -169,18 +129,16 @@ async function commit(
   sha256: string;
 }> {
   const next = temporary(filePath);
-  let createdDirectories: string[] = [];
+  const createdDirectories: string[] = [];
   let committed = false;
+  let primaryFailure: unknown;
   try {
-    const parentExists = await lstat(path.dirname(filePath)).then(
-      () => true,
-      () => false,
-    );
-    createdDirectories = parentExists ? [] : await ensureParent(filePath);
+    await ensureParentDirectories(filePath, createdDirectories, beforeReplace);
     const formatted = alreadyFormatted
       ? content
       : await formatContent(filePath, content);
     await beforeReplace?.();
+    await revalidateWritePath(filePath);
     await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
     if (mode !== undefined) {
       await beforeReplace?.();
@@ -195,6 +153,7 @@ async function commit(
       verifyExpectedHash(expectedSha256, actual);
     }
     await beforeReplace?.();
+    await revalidateWritePath(filePath);
     await rename(next, filePath);
     committed = true;
     return {
@@ -202,9 +161,26 @@ async function commit(
       createdDirectories,
       sha256: committedSha256,
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
     await removeTemporary(next);
-    if (!committed) await removeCreatedDirectories(createdDirectories);
+    if (!committed) {
+      try {
+        await removeCreatedDirectories(createdDirectories);
+      } catch (cleanupError) {
+        throw Object.assign(
+          new AggregateError(
+            [primaryFailure, cleanupError],
+            "File write failed and parent cleanup was incomplete",
+          ),
+          {
+            details: { affectedPaths: createdDirectories },
+          },
+        );
+      }
+    }
   }
 }
 function previewDiff(filePath: string, before: string, after: string): string {
@@ -699,20 +675,35 @@ async function preflightFileWrite(
       );
     mode = (await lstat(filePath)).mode;
   }
-  const parentExists = await lstat(path.dirname(filePath)).then(
-    () => true,
-    () => false,
-  );
-  const createdDirectories = parentExists ? [] : await ensureParent(filePath);
+  const createdDirectories: string[] = [];
+  let primaryFailure: unknown;
   try {
+    await ensureParentDirectories(filePath, createdDirectories, async () =>
+      patchSignals.getStore()?.throwIfAborted(),
+    );
     return {
       actual,
       content: await formatContent(filePath, request.content),
       existing: existing !== undefined,
       mode,
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await removeCreatedDirectories(createdDirectories);
+    try {
+      await removeCreatedDirectories(createdDirectories);
+    } catch (cleanupError) {
+      throw Object.assign(
+        new AggregateError(
+          [primaryFailure, cleanupError],
+          "File write preflight failed and parent cleanup was incomplete",
+        ),
+        {
+          details: { affectedPaths: createdDirectories },
+        },
+      );
+    }
   }
 }
 
@@ -821,11 +812,7 @@ async function rollbackFileBatch(
       await unlink(resolvedPath);
       const createdDirectories = result.createdDirectories;
       if (Array.isArray(createdDirectories))
-        await removeCreatedDirectories(
-          createdDirectories.filter(
-            (value): value is string => typeof value === "string",
-          ),
-        );
+        await removeCreatedDirectories(createdDirectories);
     } catch (error) {
       failures.push(error);
     }

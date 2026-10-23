@@ -15,7 +15,9 @@ function hash(value: string) {
 }
 
 async function temporaryRoot() {
-  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-rename-"));
+  const root = await fsPromises.realpath(
+    await mkdtemp(path.join(os.tmpdir(), "ast-mcp-rename-")),
+  );
   roots.push(root);
   await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
   process.env.AST_MCP_ROOTS = root;
@@ -106,7 +108,7 @@ test("file_rename reports probe failures and probe cleanup failures", async () =
   const link = spyOn(fsPromises, "link").mockImplementation(
     async (existingPath, newPath) => {
       if (newPath.toString().includes(".ast-mcp-rename-probe-"))
-        throw new Error("link unavailable");
+        throw Object.assign(new Error("link unavailable"), { code: "ENOTSUP" });
       await actualLink(existingPath, newPath);
     },
   );
@@ -257,4 +259,166 @@ test("file_rename rejects directories and duplicate resolved sources", async () 
       },
     }),
   ).rejects.toThrow("source appears more than once");
+});
+
+test("file_rename creates nested shared destination parents without markers", async () => {
+  const root = await temporaryRoot();
+  const first = path.join(root, "first.txt");
+  const second = path.join(root, "second.txt");
+  await writeFile(first, "first");
+  await writeFile(second, "second");
+  const firstDestination = path.join(root, "new/deep/first.txt");
+  const secondDestination = path.join(root, "new/deep/second.txt");
+  await renameFilesSafely({
+    [first]: { destination: firstDestination, expectedSha256: hash("first") },
+    [second]: {
+      destination: secondDestination,
+      expectedSha256: hash("second"),
+    },
+  });
+  expect(await readFile(firstDestination, "utf8")).toBe("first");
+  expect(await readFile(secondDestination, "utf8")).toBe("second");
+  expect(
+    (await fsPromises.readdir(path.dirname(firstDestination))).sort(),
+  ).toEqual(["first.txt", "second.txt"]);
+});
+
+test("file_rename removes created parents on probe failure and preserves errno causes", async () => {
+  const root = await temporaryRoot();
+  const source = path.join(root, "source.txt");
+  await writeFile(source, "source");
+  for (const code of [
+    "ENOENT",
+    "EACCES",
+    "EXDEV",
+    "ENOTSUP",
+    "EOPNOTSUPP",
+    "ENOSYS",
+    "EIO",
+    "ENOSPC",
+    "EMFILE",
+    "EROFS",
+  ]) {
+    const destination = path.join(root, code, "deep/destination.txt");
+    const cause = Object.assign(new Error("injected probe failure"), { code });
+    const actual = fsPromises.link.bind(fsPromises);
+    const link = spyOn(fsPromises, "link").mockImplementation(
+      async (from, to) => {
+        if (to.toString().includes(".ast-mcp-rename-probe-")) throw cause;
+        return actual(from, to);
+      },
+    );
+    try {
+      let failure: unknown;
+      try {
+        await renameFilesSafely({
+          [source]: { destination, expectedSha256: hash("source") },
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toMatchObject({ code, cause });
+      const message = (failure as Error).message;
+      if (["EIO", "ENOSPC", "EMFILE", "EROFS"].includes(code)) {
+        expect(message).toBe("file_rename filesystem link operation failed");
+        expect(message).not.toContain("requires hard-link support");
+      } else if (["EXDEV", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].includes(code)) {
+        expect(message).toContain("requires hard-link support");
+      }
+      await expect(fsPromises.lstat(path.join(root, code))).rejects.toThrow();
+      expect(await readFile(source, "utf8")).toBe("source");
+    } finally {
+      link.mockRestore();
+    }
+  }
+});
+
+test("file_rename destination races preserve concurrent files", async () => {
+  const root = await temporaryRoot();
+  const source = path.join(root, "source.txt");
+  const destination = path.join(root, "new/deep/destination.txt");
+  await writeFile(source, "source");
+  const actual = fsPromises.link.bind(fsPromises);
+  const link = spyOn(fsPromises, "link").mockImplementation(
+    async (from, to) => {
+      if (to.toString() === destination)
+        await writeFile(destination, "concurrent");
+      return actual(from, to);
+    },
+  );
+  try {
+    await expect(
+      renameFilesSafely({
+        [source]: { destination, expectedSha256: hash("source") },
+      }),
+    ).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await readFile(source, "utf8")).toBe("source");
+    expect(await readFile(destination, "utf8")).toBe("concurrent");
+  } finally {
+    link.mockRestore();
+  }
+});
+
+test("file_rename cancellation after parent creation removes owned empty parents", async () => {
+  const root = await temporaryRoot();
+  const source = path.join(root, "source.txt");
+  const destination = path.join(root, "new/deep/destination.txt");
+  await writeFile(source, "source");
+  const controller = new AbortController();
+  const actual = fsPromises.link.bind(fsPromises);
+  const link = spyOn(fsPromises, "link").mockImplementation(
+    async (from, to) => {
+      await actual(from, to);
+      if (to.toString().includes(".ast-mcp-rename-probe-")) controller.abort();
+    },
+  );
+  try {
+    await expect(
+      renameFilesSafely(
+        { [source]: { destination, expectedSha256: hash("source") } },
+        controller.signal,
+      ),
+    ).rejects.toThrow();
+    await expect(fsPromises.lstat(path.join(root, "new"))).rejects.toThrow();
+    expect(await readFile(source, "utf8")).toBe("source");
+  } finally {
+    link.mockRestore();
+  }
+});
+
+test("file_rename rollback restores sources and removes shared created parents", async () => {
+  const root = await temporaryRoot();
+  const first = path.join(root, "first.txt");
+  const second = path.join(root, "second.txt");
+  const firstDestination = path.join(root, "new/deep/first.txt");
+  const secondDestination = path.join(root, "new/deep/second.txt");
+  await writeFile(first, "first");
+  await writeFile(second, "second");
+  const actual = fsPromises.unlink.bind(fsPromises);
+  const unlink = spyOn(fsPromises, "unlink").mockImplementation(
+    async (file) => {
+      if (file.toString() === second)
+        throw new Error("second source unlink failed");
+      return actual(file);
+    },
+  );
+  try {
+    await expect(
+      renameFilesSafely({
+        [first]: {
+          destination: firstDestination,
+          expectedSha256: hash("first"),
+        },
+        [second]: {
+          destination: secondDestination,
+          expectedSha256: hash("second"),
+        },
+      }),
+    ).rejects.toThrow("second source unlink failed");
+    expect(await readFile(first, "utf8")).toBe("first");
+    expect(await readFile(second, "utf8")).toBe("second");
+    await expect(fsPromises.lstat(path.join(root, "new"))).rejects.toThrow();
+  } finally {
+    unlink.mockRestore();
+  }
 });

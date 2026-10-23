@@ -15,6 +15,11 @@ import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
+import {
+  ensureParentDirectories,
+  removeCreatedDirectories,
+  revalidateWritePath,
+} from "./parent-directories";
 import { pathsShareRoot, resolveWritablePath } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
 
@@ -43,6 +48,35 @@ function sourceHashFor(hashes: ReadonlyMap<string, string>, filePath: string) {
   return value;
 }
 
+function renameFailure(error: unknown): Error {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  const message =
+    code === "ENOENT"
+      ? "file_rename source or destination parent is missing"
+      : code === "EACCES" || code === "EPERM"
+        ? "file_rename filesystem permission denied"
+        : code === "EEXIST"
+          ? "file_rename destination already exists"
+          : code === "EXDEV" ||
+              code === "ENOTSUP" ||
+              code === "EOPNOTSUPP" ||
+              code === "ENOSYS"
+            ? "file_rename requires hard-link support between source and destination filesystems"
+            : "file_rename filesystem link operation failed";
+  return Object.assign(new Error(message, { cause: error }), {
+    code: typeof code === "string" ? code : "file_rename_link_failed",
+    retryable: code === "ENOENT",
+  });
+}
+
+async function revalidateEntry(entry: RenameEntry): Promise<void> {
+  if ((await resolveWritablePath(entry.filePath, "delete")) !== entry.filePath)
+    throw Object.assign(new Error("file_rename source path changed"), {
+      code: "mutation_path_changed",
+    });
+  await revalidateWritePath(entry.destinationPath);
+}
+
 async function verifyLinkCapability(
   entries: RenameEntry[],
   fence: () => Promise<void>,
@@ -54,8 +88,10 @@ async function verifyLinkCapability(
     );
     let linkError: unknown;
     let created = false;
+    await fence();
+    await revalidateEntry(entry);
+    await revalidateWritePath(probe);
     try {
-      await fence();
       await link(entry.filePath, probe);
       created = true;
     } catch (error) {
@@ -72,10 +108,7 @@ async function verifyLinkCapability(
         );
       }
     }
-    if (linkError)
-      throw new Error(
-        `file_rename requires hard-link support between source and destination filesystems: ${String(linkError)}`,
-      );
+    if (linkError) throw renameFailure(linkError);
   }
 }
 
@@ -124,11 +157,25 @@ async function moveFilesWithRollback(
       signal?.throwIfAborted();
       await fence();
       signal?.throwIfAborted();
-      await link(entry.filePath, entry.destinationPath);
+      await revalidateEntry(entry);
+      verifyExpectedHash(
+        sourceHashFor(sourceHashes, entry.filePath),
+        await sha256File(entry.filePath),
+      );
+      try {
+        await link(entry.filePath, entry.destinationPath);
+      } catch (error) {
+        throw renameFailure(error);
+      }
       try {
         await linked(entry);
         await fence();
         signal?.throwIfAborted();
+        await revalidateEntry(entry);
+        verifyExpectedHash(
+          sourceHashFor(sourceHashes, entry.filePath),
+          await sha256File(entry.filePath),
+        );
         await unlink(entry.filePath);
       } catch (error) {
         await fence();
@@ -195,10 +242,17 @@ export async function renameFilesSafely(
         throw new Error(
           `file_rename source and destination must share a root: ${inputPath}`,
         );
-      if (await lstat(destinationPath).catch(() => undefined))
-        throw new Error(
-          `file_rename destination already exists: ${request.destination}`,
+      try {
+        await lstat(destinationPath);
+        throw Object.assign(
+          new Error(
+            `file_rename destination already exists: ${request.destination}`,
+          ),
+          { code: "EEXIST" },
         );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
       return { destinationPath, filePath, request } satisfies RenameEntry;
     }),
   );
@@ -224,7 +278,6 @@ export async function renameFilesSafely(
       const fence = async () => {
         for (const lease of leases) await lease.fence();
       };
-      await verifyLinkCapability(entries, fence);
       const sourceSnapshots = new Map<
         string,
         Awaited<ReturnType<typeof readFileSnapshot>>
@@ -278,6 +331,9 @@ export async function renameFilesSafely(
         : randomUUID();
       let began = false;
       let moved = false;
+      let completed = false;
+      let primaryFailure: unknown;
+      const createdDirectories: string[] = [];
       try {
         signal?.throwIfAborted();
         await beginMutation({
@@ -287,6 +343,17 @@ export async function renameFilesSafely(
           workspace,
         });
         began = true;
+        for (const entry of entries) {
+          await ensureParentDirectories(
+            entry.destinationPath,
+            createdDirectories,
+            async () => {
+              signal?.throwIfAborted();
+              await fence();
+            },
+          );
+        }
+        await verifyLinkCapability(entries, fence);
         const files = await moveFilesWithRollback(
           entries,
           fence,
@@ -328,8 +395,10 @@ export async function renameFilesSafely(
           operationId,
           commits,
         );
+        completed = true;
         return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
       } catch (error) {
+        primaryFailure = error;
         if (began) await ignoreFailure(failMutation(operationId, error));
         if (moved) {
           try {
@@ -357,6 +426,22 @@ export async function renameFilesSafely(
         if (began && restored.every(Boolean))
           await ignoreFailure(recordMutationRollback(operationId));
         throw error;
+      } finally {
+        if (!completed) {
+          try {
+            await removeCreatedDirectories(createdDirectories);
+          } catch (cleanupError) {
+            throw Object.assign(
+              new AggregateError(
+                [primaryFailure, cleanupError],
+                "file_rename failed and parent cleanup was incomplete",
+              ),
+              {
+                details: { affectedPaths: createdDirectories },
+              },
+            );
+          }
+        }
       }
     },
     { signal },
