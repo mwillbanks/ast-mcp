@@ -5,12 +5,79 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  accountLookupCommand,
   privateLockDatabasePath,
   privateLockDatabasePathSync,
   ensurePrivateLockDirectory,
   readSystemAccount,
   systemAccount,
 } from "../../src/runtime/private-lock-directory.ts";
+
+test("Windows account lookup uses the system known folder and rejects an unknown system root", () => {
+  const command = accountLookupCommand("win32", {
+    SystemRoot: "C:\\Windows",
+    HOME: "Z:\\untrusted",
+    USERPROFILE: "Z:\\untrusted",
+  });
+  expect(command[0]).toBe(
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  );
+  expect(command).toContain("-NoProfile");
+  expect(command.at(-1)).toContain("[Environment+SpecialFolder]::UserProfile");
+  expect(command.join(" ")).not.toContain("untrusted");
+  expect(accountLookupCommand("win32", { systemroot: "C:\\Windows" })).toEqual(
+    command,
+  );
+  expect(() => accountLookupCommand("win32", {})).toThrow(
+    "system directory is unavailable",
+  );
+  expect(() =>
+    accountLookupCommand("win32", { SystemRoot: "relative" }),
+  ).toThrow("system directory is unavailable");
+});
+
+test("account lookup removes environment home and runtime options with mixed casing", async () => {
+  const names = [
+    "hOmE",
+    "UserProfile",
+    "HomeDrive",
+    "HomePath",
+    "Node_Options",
+    "Bun_Options",
+  ];
+  const before = names.map((name) => process.env[name]);
+  const original = Bun.spawn;
+  let environment: NodeJS.ProcessEnv | undefined;
+  const spawn = spyOn(Bun, "spawn").mockImplementation(((_command, options) => {
+    environment = options?.env;
+    return original(
+      [
+        process.execPath,
+        "--eval",
+        'console.log(JSON.stringify({homedir: process.cwd(),uid: process.platform === "win32" ? -1 : process.geteuid()}))',
+      ],
+      { env: options?.env, stdout: "pipe", stderr: "ignore" },
+    );
+  }) as typeof Bun.spawn);
+  try {
+    for (const name of names) process.env[name] = "untrusted";
+    await readSystemAccount();
+    for (const name of names) {
+      expect(
+        Object.keys(environment!).some(
+          (key) => key.toUpperCase() === name.toUpperCase(),
+        ),
+      ).toBe(false);
+      expect(process.env[name]).toBe("untrusted");
+    }
+  } finally {
+    spawn.mockRestore();
+    for (const [index, name] of names.entries()) {
+      if (before[index] === undefined) delete process.env[name];
+      else process.env[name] = before[index];
+    }
+  }
+});
 
 test("account lookup deadlines terminate a nonresponsive child", async () => {
   const original = Bun.spawn;

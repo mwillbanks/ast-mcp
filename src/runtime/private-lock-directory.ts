@@ -7,7 +7,7 @@ import {
   realpathSync,
   type Stats,
 } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, open } from "node:fs/promises";
 import path from "node:path";
 
 import { sha256 } from "./hash.ts";
@@ -23,16 +23,44 @@ let accountPromise: Promise<SystemAccount> | undefined;
 let resolvedAccount: SystemAccount | undefined;
 function accountEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
-  for (const key of [
+  const excluded = new Set([
     "HOME",
     "USERPROFILE",
     "HOMEDRIVE",
     "HOMEPATH",
     "NODE_OPTIONS",
     "BUN_OPTIONS",
-  ])
-    delete env[key];
+  ]);
+  for (const key of Object.keys(env))
+    if (excluded.has(key.toUpperCase())) delete env[key];
   return env;
+}
+
+/** Windows Bun userInfo can follow environment homes; query the Windows known folder instead. */
+export function accountLookupCommand(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (platform !== "win32") return [process.execPath, "--eval", ACCOUNT_QUERY];
+  const systemRoot = Object.entries(env).find(
+    ([key]) => key.toUpperCase() === "SYSTEMROOT",
+  )?.[1];
+  if (!systemRoot || !path.win32.isAbsolute(systemRoot))
+    throw new Error("The Windows system directory is unavailable");
+  return [
+    path.win32.join(
+      systemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile); if (-not $profilePath) { exit 1 }; @{ homedir = $profilePath; uid = -1 } | ConvertTo-Json -Compress",
+  ];
 }
 function parseAccount(output: string): SystemAccount {
   const account: unknown = JSON.parse(output);
@@ -57,12 +85,12 @@ function unavailable(cause: unknown): Error {
   );
 }
 
-/** Bun's userInfo honors HOME. Query in a bounded child with a sanitized copy. */
+/** Resolve the native account in a bounded child without modifying the host environment. */
 export async function readSystemAccount(): Promise<SystemAccount> {
   let child: ReturnType<typeof Bun.spawn> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    child = Bun.spawn([process.execPath, "--eval", ACCOUNT_QUERY], {
+    child = Bun.spawn(accountLookupCommand(), {
       env: accountEnvironment(),
       stdin: "ignore",
       stdout: "pipe",
@@ -102,7 +130,8 @@ export async function readSystemAccount(): Promise<SystemAccount> {
 function systemAccountSync(): SystemAccount {
   if (resolvedAccount) return resolvedAccount;
   try {
-    const result = spawnSync(process.execPath, ["--eval", ACCOUNT_QUERY], {
+    const [executable, ...args] = accountLookupCommand();
+    const result = spawnSync(executable!, args, {
       env: accountEnvironment(),
       encoding: "utf8",
       timeout: 5_000,
@@ -154,7 +183,7 @@ export async function ensurePrivateLockDirectory(
   account: SystemAccount,
 ): Promise<string> {
   directoryIn(account.homedir);
-  const directory = directoryIn(await realpath(account.homedir));
+  const directory = directoryIn(realpathSync.native(account.homedir));
   try {
     await mkdir(directory, { mode: 0o700 });
   } catch (error) {
@@ -190,7 +219,7 @@ export async function privateLockDatabasePath(
 }
 export function privateLockDatabasePathSync(lockIdentity: string): string {
   const account = systemAccountSync();
-  const directory = directoryIn(realpathSync(account.homedir));
+  const directory = directoryIn(realpathSync.native(account.homedir));
   try {
     mkdirSync(directory, { mode: 0o700 });
   } catch (error) {

@@ -122,7 +122,11 @@ test("persistent approval cannot be overwritten by an in-flight configuration ed
     expect(approved).toBe(true);
     const persisted = await fs.readFile(file, "utf8");
     expect(persisted).toContain("approval-");
-    expect(persisted).toContain(decision.canonicalPath);
+    expect(
+      (
+        Bun.TOML.parse(persisted) as { paths: Array<{ path: string }> }
+      ).paths.some((rule) => rule.path === decision.canonicalPath),
+    ).toBe(true);
     expect(persisted).not.toContain("[telemetry]");
   } finally {
     writer.mockRestore();
@@ -168,8 +172,9 @@ test("configuration commits do not contend with their enclosing file lease", asy
 
 test("configuration ownership recovers immediately after its process is killed", async () => {
   const { file } = await fixture();
-  const modulePath = new URL("../../src/config/transaction.ts", import.meta.url)
-    .pathname;
+  const modulePath = Bun.fileURLToPath(
+    new URL("../../src/config/transaction.ts", import.meta.url),
+  );
   const script = `import {withConfigTransaction} from ${JSON.stringify(modulePath)}; withConfigTransaction(${JSON.stringify(file)},()=>{console.log("ready"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);});`;
   const child = Bun.spawn([process.execPath, "-e", script], {
     stdout: "pipe",

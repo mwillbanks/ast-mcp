@@ -362,3 +362,22 @@ test("injected Potion close shares and retains failure until a new session loads
   await expect(provider.close()).rejects.toThrow("session close refused");
   expect(closes).toBe(2);
 });
+
+test("inline model engines reject missing offline models without a worker dependency", async () => {
+  const { InlineTransformersProvider, createPotionStaticSession } =
+    await import("../../../src/intelligence/retrieval/model-provider.ts");
+  const inline = new InlineTransformersProvider({
+    artifacts: {},
+    dimensions: 2,
+  });
+  await expect(inline.embed(["query"])).rejects.toThrow(
+    "embedding_model_not_configured",
+  );
+  await inline.close();
+  await expect(
+    createPotionStaticSession(
+      { ...config, localPath: "/missing-ast-mcp-offline-model" },
+      { verifyArtifacts: async () => {} },
+    ),
+  ).rejects.toThrow();
+});

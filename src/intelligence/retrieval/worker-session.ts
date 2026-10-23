@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads";
 
-import { EmbeddingUnavailableError } from "./embedding.ts";
+import { EmbeddingUnavailableError } from "./model-provider.ts";
 import type { EmbeddingModelConfig } from "./types.ts";
 
 export interface ModelWorkerRequest {

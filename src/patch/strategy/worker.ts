@@ -1,8 +1,7 @@
 import { parentPort } from "node:worker_threads";
 
 import type { PatchStrategyContext } from "../strategy.ts";
-import { inlineAiderBlockStrategy } from "./aiderBlock.ts";
-import { inlineAstStrategy } from "./ast.ts";
+import { inlineAiderBlockStrategy, inlineAstStrategy } from "./inline.ts";
 
 parentPort?.once(
   "message",

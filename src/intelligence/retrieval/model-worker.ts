@@ -2,10 +2,10 @@ import { parentPort } from "node:worker_threads";
 
 import {
   createPotionStaticSession,
-  PotionStaticEmbeddingProvider,
-  TransformersEmbeddingProvider,
+  InlinePotionProvider,
+  InlineTransformersProvider,
   type EmbeddingProvider,
-} from "./embedding.ts";
+} from "./model-provider.ts";
 import type { ModelWorkerRequest } from "./worker-session.ts";
 
 let provider: EmbeddingProvider | undefined;
@@ -17,10 +17,10 @@ parentPort?.on("message", (request: ModelWorkerRequest) => {
     try {
       provider ??=
         request.kind === "potion"
-          ? new PotionStaticEmbeddingProvider(request.config, (config) =>
+          ? new InlinePotionProvider(request.config, (config) =>
               createPotionStaticSession(config),
             )
-          : new TransformersEmbeddingProvider(
+          : new InlineTransformersProvider(
               request.config,
               request.allowDownload,
               async (task, model, options) => {
