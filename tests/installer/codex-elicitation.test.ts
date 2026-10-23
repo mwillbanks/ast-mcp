@@ -159,6 +159,77 @@ describe("Codex elicitation policy", () => {
     expect(result.approval_policy).toBeUndefined();
   });
 
+  test("preserves escaped basic strings while changing approval policy", () => {
+    const source = [
+      'description = "quoted \\"value\\" and C:\\\\tools"',
+      '"escaped\\u0020key" = "unchanged"',
+      "approval_policy = 'never'",
+      "",
+    ].join("\n");
+    const before = parsed(source);
+    const result = parsed(enableCodexElicitation(source));
+    expect(result.description).toBe(before.description);
+    expect(result["escaped key"]).toBe("unchanged");
+    expect(result.approval_policy.granular.mcp_elicitations).toBeTrue();
+  });
+
+  test("adds inherited policy to an existing local profile table", () => {
+    const source = [
+      "model = 'local'",
+      "[profiles.safe]",
+      "model = 'profile-local'",
+      "[profiles.inherit]",
+      "model = 'inherits-root'",
+      "",
+    ].join("\n");
+    const inherited = [
+      "approval_policy = 'on-request'",
+      "[profiles.safe]",
+      "approval_policy = { granular = { rules = false, sandbox_approval = true, mcp_elicitations = false } }",
+      "model = 'global'",
+      "",
+    ].join("\n");
+    const result = enableCodexElicitation(source, inherited);
+    expect(parsed(result)).toEqual({
+      model: "local",
+      profiles: {
+        safe: {
+          model: "profile-local",
+          approval_policy: {
+            granular: {
+              rules: false,
+              sandbox_approval: true,
+              mcp_elicitations: true,
+            },
+          },
+        },
+        inherit: { model: "inherits-root" },
+      },
+    });
+    expect(enableCodexElicitation(result, inherited)).toBe(result);
+  });
+
+  test("rejects inline profile policies without changing unrelated values", () => {
+    const source =
+      "profiles = { safe = { approval_policy = 'never', model = 'example' } }\n";
+    expect(() => enableCodexElicitation(source)).toThrow(
+      "Expand inline Codex profiles before enabling MCP elicitation",
+    );
+    expect(parsed(source).profiles.safe).toEqual({
+      approval_policy: "never",
+      model: "example",
+    });
+  });
+
+  test("rejects inherited policy insertion into an inline local profile", () => {
+    const source = "profiles = { safe = { model = 'local' } }\n";
+    const inherited = "[profiles.safe]\napproval_policy = 'never'\n";
+    expect(() => enableCodexElicitation(source, inherited)).toThrow(
+      "Expand inline Codex profiles before enabling MCP elicitation",
+    );
+    expect(parsed(source).profiles.safe).toEqual({ model: "local" });
+  });
+
   test("fails safely for malformed or unsupported approval settings", () => {
     for (const content of [
       "invalid [",
