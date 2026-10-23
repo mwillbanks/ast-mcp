@@ -194,6 +194,10 @@ export class InlineTransformersProvider implements EmbeddingProvider {
     return session;
   }
 
+  async initialize(): Promise<void> {
+    await this.load();
+  }
+
   async embed(texts: readonly string[]): Promise<readonly number[][]> {
     if (texts.length === 0) return [];
     const session = await this.load();
@@ -411,8 +415,7 @@ export class InlinePotionProvider implements EmbeddingProvider {
       throw new TypeError("potion_static_model_required");
   }
 
-  async embed(texts: readonly string[]): Promise<readonly number[][]> {
-    if (texts.length === 0) return [];
+  private load(): Promise<PotionStaticSession> {
     if (!this.session) {
       this.sessionClose = undefined;
       this.session = Promise.resolve().then(() => this.factory(this.config));
@@ -421,7 +424,16 @@ export class InlinePotionProvider implements EmbeddingProvider {
     void loading.catch(() => {
       if (this.session === loading) this.session = null;
     });
-    const session = await loading;
+    return loading;
+  }
+
+  async initialize(): Promise<void> {
+    await this.load();
+  }
+
+  async embed(texts: readonly string[]): Promise<readonly number[][]> {
+    if (texts.length === 0) return [];
+    const session = await this.load();
     const vectors = await session.embed(texts);
     if (vectors.length !== texts.length)
       throw new TypeError("embedding_batch_count_mismatch");

@@ -31,6 +31,8 @@ interface Pending<
   LanguageId extends string,
 > extends WorkerExpectation<LanguageId> {
   bytes: number;
+  retiring: boolean;
+  waiting: boolean;
   cleanup(): void;
   reject(error: Error): void;
   resolve(facts: SyntaxFacts): void;
@@ -59,6 +61,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
   private nextId = 1;
   private outstandingBytes = 0;
   private termination: Promise<void> | undefined;
+  private retirementFailed = false;
+  private readonly waitingStarts = new Map<number, () => void>();
   private readonly pending = new Map<number, Pending<LanguageId>>();
   private readonly drainWaiters = new Set<() => void>();
 
@@ -83,6 +87,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const request = this.pending.get(id);
     if (!request) return undefined;
     this.pending.delete(id);
+    this.waitingStarts.delete(id);
     this.outstandingBytes -= request.bytes;
     request.cleanup();
     this.notifyDrained();
@@ -103,6 +108,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
     failure: Error,
   ): Promise<void> {
     if (!this.termination) {
+      const retiringRequests = [...this.pending.entries()];
+      for (const [, request] of retiringRequests) request.retiring = true;
       this.worker = undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const retirement = Promise.resolve()
@@ -110,8 +117,12 @@ export class LanguageWorkerClient<LanguageId extends string> {
           if (active) await active.terminate();
         })
         .then(() => {
-          this.rejectPending(failure);
+          for (const [id] of retiringRequests) this.finish(id);
           this.termination = undefined;
+          this.retirementFailed = false;
+          const starts = [...this.waitingStarts.values()];
+          this.waitingStarts.clear();
+          for (const start of starts) queueMicrotask(start);
           this.notifyDrained();
         });
       this.termination = Promise.race([
@@ -124,8 +135,15 @@ export class LanguageWorkerClient<LanguageId extends string> {
           );
         }),
       ]).finally(() => clearTimeout(timer));
-      void this.termination.catch(observeRetirementFailure);
-      for (const request of this.pending.values()) {
+      void this.termination.catch(() => {
+        this.retirementFailed = true;
+        for (const id of [...this.waitingStarts.keys()]) {
+          this.finish(id)?.reject(
+            this.error("queue-full", "worker is retiring"),
+          );
+        }
+      });
+      for (const [, request] of retiringRequests) {
         request.cleanup();
         request.reject(failure);
       }
@@ -134,6 +152,10 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   private async cancel(id: number, failure: Error): Promise<void> {
+    if (this.pending.get(id)?.waiting) {
+      this.finish(id)?.reject(failure);
+      return;
+    }
     const active = this.worker;
     try {
       active?.postMessage({ id, type: "cancel" });
@@ -189,7 +211,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   analyze(request: LanguageAnalyzeRequest<LanguageId>): Promise<SyntaxFacts> {
-    if (this.termination)
+    if (this.termination && this.retirementFailed)
       return Promise.reject(this.error("queue-full", "worker is retiring"));
     const bytes = Buffer.byteLength(request.source);
     if (
@@ -218,6 +240,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
       };
       this.pending.set(id, {
         bytes,
+        retiring: false,
+        waiting: this.termination !== undefined,
         cleanup,
         languageId: request.languageId,
         reject,
@@ -226,8 +250,21 @@ export class LanguageWorkerClient<LanguageId extends string> {
       });
       this.outstandingBytes += bytes;
       request.signal?.addEventListener("abort", abort, { once: true });
-      queueMicrotask(() => {
-        if (this.termination || !this.pending.has(id)) return;
+      const start = () => {
+        const admitted = this.pending.get(id);
+        if (!admitted || admitted.retiring) return;
+        if (this.termination) {
+          if (this.retirementFailed)
+            this.finish(id)?.reject(
+              this.error("queue-full", "worker is retiring"),
+            );
+          else {
+            admitted.waiting = true;
+            this.waitingStarts.set(id, start);
+          }
+          return;
+        }
+        admitted.waiting = false;
         try {
           this.parserWorker().postMessage({
             id,
@@ -241,7 +278,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
             this.error("worker-exit", "worker could not start request"),
           ).catch(observeRetirementFailure);
         }
-      });
+      };
+      queueMicrotask(start);
     });
   }
 
@@ -258,7 +296,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   drain(): Promise<void> {
-    if (this.termination) return this.termination;
+    if (this.termination) return this.termination.then(() => this.drain());
     if (this.pending.size === 0) return Promise.resolve();
     return new Promise((resolve) => this.drainWaiters.add(resolve));
   }

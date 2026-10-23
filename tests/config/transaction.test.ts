@@ -1,4 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,10 @@ import {
   migrateConfigSource,
   writeMigratedConfig,
 } from "../../src/config/migrate";
-import { withConfigTransaction } from "../../src/config/transaction";
+import {
+  configWriteTarget,
+  withConfigTransaction,
+} from "../../src/config/transaction";
 import {
   authorizeRequestedDecision,
   clearSessionApprovals,
@@ -17,6 +21,10 @@ import {
 } from "../../src/runtime/approval";
 import { withFileLocks } from "../../src/runtime/locks";
 import { privateLockDatabasePathSync } from "../../src/runtime/private-lock-directory";
+import {
+  acquireTransactionLockSync,
+  isTransactionLockArtifact,
+} from "../../src/runtime/transaction-lock";
 
 const folders: string[] = [];
 afterEach(async () => {
@@ -36,6 +44,184 @@ async function fixture(source = "version = 2\n") {
   await fs.writeFile(file, source);
   return { root, file };
 }
+test.skipIf(process.platform === "win32")(
+  "configuration writes preserve symlink targets and permissions",
+  async () => {
+    const { root, file } = await fixture();
+    const target = path.join(root, "shared.toml");
+    await fs.rename(file, target);
+    await fs.chmod(target, 0o640);
+    await fs.symlink(target, file);
+    await writeConfigSource(
+      file,
+      "version = 2\n# linked update\n",
+      "version = 2\n",
+      file + ".bak",
+    );
+    expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toContain("linked update");
+    expect((await fs.stat(target)).mode & 0o777).toBe(0o640);
+    expect(await fs.readFile(file + ".bak", "utf8")).toBe("version = 2\n");
+    withConfigTransaction(file, () =>
+      expect(() => withConfigTransaction(target, () => {})).toThrow(
+        expect.objectContaining({ code: "configuration_busy" }),
+      ),
+    );
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "configuration retargeting during staging fails without changing either target",
+  async () => {
+    const { root, file } = await fixture();
+    const first = path.join(root, "first.toml");
+    const second = path.join(root, "second.toml");
+    const original = "version = 2\n";
+    await fs.rename(file, first);
+    await fs.writeFile(second, original);
+    await fs.symlink(first, file);
+    const actual = fs.writeFile;
+    const writer = spyOn(fs, "writeFile").mockImplementation(
+      async (...args: Parameters<typeof fs.writeFile>) => {
+        await actual(...args);
+        if (String(args[0]).includes(".config-")) {
+          await fs.unlink(file);
+          await fs.symlink(second, file);
+        }
+      },
+    );
+    try {
+      await expect(
+        writeConfigSource(file, original + "# rejected\n", original),
+      ).rejects.toMatchObject({
+        code: "configuration_conflict",
+        retryable: true,
+      });
+      expect(await fs.readFile(first, "utf8")).toBe(original);
+      expect(await fs.readFile(second, "utf8")).toBe(original);
+      expect(
+        (await fs.readdir(root)).filter(
+          (name) =>
+            name.includes(".config-") && !isTransactionLockArtifact(name),
+        ),
+      ).toEqual([]);
+    } finally {
+      writer.mockRestore();
+    }
+  },
+);
+
+test("missing and broken configuration targets fail safely without staging bytes", async () => {
+  const { root, file } = await fixture();
+  const missing = path.join(root, "missing.toml");
+  const target = await configWriteTarget(missing, true);
+  expect(target.target).toBe(
+    path.join(await fs.realpath(root), "missing.toml"),
+  );
+  expect(target.mode).toBe(0o600);
+  let called = false;
+  withConfigTransaction(missing, () => {
+    called = true;
+  });
+  expect(called).toBe(true);
+  await expect(configWriteTarget(missing)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await fs.unlink(file);
+  await fs.symlink(missing, file);
+  expect(() => withConfigTransaction(file, () => {})).toThrow(
+    expect.objectContaining({ code: "ENOENT" }),
+  );
+});
+
+test("configuration commit preserves filesystem inspection errors and malformed shared guards", async () => {
+  const { root, file } = await fixture();
+  const actual = fsSync.realpathSync;
+  const realpath = spyOn(fsSync, "realpathSync").mockImplementation(((
+    ...args: Parameters<typeof fsSync.realpathSync>
+  ) => {
+    if (String(args[0]) === file)
+      throw Object.assign(new Error("canonical lookup denied"), {
+        code: "EACCES",
+      });
+    return actual(...args);
+  }) as typeof fsSync.realpathSync);
+  try {
+    expect(() => withConfigTransaction(file, () => {})).toThrow(
+      "canonical lookup denied",
+    );
+  } finally {
+    realpath.mockRestore();
+  }
+  const missing = path.join(root, "missing.toml");
+  const originalLstat = fsSync.lstatSync;
+  const lstat = spyOn(fsSync, "lstatSync").mockImplementation(((
+    ...args: Parameters<typeof fsSync.lstatSync>
+  ) => {
+    if (String(args[0]) === missing)
+      throw Object.assign(new Error("link inspection denied"), {
+        code: "EACCES",
+      });
+    return originalLstat(...args);
+  }) as typeof fsSync.lstatSync);
+  try {
+    expect(() => withConfigTransaction(missing, () => {})).toThrow(
+      "link inspection denied",
+    );
+  } finally {
+    lstat.mockRestore();
+  }
+  await fs.writeFile(file + ".config-commit.sqlite", "invalid database", {
+    mode: 0o600,
+  });
+  expect(() => withConfigTransaction(file, () => {})).toThrow();
+  expect(await fs.readFile(file, "utf8")).toBe("version = 2\n");
+});
+
+test("shared configuration transactions exclude a different private namespace", async () => {
+  const { root, file } = await fixture();
+  const owner = acquireTransactionLockSync(
+    path.join(root, "different-account"),
+    {
+      sharedDatabasePath: file + ".config-commit.sqlite",
+    },
+  );
+  let invoked = false;
+  try {
+    expect(() =>
+      withConfigTransaction(file, () => {
+        invoked = true;
+      }),
+    ).toThrow(expect.objectContaining({ code: "configuration_busy" }));
+    expect(invoked).toBe(false);
+  } finally {
+    owner.release();
+  }
+  withConfigTransaction(file, () => {
+    invoked = true;
+  });
+  expect(invoked).toBe(true);
+});
+
+test("configuration targets reject non-files and propagate inspection failures", async () => {
+  const { root, file } = await fixture();
+  await expect(configWriteTarget(root)).rejects.toThrow("regular file");
+  const original = fs.stat;
+  const inspect = spyOn(fs, "stat").mockImplementation(((
+    ...args: Parameters<typeof fs.stat>
+  ) =>
+    path.basename(String(args[0])) === path.basename(file)
+      ? Promise.reject(
+          Object.assign(new Error("metadata denied"), { code: "EACCES" }),
+        )
+      : original(...args)) as typeof fs.stat);
+  try {
+    await expect(configWriteTarget(file)).rejects.toThrow("metadata denied");
+  } finally {
+    inspect.mockRestore();
+  }
+});
+
 test("configuration commit rejects stale source and removes prepared replacement", async () => {
   const { root, file } = await fixture();
   await fs.writeFile(file, "version = 2\n# concurrent update\n");
@@ -44,7 +230,9 @@ test("configuration commit rejects stale source and removes prepared replacement
   ).rejects.toMatchObject({ code: "configuration_conflict", retryable: true });
   expect(await fs.readFile(file, "utf8")).toContain("concurrent update");
   expect(
-    (await fs.readdir(root)).filter((name) => name.includes(".config-")),
+    (await fs.readdir(root)).filter(
+      (name) => name.includes(".config-") && !isTransactionLockArtifact(name),
+    ),
   ).toEqual([]);
 });
 test("persistent approval cannot be overwritten by an in-flight configuration edit", async () => {
@@ -89,12 +277,13 @@ test("persistent approval cannot be overwritten by an in-flight configuration ed
     )[0]!;
   }
   const actual = fs.writeFile;
+  const directory = await fs.realpath(path.dirname(file));
   let approved = false;
   const writer = spyOn(fs, "writeFile").mockImplementation(
     async (...args: Parameters<typeof fs.writeFile>) => {
       await actual(...args);
       if (
-        path.dirname(String(args[0])) === path.dirname(file) &&
+        path.dirname(String(args[0])) === directory &&
         String(args[0]) !== file &&
         !approved
       ) {

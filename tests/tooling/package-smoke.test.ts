@@ -584,36 +584,55 @@ async function exerciseConsumer(installer: string) {
           "--eval",
           `import { Worker } from "node:worker_threads";
        import { pathToFileURL } from "node:url";
-       const worker = new Worker(pathToFileURL(${JSON.stringify(patchWorkerPath)}));
-       try {
-         const result = await new Promise((resolve, reject) => {
-           const timer = setTimeout(() => reject(new Error("packaged patch worker timed out")), 5000);
-           worker.once("error", reject);
-           worker.once("message", value => { clearTimeout(timer); resolve(value); });
-           worker.postMessage({ strategy: "ast", context: {
-             original: "const value = 1;", language: "typescript",
-             astRules: [{ pattern: "const value = 1", fix: "const value = 2" }],
-             aiderBlocks: [], capabilities: { effective: { patch: ["ast"] } }
-           } });
-         });
-         console.log(JSON.stringify(result));
-       } finally { await worker.terminate(); }`,
+       const { LanguageRegistry } = await import(pathToFileURL(${JSON.stringify(path.join(installedPackage, "src", "intelligence", "parser", "registry.ts"))}));
+       const toml = (await import("@ast-grep/lang-toml")).default;
+       const registry = new LanguageRegistry(() => {});
+       const libraryPath = toml.libraryPath;
+       const sha256 = new Bun.CryptoHasher("sha256").update(await Bun.file(libraryPath).arrayBuffer()).digest("hex");
+       await registry.addDynamic({
+         astGrepLanguage:"PackagedToml", dynamicAsset:{libraryPath,sha256,languageSymbol:toml.languageSymbol,expandoChar:toml.expandoChar},
+         extensions:[".packagedtoml"],grammarVersion:"package-fixture",languageId:"packaged-toml"
+       },{
+         callResolution:false,embeddedLanguages:false,exportResolution:false,importResolution:false,
+         inheritanceResolution:false,match:true,parse:true,rewrite:true,structuralRead:true,symbolExtraction:false
+       });
+       const results = [];
+         for (const [language, original, replacement] of [
+           ["typescript", "const value = 1", "const value = 2"],
+           ["packaged-toml", "answer = 1", "answer = 2"]
+         ]) {
+           const worker = new Worker(pathToFileURL(${JSON.stringify(patchWorkerPath)}));
+           try {
+           results.push(await new Promise((resolve, reject) => {
+             const timer = setTimeout(() => reject(new Error("packaged patch worker timed out")), 5000);
+             worker.once("error", reject);
+             worker.once("message", value => { clearTimeout(timer); resolve(value); });
+             worker.postMessage({strategy:"ast", manifest:registry.dynamicManifest(), context:{
+               original, language, astRules:[{pattern:original,fix:replacement}],
+               aiderBlocks:[],capabilities:{effective:{patch:["ast"]}}
+             }});
+           }));
+           } finally { await worker.terminate(); }
+         }
+         console.log(JSON.stringify(results));`,
         ],
         consumer,
       ),
     );
-    expect(patchWorkerResult).toEqual({
-      ok: true,
-      patch: {
-        candidate: "const value = 2",
-        metadata: {
-          engine: "ast-mcp.native",
-          matches: 1,
-          operations: 1,
-          strategy: "ast",
+    expect(patchWorkerResult).toEqual(
+      ["const value = 2", "answer = 2"].map((candidate) => ({
+        ok: true,
+        patch: {
+          candidate,
+          metadata: {
+            engine: "ast-mcp.native",
+            matches: 1,
+            operations: 1,
+            strategy: "ast",
+          },
         },
-      },
-    });
+      })),
+    );
     const canonicalFixture = await realpath(fixture);
     const jsonOutput = JSON.parse(
       await command([consumerBun, executable, "config", "validate"], fixture),

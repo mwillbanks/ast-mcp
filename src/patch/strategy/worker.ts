@@ -1,5 +1,9 @@
 import { parentPort } from "node:worker_threads";
 
+import {
+  defaultLanguageRegistry,
+  type DynamicGrammarManifest,
+} from "../../intelligence/parser/registry.ts";
 import type { PatchStrategyContext } from "../strategy.ts";
 import { inlineAiderBlockStrategy, inlineAstStrategy } from "./inline.ts";
 
@@ -7,9 +11,14 @@ parentPort?.once(
   "message",
   async (request: {
     context: PatchStrategyContext;
+    manifest?: DynamicGrammarManifest;
     strategy: "ast" | "aider_block";
   }) => {
     try {
+      if (request.strategy === "ast" && request.manifest) {
+        await defaultLanguageRegistry.loadDynamicManifest(request.manifest);
+        defaultLanguageRegistry.registerDynamicGrammars();
+      }
       const adapter =
         request.strategy === "ast"
           ? inlineAstStrategy

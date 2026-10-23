@@ -18,11 +18,14 @@ const config = EmbeddingModelConfigSchema.parse({
   dimensions: 2,
   batchSize: 1,
 });
-const url = (body: string) =>
+const url = (body: string, notifyStarted = true) =>
   new URL(
     "data:text/javascript," +
       encodeURIComponent(
         'import { parentPort } from "node:worker_threads"; parentPort.on("message", request => {' +
+          (notifyStarted
+            ? 'parentPort.postMessage({id: request.id, type: "started"});'
+            : "") +
           body +
           "});",
       ),
@@ -82,6 +85,86 @@ describe("isolated model session lifecycle", () => {
       await expect(model.close()).rejects.toThrow("termination unavailable");
       await expect(model.close()).rejects.toThrow("termination unavailable");
       expect(await pending).toBe("embedding_session_closed");
+    } finally {
+      await terminate();
+    }
+  });
+
+  test("bounds recovery admission and expires waiters while retirement remains pending", async () => {
+    const active = new Worker(url(""));
+    const terminate = active.terminate.bind(active);
+    let retire!: (code: number) => void;
+    active.terminate = () =>
+      new Promise<number>((resolve) => {
+        retire = resolve;
+      });
+    let creates = 0;
+    const model = new ManagedModelSession(
+      config,
+      "transformers",
+      false,
+      10,
+      url(""),
+      () => {
+        creates++;
+        return active;
+      },
+      100,
+    );
+    try {
+      await expect(model.embed(["stuck"])).rejects.toThrow(
+        "embedding_worker_timeout",
+      );
+      const waiting = Array.from({ length: 128 }, () =>
+        model.embed(["recovery"]).catch((error: Error) => error.message),
+      );
+      await expect(model.embed(["overflow"])).rejects.toThrow(
+        "embedding_queue_full",
+      );
+      expect(await Promise.all(waiting)).toEqual(
+        Array(128).fill("embedding_worker_retirement_timeout"),
+      );
+      expect(creates).toBe(1);
+      const closingWaiter = model
+        .embed(["close"])
+        .catch((error: Error) => error.message);
+      const closing = model.close().catch((error: Error) => error.message);
+      expect(await closingWaiter).toBe("embedding_session_closed");
+      retire(await terminate());
+      await closing;
+    } finally {
+      await terminate();
+    }
+  });
+
+  test("rejects bounded recovery callers when physical retirement fails", async () => {
+    const active = new Worker(url(""));
+    const terminate = active.terminate.bind(active);
+    let failRetirement!: (error: Error) => void;
+    active.terminate = () =>
+      new Promise<number>((_resolve, reject) => {
+        failRetirement = reject;
+      });
+    const model = new ManagedModelSession(
+      config,
+      "transformers",
+      false,
+      10,
+      url(""),
+      () => active,
+      200,
+    );
+    try {
+      await expect(model.embed(["stuck"])).rejects.toThrow(
+        "embedding_worker_timeout",
+      );
+      const recovery = model.embed(["recovery"]);
+      failRetirement(new Error("termination failed"));
+      await expect(recovery).rejects.toThrow("embedding_worker_retiring");
+      await expect(model.embed(["later"])).rejects.toThrow(
+        "embedding_worker_retiring",
+      );
+      await expect(model.close()).rejects.toThrow("termination failed");
     } finally {
       await terminate();
     }
@@ -380,4 +463,117 @@ test("inline model engines reject missing offline models without a worker depend
       { verifyArtifacts: async () => {} },
     ),
   ).rejects.toThrow();
+});
+
+test("model requests use separate queue and initialization budgets before inference starts", async () => {
+  const model = new ManagedModelSession(
+    config,
+    "transformers",
+    false,
+    25,
+    url(
+      'globalThis.tail = (globalThis.tail ?? Promise.resolve()).then(async () => { await new Promise(resolve => setTimeout(resolve, 40)); parentPort.postMessage({id:request.id,type:"started"}); await new Promise(resolve => setTimeout(resolve,5)); parentPort.postMessage({id:request.id,vectors:[[1,0]]}); });',
+      false,
+    ),
+    undefined,
+    250,
+  );
+  try {
+    expect(
+      await Promise.all([model.embed(["first"]), model.embed(["second"])]),
+    ).toEqual([[[1, 0]], [[1, 0]]]);
+  } finally {
+    await model.close();
+  }
+  const stalled = new ManagedModelSession(
+    config,
+    "transformers",
+    false,
+    5,
+    url("", false),
+    undefined,
+    20,
+  );
+  await expect(stalled.embed(["query"])).rejects.toThrow(
+    "embedding_worker_load_timeout",
+  );
+  await stalled.close();
+  const duplicate = session(
+    'parentPort.postMessage({id:request.id,type:"started"});',
+  );
+  await expect(duplicate.embed(["query"])).rejects.toThrow(
+    "embedding_worker_protocol_error",
+  );
+  await duplicate.close();
+});
+
+test("embedding retries wait for retirement before spending their next inference attempt", async () => {
+  let creates = 0;
+  let release!: () => void;
+  const model = new ManagedModelSession(
+    config,
+    "transformers",
+    false,
+    20,
+    url(""),
+    () => {
+      const active = new Worker(
+        url(
+          ++creates === 1
+            ? "while(true){}"
+            : "parentPort.postMessage({id:request.id,vectors:[[1,0]]});",
+        ),
+      );
+      if (creates === 1) {
+        const terminate = active.terminate.bind(active);
+        active.terminate = () =>
+          new Promise<number>((resolve, reject) => {
+            release = () => {
+              void terminate().then(resolve, reject);
+            };
+          });
+      }
+      return active;
+    },
+    500,
+  );
+  const pool = new EmbeddingWorkerPool(config, () => ({
+    config,
+    embed: (texts) => model.embed(texts),
+    close: () => model.close(),
+  }));
+  const result = pool.embed("query", { retries: 1 });
+  for (let attempt = 0; !release && attempt < 100; attempt++)
+    await Bun.sleep(2);
+  expect(creates).toBe(1);
+  release();
+  expect(await result).toEqual([1, 0]);
+  expect(creates).toBe(2);
+  await pool.close();
+});
+
+test("inline provider initialization finishes before any inference begins", async () => {
+  const { InlineTransformersProvider, InlinePotionProvider } =
+    await import("../../../src/intelligence/retrieval/model-provider.ts");
+  let inference = 0;
+  const transformer = new InlineTransformersProvider(
+    config,
+    true,
+    async () => async () => {
+      inference++;
+      return { data: [1, 0] };
+    },
+  );
+  const potion = new InlinePotionProvider(potionConfig, async () => ({
+    embed: async () => {
+      inference++;
+      return [Array.from({ length: 256 }, () => 1)];
+    },
+  }));
+  await Promise.all([transformer.initialize(), potion.initialize()]);
+  expect(inference).toBe(0);
+  await transformer.embed(["query"]);
+  await potion.embed(["query"]);
+  expect(inference).toBe(2);
+  await Promise.all([transformer.close(), potion.close()]);
 });

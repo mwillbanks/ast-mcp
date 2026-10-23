@@ -813,15 +813,16 @@ async function ensureInstallerConfig(
       flag: "wx",
     });
   } else {
+    let migration: ReturnType<typeof migrateConfigSource>;
     try {
-      const migration = migrateConfigSource(existing, file);
-      if (migration.changed)
-        await writeMigratedConfig(file, migration.source, true, existing);
+      migration = migrateConfigSource(existing, file);
     } catch (error) {
       throw new Error(
         `invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    if (migration.changed)
+      await writeMigratedConfig(file, migration.source, true, existing);
   }
   clearConfigCache();
   await resolveConfig({

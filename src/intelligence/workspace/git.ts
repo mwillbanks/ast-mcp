@@ -5,6 +5,7 @@ import path from "node:path";
 import { sha256 } from "../../runtime/hash.ts";
 import { pathWithin } from "../../runtime/path-utils.ts";
 import { terminateProcessTree } from "../../runtime/subprocess.ts";
+import { isTransactionLockArtifact } from "../../runtime/transaction-lock.ts";
 import {
   createRevisionId,
   dirtyOverlayArtifactIdentity,
@@ -580,7 +581,9 @@ export async function gitDirtyOverlayId(
       result.stderr || "Unable to inspect Git working state",
       { checkoutRoot: git.checkoutRoot },
     );
-  const records = parseGitPorcelainV1Z(result.stdout);
+  const records = parseGitPorcelainV1Z(result.stdout).filter(
+    (record) => !isTransactionLockArtifact(record.path),
+  );
   const entries: DirtyEntry[] = [];
   for (const record of records) {
     entries.push(await dirtyEntry(git, record.path, record.code));
@@ -622,7 +625,9 @@ export async function gitWorkingState(git: GitWorkspaceIdentity) {
       { checkoutRoot: git.checkoutRoot },
     );
   }
-  const records = parseGitPorcelainV1Z(result.stdout);
+  const records = parseGitPorcelainV1Z(result.stdout).filter(
+    (record) => !isTransactionLockArtifact(record.path),
+  );
   return {
     deleted: records.some(
       (record) =>

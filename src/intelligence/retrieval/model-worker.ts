@@ -4,11 +4,10 @@ import {
   createPotionStaticSession,
   InlinePotionProvider,
   InlineTransformersProvider,
-  type EmbeddingProvider,
 } from "./model-provider.ts";
 import type { ModelWorkerRequest } from "./worker-session.ts";
 
-let provider: EmbeddingProvider | undefined;
+let provider: InlinePotionProvider | InlineTransformersProvider | undefined;
 let tail = Promise.resolve();
 
 parentPort?.on("message", (request: ModelWorkerRequest) => {
@@ -28,6 +27,8 @@ parentPort?.on("message", (request: ModelWorkerRequest) => {
                 return (await pipeline(task, model, options)) as never;
               },
             );
+      await provider.initialize();
+      parentPort?.postMessage({ id: request.id, type: "started" });
       const vectors = await provider.embed(request.texts);
       parentPort?.postMessage({ id: request.id, vectors });
     } catch (error) {

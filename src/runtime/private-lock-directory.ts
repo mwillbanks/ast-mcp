@@ -30,9 +30,13 @@ function accountEnvironment(): NodeJS.ProcessEnv {
     "HOMEPATH",
     "NODE_OPTIONS",
     "BUN_OPTIONS",
+    "PSMODULEANALYSISCACHEPATH",
   ]);
   for (const key of Object.keys(env))
     if (excluded.has(key.toUpperCase())) delete env[key];
+  // Disable PowerShell background module-cache discovery before its host starts.
+  env.PSModuleAnalysisCachePath =
+    process.platform === "win32" ? "NUL" : "/dev/null";
   return env;
 }
 
@@ -59,7 +63,8 @@ export function accountLookupCommand(
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile); if (-not $profilePath) { exit 1 }; @{ homedir = $profilePath; uid = -1 } | ConvertTo-Json -Compress",
+    // Use only built-in language and .NET APIs: cmdlets trigger cold module discovery.
+    "$PSModuleAutoLoadingPreference = 'None'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $profilePath = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile); if (-not $profilePath) { exit 1 }; [Console]::WriteLine('{\"homedir\":\"' + $profilePath.Replace('\\', '\\\\').Replace('\"', '\\\"') + '\",\"uid\":-1}')",
   ];
 }
 function parseAccount(output: string): SystemAccount {

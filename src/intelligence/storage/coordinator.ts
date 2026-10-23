@@ -161,8 +161,12 @@ export class StorageCoordinator {
     options: CoordinatorOptions = {},
   ): Promise<StorageCoordinator> {
     const canonicalPath = storagePathIdentity(storagePath);
-    while (coordinators.get(canonicalPath)?.closing) {
-      await coordinators.get(canonicalPath)!.closing;
+    for (
+      let closing = coordinators.get(canonicalPath)?.closing;
+      closing;
+      closing = coordinators.get(canonicalPath)?.closing
+    ) {
+      await closing.catch(() => undefined);
     }
     return StorageCoordinator.forStorageDirectory(
       connection,
@@ -230,7 +234,14 @@ export class StorageCoordinator {
     try {
       transaction = await acquireTransactionLock(
         path.join(this.storagePath, ".ast-mcp-storage-writer"),
-        { tryOnly: !waitForWriter, deadline: Date.now() + 10_000 },
+        {
+          tryOnly: !waitForWriter,
+          deadline: Date.now() + 10_000,
+          sharedDatabasePath: path.join(
+            this.storagePath,
+            ".ast-mcp-storage-writer.sqlite",
+          ),
+        },
       );
     } catch (error) {
       if (
@@ -247,7 +258,10 @@ export class StorageCoordinator {
       throw error;
     }
     try {
-      return await action();
+      transaction.fence();
+      const result = await action();
+      transaction.fence();
+      return result;
     } finally {
       transaction.release();
     }

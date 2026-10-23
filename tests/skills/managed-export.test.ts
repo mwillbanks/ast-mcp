@@ -774,7 +774,7 @@ test("killed export owners do not block future exports", async () => {
   const modulePath = Bun.fileURLToPath(
     new URL("../../src/runtime/transaction-lock.ts", import.meta.url),
   );
-  const script = `import {acquireTransactionLock} from ${JSON.stringify(modulePath)}; const lease=await acquireTransactionLock(${JSON.stringify(identity)}); console.log("ready"); await Bun.sleep(60000);`;
+  const script = `import {acquireTransactionLock} from ${JSON.stringify(modulePath)}; const lease=await acquireTransactionLock(${JSON.stringify(identity + "-different-private-account")}, {sharedDatabasePath: ${JSON.stringify(identity + ".sqlite")}}); console.log("ready"); await Bun.sleep(60000);`;
   const child = Bun.spawn([process.execPath, "-e", script], {
     stdout: "pipe",
     stderr: "pipe",

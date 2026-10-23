@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { copyFileSync, readFileSync, renameSync } from "node:fs";
-import { chmod, lstat, unlink, writeFile } from "node:fs/promises";
+import { chmod, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { withConfigTransaction } from "./transaction";
+import {
+  assertConfigWriteTarget,
+  configWriteTarget,
+  withConfigTransaction,
+} from "./transaction";
 import { fileV2Schema } from "./v2-schema";
 
 export type TomlValue =
@@ -261,23 +265,24 @@ export async function writeConfigSource(
   backupPath?: string,
 ): Promise<void> {
   validateConfigSource(source, filePath);
-  const expected = expectedSource ?? (await readConfigSource(filePath));
-  const metadata = await lstat(filePath);
+  const { target, mode } = await configWriteTarget(filePath);
+  const expected = expectedSource ?? (await readConfigSource(target));
   const temporary = path.join(
-    path.dirname(filePath),
-    `.${path.basename(filePath)}.config-${randomUUID()}`,
+    path.dirname(target),
+    `.${path.basename(target)}.config-${randomUUID()}`,
   );
   try {
-    await writeFile(temporary, source, { flag: "wx", mode: metadata.mode });
-    await chmod(temporary, metadata.mode);
-    withConfigTransaction(filePath, () => {
-      if (readFileSync(filePath, "utf8") !== expected)
+    await writeFile(temporary, source, { flag: "wx", mode });
+    await chmod(temporary, mode);
+    withConfigTransaction(target, () => {
+      assertConfigWriteTarget(filePath, target);
+      if (readFileSync(target, "utf8") !== expected)
         throw Object.assign(
           new Error("Configuration changed before commit; reload and retry"),
           { code: "configuration_conflict", retryable: true },
         );
-      if (backupPath) copyFileSync(filePath, backupPath);
-      renameSync(temporary, filePath);
+      if (backupPath) copyFileSync(target, backupPath);
+      renameSync(temporary, target);
     });
   } finally {
     await unlink(temporary).catch(() => undefined);

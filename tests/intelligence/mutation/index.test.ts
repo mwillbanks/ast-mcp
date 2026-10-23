@@ -39,6 +39,7 @@ import {
   acquireFileLock,
   clearMutationLockQueuesForTests,
   mutationLockPath,
+  mutationSharedDatabasePath,
   withFencedFileLock,
   withFencedFileLocks,
 } from "../../../src/intelligence/mutation/locks.ts";
@@ -2209,6 +2210,9 @@ describe("Case alias locking", () => {
           },
           { deadline: Date.now() + 200 },
         );
+        expect(
+          await mutationTransactionLockPath(path.join(root, "Checkout")),
+        ).toBe(await mutationTransactionLockPath(path.join(root, "checkout")));
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -2318,7 +2322,9 @@ describe("Lease metadata validation", () => {
       await expect(acquireFileLock(path.join(root, "target"))).rejects.toBe(
         failure,
       );
-      expect(await fsPromises.readdir(root)).toEqual([]);
+      expect(await fsPromises.readdir(root)).toEqual([
+        ".ast-mcp-mutation-locks",
+      ]);
       open.mockRestore();
       const next = await acquireFileLock(path.join(root, "target"));
       await next.fence();
@@ -2555,5 +2561,166 @@ describe("Private checkout lock namespace", () => {
     } finally {
       lookup.mockRestore();
     }
+  });
+});
+
+describe("Account-scoped recovery", () => {
+  test.each(["legacy", "foreign"] as const)(
+    "preserves a future-dated %s lease until its actual expiry",
+    async (kind) => {
+      const root = await temporary();
+      const target = path.join(root, "target");
+      const lease = await acquireFileLock(target, { leaseMs: 60_000 });
+      const record = JSON.parse(await readFile(lease.lockPath, "utf8"));
+      await lease.release();
+      if (kind === "foreign" && process.platform === "win32")
+        record.accountId = "foreign-account";
+      if (kind === "legacy") {
+        delete record.protocol;
+        delete record.accountId;
+      }
+      const original = JSON.stringify(record);
+      await writeFile(lease.lockPath, original);
+      const actual = fsPromises.lstat;
+      const inspect = spyOn(fsPromises, "lstat").mockImplementation((async (
+        ...args: Parameters<typeof fsPromises.lstat>
+      ) => {
+        const metadata = await actual(...args);
+        if (kind === "foreign" && String(args[0]) === lease.lockPath)
+          metadata.uid = Number(metadata.uid) + 1;
+        return metadata;
+      }) as typeof fsPromises.lstat);
+      try {
+        await expect(
+          acquireFileLock(target, { deadline: Date.now() + 50, pollMs: 5 }),
+        ).rejects.toMatchObject({ code: "lock_deadline" });
+        expect(await readFile(lease.lockPath, "utf8")).toBe(original);
+        const next = await acquireFileLock(target, {
+          now: () => record.expiresAt + 1,
+        });
+        await next.fence();
+        await next.release();
+      } finally {
+        inspect.mockRestore();
+      }
+    },
+  );
+});
+
+test("retries when a stale record disappears before its ownership inspection", async () => {
+  const root = await temporary();
+  const target = path.join(root, "disappearing.txt");
+  const first = await acquireFileLock(target);
+  const initial = await readFile(first.lockPath, "utf8");
+  await first.release();
+  await writeFile(first.lockPath, initial);
+  const actual = fsPromises.lstat;
+  let removed = false;
+  const inspect = spyOn(fsPromises, "lstat").mockImplementation((async (
+    ...args: Parameters<typeof fsPromises.lstat>
+  ) => {
+    if (!removed && String(args[0]) === first.lockPath) {
+      removed = true;
+      await rm(first.lockPath);
+    }
+    return actual(...args);
+  }) as typeof fsPromises.lstat);
+  try {
+    const next = await acquireFileLock(target);
+    await next.fence();
+    await next.release();
+    expect(removed).toBe(true);
+  } finally {
+    inspect.mockRestore();
+  }
+});
+
+describe("Shared mutation metadata placement", () => {
+  test("keeps configured project guards outside deletable source ancestors", async () => {
+    const root = await temporary();
+    await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
+    const target = path.join(root, "nested", "deeper", "target.txt");
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "source");
+    const database = await mutationSharedDatabasePath(target);
+    expect(path.dirname(database)).toBe(
+      path.join(await realpath(root), ".ast-mcp-locks"),
+    );
+    const owner = await acquireFileLock(target);
+    await owner.release();
+    expect(await fsPromises.readdir(path.dirname(target))).toEqual([
+      "target.txt",
+    ]);
+    expect(await mutationSharedDatabasePath(target)).toBe(database);
+    expect(await mutationSharedDatabasePath(root)).not.toBe(database);
+  });
+
+  test.each(["directory", "worktree"] as const)(
+    "uses %s Git metadata ahead of a configuration marker",
+    async (kind) => {
+      const root = await temporary();
+      await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
+      const metadata =
+        kind === "directory"
+          ? path.join(root, ".git")
+          : path.join(root, "metadata");
+      await mkdir(metadata);
+      if (kind === "worktree")
+        await writeFile(path.join(root, ".git"), "gitdir: metadata\n");
+      const database = await mutationSharedDatabasePath(
+        path.join(root, "missing", "target"),
+      );
+      expect(path.dirname(database)).toBe(
+        path.join(await realpath(metadata), "ast-mcp-locks"),
+      );
+      expect(await mutationSharedDatabasePath(root)).not.toBe(database);
+    },
+  );
+
+  test("keeps unmarked external guard files in one reserved parent directory", async () => {
+    const root = await temporary();
+    const database = await mutationSharedDatabasePath(
+      path.join(root, "missing", "target"),
+    );
+    expect(path.dirname(database)).toBe(
+      path.join(await realpath(root), ".ast-mcp-mutation-locks"),
+    );
+    expect(await mutationSharedDatabasePath(path.join(root, "other"))).not.toBe(
+      database,
+    );
+  });
+
+  test.each(["malformed", "oversized", "symlink", "missing-target"] as const)(
+    "rejects an unsafe %s Git marker",
+    async (kind) => {
+      const root = await temporary();
+      const marker = path.join(root, ".git");
+      if (kind === "symlink") await symlink(await temporary(), marker, "dir");
+      else
+        await writeFile(
+          marker,
+          kind === "oversized"
+            ? "x".repeat(4097)
+            : kind === "missing-target"
+              ? "gitdir: missing"
+              : "invalid",
+        );
+      await expect(
+        mutationSharedDatabasePath(path.join(root, "target")),
+      ).rejects.toThrow();
+    },
+  );
+
+  test("rejects occupied coordination directories and excessive ancestor depth", async () => {
+    const root = await temporary();
+    await writeFile(path.join(root, ".ast-mcp-mutation-locks"), "foreign");
+    await expect(
+      mutationSharedDatabasePath(path.join(root, "target")),
+    ).rejects.toThrow("Unsafe mutation coordination directory");
+    await expect(
+      mutationSharedDatabasePath(
+        path.join(root, ...Array(257).fill("a"), "target"),
+      ),
+    ).rejects.toThrow("ancestor limit");
   });
 });

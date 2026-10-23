@@ -1,5 +1,9 @@
 import { Worker } from "node:worker_threads";
 
+import {
+  defaultLanguageRegistry,
+  type DynamicGrammarManifest,
+} from "../../intelligence/parser/registry.ts";
 import type { PatchStrategyName } from "../../runtime/file-capabilities.ts";
 import type {
   PatchStrategyContext,
@@ -10,6 +14,7 @@ interface Task {
   bytes: number;
   cleanup(): void;
   context: PatchStrategyContext;
+  manifest?: DynamicGrammarManifest;
   reject(error: Error): void;
   resolve(patch: PreparedStrategyPatch): void;
   settled: boolean;
@@ -58,9 +63,14 @@ export class PatchPreparationPool {
         failure("patch_queue_full", "Patch preparation capacity exceeded"),
       );
     let snapshot: PatchStrategyContext;
+    let manifest: DynamicGrammarManifest | undefined;
     try {
       const { signal: _signal, ...serializable } = context;
       snapshot = { ...structuredClone(serializable), signal: context.signal };
+      manifest =
+        strategy === "ast"
+          ? defaultLanguageRegistry.dynamicManifest()
+          : undefined;
     } catch {
       return Promise.reject(
         failure(
@@ -91,6 +101,7 @@ export class PatchPreparationPool {
         bytes,
         cleanup,
         context: snapshot,
+        manifest,
         reject,
         resolve,
         settled: false,
@@ -191,7 +202,11 @@ export class PatchPreparationPool {
             );
         });
         const { signal: _signal, ...context } = task.context;
-        worker.postMessage({ context, strategy: task.strategy });
+        worker.postMessage({
+          context,
+          strategy: task.strategy,
+          manifest: task.manifest,
+        });
       } catch {
         this.settle(
           task,

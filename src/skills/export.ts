@@ -306,17 +306,19 @@ export async function reconcileSkillExport(
   await requireDirectory(root);
   const canonical = await realpath(root);
   const lock = path.join(canonical, lockName);
-  const handle = await acquireTransactionLock(lock, { tryOnly: true }).catch(
-    (error: unknown) => {
-      if ((error as { code?: string }).code === "lock_busy")
-        throw new Error("Skill export is locked; wait for the active export", {
-          cause: error,
-        });
-      throw error;
-    },
-  );
+  const handle = await acquireTransactionLock(lock, {
+    tryOnly: true,
+    sharedDatabasePath: `${lock}.sqlite`,
+  }).catch((error: unknown) => {
+    if ((error as { code?: string }).code === "lock_busy")
+      throw new Error("Skill export is locked; wait for the active export", {
+        cause: error,
+      });
+    throw error;
+  });
   let failed = false;
   try {
+    handle.fence();
     // Read again under the lock; a concurrent invocation may have just completed.
     const current = await readManifest(canonical);
     const planned = {
@@ -350,10 +352,12 @@ export async function reconcileSkillExport(
       conflicts: [],
     };
     for (const file of files) {
+      handle.fence();
       await inspectParents(canonical, file.relative);
       await reconcileFile(canonical, file, operation, current, result);
     }
     const serialized = Buffer.from(JSON.stringify(current, null, 2) + "\n");
+    handle.fence();
     if (!original?.equals(serialized))
       await replaceFile(
         canonical,
@@ -361,6 +365,7 @@ export async function reconcileSkillExport(
         serialized,
         original ? hash(original) : undefined,
       );
+    handle.fence();
     return result;
   } catch (error) {
     failed = true;

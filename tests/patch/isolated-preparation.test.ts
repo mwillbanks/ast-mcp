@@ -323,3 +323,60 @@ describe("isolated patch preparation", () => {
     ).toEqual(["const value = 1;", "const value = 1;"]);
   });
 });
+
+test("isolated AST preparation loads a main-thread registered native grammar", async () => {
+  const registryUrl = new URL(
+    "../../src/intelligence/parser/registry.ts",
+    import.meta.url,
+  ).href;
+  const strategyUrl = new URL(
+    "../../src/patch/strategy/ast.ts",
+    import.meta.url,
+  ).href;
+  const source = `
+    import toml from "@ast-grep/lang-toml";
+    const {defaultLanguageRegistry} = await import(${JSON.stringify(registryUrl)});
+    const {astStrategy} = await import(${JSON.stringify(strategyUrl)});
+    const libraryPath = toml.libraryPath;
+    const sha256 = new Bun.CryptoHasher("sha256").update(await Bun.file(libraryPath).arrayBuffer()).digest("hex");
+    await defaultLanguageRegistry.addDynamic({
+      astGrepLanguage:"RegisteredToml",
+      dynamicAsset:{libraryPath, sha256, languageSymbol:toml.languageSymbol, expandoChar:toml.expandoChar},
+      extensions:[".registeredtoml"],grammarVersion:"fixture-v1",languageId:"registered-toml",
+    },{
+      callResolution:false,embeddedLanguages:false,exportResolution:false,importResolution:false,
+      inheritanceResolution:false,match:true,parse:true,rewrite:true,structuralRead:true,symbolExtraction:false,
+    });
+    const input = ${JSON.stringify(context())};
+    input.language = "registered-toml";
+    input.original = "answer = 1";
+    input.aiderBlocks = [];
+    input.astRules = [{pattern:"answer = 1",fix:"answer = 2",expectedMatches:1}];
+    defaultLanguageRegistry.registerDynamicGrammars();
+    const {parse} = await import("@ast-grep/napi");
+    if (parse("RegisteredToml", "answer = 1").root().text() !== "answer = 1") throw new Error("custom native grammar unavailable");
+    if (parse("typescript", "const value = 1;").root().text() !== "const value = 1;") throw new Error("pinned native grammar unavailable");
+    const result = await astStrategy.prepare(input);
+    const pinned = await astStrategy.prepare({
+      ...input,language:"typescript",original:"const value = 1;",
+      astRules:[{pattern:"const value = 1",fix:"const value = 2",expectedMatches:1}],
+    });
+    if (pinned.candidate !== "const value = 2") throw new Error("pinned worker grammar unavailable");
+    console.log(JSON.stringify(result));
+  `;
+  const child = Bun.spawn([process.execPath, "--eval", source], {
+    cwd: process.cwd(),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+  expect(JSON.parse(stdout)).toMatchObject({
+    candidate: "answer = 2",
+    metadata: { strategy: "ast", operations: 1, matches: 1 },
+  });
+});

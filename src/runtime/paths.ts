@@ -20,6 +20,20 @@ import {
   effectiveWorkspaceRoot,
   pathWithin,
 } from "./path-utils";
+import { isTransactionLockArtifact } from "./transaction-lock";
+
+function assertPublicPath(filePath: string): void {
+  if (isTransactionLockArtifact(filePath))
+    throw Object.assign(
+      new Error(
+        "Coordination artifacts are reserved for internal lock ownership",
+      ),
+      {
+        code: "coordination_artifact_reserved",
+        retryable: false,
+      },
+    );
+}
 
 async function realpathOrSelf(filePath: string): Promise<string> {
   try {
@@ -265,6 +279,7 @@ async function resolvedSymlinkTarget(args: {
       `Symbolic-link targets are not permitted by the winning path rule: ${args.filePath}`,
     );
   const target = await realpath(args.resolved);
+  assertPublicPath(target);
   assertWithinBoundary(
     target,
     args.roots,
@@ -287,6 +302,7 @@ async function resolvePath(
   boundary: string,
   operation: PathOperation,
 ): Promise<string> {
+  assertPublicPath(filePath);
   const config = await currentConfig();
   const selected = currentWorkspace();
   allowAnyPath ||= config.safety.filesystem === "unrestricted";
@@ -303,6 +319,7 @@ async function resolvePath(
     );
   const base = selected?.checkoutRoot ?? (roots[0] as string);
   const resolved = await canonicalCandidate(filePath, base);
+  assertPublicPath(resolved);
   assertWithinBoundary(
     resolved,
     roots,
@@ -315,6 +332,7 @@ async function resolvePath(
   if (!metadata?.isSymbolicLink()) {
     if (process.platform !== "win32" || !metadata) return resolved;
     const canonical = await realpath(resolved);
+    assertPublicPath(canonical);
     assertWithinBoundary(
       canonical,
       roots,

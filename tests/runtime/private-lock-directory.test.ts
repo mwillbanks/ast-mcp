@@ -23,6 +23,10 @@ test("Windows account lookup uses the system known folder and rejects an unknown
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   );
   expect(command).toContain("-NoProfile");
+  expect(command.at(-1)).toContain("$PSModuleAutoLoadingPreference = 'None'");
+  expect(command.at(-1)).toContain("[Console]::WriteLine");
+  expect(command.at(-1)).not.toContain("ConvertTo-Json");
+  expect(command.at(-1)).not.toContain("|");
   expect(command.at(-1)).toContain("[Environment+SpecialFolder]::UserProfile");
   expect(command.join(" ")).not.toContain("untrusted");
   expect(accountLookupCommand("win32", { systemroot: "C:\\Windows" })).toEqual(
@@ -35,6 +39,45 @@ test("Windows account lookup uses the system known folder and rejects an unknown
     accountLookupCommand("win32", { SystemRoot: "relative" }),
   ).toThrow("system directory is unavailable");
 });
+
+test.skipIf(process.platform !== "win32")(
+  "Windows native lookup completes without module discovery",
+  async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-account-no-modules-"),
+    );
+    const original = Bun.spawn;
+    const command = accountLookupCommand();
+    const query = command.at(-1)!;
+    const spawned: ReturnType<typeof Bun.spawn>[] = [];
+    const spawn = spyOn(Bun, "spawn").mockImplementation(((_args, options) => {
+      const child = original(command, {
+        ...options,
+        env: {
+          ...options?.env,
+          PSModulePath: path.join(root, "absent-modules"),
+        },
+      });
+      spawned.push(child);
+      return child;
+    }) as typeof Bun.spawn);
+    try {
+      // This executes the production query in fresh hosts with no usable module catalog.
+      expect(query).toContain("$PSModuleAutoLoadingPreference = 'None'");
+      const first = await readSystemAccount();
+      expect(path.isAbsolute(first.homedir)).toBe(true);
+      expect(await readSystemAccount()).toEqual(first);
+    } finally {
+      spawn.mockRestore();
+      for (const child of spawned) {
+        child.kill();
+        await child.exited;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
 
 test("account lookup removes environment home and runtime options with mixed casing", async () => {
   const names = [
@@ -62,6 +105,9 @@ test("account lookup removes environment home and runtime options with mixed cas
   try {
     for (const name of names) process.env[name] = "untrusted";
     await readSystemAccount();
+    expect(environment?.PSModuleAnalysisCachePath).toBe(
+      process.platform === "win32" ? "NUL" : "/dev/null",
+    );
     for (const name of names) {
       expect(
         Object.keys(environment!).some(

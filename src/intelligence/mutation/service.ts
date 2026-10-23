@@ -27,6 +27,7 @@ export { ensurePrivateLockDirectory as ensureMutationLockDirectory } from "../..
 import { refreshMutationIntelligence } from "./freshness.ts";
 import { LanceMutationJournal } from "./journal.ts";
 import { activeMutationLifecycle, withMutationLifecycle } from "./lifecycle.ts";
+import { lockPathIdentity, mutationSharedDatabasePath } from "./locks.ts";
 import type {
   MutationBatchPlan,
   MutationFileCommit,
@@ -338,8 +339,7 @@ export async function mutationTransactionLockPath(
   const account = await systemAccount();
   const directory = await ensureMutationLockDirectory(account);
   const checkout = await canonicalizePath(checkoutRoot);
-  const identity =
-    process.platform === "win32" ? checkout.toLowerCase() : checkout;
+  const identity = lockPathIdentity(checkout);
   return path.join(directory, `transaction-${sha256(identity)}`);
 }
 
@@ -407,6 +407,9 @@ export async function withLanceMutationLifecycle<T>(
     {
       deadline: options.deadline ?? Date.now() + 10_000,
       signal: options.signal,
+      sharedDatabasePath: await mutationSharedDatabasePath(
+        workspace.checkoutRoot,
+      ),
     },
   );
 }
