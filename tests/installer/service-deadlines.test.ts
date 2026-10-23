@@ -87,15 +87,24 @@ test("terminates service commands that never exit even when failures are ignored
 });
 
 test.each([false, true])(
-  "bounds service exit after stderr closes with ignored failures %s",
+  "bounds service exit after its stderr reader completes with ignored failures %s",
   async (ignoreFailure) => {
     const spawn = spyOn(Bun, "spawn");
     const readOutput = subprocess.readSubprocessOutput;
-    let stderrDrained = false;
+    const stderrDrained = Promise.withResolvers<void>();
     const reader = spyOn(subprocess, "readSubprocessOutput").mockImplementation(
-      async (...args) => {
-        const output = await readOutput(...args);
-        stderrDrained = true;
+      async (_stream, ...options) => {
+        // Windows does not reliably expose pipe EOF after a child closes fd 2.
+        // Complete the real reader against deterministic EOF while retaining a real live child.
+        const output = await readOutput(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          }),
+          ...options,
+        );
+        stderrDrained.resolve();
         return output;
       },
     );
@@ -103,33 +112,37 @@ test.each([false, true])(
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       operation = runServiceCommand(
-        [
-          process.execPath,
-          "-e",
-          'import { closeSync } from "node:fs"; closeSync(2); setInterval(() => {}, 1000);',
-        ],
+        [process.execPath, "-e", "setInterval(() => {}, 1000);"],
         ignoreFailure,
         1000,
       );
-      await expect(
-        Promise.race([
-          operation,
-          new Promise<never>((_resolve, reject) => {
-            watchdog = setTimeout(
-              () => reject(new Error("Service exit remained unbounded")),
-              3000,
-            );
-          }),
-        ]),
-      ).rejects.toThrow("deadline expired");
-      expect(stderrDrained).toBe(true);
+      const bounded = new Promise<never>((_resolve, reject) => {
+        watchdog = setTimeout(
+          () => reject(new Error("Service exit remained unbounded")),
+          3000,
+        );
+      });
+      await Promise.race([
+        stderrDrained.promise,
+        operation.then(() => {
+          throw new Error("Service exited before its stderr reader completed");
+        }),
+        bounded,
+      ]);
       const child = spawn.mock.results[0]?.value as Bun.Subprocess;
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      await expect(Promise.race([operation, bounded])).rejects.toThrow(
+        "deadline expired",
+      );
       expect(child.signalCode ?? child.exitCode).not.toBeNull();
     } finally {
       if (watchdog) clearTimeout(watchdog);
       const child = spawn.mock.results[0]?.value as Bun.Subprocess | undefined;
       if (child?.exitCode === null && child.signalCode === null) child.kill();
       await operation?.catch(() => undefined);
+      if (child?.stderr instanceof ReadableStream)
+        await child.stderr.cancel().catch(() => undefined);
       reader.mockRestore();
       spawn.mockRestore();
     }
