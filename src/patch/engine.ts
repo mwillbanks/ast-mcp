@@ -271,6 +271,60 @@ const MAX_PREVIEW_SESSION_BYTES = 16 * 1024 * 1024;
 const MAX_PREVIEW_SESSION_RECEIPTS = 32;
 const previewReceipts = new Map<string, PreviewReceipt>();
 const expiredPreviewReceipts = new Set<string>();
+const reservedPreviewReceipts = new Map<string, symbol>();
+const previewReservation = new AsyncLocalStorage<symbol>();
+
+interface ReceiptBatchState {
+  completed: boolean;
+  safeToRelease: boolean;
+}
+
+async function withReservedPreviewReceipts<T>(
+  requests: unknown[],
+  state: ReceiptBatchState,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const owner = Symbol("patch receipt batch");
+  const tokens = requests.flatMap((request) => {
+    const token = (request as PatchBatchRequest).previewReceipt;
+    return typeof token === "string" ? [token] : [];
+  });
+  if (
+    new Set(tokens).size !== tokens.length ||
+    tokens.some((token) => reservedPreviewReceipts.has(token))
+  )
+    throw receiptError(
+      "preview_receipt_reserved",
+      "Preview receipt is already reserved by an active batch",
+    );
+  const receipts = tokens.map(
+    (token) => [token, previewReceipts.get(token)] as const,
+  );
+  for (const token of tokens) reservedPreviewReceipts.set(token, owner);
+  try {
+    return await previewReservation.run(owner, operation);
+  } finally {
+    for (const [token, receipt] of receipts) {
+      let reusable = state.safeToRelease && !state.completed;
+      if (receipt && reusable) {
+        try {
+          reusable = await patchSignals.run(
+            undefined,
+            async () =>
+              sha256(await readText(receipt.filePath)) === receipt.sourceSha256,
+          );
+        } catch {
+          reusable = false;
+        }
+      }
+      if (!reusable && receipt) {
+        clearTimeout(receipt.expiryTimer);
+        previewReceipts.delete(token);
+      }
+      reservedPreviewReceipts.delete(token);
+    }
+  }
+}
 
 function expirePreviewReceipt(token: string): void {
   previewReceipts.delete(token);
@@ -319,6 +373,14 @@ function previewPayloadBytes(
 }
 
 async function validatePreviewReceipt(filePath: string, token: string) {
+  if (
+    reservedPreviewReceipts.has(token) &&
+    reservedPreviewReceipts.get(token) !== previewReservation.getStore()
+  )
+    throw receiptError(
+      "preview_receipt_reserved",
+      "Preview receipt is already reserved by an active batch",
+    );
   const receipt = previewReceipts.get(token);
   if (!receipt)
     throw receiptError(
@@ -625,11 +687,8 @@ async function applyPreparedPatch(
     prepared.candidate,
     await inspectFileCapabilities(filePath),
   );
-  if (prepared.receiptToken) {
-    const receipt = previewReceipts.get(prepared.receiptToken);
-    if (receipt) clearTimeout(receipt.expiryTimer);
-    previewReceipts.delete(prepared.receiptToken);
-  }
+  if (prepared.receiptToken)
+    await validatePreviewReceipt(filePath, prepared.receiptToken);
   await commit(
     filePath,
     candidate,
@@ -821,7 +880,7 @@ async function rollbackFileBatch(
     throw new AggregateError(failures, "Mutation rollback requires recovery");
 }
 
-async function executePreparedFileBatch<T, Prepared>(
+async function executeReservedFileBatch<T, Prepared>(
   tool: "file_patch" | "file_write",
   entries: ResolvedBatchEntry<T>[],
   handler: (
@@ -833,7 +892,8 @@ async function executePreparedFileBatch<T, Prepared>(
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
   fence: () => Promise<void>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  receiptState: ReceiptBatchState,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
   const snapshots = await captureBatchSnapshots(entries);
@@ -875,6 +935,7 @@ async function executePreparedFileBatch<T, Prepared>(
   try {
     signal?.throwIfAborted();
     if (plannedEntries.length > 0) {
+      receiptState.safeToRelease = false;
       await beginMutation({
         files: sourcePlan,
         operationId,
@@ -918,6 +979,7 @@ async function executePreparedFileBatch<T, Prepared>(
       began && commits.length > 0
         ? await completeMutation(operationId, commits)
         : null;
+    receiptState.completed = true;
     return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
   } catch (error) {
     discardPreparedPreviews(prepared);
@@ -926,7 +988,9 @@ async function executePreparedFileBatch<T, Prepared>(
       await patchSignals.run(undefined, () =>
         rollbackFileBatch(committed, snapshots, fence),
       );
-      if (began) await ignoreFailure(recordMutationRollback(operationId));
+      if (began) await recordMutationRollback(operationId);
+      // A failed begin can leave an uncertain journal even without file commits.
+      receiptState.safeToRelease = began || receiptState.safeToRelease;
     } catch (rollbackError) {
       throw new AggregateError(
         [error, rollbackError],
@@ -963,19 +1027,29 @@ async function processFileBatch<T, Prepared>(
       resolvedPath: await resolveWritablePath(inputPath),
     })),
   );
+  const receiptState: ReceiptBatchState = {
+    completed: false,
+    safeToRelease: true,
+  };
   return withFencedFileLocks(
     resolvedEntries.map(({ resolvedPath }) => resolvedPath),
     (leases: readonly FileLockLease[]) =>
-      executePreparedFileBatch(
-        tool,
-        resolvedEntries,
-        handler,
-        preflight,
-        mutates,
-        async () => {
-          for (const lease of leases) await lease.fence();
-        },
-        options.signal,
+      withReservedPreviewReceipts(
+        resolvedEntries.map(({ request }) => request),
+        receiptState,
+        () =>
+          executeReservedFileBatch(
+            tool,
+            resolvedEntries,
+            handler,
+            preflight,
+            mutates,
+            async () => {
+              for (const lease of leases) await lease.fence();
+            },
+            options.signal,
+            receiptState,
+          ),
       ),
     { ...options, deadline: options.deadline ?? Date.now() + 10_000 },
   );
