@@ -63,7 +63,8 @@ const MutationJournalRecordSchema = z
     checkoutRoot: CanonicalAbsolutePathSchema.optional(),
     createdAt: TimestampSchema,
     errorCode: z.string().min(1).nullable(),
-    files: z.array(MutationJournalFileSchema).max(50),
+    // A rename journals both its source and destination for each request.
+    files: z.array(MutationJournalFileSchema).max(100),
     operationId: JobIdSchema,
     revisionId: RevisionIdSchema,
     schemaVersion: z.literal("ast-mcp.mutation-journal.v1"),
@@ -87,7 +88,16 @@ const MutationJournalRecordSchema = z
     updatedAt: TimestampSchema,
     workspaceId: WorkspaceIdSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((record, context) => {
+    const limit = record.tool === "file_rename" ? 100 : 50;
+    if (record.files.length > limit)
+      context.addIssue({
+        code: "custom",
+        message: `Mutation journal permits at most ${limit} paths for ${record.tool}`,
+        path: ["files"],
+      });
+  });
 
 function parseRecord(
   value: unknown,
@@ -108,14 +118,83 @@ function parseRecord(
     !required &&
     (!parsed ||
       typeof parsed !== "object" ||
-      (parsed as { schemaVersion?: unknown }).schemaVersion !==
-        "ast-mcp.mutation-journal.v1")
+      ((parsed as { schemaVersion?: unknown }).schemaVersion !==
+        "ast-mcp.mutation-journal.v1" &&
+        !(
+          "operationId" in parsed ||
+          "checkoutRoot" in parsed ||
+          "files" in parsed
+        )))
   )
     return null;
   const result = MutationJournalRecordSchema.safeParse(parsed);
   if (!result.success)
     throw new Error(`mutation_journal_malformed: ${result.error.message}`);
   return result.data;
+}
+
+/** Scope shared-store recovery before validating unrelated journal payloads. */
+function recoveryRecord(
+  value: unknown,
+  workspaceId?: string,
+  checkoutRoot?: string,
+): MutationJournalRecord | null {
+  if (!checkoutRoot) return parseRecord(value);
+  let parsed: unknown;
+  try {
+    if (typeof value !== "string") throw new Error();
+    parsed = JSON.parse(value);
+  } catch {
+    // Workspace identities change with overlays. A row's workspace_id alone
+    // cannot prove that an opaque payload belongs to a different checkout.
+    throw new Error("mutation_recovery_scope_unknown");
+  }
+  if (!parsed || typeof parsed !== "object")
+    throw new Error("mutation_journal_malformed");
+  const envelope = parsed as Record<string, unknown>;
+  if (
+    envelope.schemaVersion !== "ast-mcp.mutation-journal.v1" &&
+    !(
+      typeof envelope.schemaVersion === "string" &&
+      envelope.schemaVersion.startsWith("ast-mcp.mutation-journal.")
+    ) &&
+    ![
+      "file_patch",
+      "file_write",
+      "file_delete",
+      "file_rename",
+      "file_chattr",
+    ].includes(String(envelope.tool)) &&
+    // These fields distinguish mutation records from ordinary intelligence
+    // jobs, even when both mutation discriminators have been damaged.
+    !(
+      "operationId" in envelope ||
+      "checkoutRoot" in envelope ||
+      "files" in envelope
+    )
+  )
+    return null;
+  if (
+    envelope.workspaceId === workspaceId ||
+    envelope.checkoutRoot === checkoutRoot
+  )
+    return parseRecord(value, true);
+  if (CanonicalAbsolutePathSchema.safeParse(envelope.checkoutRoot).success)
+    return null;
+  // Legacy records lack a checkout root. Only a complete set of canonical,
+  // non-overlapping paths proves that their recovery is unrelated.
+  if (!Array.isArray(envelope.files) || envelope.files.length === 0)
+    throw new Error("mutation_recovery_scope_unknown");
+  for (const file of envelope.files) {
+    const candidate =
+      file && typeof file === "object" ? file.filePath : undefined;
+    if (
+      !CanonicalAbsolutePathSchema.safeParse(candidate).success ||
+      pathWithin(checkoutRoot, candidate)
+    )
+      throw new Error("mutation_recovery_scope_unknown");
+  }
+  return null;
 }
 
 export class LanceMutationJournal {
@@ -208,7 +287,7 @@ export class LanceMutationJournal {
           : undefined,
     );
     return rows
-      .map((row) => parseRecord(row.payload_json))
+      .map((row) => recoveryRecord(row.payload_json, workspaceId, checkoutRoot))
       .filter((record): record is MutationJournalRecord => Boolean(record))
       .filter(
         (record) =>
@@ -218,20 +297,6 @@ export class LanceMutationJournal {
           (record.state === "failed" &&
             record.files.some((file) => file.committedSha256 !== null)),
       )
-      .filter((record) => {
-        if (
-          !checkoutRoot ||
-          record.workspaceId === workspaceId ||
-          record.checkoutRoot === checkoutRoot
-        )
-          return true;
-        if (
-          !record.checkoutRoot &&
-          record.files.some((file) => pathWithin(checkoutRoot, file.filePath))
-        )
-          throw new Error("mutation_recovery_scope_unknown");
-        return false;
-      })
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
@@ -293,6 +358,8 @@ export class LanceMutationJournal {
   }
 
   private async write(record: MutationJournalRecord): Promise<void> {
+    // Reject invalid records before they can poison durable recovery.
+    MutationJournalRecordSchema.parse(record);
     await this.store.putRows(
       "jobs",
       [
