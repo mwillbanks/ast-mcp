@@ -490,6 +490,7 @@ export async function deleteFilesSafely(
       } catch (error) {
         if (began) await ignoreFailure(failMutation(operationId, error));
         const rollbackErrors: unknown[] = [];
+        const affectedPaths: string[] = [];
         for (const commit of [...commits].reverse()) {
           const snapshot = snapshots.get(commit.filePath);
           if (!snapshot) continue;
@@ -515,15 +516,26 @@ export async function deleteFilesSafely(
             )
               throw new Error("file_delete_rollback_verification_failed");
           } catch (rollbackError) {
-            rollbackErrors.push(rollbackError);
+            affectedPaths.push(commit.filePath);
+            rollbackErrors.push(
+              Object.assign(
+                new Error("Delete rollback failed", { cause: rollbackError }),
+                {
+                  details: { affectedPaths: [commit.filePath] },
+                },
+              ),
+            );
           }
         }
         if (began && rollbackErrors.length === 0)
           await ignoreFailure(recordMutationRollback(operationId));
         if (rollbackErrors.length > 0)
-          throw new AggregateError(
-            [error, ...rollbackErrors],
-            "file_delete failed and rollback requires recovery",
+          throw Object.assign(
+            new AggregateError(
+              [error, ...rollbackErrors],
+              "file_delete failed and rollback requires recovery",
+            ),
+            { details: { affectedPaths } },
           );
         throw error;
       }

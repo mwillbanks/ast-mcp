@@ -102,9 +102,16 @@ async function verifyLinkCapability(
         await fence();
         await unlink(probe);
       } catch (cleanupError) {
-        throw new AggregateError(
-          [cleanupError],
-          `file_rename probe cleanup failed; residual probe: ${probe}`,
+        throw Object.assign(
+          new AggregateError(
+            [cleanupError],
+            `file_rename probe cleanup failed; residual probe: ${probe}`,
+          ),
+          {
+            details: {
+              affectedPaths: [entry.filePath, entry.destinationPath, probe],
+            },
+          },
         );
       }
     }
@@ -118,6 +125,7 @@ async function rollbackMovedFiles(
   sourceHashes: ReadonlyMap<string, string>,
 ): Promise<void> {
   const rollbackErrors: unknown[] = [];
+  const affectedPaths: string[] = [];
   for (const entry of [...entries].reverse()) {
     try {
       await fence();
@@ -133,13 +141,19 @@ async function rollbackMovedFiles(
       );
       await unlink(entry.destinationPath);
     } catch (error) {
-      rollbackErrors.push(error);
+      const paths = [entry.filePath, entry.destinationPath];
+      affectedPaths.push(...paths);
+      rollbackErrors.push(
+        Object.assign(new Error("Rename rollback failed", { cause: error }), {
+          details: { affectedPaths: paths },
+        }),
+      );
     }
   }
   if (rollbackErrors.length > 0)
-    throw new AggregateError(
-      rollbackErrors,
-      "file_rename rollback was incomplete",
+    throw Object.assign(
+      new AggregateError(rollbackErrors, "file_rename rollback was incomplete"),
+      { details: { affectedPaths } },
     );
 }
 
@@ -186,9 +200,16 @@ async function moveFilesWithRollback(
           );
           await unlink(entry.destinationPath);
         })().catch((cleanupError) => {
-          throw new AggregateError(
-            [error, cleanupError],
-            "file_rename failed while cleaning up the current destination",
+          throw Object.assign(
+            new AggregateError(
+              [error, cleanupError],
+              "file_rename failed while cleaning up the current destination",
+            ),
+            {
+              details: {
+                affectedPaths: [entry.filePath, entry.destinationPath],
+              },
+            },
           );
         });
         throw error;

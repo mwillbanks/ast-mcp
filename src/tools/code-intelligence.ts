@@ -189,7 +189,9 @@ function toolDescription(name: (typeof TOOL_NAMES)[number]): string {
     surface: "Returns exported native AST symbols.",
     trace: "Returns a bounded native call trace.",
   };
-  return descriptions[name];
+  return name === "squeeze"
+    ? descriptions[name]
+    : `${descriptions[name]} Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.`;
 }
 
 async function requestRoot(input: ToolInput): Promise<string> {

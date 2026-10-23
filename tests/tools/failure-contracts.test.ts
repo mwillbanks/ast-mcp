@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { withConfig } from "../../src/config";
 import { toolFailure, toolOutputSchema } from "../../src/helpers/mcp-schema";
 import { withMutationLifecycle } from "../../src/intelligence/mutation/index";
+import * as attributes from "../../src/runtime/attributes";
 import { sha256 } from "../../src/runtime/hash";
 import registerLifecycleTools from "../../src/tools/lifecycle";
 import { hermeticConfig } from "../support/hermetic-config";
@@ -133,6 +134,72 @@ test("attribute tool rechecks identity after durable journal callbacks", async (
     if (process.platform !== "win32")
       expect((await stat(path)).mode & 0o777).toBe(0o644);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("attribute cancellation after a syscall restores metadata and reports aborted", async () => {
+  if (process.platform === "win32" || !process.getuid || !process.getgid)
+    return;
+  const root = await mkdtemp(join(tmpdir(), "ast-chattr-abort-"));
+  const path = join(root, "source.txt");
+  const controller = new AbortController();
+  await writeFile(path, "source");
+  await chmod(path, 0o640);
+  let handler: ((input: never) => Promise<unknown>) | undefined;
+  registerLifecycleTools(
+    {
+      registerTool(
+        name: string,
+        _definition: unknown,
+        callback: typeof handler,
+      ) {
+        if (name === "file_chattr") handler = callback;
+      },
+    } as never,
+    async (_args, operation) =>
+      withConfig(hermeticConfig(root), () => operation(controller.signal)),
+  );
+  const original = attributes.applyFileChattr;
+  let intercepted = false;
+  const injected = spyOn(attributes, "applyFileChattr").mockImplementation(
+    (filePath, chattr, beforeChange, guard) =>
+      original(
+        filePath,
+        chattr,
+        beforeChange,
+        guard && {
+          ...guard,
+          beforeMutation: () => {
+            guard.beforeMutation?.();
+            if (!intercepted) {
+              intercepted = true;
+              controller.abort();
+            }
+          },
+        },
+      ),
+  );
+  try {
+    const result = (await handler!({
+      files: {
+        [path]: {
+          expectedSha256: sha256("source"),
+          chattr: {
+            chown: { uid: process.getuid(), gid: process.getgid() },
+            chmod: 0o600,
+          },
+        },
+      },
+    } as never)) as { structuredContent: unknown };
+    expect(intercepted).toBe(true);
+    expect(
+      toolOutputSchema.parse(result.structuredContent).error,
+    ).toMatchObject({ code: "aborted" });
+    expect((await stat(path)).mode & 0o777).toBe(0o640);
+    expect(await Bun.file(path).text()).toBe("source");
+  } finally {
+    injected.mockRestore();
     await rm(root, { recursive: true, force: true });
   }
 });

@@ -75,7 +75,9 @@ Keep the returned `workspaceId` and pass it explicitly.
 `run` supports search and rewrite previews only. `write: true` fails with `use_file_patch`.
 Use narrow one-match AST rules where practical. `expectedMatches` is optional; explicit counts protect reviewed intent.
 Preview does not format. Commit applies enabled formatting, including receipt commits.
+Mutation batches contain at most 50 requests. Rename batches create authorized missing parents without marker files.
 Batch preflight checks all targets. Do not assume whole-batch crash atomicity.
+Inspect incomplete and truncated bulk intelligence coverage, including budget omissions. Narrow the scope before treating missing matches as evidence.
 
 ## Stop and recover
 

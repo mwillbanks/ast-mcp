@@ -203,6 +203,45 @@ describe("mutation journal correctness", () => {
   });
 
   test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    "rejects contradictory checkout envelopes (damaged=%s normalized=%s)",
+    async (damaged, normalized) => {
+      await withJournal(async (fixture) => {
+        const batch = plan(fixture, 2);
+        await fixture.journal.begin(batch);
+        await replacePayload(fixture, batch.operationId, (record) => ({
+          ...record,
+          checkoutRoot: path.join(path.dirname(fixture.root), "other-checkout"),
+          workspaceId: createIdentity("workspace", { name: "other-checkout" }),
+          files: record.files.map((file) => ({
+            ...file,
+            filePath: normalized
+              ? fixture.root +
+                path.sep +
+                "transient" +
+                path.sep +
+                ".." +
+                path.sep +
+                path.basename(file.filePath)
+              : file.filePath,
+          })),
+          ...(damaged ? { tool: "damaged", schemaVersion: "damaged" } : {}),
+        }));
+        await expect(
+          fixture.journal.unfinished(
+            fixture.workspace.workspaceId,
+            fixture.root,
+          ),
+        ).rejects.toThrow("mutation_recovery_scope_unknown");
+      });
+    },
+  );
+
+  test.each([
     "same-workspace",
     "same-checkout",
     "damaged-version",

@@ -58,7 +58,7 @@ export default function registerLifecycleTools(
         readOnlyHint: false,
       },
       description:
-        "Applies the shared chattr contract to multiple files in one declared files batch under deterministic locks.",
+        "Applies guarded attributes through verified file handles to 1–50 files under deterministic locks; cancellation and incomplete rollback return structured failures.",
       inputSchema: boundedFileBatch(
         z.object({
           chattr,
@@ -165,10 +165,7 @@ export default function registerLifecycleTools(
                             chattr: await applyFileChattr(
                               filePath,
                               request.chattr as FileChattr,
-                              async () => {
-                                signal?.throwIfAborted();
-                                await fence();
-                              },
+                              fence,
                               {
                                 ...snapshot,
                                 signal,
@@ -257,7 +254,7 @@ export default function registerLifecycleTools(
         readOnlyHint: false,
       },
       description:
-        "Deletes files in one declared files batch after reference preflight and removes empty ancestor directories. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+        "Deletes 1–50 files after one reference inventory per root and removes only authorized empty ancestors. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
       inputSchema: boundedFileBatch(
         z.object({
           expectedSha256: z.string().length(64).optional(),
@@ -297,7 +294,7 @@ export default function registerLifecycleTools(
         readOnlyHint: false,
       },
       description:
-        "Renames files in one declared files batch without overwriting destinations. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+        "Renames 1–50 files without replacement and creates authorized missing destination parents without marker files. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
       inputSchema: boundedFileBatch(
         z.object({
           destination: z.string().min(1),

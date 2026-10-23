@@ -26,6 +26,7 @@ Do not treat `$ast-mcp/references/...` as a filesystem expansion.
 4. Call `file_hash` immediately before mutation. Supply each fresh `expectedSha256` in one path-keyed `files` batch.
 5. Send ordered `astRules` or `aiderBlocks` with the selected `patchStrategy` through `file_patch`.
 6. Use `file_write` for new files and `file_rename` for guarded moves to absent destinations.
+   Both create authorized missing parents. Do not create marker files to prepare destination directories.
 7. Use `file_chattr` for metadata and `file_delete` for deletion. Verify results and run repository validation.
 
 Use `run` for search and previews only. Never request `write: true`.

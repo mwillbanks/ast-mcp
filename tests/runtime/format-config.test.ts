@@ -473,10 +473,9 @@ test("formatter failure cleans created parents when mkdir returns a physical ali
     ...args: Parameters<typeof mkdir>
   ) => {
     const created = await originalMkdir(...args);
-    if (
-      typeof created === "string" &&
-      path.basename(String(args[0])) === "deep"
-    ) {
+    // Parent creation uses non-recursive mkdir, whose native result is void.
+    // Inject the alias independently of that implementation detail.
+    if (path.resolve(String(args[0])) === path.dirname(second)) {
       aliases++;
       return path.join(alias, "new");
     }

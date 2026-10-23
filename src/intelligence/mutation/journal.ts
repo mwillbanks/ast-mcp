@@ -1,4 +1,4 @@
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -179,8 +179,22 @@ function recoveryRecord(
     envelope.checkoutRoot === checkoutRoot
   )
     return parseRecord(value, true);
-  if (CanonicalAbsolutePathSchema.safeParse(envelope.checkoutRoot).success)
+  if (CanonicalAbsolutePathSchema.safeParse(envelope.checkoutRoot).success) {
+    // A conflicting envelope cannot conceal paths in the current checkout.
+    // Unrelated malformed payloads remain outside strict recovery validation.
+    if (Array.isArray(envelope.files))
+      for (const file of envelope.files) {
+        const candidate =
+          file && typeof file === "object" ? file.filePath : undefined;
+        if (
+          typeof candidate === "string" &&
+          isAbsolute(candidate) &&
+          pathWithin(checkoutRoot, resolve(candidate))
+        )
+          throw new Error("mutation_recovery_scope_unknown");
+      }
     return null;
+  }
   // Legacy records lack a checkout root. Only a complete set of canonical,
   // non-overlapping paths proves that their recovery is unrelated.
   if (!Array.isArray(envelope.files) || envelope.files.length === 0)

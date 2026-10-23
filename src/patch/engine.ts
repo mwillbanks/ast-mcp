@@ -845,6 +845,7 @@ async function rollbackFileBatch(
   fence: () => Promise<void>,
 ): Promise<void> {
   const failures: unknown[] = [];
+  const affectedPaths: string[] = [];
   for (const { resolvedPath, result } of committed.reverse()) {
     const snapshot = snapshots.get(resolvedPath);
     try {
@@ -873,11 +874,21 @@ async function rollbackFileBatch(
       if (Array.isArray(createdDirectories))
         await removeCreatedDirectories(createdDirectories);
     } catch (error) {
-      failures.push(error);
+      affectedPaths.push(resolvedPath);
+      failures.push(
+        Object.assign(new Error("File rollback failed", { cause: error }), {
+          details: { affectedPaths: [resolvedPath] },
+        }),
+      );
     }
   }
   if (failures.length > 0)
-    throw new AggregateError(failures, "Mutation rollback requires recovery");
+    throw Object.assign(
+      new AggregateError(failures, "Mutation rollback requires recovery"),
+      {
+        details: { affectedPaths },
+      },
+    );
 }
 
 async function executeReservedFileBatch<T, Prepared>(
@@ -992,9 +1003,16 @@ async function executeReservedFileBatch<T, Prepared>(
       // A failed begin can leave an uncertain journal even without file commits.
       receiptState.safeToRelease = began || receiptState.safeToRelease;
     } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "Mutation failed and rollback requires recovery",
+      throw Object.assign(
+        new AggregateError(
+          [error, rollbackError],
+          "Mutation failed and rollback requires recovery",
+        ),
+        {
+          details: {
+            affectedPaths: committed.map(({ resolvedPath }) => resolvedPath),
+          },
+        },
       );
     }
     throw error;
