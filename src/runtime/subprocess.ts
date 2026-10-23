@@ -17,6 +17,7 @@ export async function readSubprocessOutput(
   onOverflow: () => Promise<void>,
   fatalUtf8 = false,
 ) {
+  signal.throwIfAborted();
   const reader = stream.getReader();
   const cancel = () => {
     void reader.cancel().catch(() => undefined);
@@ -27,6 +28,7 @@ export async function readSubprocessOutput(
   try {
     while (true) {
       const result = await reader.read();
+      signal.throwIfAborted();
       if (result.done) break;
       size += result.value.byteLength;
       if (size > MAX_OUTPUT_BYTES) {

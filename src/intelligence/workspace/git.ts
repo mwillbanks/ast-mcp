@@ -1,9 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lstat, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import { sha256 } from "../../runtime/hash.ts";
 import { pathWithin } from "../../runtime/path-utils.ts";
 import { terminateProcessTree } from "../../runtime/subprocess.ts";
+import { isTransactionLockArtifact } from "../../runtime/transaction-lock.ts";
 import {
   createRevisionId,
   dirtyOverlayArtifactIdentity,
@@ -22,6 +24,25 @@ export interface GitWorkspaceIdentity {
   isGit: boolean;
   isLinkedWorktree: boolean;
   repositoryRoot: string;
+}
+
+const workspaceGitContext = new AsyncLocalStorage<{
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}>();
+
+export function withWorkspaceGitContext<T>(
+  options: { signal?: AbortSignal; timeoutMs?: number },
+  operation: () => T,
+): T {
+  const previous = workspaceGitContext.getStore();
+  return workspaceGitContext.run(
+    {
+      signal: options.signal ?? previous?.signal,
+      timeoutMs: options.timeoutMs ?? previous?.timeoutMs,
+    },
+    operation,
+  );
 }
 
 interface GitResult {
@@ -87,34 +108,69 @@ export async function runGitRaw(
   assertNotAborted: (signal?: AbortSignal) => void = throwIfGitAborted,
   maxStdoutBytes?: number,
 ): Promise<GitResult> {
-  assertNotAborted(signal);
+  const context = workspaceGitContext.getStore();
+  const deadline = new AbortController();
+  const effectiveSignal = signal ?? context?.signal;
+  const combined = effectiveSignal
+    ? AbortSignal.any([effectiveSignal, deadline.signal])
+    : deadline.signal;
+  assertNotAborted(combined);
+  const timeoutMs = Math.max(0, context?.timeoutMs ?? 30_000);
+  if (timeoutMs === 0)
+    throw new WorkspaceError(
+      "workspace_git_failure",
+      "Git operation deadline expired",
+      undefined,
+      true,
+    );
   const child = Bun.spawn(["git", "-C", directory, ...args], {
     detached: process.platform !== "win32",
     env: sanitizedGitEnvironment(),
     stderr: "pipe",
     stdout: "pipe",
   });
+  const timer = setTimeout(
+    () =>
+      deadline.abort(
+        new WorkspaceError(
+          "workspace_git_failure",
+          "Git operation deadline expired",
+          { timeoutMs },
+          true,
+        ),
+      ),
+    timeoutMs,
+  );
   let termination: Promise<void> | undefined;
   const terminate = () => {
     termination ??= terminateProcessTree(child, { graceMs: 250 });
   };
-  signal?.addEventListener("abort", terminate, { once: true });
-  if (signal?.aborted) terminate();
+  effectiveSignal?.addEventListener("abort", terminate, { once: true });
+  deadline.signal.addEventListener("abort", terminate, { once: true });
+  if (combined.aborted) terminate();
   try {
     const [code, stderr, stdout] = await Promise.all([
       child.exited,
-      new Response(child.stderr).text(),
-      maxStdoutBytes === undefined
-        ? new Response(child.stdout).bytes()
-        : readBoundedGitOutput(child.stdout, maxStdoutBytes, terminate),
+      readBoundedGitOutput(child.stderr, 64 * 1024, terminate),
+      readBoundedGitOutput(
+        child.stdout,
+        maxStdoutBytes ?? 64 * 1024 * 1024,
+        terminate,
+      ),
     ]);
-    assertNotAborted(signal);
-    return { code, stderr: stderr.trim(), stdout };
+    assertNotAborted(combined);
+    return {
+      code,
+      stderr: Buffer.from(stderr).toString("utf8").trim(),
+      stdout,
+    };
   } catch (error) {
-    assertNotAborted(signal);
+    assertNotAborted(combined);
     throw error;
   } finally {
-    signal?.removeEventListener("abort", terminate);
+    clearTimeout(timer);
+    effectiveSignal?.removeEventListener("abort", terminate);
+    deadline.signal.removeEventListener("abort", terminate);
     if (termination) await termination;
   }
 }
@@ -525,7 +581,9 @@ export async function gitDirtyOverlayId(
       result.stderr || "Unable to inspect Git working state",
       { checkoutRoot: git.checkoutRoot },
     );
-  const records = parseGitPorcelainV1Z(result.stdout);
+  const records = parseGitPorcelainV1Z(result.stdout).filter(
+    (record) => !isTransactionLockArtifact(record.path),
+  );
   const entries: DirtyEntry[] = [];
   for (const record of records) {
     entries.push(await dirtyEntry(git, record.path, record.code));
@@ -567,7 +625,9 @@ export async function gitWorkingState(git: GitWorkspaceIdentity) {
       { checkoutRoot: git.checkoutRoot },
     );
   }
-  const records = parseGitPorcelainV1Z(result.stdout);
+  const records = parseGitPorcelainV1Z(result.stdout).filter(
+    (record) => !isTransactionLockArtifact(record.path),
+  );
   return {
     deleted: records.some(
       (record) =>

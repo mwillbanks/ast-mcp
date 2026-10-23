@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import * as fsPromises from "node:fs/promises";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { withConfig } from "../../../src/config/index.ts";
+import { createIdentity } from "../../../src/intelligence/contracts/common.ts";
 import {
   createRepositoryId,
   createRevisionId,
@@ -37,14 +39,18 @@ import {
   acquireFileLock,
   clearMutationLockQueuesForTests,
   mutationLockPath,
+  mutationSharedDatabasePath,
   withFencedFileLock,
   withFencedFileLocks,
 } from "../../../src/intelligence/mutation/locks.ts";
 import {
+  ensureMutationLockDirectory,
   LanceMutationLifecycle,
   mutationOperationId,
+  mutationTransactionLockPath,
   withLanceMutationLifecycle,
 } from "../../../src/intelligence/mutation/service.ts";
+import type { MutationJournalRecord } from "../../../src/intelligence/mutation/types.ts";
 import { LanceIntelligenceStore } from "../../../src/intelligence/storage/store.ts";
 import {
   type WorkspaceHandle,
@@ -56,6 +62,7 @@ import { applyFileChattr } from "../../../src/runtime/attributes.ts";
 import { deleteFilesSafely } from "../../../src/runtime/file-delete.ts";
 import { renameFilesSafely } from "../../../src/runtime/file-rename.ts";
 import { sha256 } from "../../../src/runtime/hash.ts";
+import { readSystemAccount } from "../../../src/runtime/private-lock-directory.ts";
 
 const roots: string[] = [];
 
@@ -238,6 +245,12 @@ describe("mutation locks", () => {
       ownerId: "first",
     });
     clock = 2_000;
+    await expect(
+      acquireFileLock(file, { deadline: Date.now() + 30 }),
+    ).rejects.toMatchObject({ code: "lock_deadline" });
+    const abandoned = await readFile(first.lockPath, "utf8");
+    await first.release();
+    await writeFile(first.lockPath, abandoned);
     const second = await acquireFileLock(file, {
       leaseMs: 100,
       now: () => clock,
@@ -1043,13 +1056,16 @@ describe("mutation recovery edges", () => {
     expect(await Bun.file(lock).exists()).toBeFalse();
     await writeFile(lock, "stale");
     await withFencedFileLocks([lock], async (leases) => {
-      expect(leases).toHaveLength(0);
+      expect(leases).toHaveLength(1);
+      await expect(
+        acquireFileLock(lock, { deadline: Date.now() + 20 }),
+      ).rejects.toMatchObject({ code: "lock_deadline" });
       await rm(lock);
     });
     expect(await Bun.file(lock).exists()).toBeFalse();
     expect(await Bun.file(`${lock}.ast-mcp.lock`).exists()).toBeFalse();
     expect(await mutationLockPath(path.join(root, ".hidden"))).toBe(
-      path.join(root, ".hidden.ast-mcp.lock"),
+      path.join(await realpath(root), ".hidden.ast-mcp.lock"),
     );
     const pending = `${lock}.pending-orphan`;
     await writeFile(pending, "orphan");
@@ -1155,6 +1171,9 @@ describe("mutation recovery edges", () => {
       now: () => 1_000,
       leaseMs: 100,
     });
+    const abandoned = await readFile(owner.lockPath, "utf8");
+    await owner.release();
+    await writeFile(owner.lockPath, abandoned);
     const actualFile = Bun.file;
     const denied = Object.assign(new Error("moved lock unreadable"), {
       code: "EACCES",
@@ -1172,7 +1191,6 @@ describe("mutation recovery edges", () => {
       await expect(acquireFileLock(file, { now: () => 1_200 })).rejects.toThrow(
         "moved lock unreadable",
       );
-      await owner.fence();
       expect(JSON.parse(await readFile(owner.lockPath, "utf8")).token).toBe(
         owner.token,
       );
@@ -1207,6 +1225,7 @@ describe("mutation recovery edges", () => {
         sha256:
           kind === "checksum" ? "invalid" : sha256(JSON.stringify(renewed)),
       });
+      await owner.release();
       await writeFile(
         owner.lockPath,
         kind === "initial"
@@ -1322,6 +1341,9 @@ describe("mutation recovery edges", () => {
         now: () => ownerClock,
       });
       ownerClock = 1_050;
+      const abandoned = await readFile(owner.lockPath, "utf8");
+      await owner.release();
+      await writeFile(owner.lockPath, abandoned);
       const abort = new AbortController();
       const actualRename = fsPromises.rename.bind(fsPromises);
       let raced = false;
@@ -1381,7 +1403,7 @@ describe("mutation recovery edges", () => {
             code: "lock_fenced",
           });
         } else {
-          await owner.fence();
+          expect(record.token).toBe(owner.token);
         }
       } finally {
         rename.mockRestore();
@@ -2171,5 +2193,534 @@ describe("mutation recovery edges", () => {
     expect(activeMutationLifecycle()).toBe(second);
     configureMutationLifecycle(null);
     expect(activeMutationLifecycle()).toBeNull();
+  });
+});
+
+describe("Case alias locking", () => {
+  test.skipIf(process.platform !== "darwin" && process.platform !== "win32")(
+    "absent case aliases share one batch lease",
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-case-alias-"));
+      try {
+        await withFencedFileLocks(
+          [path.join(root, "Missing.ts"), path.join(root, "missing.ts")],
+          async (leases) => {
+            expect(leases).toHaveLength(1);
+            await leases[0]!.fence();
+          },
+          { deadline: Date.now() + 200 },
+        );
+        expect(
+          await mutationTransactionLockPath(path.join(root, "Checkout")),
+        ).toBe(await mutationTransactionLockPath(path.join(root, "checkout")));
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("Concurrent journal updates", () => {
+  test("concurrent journal objects preserve every commit and the final transition", async () => {
+    const identity = (kind: string) =>
+      createIdentity(kind, { name: "journal-concurrency" });
+    const files = ["left.ts", "right.ts"].map((name) => ({
+      candidateSha256: "b".repeat(64),
+      committedDeleted: false,
+      committedSha256: null,
+      filePath: path.join(process.cwd(), name),
+      sourceContentBase64: "YQ==",
+      sourceGid: null,
+      sourceMode: null,
+      sourceSha256: "a".repeat(64),
+      sourceUid: null,
+    }));
+    const record: MutationJournalRecord = {
+      attempt: 0,
+      checkoutRoot: process.cwd(),
+      createdAt: "2026-10-22T00:00:00.000Z",
+      errorCode: null,
+      files,
+      operationId: identity("job"),
+      revisionId: identity("revision"),
+      schemaVersion: "ast-mcp.mutation-journal.v1",
+      state: "running",
+      storageDomainId: identity("storage-domain"),
+      tool: "file_patch",
+      updatedAt: "2026-10-22T00:00:00.000Z",
+      workspaceId: identity("workspace"),
+    };
+    let payload = JSON.stringify(record);
+    let failNextRead = false;
+    const store = {
+      storagePath: identity("journal-store"),
+      async rows() {
+        if (failNextRead) {
+          failNextRead = false;
+          throw new Error("journal read failed");
+        }
+        const observed = payload;
+        // Force overlapping reads to observe the same state without serialization.
+        await Bun.sleep(5);
+        return [{ payload_json: observed }];
+      },
+      async putRows(_name: unknown, rows: { payload_json: string }[]) {
+        payload = rows[0]!.payload_json;
+      },
+    } as unknown as LanceIntelligenceStore;
+    const left = new LanceMutationJournal(store);
+    const right = new LanceMutationJournal(store);
+    await Promise.all([
+      left.committed(record.operationId, {
+        filePath: files[0]!.filePath,
+        sha256: "b".repeat(64),
+      }),
+      right.committed(record.operationId, {
+        filePath: files[1]!.filePath,
+        sha256: "c".repeat(64),
+      }),
+      left.transition(record.operationId, "refreshing"),
+    ]);
+    const result = await left.get(record.operationId);
+    expect(result?.files.map((file) => file.committedSha256)).toEqual([
+      "b".repeat(64),
+      "c".repeat(64),
+    ]);
+    expect(result?.state).toBe("refreshing");
+    expect(result?.attempt).toBe(3);
+    failNextRead = true;
+    await expect(left.transition(record.operationId, "failed")).rejects.toThrow(
+      "journal read failed",
+    );
+    await right.transition(record.operationId, "succeeded");
+    expect((await left.get(record.operationId))?.state).toBe("succeeded");
+  });
+});
+
+describe("Lease metadata validation", () => {
+  test("pending metadata sync failures clean unpublished artifacts and release OS ownership", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-pending-failure-"),
+    );
+    const lockRoot = await fsPromises.realpath(root);
+    const original = fsPromises.open;
+    const failure = new Error("metadata sync failed");
+    const open = spyOn(fsPromises, "open").mockImplementation((async (
+      ...args: Parameters<typeof fsPromises.open>
+    ) => {
+      const handle = await original(...args);
+      if (
+        String(args[0]).startsWith(lockRoot) &&
+        String(args[0]).includes(".pending-")
+      )
+        handle.sync = async () => {
+          throw failure;
+        };
+      return handle;
+    }) as typeof fsPromises.open);
+    try {
+      await expect(acquireFileLock(path.join(root, "target"))).rejects.toBe(
+        failure,
+      );
+      expect(await fsPromises.readdir(root)).toEqual([
+        ".ast-mcp-mutation-locks",
+      ]);
+      open.mockRestore();
+      const next = await acquireFileLock(path.join(root, "target"));
+      await next.fence();
+      await next.release();
+    } finally {
+      open.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("release preserves malformed metadata and allows recovery after repair", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-release-failure-"),
+    );
+    const target = path.join(root, "target");
+    const owner = await acquireFileLock(target);
+    const original = await readFile(owner.lockPath, "utf8");
+    try {
+      await writeFile(owner.lockPath, "malformed");
+      await expect(owner.release()).rejects.toMatchObject({
+        code: "lock_record_malformed",
+      });
+      expect(await readFile(owner.lockPath, "utf8")).toBe("malformed");
+      await writeFile(owner.lockPath, original);
+      const next = await acquireFileLock(target);
+      await next.release();
+    } finally {
+      await owner.release();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("malformed renewal frames are ignored while invalid initial record types fail closed", async () => {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-record-validation-"),
+    );
+    const target = path.join(root, "target");
+    const owner = await acquireFileLock(target, { leaseMs: 60_000 });
+    const lockPath = owner.lockPath;
+    const initial = await readFile(lockPath, "utf8");
+    await owner.release();
+    try {
+      await writeFile(lockPath, initial + "\n{invalid}\n");
+      const recovered = await acquireFileLock(target);
+      await recovered.fence();
+      await recovered.release();
+      const invalid = { ...JSON.parse(initial), pid: "invalid" };
+      await writeFile(lockPath, JSON.stringify(invalid));
+      await expect(acquireFileLock(target)).rejects.toMatchObject({
+        code: "lock_record_malformed",
+      });
+      expect(await readFile(lockPath, "utf8")).toBe(JSON.stringify(invalid));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an expired file owner cannot renew and inner acquisition deadlines remain enforced", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-lock-clock-"));
+    let now = Date.now();
+    const owner = await acquireFileLock(path.join(root, "target"), {
+      now: () => now,
+      leaseMs: 100,
+    });
+    try {
+      now += 101;
+      await expect(owner.renew()).rejects.toMatchObject({
+        code: "lock_fenced",
+      });
+      await expect(
+        acquireFileLock(path.join(root, "other"), {
+          now: () => now + 60_000,
+          deadline: Date.now() + 30_000,
+        }),
+      ).rejects.toMatchObject({ code: "lock_deadline" });
+      await writeFile(path.join(root, "file"), "value");
+      await expect(
+        mutationLockPath(path.join(root, "file", "nested")),
+      ).rejects.toThrow();
+    } finally {
+      await owner.release();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Process ownership recovery", () => {
+  test("crashed file owners are recovered before their metadata expires", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-file-crash-"));
+    const target = path.join(root, "target");
+    const modulePath = Bun.fileURLToPath(
+      new URL("../../../src/intelligence/mutation/locks.ts", import.meta.url),
+    );
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "--eval",
+        `
+    import { acquireFileLock } from ${JSON.stringify(modulePath)};
+    await acquireFileLock(${JSON.stringify(target)}, { leaseMs: 60_000 });
+    console.log("ready");
+    await Bun.sleep(60_000);
+  `,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+    try {
+      const reader = child.stdout.getReader();
+      const ready = await reader.read();
+      reader.releaseLock();
+      expect(new TextDecoder().decode(ready.value).trim()).toBe("ready");
+      child.kill("SIGKILL");
+      await child.exited;
+      const successor = await acquireFileLock(target, {
+        deadline: Date.now() + 1000,
+      });
+      try {
+        expect(successor.epoch).toBeGreaterThan(1);
+        await successor.fence();
+      } finally {
+        await successor.release();
+      }
+    } finally {
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+      await child.exited;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("Private checkout lock namespace", () => {
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    );
+  });
+  async function temporary() {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-lock-root-"));
+    roots.push(root);
+    return root;
+  }
+
+  test("checkout locks remain shared across temporary and home environment overrides", async () => {
+    const checkout = await temporary();
+    const lockPath = await mutationTransactionLockPath(checkout);
+    const owner = await acquireFileLock(lockPath, { leaseMs: 30_000 });
+    const childTemporary = await temporary();
+    const modulePath = Bun.fileURLToPath(
+      new URL("../../../src/intelligence/mutation/service.ts", import.meta.url),
+    );
+    const locksPath = Bun.fileURLToPath(
+      new URL("../../../src/intelligence/mutation/locks.ts", import.meta.url),
+    );
+    const script = `
+    import { mutationTransactionLockPath } from ${JSON.stringify(modulePath)};
+    import { acquireFileLock } from ${JSON.stringify(locksPath)};
+    const target = await mutationTransactionLockPath(${JSON.stringify(checkout)});
+    if (target !== ${JSON.stringify(lockPath)}) throw new Error("split checkout lock namespace");
+    try {
+      const lease = await acquireFileLock(target, { deadline: Date.now() + 100 });
+      await lease.release();
+      process.exit(2);
+    } catch (error) {
+      console.log(error.code);
+      process.exit(error.code === "lock_deadline" ? 0 : 3);
+    }
+  `;
+    try {
+      const child = Bun.spawn([process.execPath, "-e", script], {
+        env: {
+          ...process.env,
+          HOME: childTemporary,
+          TMPDIR: childTemporary,
+          TMP: childTemporary,
+          TEMP: childTemporary,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exit, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("lock_deadline");
+      expect(exit).toBe(0);
+      await owner.fence();
+    } finally {
+      await owner.release();
+    }
+  });
+
+  test("creates an account-private lock directory", async () => {
+    const home = await temporary();
+    const directory = await ensureMutationLockDirectory({
+      homedir: home,
+      uid: os.userInfo().uid,
+    });
+    const metadata = await lstat(directory);
+    expect(metadata.isDirectory()).toBe(true);
+    if (process.platform !== "win32") expect(metadata.mode & 0o777).toBe(0o700);
+  });
+
+  test.each(["symlink", "public"] as const)(
+    "rejects an unsafe %s lock directory",
+    async (kind) => {
+      if (kind === "public" && process.platform === "win32") return;
+      const home = await temporary();
+      const directory = path.join(home, ".ast-mcp-mutation-locks");
+      if (kind === "symlink")
+        await symlink(await temporary(), directory, "dir");
+      else {
+        await mkdir(directory, { mode: 0o700 });
+        await chmod(directory, 0o755);
+      }
+      await expect(
+        ensureMutationLockDirectory({ homedir: home, uid: os.userInfo().uid }),
+      ).rejects.toMatchObject({ code: "mutation_lock_directory_unsafe" });
+    },
+  );
+
+  test("fails closed when account lookup fails", async () => {
+    const lookup = spyOn(Bun, "spawn").mockImplementation(() => {
+      throw new Error("account lookup failed");
+    });
+    try {
+      await expect(readSystemAccount()).rejects.toMatchObject({
+        code: "mutation_lock_account_unavailable",
+      });
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+});
+
+describe("Account-scoped recovery", () => {
+  test.each(["legacy", "foreign"] as const)(
+    "preserves a future-dated %s lease until its actual expiry",
+    async (kind) => {
+      const root = await temporary();
+      const target = path.join(root, "target");
+      const lease = await acquireFileLock(target, { leaseMs: 60_000 });
+      const record = JSON.parse(await readFile(lease.lockPath, "utf8"));
+      await lease.release();
+      if (kind === "foreign" && process.platform === "win32")
+        record.accountId = "foreign-account";
+      if (kind === "legacy") {
+        delete record.protocol;
+        delete record.accountId;
+      }
+      const original = JSON.stringify(record);
+      await writeFile(lease.lockPath, original);
+      const actual = fsPromises.lstat;
+      const inspect = spyOn(fsPromises, "lstat").mockImplementation((async (
+        ...args: Parameters<typeof fsPromises.lstat>
+      ) => {
+        const metadata = await actual(...args);
+        if (kind === "foreign" && String(args[0]) === lease.lockPath)
+          metadata.uid = Number(metadata.uid) + 1;
+        return metadata;
+      }) as typeof fsPromises.lstat);
+      try {
+        await expect(
+          acquireFileLock(target, { deadline: Date.now() + 50, pollMs: 5 }),
+        ).rejects.toMatchObject({ code: "lock_deadline" });
+        expect(await readFile(lease.lockPath, "utf8")).toBe(original);
+        const next = await acquireFileLock(target, {
+          now: () => record.expiresAt + 1,
+        });
+        await next.fence();
+        await next.release();
+      } finally {
+        inspect.mockRestore();
+      }
+    },
+  );
+});
+
+test("retries when a stale record disappears before its ownership inspection", async () => {
+  const root = await temporary();
+  const target = path.join(root, "disappearing.txt");
+  const first = await acquireFileLock(target);
+  const initial = await readFile(first.lockPath, "utf8");
+  await first.release();
+  await writeFile(first.lockPath, initial);
+  const actual = fsPromises.lstat;
+  let removed = false;
+  const inspect = spyOn(fsPromises, "lstat").mockImplementation((async (
+    ...args: Parameters<typeof fsPromises.lstat>
+  ) => {
+    if (!removed && String(args[0]) === first.lockPath) {
+      removed = true;
+      await rm(first.lockPath);
+    }
+    return actual(...args);
+  }) as typeof fsPromises.lstat);
+  try {
+    const next = await acquireFileLock(target);
+    await next.fence();
+    await next.release();
+    expect(removed).toBe(true);
+  } finally {
+    inspect.mockRestore();
+  }
+});
+
+describe("Shared mutation metadata placement", () => {
+  test("keeps configured project guards outside deletable source ancestors", async () => {
+    const root = await temporary();
+    await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
+    const target = path.join(root, "nested", "deeper", "target.txt");
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, "source");
+    const database = await mutationSharedDatabasePath(target);
+    expect(path.dirname(database)).toBe(
+      path.join(await realpath(root), ".ast-mcp-locks"),
+    );
+    const owner = await acquireFileLock(target);
+    await owner.release();
+    expect(await fsPromises.readdir(path.dirname(target))).toEqual([
+      "target.txt",
+    ]);
+    expect(await mutationSharedDatabasePath(target)).toBe(database);
+    expect(await mutationSharedDatabasePath(root)).not.toBe(database);
+  });
+
+  test.each(["directory", "worktree"] as const)(
+    "uses %s Git metadata ahead of a configuration marker",
+    async (kind) => {
+      const root = await temporary();
+      await writeFile(path.join(root, "ast-mcp.toml"), "version = 1\n");
+      const metadata =
+        kind === "directory"
+          ? path.join(root, ".git")
+          : path.join(root, "metadata");
+      await mkdir(metadata);
+      if (kind === "worktree")
+        await writeFile(path.join(root, ".git"), "gitdir: metadata\n");
+      const database = await mutationSharedDatabasePath(
+        path.join(root, "missing", "target"),
+      );
+      expect(path.dirname(database)).toBe(
+        path.join(await realpath(metadata), "ast-mcp-locks"),
+      );
+      expect(await mutationSharedDatabasePath(root)).not.toBe(database);
+    },
+  );
+
+  test("keeps unmarked external guard files in one reserved parent directory", async () => {
+    const root = await temporary();
+    const database = await mutationSharedDatabasePath(
+      path.join(root, "missing", "target"),
+    );
+    expect(path.dirname(database)).toBe(
+      path.join(await realpath(root), ".ast-mcp-mutation-locks"),
+    );
+    expect(await mutationSharedDatabasePath(path.join(root, "other"))).not.toBe(
+      database,
+    );
+  });
+
+  test.each(["malformed", "oversized", "symlink", "missing-target"] as const)(
+    "rejects an unsafe %s Git marker",
+    async (kind) => {
+      const root = await temporary();
+      const marker = path.join(root, ".git");
+      if (kind === "symlink") await symlink(await temporary(), marker, "dir");
+      else
+        await writeFile(
+          marker,
+          kind === "oversized"
+            ? "x".repeat(4097)
+            : kind === "missing-target"
+              ? "gitdir: missing"
+              : "invalid",
+        );
+      await expect(
+        mutationSharedDatabasePath(path.join(root, "target")),
+      ).rejects.toThrow();
+    },
+  );
+
+  test("rejects occupied coordination directories and excessive ancestor depth", async () => {
+    const root = await temporary();
+    await writeFile(path.join(root, ".ast-mcp-mutation-locks"), "foreign");
+    await expect(
+      mutationSharedDatabasePath(path.join(root, "target")),
+    ).rejects.toThrow("Unsafe mutation coordination directory");
+    await expect(
+      mutationSharedDatabasePath(
+        path.join(root, ...Array(257).fill("a"), "target"),
+      ),
+    ).rejects.toThrow("ancestor limit");
   });
 });

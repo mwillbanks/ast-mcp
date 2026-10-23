@@ -24,11 +24,26 @@ A legacy client's roots request has a five-second deadline. Failed roots request
 
 Legacy approval prompts have a 60-second absolute deadline. Progress notifications cannot extend that deadline. Other requests can proceed while a prompt waits. A timeout denies the pending operation; inspect the response and retry when the host can display prompts. Modern clients receive `input_required` immediately and submit their approval response separately.
 
-File reads, hashes, and capability checks have a 30-second deadline. Cancellation closes their active streams and stops further batch work.
+File reads, hashes, and capability checks have a 30-second deadline. Cancellation closes their active streams and stops further batch work. Mutation snapshots reject pipes and other nonregular files before reading them.
 
 File write and patch batches wait up to ten seconds for mutation locks. Caller cancellation stops lock waits and is checked before replacements. A cancelled batch rolls back completed replacements before releasing its locks.
 
-Mutation recovery and writes use one fenced transaction lock per checkout. Recovery cannot restore another active transaction. Preview-only patches do not open the intelligence store. Writes do not initialize a previously unindexed workspace; explicitly index it when needed. Existing indexed workspaces retain their synchronous freshness checks. Refresh has a cooperative 30-second deadline and uses cancellable parser workers. A refresh timeout rolls back the mutation; explicitly index the workspace before retrying.
+Mutation recovery and writes use one fenced transaction lock per checkout. Operating-system transactions prevent an expired lease from admitting another writer while its owner remains active. Process exit releases the operating-system lock. Lock identities use canonical paths and private account storage, independent of host temporary directories and intelligence storage domains. Restart every MCP process after upgrading so all writers use this protocol. Fast recovery requires a current-protocol record owned by the same operating-system account; foreign and legacy records retain their actual lease expiry. Private account guards also acquire resource-local SQLite guards. File and checkout guards use a hashed database under Git metadata in `ast-mcp-locks`, or under the nearest configured root in `.ast-mcp-locks`. Git worktree metadata files are supported. Unmarked external paths use `.ast-mcp-mutation-locks` in their nearest existing parent. Intelligence and export guards remain inside their resource directories. These resource guards serialize accounts that can open the same guard database. POSIX guard files use mode 0600; another account without access fails closed. Windows uses filesystem ACL authorization and shared SQLite exclusion. Guard databases remain present after release; do not remove them while any server process runs. File deletion preserves empty ancestor cleanup within Git and configured projects. Unmarked external paths can retain their reserved coordination directory. Guard databases and SQLite sidecars are excluded from working-state identities and intelligence source selection. Symlinks, nonregular files, hard links, and replaced guard inodes fail closed. Recovery cannot restore another active transaction. Preview-only patches do not open the intelligence store. Writes do not initialize a previously unindexed workspace; explicitly index it when needed. Existing indexed workspaces retain their synchronous freshness checks. Refresh has a cooperative 30-second deadline and uses cancellable parser workers. A refresh timeout rolls back the mutation; explicitly index the workspace before retrying.
+
+Install, update, and uninstall operations serialize shared checkout and home state. Service commands have a ten-second deadline. Readiness checks have a five-second overall deadline. Configuration updates use atomic replacements and reject concurrent changes with `configuration_conflict`; reload and retry. A busy configuration transaction fails promptly instead of waiting inside an approval prompt.
+
+Configuration commits keep `<canonical config>.config-commit.sqlite` beside the resolved configuration file. For symlinked configuration, the database lives beside the symlink target. SQLite can also create `-journal`, `-wal`, and `-shm` sidecars. Releasing the lock closes its handles but preserves the database to maintain one shared operating-system lock identity. Do not delete these files while any MCP server or installer process is active.
+
+If the configuration target is in a versioned repository, add these patterns to that repository's `.gitignore`:
+
+```text
+*.config-commit.sqlite
+*.config-commit.sqlite-journal
+*.config-commit.sqlite-wal
+*.config-commit.sqlite-shm
+```
+
+Default embedding model queue waits and model loading have separate five-minute deadlines. Inference has a 30-second deadline. Patch preparation also runs in workers, including native AST rewrites and text matching. Cancellation terminates active preparation before file replacement. Worker retirement retains its capacity reservation until termination completes. Language requests wait within their request admission deadline while their worker retires, then resume automatically when retirement succeeds. Failed retirement remains quarantined, reports `queue_full`, and cleanup reports the failure. Restart the affected MCP process when retirement cannot complete.
 
 A stalled-tool telemetry event reports an operation still running after 15 seconds. It does not cancel the operation or indicate a completed failure. Inspect completed events separately. See [telemetry](/docs/guides/telemetry).
 

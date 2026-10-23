@@ -212,6 +212,8 @@ interface WorkerClientConfig {
 
 interface Pending {
   bytes: number;
+  retiring: boolean;
+  waiting: boolean;
   cleanup(): void;
   languageId: string;
   reject(error: Error): void;
@@ -219,11 +221,16 @@ interface Pending {
   source: string;
 }
 
+// Retirement remains owned and close reports failures to its caller.
+function observeRetirementFailure(): void {}
+
 export function createWorkerClient(config: WorkerClientConfig) {
   let worker: Worker | undefined;
   let nextId = 1;
   let outstandingBytes = 0;
   let termination: Promise<void> | undefined;
+  let retirementFailed = false;
+  const waitingStarts = new Map<number, () => void>();
   const pending = new Map<number, Pending>();
   const drainWaiters = new Set<() => void>();
 
@@ -241,6 +248,7 @@ export function createWorkerClient(config: WorkerClientConfig) {
     const request = pending.get(id);
     if (!request) return undefined;
     pending.delete(id);
+    waitingStarts.delete(id);
     outstandingBytes -= request.bytes;
     request.cleanup();
     notifyDrained();
@@ -258,7 +266,8 @@ export function createWorkerClient(config: WorkerClientConfig) {
   }
 
   function handleError(active: Worker, failure: Error): void {
-    if (worker === active) rejectPending(failure);
+    if (worker === active)
+      void terminateWorker(active, failure).catch(observeRetirementFailure);
   }
 
   async function terminateWorker(
@@ -267,22 +276,55 @@ export function createWorkerClient(config: WorkerClientConfig) {
     canceledId?: number,
   ): Promise<void> {
     if (canceledId !== undefined) {
-      active?.postMessage({ id: canceledId, type: "cancel" });
+      try {
+        active?.postMessage({ id: canceledId, type: "cancel" });
+      } catch {
+        /* Termination remains authoritative after a failed cancellation message. */
+      }
     }
     if (!termination) {
+      const retiringRequests = [...pending.entries()];
+      for (const [, request] of retiringRequests) request.retiring = true;
       worker = undefined;
-      termination = (async () => {
-        if (active) await active.terminate();
-        rejectPending(failure);
-      })().finally(() => {
-        termination = undefined;
-        notifyDrained();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const retirement = Promise.resolve()
+        .then(async () => {
+          if (active) await active.terminate();
+        })
+        .then(() => {
+          for (const [id] of retiringRequests) finish(id);
+          termination = undefined;
+          retirementFailed = false;
+          const starts = [...waitingStarts.values()];
+          waitingStarts.clear();
+          for (const start of starts) queueMicrotask(start);
+          notifyDrained();
+        });
+      termination = Promise.race([
+        retirement,
+        new Promise<void>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(error("worker-exit", "worker retirement timed out")),
+            config.limits.timeoutMs,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      void termination.catch(() => {
+        retirementFailed = true;
+        for (const id of [...waitingStarts.keys()]) {
+          finish(id)?.reject(error("queue-full", "worker is retiring"));
+        }
       });
+      for (const [, request] of retiringRequests) {
+        request.cleanup();
+        request.reject(failure);
+      }
     }
     await termination;
   }
 
   function handleResponse(active: Worker, value: unknown): void {
+    if (worker !== active) return;
     try {
       const response = config.validateResponse(value);
       const pendingRequest = pending.get(response.id);
@@ -303,7 +345,7 @@ export function createWorkerClient(config: WorkerClientConfig) {
           "protocol",
           `${config.protocolName} parser worker returned an invalid response`,
         ),
-      );
+      ).catch(observeRetirementFailure);
     }
   }
 
@@ -329,7 +371,8 @@ export function createWorkerClient(config: WorkerClientConfig) {
   }
 
   function analyze(request: WorkerAnalyzeRequest): Promise<SyntaxFacts> {
-    if (termination) return termination.then(() => analyze(request));
+    if (termination && retirementFailed)
+      return Promise.reject(error("queue-full", "worker is retiring"));
     const bytes = Buffer.byteLength(request.source);
     if (
       pending.size >= config.limits.maxPendingRequests ||
@@ -347,19 +390,20 @@ export function createWorkerClient(config: WorkerClientConfig) {
     const id = nextId++;
     const timeoutMs = request.timeoutMs ?? config.limits.timeoutMs;
     return new Promise<SyntaxFacts>((resolve, reject) => {
-      const abort = () => {
-        void terminateWorker(
-          worker,
-          error("aborted", `${config.displayName} parser request aborted`),
-          id,
+      const cancel = (code: "aborted" | "timeout", detail: string) => {
+        if (pending.get(id)?.waiting) {
+          finish(id)?.reject(error(code, detail));
+          return;
+        }
+        void terminateWorker(worker, error(code, detail), id).catch(
+          observeRetirementFailure,
         );
       };
+      const abort = () => {
+        cancel("aborted", `${config.displayName} parser request aborted`);
+      };
       const timer = setTimeout(() => {
-        void terminateWorker(
-          worker,
-          error("timeout", `${config.displayName} parser request timed out`),
-          id,
-        );
+        cancel("timeout", `${config.displayName} parser request timed out`);
       }, timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
@@ -367,6 +411,8 @@ export function createWorkerClient(config: WorkerClientConfig) {
       };
       pending.set(id, {
         bytes,
+        retiring: false,
+        waiting: termination !== undefined,
         cleanup,
         languageId: request.languageId,
         reject,
@@ -375,15 +421,37 @@ export function createWorkerClient(config: WorkerClientConfig) {
       });
       outstandingBytes += bytes;
       request.signal?.addEventListener("abort", abort, { once: true });
-      queueMicrotask(() => {
-        if (!pending.has(id)) return;
-        parserWorker().postMessage({
-          id,
-          languageId: request.languageId,
-          source: request.source,
-          type: "start",
-        });
-      });
+      const start = () => {
+        const admitted = pending.get(id);
+        if (!admitted || admitted.retiring) return;
+        if (termination) {
+          if (retirementFailed)
+            finish(id)?.reject(error("queue-full", "worker is retiring"));
+          else {
+            admitted.waiting = true;
+            waitingStarts.set(id, start);
+          }
+          return;
+        }
+        admitted.waiting = false;
+        try {
+          parserWorker().postMessage({
+            id,
+            languageId: request.languageId,
+            source: request.source,
+            type: "start",
+          });
+        } catch {
+          void terminateWorker(
+            worker,
+            error(
+              "worker-exit",
+              `${config.displayName} parser worker could not start request`,
+            ),
+          ).catch(observeRetirementFailure);
+        }
+      };
+      queueMicrotask(start);
     });
   }
 
@@ -395,7 +463,8 @@ export function createWorkerClient(config: WorkerClientConfig) {
   }
 
   function drain(): Promise<void> {
-    if (pending.size === 0 && !termination) return Promise.resolve();
+    if (termination) return termination.then(() => drain());
+    if (pending.size === 0) return Promise.resolve();
     return new Promise((resolve) => drainWaiters.add(resolve));
   }
 
@@ -413,8 +482,7 @@ export function createWorkerClient(config: WorkerClientConfig) {
       await terminateWorker(undefined, failure);
       return;
     }
-    handleError(active, failure);
-    await active.terminate();
+    await terminateWorker(active, failure);
   }
 
   async function close(): Promise<void> {

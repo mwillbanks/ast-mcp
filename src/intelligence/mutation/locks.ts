@@ -1,9 +1,25 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, open, readdir, rename, rm } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  rename,
+  rm,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { sha256 } from "../../runtime/hash.ts";
-import { canonicalizePathSync } from "../../runtime/path-utils.ts";
+import {
+  canonicalizePath,
+  canonicalizePathSync,
+} from "../../runtime/path-utils.ts";
+import {
+  ensurePrivateLockDirectory as ensureMutationLockDirectory,
+  systemAccount,
+} from "../../runtime/private-lock-directory.ts";
+import { acquireTransactionLock } from "../../runtime/transaction-lock.ts";
 
 export interface FileLockOptions {
   deadline?: Date | number;
@@ -12,6 +28,7 @@ export interface FileLockOptions {
   ownerId?: string;
   pollMs?: number;
   signal?: AbortSignal;
+  sharedDatabasePath?: string;
 }
 
 export interface FileLockLease {
@@ -26,6 +43,8 @@ export interface FileLockLease {
 }
 
 interface LockRecord {
+  accountId?: string;
+  protocol?: "account-sqlite-v1";
   createdAt: number;
   epoch: number;
   expiresAt: number;
@@ -53,11 +72,13 @@ function exactRecord(value: unknown): LockRecord | null {
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
   const expected = [
+    ...(record.protocol === "account-sqlite-v1" ? ["accountId"] : []),
     "createdAt",
     "epoch",
     "expiresAt",
     "ownerId",
     "pid",
+    ...(record.protocol === "account-sqlite-v1" ? ["protocol"] : []),
     "token",
   ];
   if (
@@ -71,7 +92,9 @@ function exactRecord(value: unknown): LockRecord | null {
     !Number.isSafeInteger(record.expiresAt) ||
     !Number.isSafeInteger(record.pid) ||
     typeof record.ownerId !== "string" ||
-    typeof record.token !== "string"
+    typeof record.token !== "string" ||
+    (record.protocol === "account-sqlite-v1" &&
+      typeof record.accountId !== "string")
   )
     return null;
   return record as unknown as LockRecord;
@@ -100,6 +123,8 @@ function parseLockRecord(source: string): LockRecord | null {
     const record = exactRecord(frame.record);
     if (!record || frame.sha256 !== sha256(JSON.stringify(record))) continue;
     if (
+      record.accountId !== initial.accountId ||
+      record.protocol !== initial.protocol ||
       record.createdAt !== initial.createdAt ||
       record.epoch !== initial.epoch ||
       record.ownerId !== initial.ownerId ||
@@ -135,7 +160,8 @@ async function readRecord(lock: string): Promise<LockRecord | null> {
 }
 
 export async function mutationLockPath(filePath: string): Promise<string> {
-  const targetDirectory = path.dirname(filePath);
+  const canonical = await canonicalizePath(filePath);
+  const targetDirectory = path.dirname(canonical);
   let directory = targetDirectory;
   while (true) {
     try {
@@ -149,12 +175,97 @@ export async function mutationLockPath(filePath: string): Promise<string> {
       directory = parent;
     }
   }
-  const basename = path.basename(filePath);
+  const basename = path.basename(canonical);
   const name =
     directory === targetDirectory
       ? `${basename.startsWith(".") ? "" : "."}${basename}.ast-mcp.lock`
-      : `.${sha256(filePath).slice(0, 24)}.ast-mcp.lock`;
+      : `.${sha256(canonical).slice(0, 24)}.ast-mcp.lock`;
   return path.join(directory, name);
+}
+
+export async function mutationSharedDatabasePath(
+  filePath: string,
+): Promise<string> {
+  const canonical = await canonicalizePath(filePath);
+  let directory = path.dirname(canonical);
+  try {
+    if ((await lstat(canonical)).isDirectory()) directory = canonical;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  let fallback: string | undefined;
+  let configured: string | undefined;
+  let metadata: string | undefined;
+  for (let depth = 0; depth < 256; depth++) {
+    try {
+      if ((await lstat(directory)).isDirectory()) fallback ??= directory;
+      const marker = path.join(directory, ".git");
+      let git;
+      try {
+        git = await lstat(marker);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (git) {
+        if (git.isDirectory()) metadata = marker;
+        else if (git.isFile() && git.size <= 4096) {
+          const handle = await open(marker, "r");
+          try {
+            const bytes = Buffer.alloc(4097);
+            const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+            const match = bytes
+              .subarray(0, bytesRead)
+              .toString("utf8")
+              .trim()
+              .match(/^gitdir: (.+)$/);
+            if (bytesRead > 4096 || !match)
+              throw new Error("Invalid Git metadata pointer");
+            metadata = await canonicalizePath(
+              path.resolve(directory, match[1]!),
+            );
+            if (!(await lstat(metadata)).isDirectory())
+              throw new Error("Git metadata is not a directory");
+          } catch (cause) {
+            throw new Error("Git metadata pointer is unavailable or invalid", {
+              cause,
+            });
+          } finally {
+            await handle.close();
+          }
+        } else throw new Error("Unsafe Git metadata marker");
+        break;
+      }
+      if (!configured) {
+        try {
+          const config = await lstat(path.join(directory, "ast-mcp.toml"));
+          if (config.isFile()) configured = directory;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    if (depth === 255) throw new Error("Mutation lock ancestor limit exceeded");
+    directory = parent;
+  }
+  if (!fallback) throw new Error("Mutation lock parent is unavailable");
+  const root = metadata
+    ? path.join(metadata, "ast-mcp-locks")
+    : configured
+      ? path.join(configured, ".ast-mcp-locks")
+      : path.join(fallback, ".ast-mcp-mutation-locks");
+  try {
+    await mkdir(root, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const stat = await lstat(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error("Unsafe mutation coordination directory");
+  return path.join(root, `${sha256(lockPathIdentity(canonical))}.sqlite`);
 }
 
 function assertWaiting(options: FileLockOptions, now: number): void {
@@ -367,8 +478,9 @@ async function recoverExpired(
   lock: string,
   record: LockRecord,
   now: number,
+  accountId: string,
+  accountUid: number,
 ): Promise<number | null> {
-  if (record.expiresAt > now) return null;
   let metadata: Awaited<ReturnType<typeof lstat>>;
   try {
     metadata = await lstat(lock);
@@ -376,6 +488,12 @@ async function recoverExpired(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+  const earlyRecovery =
+    record.protocol === "account-sqlite-v1" &&
+    record.accountId === accountId &&
+    (process.platform === "win32" || metadata.uid === accountUid);
+  if (earlyRecovery) now = Math.max(now, record.expiresAt);
+  if (record.expiresAt > now) return null;
   const observed = await readRecord(lock);
   if (
     !observed ||
@@ -419,161 +537,206 @@ async function recoverExpired(
   }
 }
 
+export function lockPathIdentity(canonical: string): string {
+  return process.platform === "win32" || process.platform === "darwin"
+    ? canonical.toLowerCase()
+    : canonical;
+}
+
 export async function acquireFileLock(
   filePath: string,
   options: FileLockOptions = {},
 ): Promise<FileLockLease> {
-  const lock = await mutationLockPath(filePath);
-  const now = options.now ?? Date.now;
-  const leaseMs = Math.max(100, options.leaseMs ?? DEFAULT_LEASE_MS);
-  const pollMs = Math.max(1, options.pollMs ?? DEFAULT_POLL_MS);
-  const ownerId = options.ownerId ?? `${process.pid}:${randomUUID()}`;
-  let epoch = 1;
-  let malformedSince: number | null = null;
-  await cleanupOrphanArtifacts(lock);
-  while (true) {
-    const timestamp = now();
-    assertWaiting(options, timestamp);
-    const token = randomUUID();
-    const record: LockRecord = {
-      createdAt: timestamp,
-      epoch,
-      expiresAt: timestamp + leaseMs,
-      ownerId,
-      pid: process.pid,
-      token,
-    };
-    try {
-      await publishNewRecord(lock, record);
-      let expiresAt = record.expiresAt;
-      let released = false;
-      let pendingAccess = Promise.resolve();
-      const fenceOnce = async () => {
-        const active = await readRecord(lock);
-        if (
-          released ||
-          !active ||
-          active.token !== token ||
-          active.epoch !== epoch ||
-          active.expiresAt <= now()
-        )
-          throw lockError(
-            "lock_fenced",
-            "File lock ownership was fenced",
-            false,
-          );
-      };
-      const renewOnce = async () => {
-        // Acquisition cancellation must not release ownership while an operation
-        // is still rolling back or completing its journal entry.
-        if (released)
-          throw lockError(
-            "lock_fenced",
-            "File lock ownership was fenced",
-            false,
-          );
-        const active = await readRecord(lock);
-        if (
-          !active ||
-          active.token !== token ||
-          active.epoch !== epoch ||
-          active.expiresAt <= now()
-        )
-          throw lockError(
-            "lock_fenced",
-            "File lock ownership was fenced",
-            false,
-          );
-        const renewed: LockRecord = {
-          ...active,
-          expiresAt: now() + leaseMs,
-        };
-        await replaceOwnedRecord(lock, active, renewed);
-        const latest = await readRecord(lock);
-        if (
-          !latest ||
-          latest.token !== token ||
-          latest.epoch !== epoch ||
-          latest.expiresAt !== renewed.expiresAt
-        )
-          throw lockError(
-            "lock_fenced",
-            "File lock ownership was fenced",
-            false,
-          );
-        expiresAt = renewed.expiresAt;
-      };
-      const exclusive = <Result>(
-        action: () => Promise<Result>,
-      ): Promise<Result> => {
-        const result = pendingAccess.then(action);
-        pendingAccess = result.then(
-          () => undefined,
-          () => undefined,
-        );
-        return result;
-      };
-      const fence = (): Promise<void> => exclusive(fenceOnce);
-      const renew = (): Promise<void> => exclusive(renewOnce);
-      return {
+  const canonical = await canonicalizePath(filePath);
+  const identity = lockPathIdentity(canonical);
+  const account = await systemAccount();
+  const accountId = sha256(
+    process.platform === "win32"
+      ? lockPathIdentity(canonicalizePathSync(account.homedir))
+      : String(account.uid),
+  );
+  const directory = await ensureMutationLockDirectory(account);
+  const lock = await mutationLockPath(canonical);
+  const transaction = await acquireTransactionLock(
+    path.join(directory, `file-${sha256(identity)}.sqlite`),
+    {
+      ...options,
+      sharedDatabasePath:
+        options.sharedDatabasePath ??
+        (await mutationSharedDatabasePath(canonical)),
+    },
+  );
+  try {
+    const now = options.now ?? Date.now;
+    const leaseMs = Math.max(100, options.leaseMs ?? DEFAULT_LEASE_MS);
+    const pollMs = Math.max(1, options.pollMs ?? DEFAULT_POLL_MS);
+    const ownerId = options.ownerId ?? `${process.pid}:${randomUUID()}`;
+    let epoch = 1;
+    let malformedSince: number | null = null;
+    await cleanupOrphanArtifacts(lock);
+    while (true) {
+      const timestamp = now();
+      assertWaiting(options, timestamp);
+      const token = randomUUID();
+      const record: LockRecord = {
+        accountId,
+        protocol: "account-sqlite-v1",
+        createdAt: timestamp,
         epoch,
-        get expiresAt() {
-          return expiresAt;
-        },
-        fence,
-        lockPath: lock,
+        expiresAt: timestamp + leaseMs,
         ownerId,
-        async release() {
-          if (released) return;
-          await pendingAccess;
-          released = true;
-          await removeIfOwned(lock, token);
-        },
-        renew,
+        pid: process.pid,
         token,
       };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let existing: LockRecord | null;
       try {
-        existing = await readRecord(lock);
-      } catch (readError) {
-        const code = (readError as { code?: string }).code;
-        if (
-          (code === "lock_record_initializing" ||
-            code === "lock_record_malformed") &&
-          malformedSince === null
-        )
-          malformedSince = Date.now();
-        const withinInitializationGrace =
-          malformedSince !== null && Date.now() - malformedSince < 250;
-        if (
-          code === "lock_record_initializing" &&
-          !withinInitializationGrace &&
-          (await recoverInitializing(lock, malformedSince ?? Date.now()))
-        ) {
-          epoch += 1;
-          malformedSince = null;
+        await publishNewRecord(lock, record);
+        let expiresAt = record.expiresAt;
+        let released = false;
+        let pendingAccess = Promise.resolve();
+        const fenceOnce = async () => {
+          transaction.fence();
+          const active = await readRecord(lock);
+          if (
+            released ||
+            !active ||
+            active.token !== token ||
+            active.epoch !== epoch ||
+            active.expiresAt <= now()
+          )
+            throw lockError(
+              "lock_fenced",
+              "File lock ownership was fenced",
+              false,
+            );
+        };
+        const renewOnce = async () => {
+          transaction.fence();
+          // Acquisition cancellation must not release ownership while an operation
+          // is still rolling back or completing its journal entry.
+          if (released)
+            throw lockError(
+              "lock_fenced",
+              "File lock ownership was fenced",
+              false,
+            );
+          const active = await readRecord(lock);
+          if (
+            !active ||
+            active.token !== token ||
+            active.epoch !== epoch ||
+            active.expiresAt <= now()
+          )
+            throw lockError(
+              "lock_fenced",
+              "File lock ownership was fenced",
+              false,
+            );
+          const renewed: LockRecord = {
+            ...active,
+            expiresAt: now() + leaseMs,
+          };
+          await replaceOwnedRecord(lock, active, renewed);
+          const latest = await readRecord(lock);
+          if (
+            !latest ||
+            latest.token !== token ||
+            latest.epoch !== epoch ||
+            latest.expiresAt !== renewed.expiresAt
+          )
+            throw lockError(
+              "lock_fenced",
+              "File lock ownership was fenced",
+              false,
+            );
+          expiresAt = renewed.expiresAt;
+        };
+        const exclusive = <Result>(
+          action: () => Promise<Result>,
+        ): Promise<Result> => {
+          const result = pendingAccess.then(action);
+          pendingAccess = result.then(
+            () => undefined,
+            () => undefined,
+          );
+          return result;
+        };
+        const fence = (): Promise<void> => exclusive(fenceOnce);
+        const renew = (): Promise<void> => exclusive(renewOnce);
+        return {
+          epoch,
+          get expiresAt() {
+            return expiresAt;
+          },
+          fence,
+          lockPath: lock,
+          ownerId,
+          async release() {
+            if (released) return;
+            await pendingAccess;
+            released = true;
+            try {
+              await removeIfOwned(lock, token);
+            } finally {
+              transaction.release();
+            }
+          },
+          renew,
+          token,
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        let existing: LockRecord | null;
+        try {
+          existing = await readRecord(lock);
+        } catch (readError) {
+          const code = (readError as { code?: string }).code;
+          if (
+            (code === "lock_record_initializing" ||
+              code === "lock_record_malformed") &&
+            malformedSince === null
+          )
+            malformedSince = Date.now();
+          const withinInitializationGrace =
+            malformedSince !== null && Date.now() - malformedSince < 250;
+          if (
+            code === "lock_record_initializing" &&
+            !withinInitializationGrace &&
+            (await recoverInitializing(lock, malformedSince ?? Date.now()))
+          ) {
+            epoch += 1;
+            malformedSince = null;
+            continue;
+          }
+          if (
+            (code === "lock_record_initializing" ||
+              code === "lock_record_malformed") &&
+            withinInitializationGrace
+          ) {
+            await delay(pollMs, options);
+            continue;
+          }
+          throw readError;
+        }
+        if (!existing) continue;
+        // Only marked records owned by this account share the kernel guard.
+        // Foreign and legacy owners retain their lease through actual expiry.
+        const recoveredEpoch = await recoverExpired(
+          lock,
+          existing,
+          timestamp,
+          accountId,
+          account.uid,
+        );
+        if (recoveredEpoch !== null) {
+          epoch = recoveredEpoch;
           continue;
         }
-        if (
-          (code === "lock_record_initializing" ||
-            code === "lock_record_malformed") &&
-          withinInitializationGrace
-        ) {
-          await delay(pollMs, options);
-          continue;
-        }
-        throw readError;
+        await delay(pollMs, options);
       }
-      if (!existing) continue;
-      const recoveredEpoch = await recoverExpired(lock, existing, timestamp);
-      if (recoveredEpoch !== null) {
-        epoch = recoveredEpoch;
-        continue;
-      }
-      await delay(pollMs, options);
     }
+  } catch (error) {
+    transaction.release();
+    throw error;
   }
 }
 
@@ -620,10 +783,8 @@ export async function withFencedFileLock<Result>(
   operation: (lease: FileLockLease) => Promise<Result>,
   options: FileLockOptions = {},
 ): Promise<Result> {
-  const canonical =
-    process.platform === "win32" ? canonicalizePathSync(filePath) : filePath;
-  const identity =
-    process.platform === "win32" ? canonical.toLowerCase() : canonical;
+  const canonical = canonicalizePathSync(filePath);
+  const identity = lockPathIdentity(canonical);
   return withQueue(identity, options, async () => {
     const lease = await acquireFileLock(canonical, options);
     const heartbeatMs = Math.max(
@@ -650,11 +811,8 @@ export async function withFencedFileLocks<Result>(
 ): Promise<Result> {
   const canonicalPaths = new Map<string, string>();
   for (const filePath of filePaths) {
-    if (path.basename(filePath).includes(".ast-mcp.lock")) continue;
-    const canonical =
-      process.platform === "win32" ? canonicalizePathSync(filePath) : filePath;
-    const identity =
-      process.platform === "win32" ? canonical.toLowerCase() : canonical;
+    const canonical = canonicalizePathSync(filePath);
+    const identity = lockPathIdentity(canonical);
     canonicalPaths.set(identity, canonical);
   }
   const sorted = [...canonicalPaths.entries()]

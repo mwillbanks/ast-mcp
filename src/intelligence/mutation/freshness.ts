@@ -1,6 +1,7 @@
 import { readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
+import { isTransactionLockArtifact } from "../../runtime/transaction-lock.ts";
 import {
   createIdentity,
   resolvedRelationshipsArtifactIdentity,
@@ -119,7 +120,12 @@ async function repositoryFiles(
       left.name.localeCompare(right.name),
     )) {
       throwIfRefreshAborted(signal);
-      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (
+        entry.name === ".git" ||
+        entry.name === "node_modules" ||
+        isTransactionLockArtifact(entry.name)
+      )
+        continue;
       const candidate = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         const canonicalCandidate = await canonicalFilePath(candidate);

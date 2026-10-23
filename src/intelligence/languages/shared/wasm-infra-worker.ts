@@ -17,6 +17,7 @@ import {
   stableNodeId,
 } from "../../parser/index.ts";
 import type { InfraLanguageId } from "../infra/types.ts";
+import { createLanguageLoader } from "./language-loader.ts";
 import {
   resolveWasmGrammarAsset,
   wasmExtractorFingerprint,
@@ -30,19 +31,14 @@ import {
   validateInfraWorkerRequest,
 } from "./wasm-worker-validation.ts";
 
-const languages = new Map<string, Language>();
-let initialized: Promise<void> | undefined;
+const loadGrammar = createLanguageLoader(
+  () => Parser.init(),
+  (id) => Language.load(resolveWasmGrammarAsset(id)),
+);
 async function grammar(languageId: InfraLanguageId): Promise<Language | null> {
   const grammarId = languageId === "verilog" ? "systemverilog" : languageId;
   if (!["bash", "powershell", "systemverilog"].includes(grammarId)) return null;
-  initialized ??= Parser.init();
-  await initialized;
-  let loaded = languages.get(grammarId);
-  if (!loaded) {
-    loaded = await Language.load(resolveWasmGrammarAsset(grammarId));
-    languages.set(grammarId, loaded);
-  }
-  return loaded;
+  return await loadGrammar(grammarId);
 }
 interface FlatNode {
   children: FlatNode[];

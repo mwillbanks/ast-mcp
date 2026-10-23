@@ -25,6 +25,7 @@ import {
   resolveGlobalBinaryAlias,
   resolveLocalBinaryAlias,
 } from "../runtime/dependencies";
+import { withFencedFileLocks } from "../runtime/locks";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
 import { enableCodexElicitation } from "./codex";
@@ -812,14 +813,16 @@ async function ensureInstallerConfig(
       flag: "wx",
     });
   } else {
+    let migration: ReturnType<typeof migrateConfigSource>;
     try {
-      const migration = migrateConfigSource(existing, file);
-      if (migration.changed) await writeMigratedConfig(file, migration.source);
+      migration = migrateConfigSource(existing, file);
     } catch (error) {
       throw new Error(
         `invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
+    if (migration.changed)
+      await writeMigratedConfig(file, migration.source, true, existing);
   }
   clearConfigCache();
   await resolveConfig({
@@ -931,6 +934,24 @@ async function reconcileService(
     );
 }
 
+async function withInstallerLocks<T>(
+  options: InstallOptions,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const root = path.resolve(options.root);
+  const home = path.resolve(options.home ?? os.homedir());
+  await mkdir(root, { recursive: true });
+  await mkdir(home, { recursive: true });
+  return withFencedFileLocks(
+    [
+      path.join(root, ".ast-mcp-installation"),
+      path.join(home, ".ast-mcp-installation"),
+    ],
+    operation,
+    { deadline: Date.now() + 10_000 },
+  );
+}
+
 async function reconcile(
   options: InstallOptions,
   operation: "install" | "update",
@@ -985,11 +1006,11 @@ async function reconcile(
 }
 
 export async function install(options: InstallOptions) {
-  return reconcile(options, "install");
+  return withInstallerLocks(options, () => reconcile(options, "install"));
 }
 
 export async function update(options: InstallOptions) {
-  return reconcile(options, "update");
+  return withInstallerLocks(options, () => reconcile(options, "update"));
 }
 
 async function removeTargetAssets(base: string, instructionsPath?: string) {
@@ -1091,6 +1112,10 @@ async function removeUnusedService(options: InstallOptions, root: string) {
 }
 
 export async function uninstall(options: InstallOptions) {
+  return withInstallerLocks(options, () => uninstallLocked(options));
+}
+
+async function uninstallLocked(options: InstallOptions) {
   const root = path.resolve(options.root);
   const home = options.home ?? os.homedir();
   return installerRuntime.run(

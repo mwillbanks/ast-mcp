@@ -82,13 +82,22 @@ async function verifyLinkCapability(
 async function rollbackMovedFiles(
   entries: readonly RenameEntry[],
   fence: () => Promise<void>,
+  sourceHashes: ReadonlyMap<string, string>,
 ): Promise<void> {
   const rollbackErrors: unknown[] = [];
   for (const entry of [...entries].reverse()) {
     try {
       await fence();
+      verifyExpectedHash(
+        sourceHashFor(sourceHashes, entry.filePath),
+        await sha256File(entry.destinationPath),
+      );
       await link(entry.destinationPath, entry.filePath);
       await fence();
+      verifyExpectedHash(
+        sourceHashFor(sourceHashes, entry.filePath),
+        await sha256File(entry.destinationPath),
+      );
       await unlink(entry.destinationPath);
     } catch (error) {
       rollbackErrors.push(error);
@@ -105,20 +114,31 @@ async function moveFilesWithRollback(
   entries: RenameEntry[],
   fence: () => Promise<void>,
   linked: (entry: RenameEntry) => Promise<void>,
+  sourceHashes: ReadonlyMap<string, string>,
+  signal?: AbortSignal,
 ) {
   const files: Record<string, unknown> = {};
   const moved: RenameEntry[] = [];
   try {
     for (const entry of entries) {
+      signal?.throwIfAborted();
       await fence();
+      signal?.throwIfAborted();
       await link(entry.filePath, entry.destinationPath);
-      await linked(entry);
       try {
+        await linked(entry);
         await fence();
+        signal?.throwIfAborted();
         await unlink(entry.filePath);
       } catch (error) {
         await fence();
-        await unlink(entry.destinationPath).catch((cleanupError) => {
+        await (async () => {
+          verifyExpectedHash(
+            sourceHashFor(sourceHashes, entry.filePath),
+            await sha256File(entry.destinationPath),
+          );
+          await unlink(entry.destinationPath);
+        })().catch((cleanupError) => {
           throw new AggregateError(
             [error, cleanupError],
             "file_rename failed while cleaning up the current destination",
@@ -134,7 +154,7 @@ async function moveFilesWithRollback(
     }
   } catch (error) {
     try {
-      await rollbackMovedFiles(moved, fence);
+      await rollbackMovedFiles(moved, fence, sourceHashes);
     } catch (rollbackError) {
       throw new AggregateError(
         [error, rollbackError],
@@ -146,7 +166,11 @@ async function moveFilesWithRollback(
   return files;
 }
 
-export async function renameFilesSafely(requests: FileRenameBatch) {
+export async function renameFilesSafely(
+  requests: FileRenameBatch,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const requestedDestinations = Object.values(requests).map(
     ({ destination }) => destination,
   );
@@ -206,7 +230,7 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
         Awaited<ReturnType<typeof readFileSnapshot>>
       >();
       for (const { filePath, request } of entries) {
-        const snapshot = await readFileSnapshot(filePath);
+        const snapshot = await readFileSnapshot(filePath, signal);
         await requireExpectedHash(request.expectedSha256, "file_rename");
         verifyExpectedHash(request.expectedSha256, snapshot.sha256);
         sourceSnapshots.set(filePath, snapshot);
@@ -255,6 +279,7 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
       let began = false;
       let moved = false;
       try {
+        signal?.throwIfAborted();
         await beginMutation({
           files: sourcePlan,
           operationId,
@@ -284,6 +309,8 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
             )
               throw new Error("file_rename_destination_verification_failed");
           },
+          sourceHashes,
+          signal,
         );
         moved = true;
         const commits: MutationFileCommit[] = entries.flatMap(
@@ -306,7 +333,7 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
         if (began) await ignoreFailure(failMutation(operationId, error));
         if (moved) {
           try {
-            await rollbackMovedFiles(entries, fence);
+            await rollbackMovedFiles(entries, fence, sourceHashes);
           } catch (rollbackError) {
             throw new AggregateError(
               [error, rollbackError],
@@ -332,5 +359,6 @@ export async function renameFilesSafely(requests: FileRenameBatch) {
         throw error;
       }
     },
+    { signal },
   );
 }

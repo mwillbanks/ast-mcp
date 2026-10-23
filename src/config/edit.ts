@@ -1,6 +1,13 @@
-import { lstat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { copyFileSync, readFileSync, renameSync } from "node:fs";
+import { chmod, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
 
-import { replaceFileAtomically } from "../runtime/atomic";
+import {
+  assertConfigWriteTarget,
+  configWriteTarget,
+  withConfigTransaction,
+} from "./transaction";
 import { fileV2Schema } from "./v2-schema";
 
 export type TomlValue =
@@ -254,10 +261,32 @@ export function validateConfigSource(source: string, filePath: string): void {
 export async function writeConfigSource(
   filePath: string,
   source: string,
+  expectedSource?: string,
+  backupPath?: string,
 ): Promise<void> {
   validateConfigSource(source, filePath);
-  const metadata = await lstat(filePath);
-  await replaceFileAtomically(filePath, source, metadata.mode);
+  const { target, mode } = await configWriteTarget(filePath);
+  const expected = expectedSource ?? (await readConfigSource(target));
+  const temporary = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.config-${randomUUID()}`,
+  );
+  try {
+    await writeFile(temporary, source, { flag: "wx", mode });
+    await chmod(temporary, mode);
+    withConfigTransaction(target, () => {
+      assertConfigWriteTarget(filePath, target);
+      if (readFileSync(target, "utf8") !== expected)
+        throw Object.assign(
+          new Error("Configuration changed before commit; reload and retry"),
+          { code: "configuration_conflict", retryable: true },
+        );
+      if (backupPath) copyFileSync(target, backupPath);
+      renameSync(temporary, target);
+    });
+  } finally {
+    await unlink(temporary).catch(() => undefined);
+  }
 }
 
 export async function readConfigSource(filePath: string): Promise<string> {

@@ -23,6 +23,7 @@ import {
   legacyParserFingerprint,
 } from "../legacy/protocol.ts";
 import type { LegacyLanguageId } from "../legacy/types.ts";
+import { createLanguageLoader } from "./language-loader.ts";
 import { resolveWasmGrammarAsset } from "./wasm-assets.ts";
 import { installWasmWorker } from "./wasm-worker-runtime.ts";
 
@@ -527,23 +528,17 @@ function structured(
   }
   return { raw, tokens };
 }
-const wasmLanguages = new Map<string, Language>();
-let initialized: Promise<void> | undefined;
+const loadGrammar = createLanguageLoader(
+  () => Parser.init(),
+  (id) => Language.load(resolveWasmGrammarAsset(id)),
+);
 async function wasm(
   languageId: "ocaml" | "common-lisp",
   source: string,
 ): Promise<{ raw: RawFacts; treeNodes: TreeNode[] }> {
-  initialized ??= Parser.init();
-  await initialized;
-  let grammar = wasmLanguages.get(languageId);
-  if (!grammar) {
-    grammar = await Language.load(
-      resolveWasmGrammarAsset(
-        languageId === "common-lisp" ? "commonlisp" : "ocaml",
-      ),
-    );
-    wasmLanguages.set(languageId, grammar);
-  }
+  const grammar = await loadGrammar(
+    languageId === "common-lisp" ? "commonlisp" : "ocaml",
+  );
   const parser = new Parser();
   parser.setLanguage(grammar);
   const tree = parser.parse(source);

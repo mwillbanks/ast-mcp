@@ -1,3 +1,5 @@
+import { parentPort } from "node:worker_threads";
+
 import { parseSource } from "./parser.ts";
 import { type DynamicGrammarManifest, LanguageRegistry } from "./registry.ts";
 import {
@@ -49,7 +51,18 @@ interface ParserWorkerScope {
   ): void;
 }
 
-const workerScope = globalThis as unknown as ParserWorkerScope;
+const workerScope: ParserWorkerScope = {
+  onmessage: null,
+  postMessage: (message) => parentPort?.postMessage(message),
+};
+parentPort?.on(
+  "message",
+  (data: InitializeWorkerRequest | ParseWorkerRequest) => {
+    void workerScope.onmessage?.({ data } as MessageEvent<
+      InitializeWorkerRequest | ParseWorkerRequest
+    >);
+  },
+);
 let registry: LanguageRegistry | null = null;
 
 function serializeError(error: unknown): SerializedParserError {

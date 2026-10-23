@@ -520,6 +520,7 @@ describe("infrastructure language adapters", () => {
         source: "x".repeat(INFRA_WORKER_LIMITS.maxOutstandingBytes + 1),
       }),
     ).rejects.toBeInstanceOf(InfraWorkerError);
+    await drainInfraLanguageWorker();
     const capacityRequests = Array.from(
       { length: INFRA_WORKER_LIMITS.maxPendingRequests },
       () =>
@@ -570,7 +571,7 @@ describe("infrastructure language adapters", () => {
     expect(restarted.symbols.map(({ name }) => name)).toEqual(["recovered"]);
   });
 
-  test("retains accounting during abort floods and serves queued recovery", async () => {
+  test("retains abort flood accounting and resumes bounded recovery after retirement", async () => {
     const controllers = Array.from({ length: 12 }, () => new AbortController());
     const outcomes = controllers.map((controller) =>
       analyzeInfraLanguage({

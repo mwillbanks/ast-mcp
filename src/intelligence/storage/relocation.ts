@@ -25,6 +25,7 @@ import {
 import * as lancedb from "@lancedb/lancedb";
 
 import { canonicalizePathSync } from "../../runtime/path-utils.ts";
+import { isTransactionLockArtifact } from "../../runtime/transaction-lock.ts";
 import type { LanceTableName } from "../contracts/storage.ts";
 import { StorageError } from "./errors.ts";
 import { ALL_TABLES, assertCompatibleSchema } from "./schemas.ts";
@@ -204,6 +205,7 @@ async function walkFiles(
   for (const entry of entries.sort((left, right) =>
     left.name.localeCompare(right.name),
   )) {
+    if (isTransactionLockArtifact(entry.name)) continue;
     const absolute = join(directory, entry.name);
     if (entry.isDirectory()) {
       files.push(...(await walkFiles(root, absolute)));

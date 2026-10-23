@@ -51,7 +51,12 @@ test("hash stream cancellation destroys a stalled stream", async () => {
   try {
     const controller = new AbortController();
     const pending = sha256File(filePath, controller.signal);
-    const stream = await stalled.opened;
+    const stream = await Promise.race([
+      stalled.opened,
+      pending.then(() => {
+        throw new Error("Hash completed before opening its stream");
+      }),
+    ]);
     controller.abort(new Error("cancelled read"));
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     expect(stream.destroyed).toBe(true);
@@ -65,14 +70,19 @@ for (const kind of ["read", "hash", "capabilities"] as const)
     const filePath = await fixture();
     const stalled = stalledStream();
     try {
-      const options = { timeoutMs: 30 };
+      const options = { timeoutMs: 1000 };
       const operation =
         kind === "read"
           ? readFilesSafely([{ filePath, mode: "text" }], options)
           : kind === "hash"
             ? hashFilesSafely([filePath], options)
             : inspectWorkspaceFileCapabilitiesSafely([filePath], options);
-      await stalled.opened;
+      await Promise.race([
+        stalled.opened,
+        operation.then(() => {
+          throw new Error("Operation completed before opening its stream");
+        }),
+      ]);
       await expect(operation).rejects.toMatchObject({
         code: "timeout",
         retryable: true,
@@ -105,12 +115,17 @@ for (const kind of ["read", "capabilities"] as const)
     );
     const close = spyOn(ParserWorkerPool.prototype, "close");
     try {
-      const options = { timeoutMs: 100 };
+      const options = { timeoutMs: 1000 };
       const operation =
         kind === "read"
           ? readFilesSafely([{ filePath, mode: "text" }], options)
           : inspectWorkspaceFileCapabilitiesSafely([filePath], options);
-      const signal = await started.promise;
+      const signal = await Promise.race([
+        started.promise,
+        operation.then(() => {
+          throw new Error("Operation completed before starting its parser");
+        }),
+      ]);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(signal.aborted).toBe(false);
       await expect(operation).rejects.toMatchObject({ code: "timeout" });

@@ -574,11 +574,11 @@ describe("native intelligence parser", () => {
     // The injected registrar exercises the production manifest conversion safely.
     dynamicRegistry.registerDynamicGrammars();
     dynamicRegistry.registerDynamicGrammars();
-    expect(registrations).toHaveLength(2);
+    expect(registrations).toHaveLength(1);
     expect(Object.keys(registrations[0] as object).sort()).toEqual(
-      Object.keys(PINNED_GRAMMAR_REGISTRATIONS).sort(),
+      [...Object.keys(PINNED_GRAMMAR_REGISTRATIONS), "FixtureLanguage"].sort(),
     );
-    expect(registrations[1]).toEqual({
+    expect(registrations[0]).toMatchObject({
       FixtureLanguage: {
         expandoChar: "_",
         extensions: [".fixture"],

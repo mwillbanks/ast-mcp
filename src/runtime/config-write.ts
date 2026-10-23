@@ -321,11 +321,12 @@ async function commitConfigEdit(
   target: ConfigTarget,
   filePath: string,
   source: string,
+  expectedSource: string,
   changed: string[],
   grantFilesystem = false,
 ) {
   const current = await currentConfig();
-  await writeConfigSource(filePath, source);
+  await writeConfigSource(filePath, source, expectedSource);
   const snapshots = await configRegistry.reload();
   const snapshot =
     snapshots.find(
@@ -379,6 +380,7 @@ async function editConfigCore(target: ConfigTarget, patch: ConfigCorePatch) {
     target,
     loaded.filePath,
     applyConfigCorePatch(loaded.source, patch),
+    loaded.source,
     changed,
     patch.safety?.filesystem === "unrestricted",
   );
@@ -391,6 +393,7 @@ async function editConfigPaths(target: ConfigTarget, patch: ConfigPathsPatch) {
     target,
     loaded.filePath,
     applyConfigPathOperations(loaded.source, patch.operations),
+    loaded.source,
     patch.operations.map((operation) =>
       operation.op === "add"
         ? `paths.add:${operation.rule.id}`

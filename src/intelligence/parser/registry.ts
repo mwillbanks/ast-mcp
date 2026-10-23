@@ -119,11 +119,7 @@ function catalogGrammar(entry: LanguageCatalogEntry): GrammarDescriptor {
 }
 
 const CATALOG_GRAMMARS = LANGUAGE_CAPABILITY_CATALOG.map(catalogGrammar);
-const registeredPinnedGrammarFingerprints = new WeakMap<
-  typeof registerDynamicLanguage,
-  string
->();
-const registeredDynamicGrammarFingerprints = new WeakMap<
+const registeredGrammarFingerprints = new WeakMap<
   typeof registerDynamicLanguage,
   string
 >();
@@ -294,6 +290,13 @@ export class LanguageRegistry {
       throw new TypeError("Dynamic grammars require a native library asset");
     }
     await validateGrammarAsset(descriptor.dynamicAsset);
+    // Validation yields; parsing or another registration may have won meanwhile.
+    if (this.#dynamicRegistered)
+      throw new TypeError("Dynamic grammars must be configured before parsing");
+    if (this.#grammars.has(descriptor.languageId))
+      throw new TypeError(
+        `Parser language is already registered: ${descriptor.languageId}`,
+      );
     const dynamicAsset = {
       expandoChar: descriptor.dynamicAsset.expandoChar ?? null,
       languageSymbol: descriptor.dynamicAsset.languageSymbol ?? null,
@@ -316,6 +319,8 @@ export class LanguageRegistry {
         "Dynamic grammar fingerprint does not match its asset",
       );
     }
+    if (registeredGrammarFingerprints.has(this.#dynamicRegistrar))
+      throw new TypeError("Dynamic grammars must be configured before parsing");
     this.#grammars.set(descriptor.languageId, {
       ...descriptor,
       dynamicAsset: {
@@ -364,22 +369,6 @@ export class LanguageRegistry {
 
   registerDynamicGrammars(): void {
     if (this.#dynamicRegistered) return;
-    const pinnedFingerprint = fingerprint(PINNED_GRAMMAR_REGISTRATIONS);
-    const registeredPinnedFingerprint = registeredPinnedGrammarFingerprints.get(
-      this.#dynamicRegistrar,
-    );
-    if (registeredPinnedFingerprint === undefined) {
-      this.#dynamicRegistrar(PINNED_GRAMMAR_REGISTRATIONS);
-      registeredPinnedGrammarFingerprints.set(
-        this.#dynamicRegistrar,
-        pinnedFingerprint,
-      );
-    } else if (registeredPinnedFingerprint !== pinnedFingerprint) {
-      throw new TypeError(
-        "A different pinned grammar set is already registered in this process",
-      );
-    }
-
     const registrations: Record<
       string,
       {
@@ -389,7 +378,7 @@ export class LanguageRegistry {
         metaVarChar?: string;
         expandoChar?: string;
       }
-    > = {};
+    > = { ...PINNED_GRAMMAR_REGISTRATIONS };
     for (const grammar of this.#grammars.values()) {
       if (!grammar.dynamicAsset) continue;
       registrations[grammar.astGrepLanguage] = {
@@ -406,23 +395,27 @@ export class LanguageRegistry {
           : {}),
       };
     }
-    if (Object.keys(registrations).length > 0) {
-      const registrationFingerprint = fingerprint(registrations);
-      const registeredDynamicGrammarFingerprint =
-        registeredDynamicGrammarFingerprints.get(this.#dynamicRegistrar);
-      if (registeredDynamicGrammarFingerprint === undefined) {
-        this.#dynamicRegistrar(registrations);
-        registeredDynamicGrammarFingerprints.set(
-          this.#dynamicRegistrar,
-          registrationFingerprint,
-        );
-      } else if (
-        registeredDynamicGrammarFingerprint !== registrationFingerprint
-      ) {
-        throw new TypeError(
-          "A different dynamic grammar set is already registered in this process",
-        );
-      }
+    // The native registry accepts exactly one complete registration per process.
+    const registrationFingerprint = fingerprint(
+      Object.fromEntries(
+        Object.entries(registrations).sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
+      ),
+    );
+    const registeredFingerprint = registeredGrammarFingerprints.get(
+      this.#dynamicRegistrar,
+    );
+    if (registeredFingerprint === undefined) {
+      this.#dynamicRegistrar(registrations);
+      registeredGrammarFingerprints.set(
+        this.#dynamicRegistrar,
+        registrationFingerprint,
+      );
+    } else if (registeredFingerprint !== registrationFingerprint) {
+      throw new TypeError(
+        "A different grammar set is already registered in this process",
+      );
     }
     this.#dynamicRegistered = true;
   }

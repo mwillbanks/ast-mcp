@@ -5,6 +5,7 @@ import {
   type DynamicGrammarManifest,
   snapshotDynamicGrammarManifest,
 } from "./registry.ts";
+import { createParserTransport } from "./transport.ts";
 import {
   ParserError,
   type ParseSourceRequest,
@@ -105,6 +106,7 @@ export class ParserWorkerPool {
   readonly #defaultTimeoutMs: number;
   readonly #dynamicGrammarManifest?: DynamicGrammarManifest;
   readonly #workers: WorkerSlot[] = [];
+  readonly #retirements = new Set<Promise<void>>();
   readonly #workerFactory: ParserWorkerFactory;
   readonly #workerUrl: string;
   readonly #pending: QueuedJob[] = [];
@@ -136,9 +138,7 @@ export class ParserWorkerPool {
     this.#dynamicGrammarManifest = options.dynamicGrammarManifest
       ? snapshotDynamicGrammarManifest(options.dynamicGrammarManifest)
       : undefined;
-    this.#workerFactory =
-      options.workerFactory ??
-      ((workerUrl) => new Worker(workerUrl, { type: "module" }));
+    this.#workerFactory = options.workerFactory ?? createParserTransport;
     this.#workerUrl =
       options.workerUrl ?? new URL("./worker.ts", import.meta.url).href;
     if (
@@ -170,7 +170,9 @@ export class ParserWorkerPool {
         "Parser queue, memory, and timeout limits are invalid",
       );
     }
-    while (this.#workers.length < this.#minWorkers) this.#spawnWorker();
+    while (this.#workers.length < this.#minWorkers) {
+      if (!this.#spawnWorker()) break;
+    }
   }
 
   get stats(): ParserPoolStats {
@@ -293,7 +295,7 @@ export class ParserWorkerPool {
   }
 
   async close(options: { drain?: boolean } = {}): Promise<void> {
-    if (this.#state === "closed") return;
+    if (this.#state === "closed") return await this.#awaitRetirements();
     this.#state = "closing";
     if (!options.drain) {
       for (const id of [...this.#jobs.keys()]) {
@@ -311,23 +313,66 @@ export class ParserWorkerPool {
       await new Promise<void>((resolve) => this.#drainWaiters.push(resolve));
     }
     this.#terminateAll();
+    await this.#awaitRetirements();
   }
 
-  #spawnWorker(): WorkerSlot {
-    const worker = this.#workerFactory(this.#workerUrl);
-    const slot: WorkerSlot = { jobId: null, ready: false, worker };
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      this.#handleMessage(slot, event.data);
-    };
-    worker.onerror = (event: ErrorEvent) => {
-      this.#handleWorkerFailure(slot, event.message || "Parser worker failed");
-    };
-    this.#workers.push(slot);
-    worker.postMessage({
-      manifest: this.#dynamicGrammarManifest,
-      type: "initialize",
-    });
-    return slot;
+  async #awaitRetirements(): Promise<void> {
+    if (this.#retirements.size === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.all([...this.#retirements]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                parserError(
+                  "worker-error",
+                  "Parser worker retirement timed out",
+                  false,
+                ),
+              ),
+            this.#defaultTimeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  #spawnWorker(): WorkerSlot | undefined {
+    try {
+      const worker = this.#workerFactory(this.#workerUrl);
+      const slot: WorkerSlot = { jobId: null, ready: false, worker };
+      worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+        this.#handleMessage(slot, event.data);
+      };
+      worker.onerror = (event: ErrorEvent) => {
+        this.#handleWorkerFailure(
+          slot,
+          event.message || "Parser worker failed",
+        );
+      };
+      this.#workers.push(slot);
+      worker.postMessage({
+        manifest: this.#dynamicGrammarManifest,
+        type: "initialize",
+      });
+      return slot;
+    } catch (error) {
+      this.#failAll(error instanceof Error ? error.message : String(error));
+      return undefined;
+    }
+  }
+
+  #failAll(message: string): void {
+    for (const job of [...this.#jobs.values()]) {
+      this.#forget(job);
+      job.reject(parserError("worker-error", message, false));
+    }
+    this.#pending.length = 0;
+    this.#terminateAll();
   }
 
   #dispatch(): void {
@@ -336,30 +381,38 @@ export class ParserWorkerPool {
       this.#pending.length >
         this.#workers.filter((slot) => slot.ready && slot.jobId === null)
           .length &&
-      this.#workers.length < this.#maxWorkers
+      this.#workers.length + this.#retirements.size < this.#maxWorkers
     ) {
-      this.#spawnWorker();
+      if (!this.#spawnWorker()) return;
     }
     for (const slot of this.#workers) {
       if (!slot.ready || slot.jobId !== null) continue;
       const job = this.#pending.shift();
       if (!job) break;
       slot.jobId = job.id;
-      slot.worker.postMessage({
-        id: job.id,
-        request: {
-          ...job.request,
-          maxNodes: Math.min(
-            job.request.maxNodes ?? this.#maxNodesPerJob,
-            this.#maxNodesPerJob,
-          ),
-        },
-        type: "parse",
-      });
+      try {
+        slot.worker.postMessage({
+          id: job.id,
+          request: {
+            ...job.request,
+            maxNodes: Math.min(
+              job.request.maxNodes ?? this.#maxNodesPerJob,
+              this.#maxNodesPerJob,
+            ),
+          },
+          type: "parse",
+        });
+      } catch (error) {
+        this.#handleWorkerFailure(
+          slot,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
   }
 
   #handleMessage(slot: WorkerSlot, response: WorkerResponse): void {
+    if (!this.#workers.includes(slot)) return;
     if (response.type === "ready") {
       if (!response.ok) {
         this.#handleWorkerFailure(
@@ -398,16 +451,12 @@ export class ParserWorkerPool {
   }
 
   #handleWorkerFailure(slot: WorkerSlot, message: string): void {
+    if (!this.#workers.includes(slot)) return;
     const jobId = slot.jobId;
     const failedDuringInitialization = !slot.ready;
     this.#removeWorker(slot);
     if (failedDuringInitialization) {
-      for (const job of [...this.#jobs.values()]) {
-        this.#forget(job);
-        job.reject(parserError("worker-error", message, false));
-      }
-      this.#pending.length = 0;
-      this.#terminateAll();
+      this.#failAll(message);
       return;
     }
     if (jobId !== null) {
@@ -445,8 +494,16 @@ export class ParserWorkerPool {
 
   #removeWorker(slot: WorkerSlot): void {
     const index = this.#workers.indexOf(slot);
-    if (index >= 0) this.#workers.splice(index, 1);
-    slot.worker.terminate();
+    if (index < 0) return;
+    this.#workers.splice(index, 1);
+    const retirement = Promise.resolve()
+      .then(() => slot.worker.terminate())
+      .then(() => {
+        this.#retirements.delete(retirement);
+        this.#afterSettlement();
+      });
+    this.#retirements.add(retirement);
+    void retirement.catch(() => {});
   }
 
   #afterSettlement(): void {
@@ -456,10 +513,10 @@ export class ParserWorkerPool {
         (this.#state === "open" && this.#workers.length < this.#minWorkers))
     ) {
       while (
-        this.#workers.length < this.#minWorkers &&
-        this.#workers.length < this.#maxWorkers
+        this.#workers.length + this.#retirements.size < this.#minWorkers &&
+        this.#workers.length + this.#retirements.size < this.#maxWorkers
       ) {
-        this.#spawnWorker();
+        if (!this.#spawnWorker()) return;
       }
       this.#dispatch();
     }
@@ -517,9 +574,9 @@ export class ParserWorkerPool {
   }
 
   #terminateAll(): void {
-    for (const slot of this.#workers.splice(0)) slot.worker.terminate();
-    this.#clearCache();
     this.#state = "closed";
+    for (const slot of [...this.#workers]) this.#removeWorker(slot);
+    this.#clearCache();
     for (const resolve of this.#drainWaiters.splice(0)) resolve();
   }
 }

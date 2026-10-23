@@ -500,6 +500,7 @@ describe("JVM WASM language adapters", () => {
     });
     activeController.abort();
     await expect(activeRequest).rejects.toMatchObject({ code: "aborted" });
+    await drainJvmLanguageWorker();
     await expect(
       jvmLanguageAdapter("java").analyze({
         languageId: "java",
@@ -554,6 +555,7 @@ describe("JVM WASM language adapters", () => {
     );
     for (const controller of controllers) controller.abort();
     expect(jvmWorkerStats().pendingRequests).toBeGreaterThan(0);
+    await drainJvmLanguageWorker();
     const recovery = analyzeJvmLanguage({
       languageId: "java",
       source: "public class Recovered {}",

@@ -23,6 +23,7 @@ import { detectAstLanguage } from "../patch/languages";
 import { assertReadableTree } from "../runtime/path-policy";
 import { resolveIntelligencePath } from "../runtime/paths";
 import { terminateProcessTree } from "../runtime/subprocess";
+import { isTransactionLockArtifact } from "../runtime/transaction-lock";
 import type { CompilerAlias, NativeFile } from "./code-intelligence-compute.ts";
 import type { CpuJob, CpuReply } from "./code-intelligence-worker.ts";
 import { type ConfiguredExecution, localExecution } from "./configured";
@@ -309,7 +310,7 @@ async function revisionFilePaths(
   const files = Buffer.from(stdout)
     .toString("utf8")
     .split("\0")
-    .filter(Boolean);
+    .filter((file) => file.length > 0 && !isTransactionLockArtifact(file));
   if (files.length > MAX_CANDIDATE_PATHS)
     throw capacityError("File inventory exceeds 100000 paths");
   return files.sort();
@@ -392,7 +393,9 @@ async function requestedFiles(
     const files: string[] = [];
     for (const value of explicit) {
       throwIfAborted(signal);
-      const resolved = await resolveIntelligencePath(path.resolve(root, value));
+      const absolute = path.resolve(root, value);
+      if (isTransactionLockArtifact(absolute, root)) continue;
+      const resolved = await resolveIntelligencePath(absolute);
       const metadata = await Bun.file(resolved)
         .stat()
         .catch(() => undefined);
@@ -406,6 +409,7 @@ async function requestedFiles(
           onlyFiles: true,
         })) {
           throwIfAborted(signal);
+          if (isTransactionLockArtifact(entry, root)) continue;
           if (files.length >= MAX_CANDIDATE_PATHS)
             throw capacityError("File inventory exceeds 100000 paths");
           files.push(entry);
@@ -425,6 +429,7 @@ async function requestedFiles(
   })) {
     throwIfAborted(signal);
     if (
+      !isTransactionLockArtifact(entry, root) &&
       !entry.includes(`${path.sep}node_modules${path.sep}`) &&
       !entry.includes(`${path.sep}.git${path.sep}`) &&
       !entry.includes(`${path.sep}.ast-mcp${path.sep}`)
@@ -1027,7 +1032,9 @@ export default function registerNativeCodeIntelligenceTools(
             });
           const controller = new AbortController();
           controllers.add(controller);
-          const upstream = (context as { signal?: AbortSignal }).signal;
+          const upstream =
+            context.mcpReq?.signal ??
+            (context as { signal?: AbortSignal }).signal;
           const abortFromUpstream = () => controller.abort(upstream?.reason);
           if (upstream?.aborted) abortFromUpstream();
           else

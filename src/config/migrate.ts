@@ -1,8 +1,7 @@
-import { copyFile, lstat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { replaceFileAtomically } from "../runtime/atomic";
+import { writeConfigSource } from "./edit";
 import { fileV2Schema } from "./v2-schema";
 
 export interface MigrationPreview {
@@ -208,10 +207,9 @@ export async function writeMigratedConfig(
   filePath: string,
   source: string,
   backup = true,
+  expectedSource?: string,
 ): Promise<string | undefined> {
-  const metadata = await lstat(filePath);
   const backupPath = backup ? `${filePath}.v1.bak` : undefined;
-  if (backupPath) await copyFile(filePath, backupPath);
-  await replaceFileAtomically(filePath, source, metadata.mode);
+  await writeConfigSource(filePath, source, expectedSource, backupPath);
   return backupPath;
 }

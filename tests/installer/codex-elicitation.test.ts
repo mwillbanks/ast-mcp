@@ -209,6 +209,34 @@ describe("Codex elicitation policy", () => {
     expect(enableCodexElicitation(result, inherited)).toBe(result);
   });
 
+  test("inherits policy when a local profile exists only through a subtable", () => {
+    const source = "[profiles.safe.mcp_servers.example]\ncommand = 'example'\n";
+    const inherited = "[profiles.safe]\napproval_policy = 'never'\n";
+    const result = enableCodexElicitation(source, inherited);
+    expect(parsed(result).profiles.safe).toEqual({
+      mcp_servers: { example: { command: "example" } },
+      approval_policy: {
+        granular: {
+          sandbox_approval: false,
+          rules: false,
+          mcp_elicitations: true,
+          request_permissions: false,
+          skill_approval: false,
+        },
+      },
+    });
+    expect(enableCodexElicitation(result, inherited)).toBe(result);
+  });
+
+  test("rejects sealed dotted profiles without emitting invalid TOML", () => {
+    const source = "profiles.safe.model = 'local'\n";
+    const inherited = "[profiles.safe]\napproval_policy = 'never'\n";
+    expect(() => enableCodexElicitation(source, inherited)).toThrow(
+      "Expand inline Codex profiles before enabling MCP elicitation",
+    );
+    expect(parsed(source).profiles.safe.model).toBe("local");
+  });
+
   test("rejects inline profile policies without changing unrelated values", () => {
     const source =
       "profiles = { safe = { approval_policy = 'never', model = 'example' } }\n";

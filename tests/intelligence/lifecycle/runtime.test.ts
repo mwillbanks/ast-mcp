@@ -276,3 +276,58 @@ test("runtime close drains admitted configuration before provider creation", asy
     "intelligence_runtime_closed",
   );
 });
+
+test("shutdown closes all resources and waits for delayed closes after a failure", async () => {
+  let finishParser!: () => void;
+  const parserGate = new Promise<void>((resolve) => {
+    finishParser = resolve;
+  });
+  let parserCloses = 0;
+  let embeddingCloses = 0;
+  const dispatcherFailure = new Error("dispatcher close failed");
+  const runtime = new IntelligenceRuntime({
+    config: async () => resolvedConfig("fixture/failed-close"),
+    dispatcher: {
+      async analyze() {
+        return null;
+      },
+      async close() {
+        throw dispatcherFailure;
+      },
+    },
+    parserPool: {
+      async parse() {
+        throw new Error("unused");
+      },
+      async close() {
+        parserCloses += 1;
+        await parserGate;
+      },
+    },
+    embeddingProviderFactory: (config) => ({
+      config,
+      async embed(texts) {
+        return texts.map(() => [1, 0]);
+      },
+      async close() {
+        embeddingCloses += 1;
+      },
+    }),
+  });
+  await runtime.queryVector("ready", true);
+  let settled = false;
+  const closing = runtime.close().catch((error: unknown) => {
+    settled = true;
+    return error;
+  });
+  await Bun.sleep(0);
+  expect(parserCloses).toBe(1);
+  expect(embeddingCloses).toBe(1);
+  expect(settled).toBe(false);
+  finishParser();
+  const error = await closing;
+  expect(error).toBeInstanceOf(AggregateError);
+  expect((error as AggregateError).errors).toContain(dispatcherFailure);
+  await expect(runtime.close()).rejects.toBe(error);
+  expect(parserCloses).toBe(1);
+});

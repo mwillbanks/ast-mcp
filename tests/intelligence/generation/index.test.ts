@@ -68,6 +68,30 @@ function request(provider: GenerationRequest["provider"]): GenerationRequest {
   };
 }
 
+test("observes provider rejection when the provider synchronously aborts its caller", async () => {
+  const controller = new AbortController();
+  const result = await generateWithEvidence(
+    base,
+    {
+      ...request({
+        apiKey: null,
+        endpoint: "http://127.0.0.1:1/v1/chat/completions",
+        kind: "http",
+        model: "fixture",
+      }),
+      signal: controller.signal,
+    },
+    {
+      fetch: () => {
+        controller.abort();
+        return Promise.reject(new Error("provider aborted during dispatch"));
+      },
+    },
+  );
+  expect(result.status).toBe("cancelled");
+  await Bun.sleep(1);
+});
+
 let responseMode:
   | "invalid-citation"
   | "malformed"

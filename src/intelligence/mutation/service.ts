@@ -7,12 +7,15 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { sha256 } from "../../runtime/hash.ts";
 import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
+import {
+  ensurePrivateLockDirectory as ensureMutationLockDirectory,
+  systemAccount,
+} from "../../runtime/private-lock-directory.ts";
 import { createIdentity } from "../contracts/common.ts";
 import { ParserWorkerPool } from "../parser/pool.ts";
 import { LanceIntelligenceStore } from "../storage/store.ts";
@@ -20,9 +23,11 @@ import {
   currentWorkspace,
   type WorkspaceHandle,
 } from "../workspace/context.ts";
+export { ensurePrivateLockDirectory as ensureMutationLockDirectory } from "../../runtime/private-lock-directory.ts";
 import { refreshMutationIntelligence } from "./freshness.ts";
 import { LanceMutationJournal } from "./journal.ts";
 import { activeMutationLifecycle, withMutationLifecycle } from "./lifecycle.ts";
+import { lockPathIdentity, mutationSharedDatabasePath } from "./locks.ts";
 import type {
   MutationBatchPlan,
   MutationFileCommit,
@@ -327,6 +332,17 @@ export class LanceMutationLifecycle implements MutationLifecycle {
   }
 }
 
+/** One private checkout-lock namespace per operating-system account. */
+export async function mutationTransactionLockPath(
+  checkoutRoot: string,
+): Promise<string> {
+  const account = await systemAccount();
+  const directory = await ensureMutationLockDirectory(account);
+  const checkout = await canonicalizePath(checkoutRoot);
+  const identity = lockPathIdentity(checkout);
+  return path.join(directory, `transaction-${sha256(identity)}`);
+}
+
 export async function withLanceMutationLifecycle<T>(
   operation: () => Promise<T>,
   options: {
@@ -341,9 +357,11 @@ export async function withLanceMutationLifecycle<T>(
   if (!workspace) return operation();
   // Workspace IDs change with revision and overlay state. The checkout lock must
   // cover recovery and the entire transaction across requests and processes.
-  const checkout = await canonicalizePath(workspace.checkoutRoot);
+  const transactionPath = await mutationTransactionLockPath(
+    workspace.checkoutRoot,
+  );
   return withFileLock(
-    path.join(os.tmpdir(), `ast-mcp-transaction-${sha256(checkout)}`),
+    transactionPath,
     async (lease) => {
       options.signal?.throwIfAborted();
       const store = await LanceIntelligenceStore.open(workspace.storageDomain);
@@ -389,6 +407,9 @@ export async function withLanceMutationLifecycle<T>(
     {
       deadline: options.deadline ?? Date.now() + 10_000,
       signal: options.signal,
+      sharedDatabasePath: await mutationSharedDatabasePath(
+        workspace.checkoutRoot,
+      ),
     },
   );
 }

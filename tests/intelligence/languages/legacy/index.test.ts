@@ -420,6 +420,7 @@ describe("legacy language adapters", () => {
     });
     const activeOutcome = active.catch((error) => error);
     activeController.abort();
+    await drainLegacyLanguageWorker();
     const recovery = analyzeLegacyLanguage({
       languageId: "ocaml",
       source: "let recovered = 1",

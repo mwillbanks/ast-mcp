@@ -51,7 +51,7 @@ test("output cancellation releases the reader when stream cleanup rejects", asyn
     throw new Error("unexpected overflow");
   });
   abort.abort();
-  expect(await completion).toBe("");
+  await expect(completion).rejects.toBe(abort.signal.reason);
   await Bun.sleep(0);
   expect(cancelled).toBeTrue();
   expect(stream.locked).toBeFalse();

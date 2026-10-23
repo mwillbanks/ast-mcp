@@ -5,6 +5,7 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import * as transactionLocks from "../../src/runtime/transaction-lock";
 import {
   reconcileSkillExport,
   SKILL_EXPORT_MANIFEST,
@@ -260,11 +261,17 @@ test("resource path validation rejects traversal and duplicates before directory
 
 test("active locks reject competing exports without changing files", async () => {
   const root = await temporary();
-  await fs.writeFile(path.join(root, ".ast-mcp-export.lock"), "");
-  await expect(reconcileSkillExport(root, "update", current)).rejects.toThrow(
-    "locked",
+  const owner = await transactionLocks.acquireTransactionLock(
+    path.join(await fs.realpath(root), ".ast-mcp-export.lock"),
   );
-  expect(await Bun.file(path.join(root, "SKILL.md")).exists()).toBeFalse();
+  try {
+    await expect(reconcileSkillExport(root, "update", current)).rejects.toThrow(
+      "locked",
+    );
+    expect(await Bun.file(path.join(root, "SKILL.md")).exists()).toBeFalse();
+  } finally {
+    owner.release();
+  }
 });
 
 test("changes during staging are preserved and locks are released", async () => {
@@ -542,20 +549,18 @@ test("directory and lock permission failures propagate", async () => {
   } finally {
     mkdir.mockRestore();
   }
-  const originalOpen = fs.open;
-  const open = spyOn(fs, "open").mockImplementation(
-    async (...args: Parameters<typeof fs.open>) => {
-      if (String(args[0]).endsWith(".lock"))
-        throw Object.assign(new Error("lock denied"), { code: "EACCES" });
-      return originalOpen(...args);
-    },
+  const acquire = spyOn(
+    transactionLocks,
+    "acquireTransactionLock",
+  ).mockRejectedValueOnce(
+    Object.assign(new Error("lock denied"), { code: "EACCES" }),
   );
   try {
     await expect(reconcileSkillExport(root, "export", current)).rejects.toThrow(
       "lock denied",
     );
   } finally {
-    open.mockRestore();
+    acquire.mockRestore();
   }
 });
 
@@ -638,25 +643,33 @@ for (const phase of ["resource", "initial manifest"] as const) {
   );
 }
 
-test("successful writes report lock cleanup failure instead of false success", async () => {
+test("successful writes report transaction release failures and permit later exports", async () => {
   const root = await temporary();
-  const originalUnlink = fs.unlink;
-  const unlink = spyOn(fs, "unlink").mockImplementation(async (target) => {
-    if (String(target).endsWith(".lock"))
-      throw new Error("lock cleanup denied");
-    return originalUnlink(target);
+  const actual = transactionLocks.acquireTransactionLock;
+  const acquire = spyOn(
+    transactionLocks,
+    "acquireTransactionLock",
+  ).mockImplementation(async (...args) => {
+    const lease = await actual(...args);
+    return {
+      ...lease,
+      release() {
+        lease.release();
+        throw new Error("lock cleanup denied");
+      },
+    };
   });
   try {
     await expect(
       reconcileSkillExport(root, "export", [file("SKILL.md", "new")]),
-    ).rejects.toThrow("lock cleanup failed");
+    ).rejects.toThrow("lock cleanup denied");
   } finally {
-    unlink.mockRestore();
+    acquire.mockRestore();
   }
   expect(await fs.readFile(path.join(root, "SKILL.md"), "utf8")).toBe("new");
-  await expect(reconcileSkillExport(root, "update", current)).rejects.toThrow(
-    "locked",
-  );
+  await expect(
+    reconcileSkillExport(root, "update", current),
+  ).resolves.toBeDefined();
 });
 
 for (const failure of [
@@ -716,19 +729,26 @@ for (const failure of [
   );
 }
 
-test("lock close failures do not hide the primary operation failure", async () => {
+test("transaction release failures do not hide the primary operation failure", async () => {
   const root = await temporary();
+  const actualAcquire = transactionLocks.acquireTransactionLock;
+  const acquire = spyOn(
+    transactionLocks,
+    "acquireTransactionLock",
+  ).mockImplementation(async (...args) => {
+    const lease = await actualAcquire(...args);
+    return {
+      ...lease,
+      release() {
+        lease.release();
+        throw new Error("close failure");
+      },
+    };
+  });
   const originalOpen = fs.open;
   const open = spyOn(fs, "open").mockImplementation(
     async (...args: Parameters<typeof fs.open>) => {
       const handle = await originalOpen(...args);
-      if (String(args[0]).endsWith(".lock")) {
-        const close = handle.close.bind(handle);
-        spyOn(handle, "close").mockImplementation(async () => {
-          await close();
-          throw new Error("close failure");
-        });
-      }
       if (String(args[0]).endsWith("SKILL.md"))
         spyOn(handle, "writeFile").mockRejectedValueOnce(
           new Error("primary write failure"),
@@ -742,8 +762,48 @@ test("lock close failures do not hide the primary operation failure", async () =
     ).rejects.toThrow("primary write failure");
   } finally {
     open.mockRestore();
+    acquire.mockRestore();
   }
-  expect(
-    (await fs.readdir(root)).some((name) => name.endsWith(".lock")),
-  ).toBeFalse();
+  await expect(
+    reconcileSkillExport(root, "export", current),
+  ).resolves.toBeDefined();
+});
+test("killed export owners do not block future exports", async () => {
+  const root = await temporary();
+  const identity = path.join(await fs.realpath(root), ".ast-mcp-export.lock");
+  const modulePath = Bun.fileURLToPath(
+    new URL("../../src/runtime/transaction-lock.ts", import.meta.url),
+  );
+  const script = `import {acquireTransactionLock} from ${JSON.stringify(modulePath)}; const lease=await acquireTransactionLock(${JSON.stringify(identity + "-different-private-account")}, {sharedDatabasePath: ${JSON.stringify(identity + ".sqlite")}}); console.log("ready"); await Bun.sleep(60000);`;
+  const child = Bun.spawn([process.execPath, "-e", script], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const reader = child.stdout.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const ready = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("Export owner never became ready")),
+          3000,
+        );
+      }),
+    ]);
+    expect(new TextDecoder().decode(ready.value)).toContain("ready");
+    await expect(reconcileSkillExport(root, "export", current)).rejects.toThrow(
+      "locked",
+    );
+    child.kill("SIGKILL");
+    await child.exited;
+    expect(
+      (await reconcileSkillExport(root, "export", current)).written,
+    ).toEqual(["SKILL.md", "references/tools.md"]);
+  } finally {
+    clearTimeout(timer);
+    child.kill();
+    await reader.cancel().catch(() => undefined);
+    await child.exited;
+  }
 });

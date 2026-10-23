@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import {
   chmod,
@@ -43,6 +44,7 @@ import {
   referenceRootForPath,
   resolveWorkspacePath,
 } from "../../src/runtime/paths";
+import { privateLockDatabasePathSync } from "../../src/runtime/private-lock-directory";
 import { hermeticConfig } from "../support/hermetic-config";
 
 const created: string[] = [];
@@ -371,20 +373,23 @@ test("approval flow fails closed and supports once, session, and persistent gran
     expect(mergedPersistentSource).toContain(
       'policies = { read = "allow", write = "allow", delete = "deny" }',
     );
-    const lockPath = path.join(
-      root,
-      "global/ast-mcp/ast-mcp.toml.approval.lock",
+    const lockPath = privateLockDatabasePathSync(
+      path.join(root, "global/ast-mcp/ast-mcp.toml") + ".config-commit",
     );
-    await writeFile(lockPath, "locked");
+    const owner = new Database(lockPath);
+    owner.exec("BEGIN IMMEDIATE");
     const blockedDecision = {
       ...decision,
       canonicalPath: path.join(root, "blocked.txt"),
     };
-    await expect(
-      approve(blockedDecision, 7, "always_allow"),
-    ).rejects.toMatchObject({ code: "approval_persistence_busy" });
-    expect(await readFile(lockPath, "utf8")).toBe("locked");
-    await rm(lockPath);
+    try {
+      await expect(
+        approve(blockedDecision, 7, "always_allow"),
+      ).rejects.toMatchObject({ code: "approval_persistence_busy" });
+    } finally {
+      owner.exec("ROLLBACK");
+      owner.close();
+    }
   } finally {
     if (previousAppData === undefined) delete process.env.APPDATA;
     else process.env.APPDATA = previousAppData;

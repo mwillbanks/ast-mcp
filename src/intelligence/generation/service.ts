@@ -73,13 +73,23 @@ async function waitForProvider(
   operation: Promise<unknown>,
   signal: AbortSignal,
 ): Promise<unknown> {
-  if (signal.aborted) throw new Error("generation_aborted");
   return await new Promise((resolve, reject) => {
-    const aborted = () => reject(new Error("generation_aborted"));
-    signal.addEventListener("abort", aborted, { once: true });
-    operation.then(resolve, reject).finally(() => {
+    const aborted = () => {
       signal.removeEventListener("abort", aborted);
-    });
+      reject(new Error("generation_aborted"));
+    };
+    operation.then(
+      (value) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error);
+      },
+    );
+    signal.addEventListener("abort", aborted, { once: true });
+    if (signal.aborted) aborted();
   });
 }
 

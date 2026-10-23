@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -20,6 +21,11 @@ import {
 import { z } from "zod";
 
 import { globalConfigPath, type ResolvedConfig } from "../config";
+import {
+  assertConfigWriteTarget,
+  canonicalConfigPath,
+  withConfigTransaction,
+} from "../config/transaction";
 import type { PolicyDecision } from "./path-policy";
 import { canonicalizePathSync } from "./path-utils";
 
@@ -141,45 +147,46 @@ function persistApproval(
   update: (existing: string) => string | undefined,
 ): void {
   mkdirSync(path.dirname(globalPath), { mode: 0o700, recursive: true });
-  const lockPath = `${globalPath}.approval.lock`;
+  const target = canonicalConfigPath(globalPath);
   const temporary = path.join(
-    path.dirname(globalPath),
-    `.${path.basename(globalPath)}.approval-${randomUUID()}`,
+    path.dirname(target),
+    `.${path.basename(target)}.approval-${randomUUID()}`,
   );
-  let lockOwned = false;
   try {
-    try {
-      writeFileSync(lockPath, "", { flag: "wx", mode: 0o600 });
-      lockOwned = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
-        throw Object.assign(
-          new Error("Another persistent approval update is in progress; retry"),
-          { code: "approval_persistence_busy", retryable: true },
-        );
-      throw error;
-    }
-    const existing = persistentConfig(globalPath);
-    const next = update(existing);
-    if (next === undefined) return;
-    writeFileSync(temporary, next, {
-      flag: "wx",
-      mode: existsSync(globalPath) ? statSync(globalPath).mode : 0o600,
-    });
-    if (persistentConfig(globalPath) !== existing)
-      throw Object.assign(
-        new Error("User-global configuration changed during approval; retry"),
-        { code: "approval_persistence_conflict", retryable: true },
-      );
-    renameSync(temporary, globalPath);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {}
-    if (lockOwned)
+    withConfigTransaction(target, () => {
       try {
-        unlinkSync(lockPath);
-      } catch {}
+        assertConfigWriteTarget(globalPath, target);
+        const existing = persistentConfig(target);
+        const mode = existsSync(target)
+          ? statSync(target).mode & 0o7777
+          : 0o600;
+        const next = update(existing);
+        if (next === undefined) return;
+        writeFileSync(temporary, next, {
+          flag: "wx",
+          mode,
+        });
+        chmodSync(temporary, mode);
+        assertConfigWriteTarget(globalPath, target);
+        if (persistentConfig(target) !== existing)
+          throw Object.assign(
+            new Error(
+              "User-global configuration changed during approval; retry",
+            ),
+            { code: "approval_persistence_conflict", retryable: true },
+          );
+        assertConfigWriteTarget(globalPath, target);
+        renameSync(temporary, target);
+      } finally {
+        try {
+          unlinkSync(temporary);
+        } catch {}
+      }
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "configuration_busy")
+      Object.assign(error as object, { code: "approval_persistence_busy" });
+    throw error;
   }
 }
 

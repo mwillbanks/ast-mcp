@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -413,6 +413,133 @@ describe("retrieval chunk identity", () => {
     ];
     expect(new Set(identities)).toHaveLength(identities.length);
   });
+});
+
+test("failed native table opens and pinned checkouts release their connections", async () => {
+  const { store, scope, workspace } = await harness("native-resource-cleanup");
+  const corpus = chunks();
+  await publishRetrievalChunks(store, scope, corpus, workspace);
+  const reader = await fakeReader(store, scope);
+  const chunkRows = await store.rows("chunks");
+  reader.rows = async (table) => (table === "chunks" ? chunkRows : []);
+  try {
+    for (const stage of ["open", "checkout"]) {
+      let closedConnections = 0;
+      let closedTables = 0;
+      const connection = {
+        async openTable() {
+          if (stage === "open") throw new Error("native open failed");
+          return {
+            async checkout() {
+              throw new Error("native checkout failed");
+            },
+            close() {
+              closedTables++;
+            },
+          };
+        },
+        close() {
+          closedConnections++;
+        },
+      };
+      const connect = spyOn(lancedb, "connect").mockResolvedValue(
+        connection as never,
+      );
+      try {
+        await expect(
+          retrieve(
+            store,
+            reader,
+            { query: "publish", scope, semantic: false },
+            { graph: graphFor(scope, corpus), workspace },
+          ),
+        ).rejects.toThrow(`native ${stage} failed`);
+        expect(closedConnections).toBe(1);
+        expect(closedTables).toBe(stage === "checkout" ? 1 : 0);
+      } finally {
+        connect.mockRestore();
+      }
+    }
+    let closed = 0;
+    const connect = spyOn(lancedb, "connect").mockResolvedValue({
+      async openTable() {
+        throw new Error("FTS table open failed");
+      },
+      close() {
+        closed++;
+      },
+    } as never);
+    try {
+      await expect(
+        publishRetrievalChunks(store, scope, corpus, workspace),
+      ).rejects.toThrow("FTS table open failed");
+      expect(closed).toBe(1);
+    } finally {
+      connect.mockRestore();
+    }
+  } finally {
+    await store.shutdownCoordinator();
+  }
+});
+
+test("embedding publication waits for sibling writes before exposing a batch failure", async () => {
+  const { store, scope, workspace } = await harness("publication-barrier");
+  const corpus = chunks().slice(0, 2);
+  const config = EmbeddingModelConfigSchema.parse({
+    artifacts: {},
+    dimensions: 2,
+    workers: 2,
+    batchSize: 1,
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let failedWrite!: () => void;
+  const failedJob = new Promise<void>((resolve) => {
+    failedWrite = resolve;
+  });
+  const putJob = store.putJob.bind(store);
+  store.putJob = async (job) => {
+    const metrics = await putJob(job);
+    if (job.state === "failed") failedWrite();
+    return metrics;
+  };
+  const pool = new EmbeddingWorkerPool(config, () => ({
+    config,
+    close: async () => {},
+    embed: async (texts) => {
+      if (texts[0] === corpus[0]!.text) throw new Error("first chunk failed");
+      await gate;
+      return [[1, 0]];
+    },
+  }));
+  let settled = false;
+  const result = publishChunkEmbeddings(store, scope, corpus, config, pool, {
+    workspace,
+    throwOnFailure: true,
+  })
+    .catch((error: unknown) => error)
+    .finally(() => {
+      settled = true;
+    });
+  try {
+    await failedJob;
+    await Bun.sleep(1);
+    expect(settled).toBe(false);
+    release();
+    expect(await result).toMatchObject({ message: "first chunk failed" });
+    expect(await store.rows("embeddings")).toHaveLength(1);
+    expect((await store.rows("jobs")).map((job) => job.state).sort()).toEqual([
+      "failed",
+      "succeeded",
+    ]);
+  } finally {
+    release();
+    await result;
+    await pool.close();
+    await store.shutdownCoordinator();
+  }
 });
 
 describe("retrieval embedding provider", () => {
@@ -2009,7 +2136,8 @@ describe("LanceDB hybrid retrieval", () => {
     ).rejects.toThrow("embedding_cancelled");
     expect(midProviderCalls).toBe(1);
     expect(await store.rows("embeddings")).toHaveLength(0);
-    expect(await store.rows("jobs")).toHaveLength(2);
+    // Both accepted sibling publications finish before cancellation is returned.
+    expect(await store.rows("jobs")).toHaveLength(3);
     await failedPool.close();
     await pool.close();
     await store.shutdownCoordinator();

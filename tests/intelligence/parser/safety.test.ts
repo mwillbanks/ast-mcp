@@ -155,17 +155,17 @@ describe("dynamic grammar trust boundary", () => {
       };
       const first = new LanguageRegistry(registrar);
       await first.addDynamic(descriptor, implementation);
-      first.registerDynamicGrammars();
       const identical = new LanguageRegistry(registrar);
       await identical.addDynamic(descriptor, implementation);
-      expect(() => identical.registerDynamicGrammars()).not.toThrow();
       const conflicting = new LanguageRegistry(registrar);
       await conflicting.addDynamic(
         { ...descriptor, dynamicAsset: { ...asset, metaVarChar: "%" } },
         implementation,
       );
+      first.registerDynamicGrammars();
+      expect(() => identical.registerDynamicGrammars()).not.toThrow();
       expect(() => conflicting.registerDynamicGrammars()).toThrow(
-        "different dynamic grammar set",
+        "different grammar set",
       );
     } finally {
       await rm(root, { recursive: true, force: true });

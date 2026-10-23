@@ -24,6 +24,7 @@ export interface PatchStrategyContext {
   language?: string;
   mode: number;
   original: string;
+  signal?: AbortSignal;
 }
 
 export interface PatchStrategyMetadata {

@@ -1029,11 +1029,13 @@ export async function analyzeDocument(
   const embeddedCode: EmbeddedCodeRegion[] = [];
   for (const [ordinal, region] of (parsed.embedded ?? []).entries()) {
     const embeddedSource = source.slice(region.start, region.end);
-    const facts = await embeddedFacts(
+    const parsedFacts = await embeddedFacts(
       request,
       region.languageId,
       embeddedSource,
     );
+    // Parser callbacks may share cached facts. Host-coordinate mapping is local.
+    const facts = parsedFacts ? structuredClone(parsedFacts) : null;
     if (!facts) {
       const documentDiagnostics = parsed.diagnostics ?? [];
       documentDiagnostics.push({

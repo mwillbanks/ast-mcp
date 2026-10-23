@@ -31,6 +31,8 @@ interface Pending<
   LanguageId extends string,
 > extends WorkerExpectation<LanguageId> {
   bytes: number;
+  retiring: boolean;
+  waiting: boolean;
   cleanup(): void;
   reject(error: Error): void;
   resolve(facts: SyntaxFacts): void;
@@ -41,6 +43,7 @@ interface LanguageWorkerClientOptions<LanguageId extends string> {
   createError(code: LanguageWorkerErrorCode, message: string): Error;
   label: string;
   limits: LanguageWorkerLimits;
+  /** Retained for caller compatibility; failed transports always retire. */
   terminateOnProtocolError: boolean;
   terminateOnWorkerError: boolean;
   validateResult(
@@ -50,11 +53,16 @@ interface LanguageWorkerClientOptions<LanguageId extends string> {
   workerUrl: URL;
 }
 
+// Retirement remains owned and close reports failures to its caller.
+function observeRetirementFailure(): void {}
+
 export class LanguageWorkerClient<LanguageId extends string> {
   private worker: Worker | undefined;
   private nextId = 1;
   private outstandingBytes = 0;
   private termination: Promise<void> | undefined;
+  private retirementFailed = false;
+  private readonly waitingStarts = new Map<number, () => void>();
   private readonly pending = new Map<number, Pending<LanguageId>>();
   private readonly drainWaiters = new Set<() => void>();
 
@@ -70,7 +78,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   private notifyDrained(): void {
-    if (this.pending.size !== 0) return;
+    if (this.pending.size !== 0 || this.termination) return;
     for (const resolve of this.drainWaiters) resolve();
     this.drainWaiters.clear();
   }
@@ -79,6 +87,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const request = this.pending.get(id);
     if (!request) return undefined;
     this.pending.delete(id);
+    this.waitingStarts.delete(id);
     this.outstandingBytes -= request.bytes;
     request.cleanup();
     this.notifyDrained();
@@ -99,21 +108,60 @@ export class LanguageWorkerClient<LanguageId extends string> {
     failure: Error,
   ): Promise<void> {
     if (!this.termination) {
+      const retiringRequests = [...this.pending.entries()];
+      for (const [, request] of retiringRequests) request.retiring = true;
       this.worker = undefined;
-      this.termination = (async () => {
-        if (active) await active.terminate();
-        this.rejectPending(failure);
-      })().finally(() => {
-        this.termination = undefined;
-        this.notifyDrained();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const retirement = Promise.resolve()
+        .then(async () => {
+          if (active) await active.terminate();
+        })
+        .then(() => {
+          for (const [id] of retiringRequests) this.finish(id);
+          this.termination = undefined;
+          this.retirementFailed = false;
+          const starts = [...this.waitingStarts.values()];
+          this.waitingStarts.clear();
+          for (const start of starts) queueMicrotask(start);
+          this.notifyDrained();
+        });
+      this.termination = Promise.race([
+        retirement,
+        new Promise<void>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(this.error("worker-exit", "worker retirement timed out")),
+            this.options.limits.timeoutMs,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      void this.termination.catch(() => {
+        this.retirementFailed = true;
+        for (const id of [...this.waitingStarts.keys()]) {
+          this.finish(id)?.reject(
+            this.error("queue-full", "worker is retiring"),
+          );
+        }
       });
+      for (const [, request] of retiringRequests) {
+        request.cleanup();
+        request.reject(failure);
+      }
     }
     await this.termination;
   }
 
   private async cancel(id: number, failure: Error): Promise<void> {
+    if (this.pending.get(id)?.waiting) {
+      this.finish(id)?.reject(failure);
+      return;
+    }
     const active = this.worker;
-    active?.postMessage({ id, type: "cancel" });
+    try {
+      active?.postMessage({ id, type: "cancel" });
+    } catch {
+      /* Terminate even if the cancellation message cannot be delivered. */
+    }
     await this.terminateWorker(active, failure);
   }
 
@@ -137,9 +185,9 @@ export class LanguageWorkerClient<LanguageId extends string> {
           "protocol",
           "worker returned an invalid response",
         );
-        if (this.options.terminateOnProtocolError)
-          void this.terminateWorker(active, failure);
-        else this.rejectPending(failure);
+        void this.terminateWorker(active, failure).catch(
+          observeRetirementFailure,
+        );
         return;
       }
       this.finish(response.id);
@@ -148,12 +196,10 @@ export class LanguageWorkerClient<LanguageId extends string> {
     });
     active.on("error", (error) => {
       if (this.worker !== active) return;
-      if (this.options.terminateOnWorkerError)
-        void this.terminateWorker(
-          active,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-      else this.rejectPending(error);
+      void this.terminateWorker(
+        active,
+        error instanceof Error ? error : new Error(String(error)),
+      ).catch(observeRetirementFailure);
     });
     active.on("exit", (code) => {
       if (this.worker !== active) return;
@@ -165,8 +211,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   analyze(request: LanguageAnalyzeRequest<LanguageId>): Promise<SyntaxFacts> {
-    if (this.termination)
-      return this.termination.then(() => this.analyze(request));
+    if (this.termination && this.retirementFailed)
+      return Promise.reject(this.error("queue-full", "worker is retiring"));
     const bytes = Buffer.byteLength(request.source);
     if (
       this.pending.size >= this.options.limits.maxPendingRequests ||
@@ -179,10 +225,14 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const timeoutMs = request.timeoutMs ?? this.options.limits.timeoutMs;
     return new Promise<SyntaxFacts>((resolve, reject) => {
       const abort = () => {
-        void this.cancel(id, this.error("aborted", "request aborted"));
+        void this.cancel(id, this.error("aborted", "request aborted")).catch(
+          observeRetirementFailure,
+        );
       };
       const timer = setTimeout(() => {
-        void this.cancel(id, this.error("timeout", "request timed out"));
+        void this.cancel(id, this.error("timeout", "request timed out")).catch(
+          observeRetirementFailure,
+        );
       }, timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
@@ -190,6 +240,8 @@ export class LanguageWorkerClient<LanguageId extends string> {
       };
       this.pending.set(id, {
         bytes,
+        retiring: false,
+        waiting: this.termination !== undefined,
         cleanup,
         languageId: request.languageId,
         reject,
@@ -198,15 +250,36 @@ export class LanguageWorkerClient<LanguageId extends string> {
       });
       this.outstandingBytes += bytes;
       request.signal?.addEventListener("abort", abort, { once: true });
-      queueMicrotask(() => {
-        if (!this.pending.has(id)) return;
-        this.parserWorker().postMessage({
-          id,
-          languageId: request.languageId,
-          source: request.source,
-          type: "start",
-        });
-      });
+      const start = () => {
+        const admitted = this.pending.get(id);
+        if (!admitted || admitted.retiring) return;
+        if (this.termination) {
+          if (this.retirementFailed)
+            this.finish(id)?.reject(
+              this.error("queue-full", "worker is retiring"),
+            );
+          else {
+            admitted.waiting = true;
+            this.waitingStarts.set(id, start);
+          }
+          return;
+        }
+        admitted.waiting = false;
+        try {
+          this.parserWorker().postMessage({
+            id,
+            languageId: request.languageId,
+            source: request.source,
+            type: "start",
+          });
+        } catch {
+          void this.terminateWorker(
+            this.worker,
+            this.error("worker-exit", "worker could not start request"),
+          ).catch(observeRetirementFailure);
+        }
+      };
+      queueMicrotask(start);
     });
   }
 
@@ -223,6 +296,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   drain(): Promise<void> {
+    if (this.termination) return this.termination.then(() => this.drain());
     if (this.pending.size === 0) return Promise.resolve();
     return new Promise((resolve) => this.drainWaiters.add(resolve));
   }
@@ -232,9 +306,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const active = this.worker;
     const failure = this.error("closed", "worker closed");
     if (this.options.closeMode === "detach-first") {
-      this.worker = undefined;
-      this.rejectPending(failure);
-      if (active) await active.terminate();
+      await this.terminateWorker(active, failure);
       return;
     }
     if (!active) {

@@ -28,6 +28,8 @@ const providerMetadata = {
         "dist/ast-mcp.js",
         "dist/workers/code-intelligence-worker.js",
         "dist/workers/parser-worker.js",
+        "dist/workers/embedding-model-worker.js",
+        "dist/workers/patch-strategy-worker.js",
         "dist/workers/dynamic-wasm-worker.js",
         "dist/workers/infra-wasm-worker.js",
         "dist/workers/jvm-wasm-worker.js",
@@ -53,6 +55,16 @@ const nativeExternals = [
   "@lancedb/lancedb-*",
 ];
 const workers = [
+  {
+    client: "src/patch/strategy/worker-client.ts",
+    entrypoint: "src/patch/strategy/worker.ts",
+    output: "patch-strategy-worker.js",
+  },
+  {
+    client: "src/intelligence/retrieval/worker-session.ts",
+    entrypoint: "src/intelligence/retrieval/model-worker.ts",
+    output: "embedding-model-worker.js",
+  },
   {
     client: "src/intelligence/parser/pool.ts",
     entrypoint: "src/intelligence/parser/worker.ts",
@@ -107,7 +119,7 @@ const packagedWorkerPlugin: BunPlugin = {
     build.onLoad(
       {
         filter:
-          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
+          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|intelligence[\\/]+retrieval[\\/]+worker-session|patch[\\/]+strategy[\\/]+worker-client|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
       },
       async ({ path: filePath }: { path: string }) => {
         const relative = path
@@ -122,7 +134,11 @@ const packagedWorkerPlugin: BunPlugin = {
             ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
             : relative === "src/intelligence/parser/pool.ts"
               ? 'new URL("./worker.ts", import.meta.url)'
-              : 'new URL("./wasm-worker.ts", import.meta.url)';
+              : relative === "src/intelligence/retrieval/worker-session.ts"
+                ? 'new URL("./model-worker.ts", import.meta.url)'
+                : relative === "src/patch/strategy/worker-client.ts"
+                  ? 'new URL("./worker.ts", import.meta.url)'
+                  : 'new URL("./wasm-worker.ts", import.meta.url)';
         if (!source.includes(marker))
           throw new Error(`Worker URL marker is missing from ${relative}`);
         return {

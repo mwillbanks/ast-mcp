@@ -787,6 +787,7 @@ describe.serial("dynamic language WASM adapters", () => {
     const activeOutcome = active.catch((error: unknown) => error);
     activeController.abort();
     expect(await activeOutcome).toMatchObject({ code: "aborted" });
+    await drainDynamicLanguageWorker();
 
     await expect(
       analyzeDynamicLanguage({
@@ -854,6 +855,7 @@ describe.serial("dynamic language WASM adapters", () => {
     );
     for (const controller of controllers) controller.abort();
     expect(dynamicWorkerStats().pendingRequests).toBeGreaterThan(0);
+    await drainDynamicLanguageWorker();
     const recovery = analyzeDynamicLanguage({
       languageId: "python",
       source: "def recovered():\n    pass\n",
