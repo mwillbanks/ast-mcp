@@ -180,9 +180,12 @@ export async function runServiceCommand(
       ),
     timeoutMs,
   );
+  const interrupted = Promise.withResolvers<never>();
+  const onAbort = () => interrupted.reject(controller.signal.reason);
+  controller.signal.addEventListener("abort", onAbort, { once: true });
   try {
     const [exitCode, stderr] = await Promise.all([
-      child.exited,
+      Promise.race([child.exited, interrupted.promise]),
       readSubprocessOutput(child.stderr, controller.signal, () =>
         terminateProcessTree(child, { force: true }),
       ),
@@ -200,6 +203,7 @@ export async function runServiceCommand(
     throw error;
   } finally {
     clearTimeout(deadline);
+    controller.signal.removeEventListener("abort", onAbort);
   }
 }
 const defaultRunner = runServiceCommand;

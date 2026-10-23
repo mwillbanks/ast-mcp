@@ -6,6 +6,7 @@ import {
   runServiceCommand,
   waitForService,
 } from "../../src/installer/service";
+import * as subprocess from "../../src/runtime/subprocess";
 
 test("rejects unsupported service platforms before executing commands", () => {
   expect(() =>
@@ -84,6 +85,56 @@ test("terminates service commands that never exit even when failures are ignored
   ).rejects.toThrow("Service command interrupted");
   expect(Date.now() - started).toBeLessThan(2000);
 });
+
+test.each([false, true])(
+  "bounds service exit after stderr closes with ignored failures %s",
+  async (ignoreFailure) => {
+    const spawn = spyOn(Bun, "spawn");
+    const readOutput = subprocess.readSubprocessOutput;
+    let stderrDrained = false;
+    const reader = spyOn(subprocess, "readSubprocessOutput").mockImplementation(
+      async (...args) => {
+        const output = await readOutput(...args);
+        stderrDrained = true;
+        return output;
+      },
+    );
+    let operation: Promise<void> | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    try {
+      operation = runServiceCommand(
+        [
+          process.execPath,
+          "-e",
+          'import { closeSync } from "node:fs"; closeSync(2); setInterval(() => {}, 1000);',
+        ],
+        ignoreFailure,
+        1000,
+      );
+      await expect(
+        Promise.race([
+          operation,
+          new Promise<never>((_resolve, reject) => {
+            watchdog = setTimeout(
+              () => reject(new Error("Service exit remained unbounded")),
+              3000,
+            );
+          }),
+        ]),
+      ).rejects.toThrow("deadline expired");
+      expect(stderrDrained).toBe(true);
+      const child = spawn.mock.results[0]?.value as Bun.Subprocess;
+      expect(child.signalCode ?? child.exitCode).not.toBeNull();
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+      const child = spawn.mock.results[0]?.value as Bun.Subprocess | undefined;
+      if (child?.exitCode === null && child.signalCode === null) child.kill();
+      await operation?.catch(() => undefined);
+      reader.mockRestore();
+      spawn.mockRestore();
+    }
+  },
+);
 
 test("discards large service output while draining diagnostics", async () => {
   await runServiceCommand([

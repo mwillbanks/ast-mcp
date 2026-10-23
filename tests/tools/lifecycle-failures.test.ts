@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -276,13 +277,43 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
               ...(tool === "file_rename" ? { destination } : {}),
             },
           };
+    const waiting = Promise.withResolvers<void>();
+    const originalExec = Database.prototype.exec;
+    const exec = spyOn(Database.prototype, "exec").mockImplementation(function (
+      this: Database,
+      ...args: Parameters<typeof originalExec>
+    ) {
+      try {
+        return originalExec.apply(this, args);
+      } catch (error) {
+        if (
+          args[0] === "BEGIN IMMEDIATE" &&
+          (error as { code?: string }).code === "SQLITE_BUSY"
+        )
+          waiting.resolve();
+        throw error;
+      }
+    });
     let operation: ReturnType<Handler> | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       operation = withWorkspaceContext(workspace, () =>
         handlers.get(tool)!({ files: request }),
       );
-      await Bun.sleep(30);
+      await Promise.race([
+        waiting.promise,
+        operation.then(() => {
+          throw new Error("Tool completed before checkout admission waited");
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(new Error("Checkout lock contention was not observed")),
+            5000,
+          );
+        }),
+      ]);
+      clearTimeout(timeout);
       abort.abort(new Error("caller cancelled"));
       const result = await Promise.race([
         operation,
@@ -310,6 +341,7 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
       await owner.fence();
     } finally {
       if (timeout) clearTimeout(timeout);
+      exec.mockRestore();
       await owner.release();
       await operation;
       open.mockRestore();
