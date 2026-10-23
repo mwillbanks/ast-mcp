@@ -191,6 +191,89 @@ async function invoke(
     return "preserved";
   });
 }
+
+test("stalled tools emit one sanitized event before completion", async () => {
+  const sdk = fakeSdk();
+  const telemetry = new Telemetry({
+    globalEnabled: async () => true,
+    loadSdk: sdk.loadSdk,
+    slowToolMs: 5,
+  });
+  telemetry.register("file_read");
+  let finish!: () => void;
+  const operation = telemetry.run("file_read", async () => {
+    telemetry.select(policy());
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    return "completed";
+  });
+  try {
+    await Bun.sleep(25);
+    await tick();
+    expect(sdk.calls).toHaveLength(0);
+    expect(sdk.events).toHaveLength(1);
+    const event = filterTelemetryEvent(
+      sdk.events[0]!,
+      "session",
+      new Set(["file_read"]),
+    );
+    expect(event?.event).toBe("$mcp_tool_stalled");
+    expect(event?.properties?.error_code).toBe("tool_stalled");
+    expect(event?.properties?.outcome).toBe("operational_error");
+    await Bun.sleep(15);
+    expect(sdk.events).toHaveLength(1);
+  } finally {
+    finish();
+    expect(await operation).toBe("completed");
+    await telemetry.close();
+  }
+  expect(sdk.calls).toHaveLength(1);
+});
+
+test("stall watchdogs preserve opt-out and stop on close", async () => {
+  for (const selected of [policy(false), policy(true, false), undefined]) {
+    const sdk = fakeSdk();
+    const telemetry = new Telemetry({
+      globalEnabled: async () => true,
+      loadSdk: sdk.loadSdk,
+      slowToolMs: 5,
+    });
+    let finish!: () => void;
+    const operation = telemetry.run("file_read", async () => {
+      if (selected) telemetry.select(selected);
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await Bun.sleep(15);
+    finish();
+    await operation;
+    await telemetry.close();
+    expect(sdk.loaded).toBe(0);
+    expect(sdk.events).toHaveLength(0);
+  }
+  const sdk = fakeSdk();
+  const telemetry = new Telemetry({
+    globalEnabled: async () => true,
+    loadSdk: sdk.loadSdk,
+    slowToolMs: 10,
+  });
+  let finish!: () => void;
+  const operation = telemetry.run("file_read", async () => {
+    telemetry.select(policy());
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+  });
+  await telemetry.close();
+  await Bun.sleep(20);
+  finish();
+  await operation;
+  expect(sdk.loaded).toBe(0);
+  expect(sdk.events).toHaveLength(0);
+});
+
 function wireOptions(sdk: ReturnType<typeof fakeSdk>) {
   return sdk.options.fetch!;
 }

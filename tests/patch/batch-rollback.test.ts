@@ -12,8 +12,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { withConfig } from "../../src/config";
+import { withMutationLifecycle } from "../../src/intelligence/mutation/lifecycle";
 import { patchFiles, writeFilesSafely } from "../../src/patch/engine";
 import { sha256 } from "../../src/runtime/hash";
+import { withFileLock } from "../../src/runtime/locks";
 import { hermeticConfig } from "../support/hermetic-config";
 
 async function configuredRoot(prefix: string): Promise<string> {
@@ -35,6 +37,121 @@ async function configuredRoot(prefix: string): Promise<string> {
   );
   return root;
 }
+
+test("cancelled patch and write batches roll back completed commits and remain usable", async () => {
+  for (const kind of ["patch", "write"] as const) {
+    const root = await configuredRoot("ast-mcp-cancel-batch-");
+    const first = path.join(root, "first.txt");
+    const second = path.join(root, "second.txt");
+    await writeFile(first, "before\n");
+    await writeFile(second, "before\n");
+    const controller = new AbortController();
+    let rolledBack = false;
+    try {
+      await expect(
+        withConfig(hermeticConfig(root), () =>
+          withMutationLifecycle(
+            {
+              begin: async () => {},
+              committed: async () => {
+                controller.abort(new Error("cancelled by client"));
+              },
+              complete: async () => null,
+              failed: async () => {},
+              rolledBack: async () => {
+                rolledBack = true;
+              },
+            },
+            () =>
+              kind === "patch"
+                ? patchFiles(
+                    Object.fromEntries(
+                      [first, second].map((file) => [
+                        file,
+                        {
+                          expectedSha256: sha256("before\n"),
+                          patchStrategy: "aider_block" as const,
+                          aiderBlocks: [{ search: "before", replace: "after" }],
+                        },
+                      ]),
+                    ),
+                    { signal: controller.signal },
+                  )
+                : writeFilesSafely(
+                    Object.fromEntries(
+                      [first, second].map((file) => [
+                        file,
+                        {
+                          expectedSha256: sha256("before\n"),
+                          content: "after\n",
+                        },
+                      ]),
+                    ),
+                    { signal: controller.signal },
+                  ),
+          ),
+        ),
+      ).rejects.toThrow("cancelled by client");
+      expect(rolledBack).toBeTrue();
+      expect(await readFile(first, "utf8")).toBe("before\n");
+      expect(await readFile(second, "utf8")).toBe("before\n");
+      await withConfig(hermeticConfig(root), () =>
+        writeFilesSafely({
+          [first]: { expectedSha256: sha256("before\n"), content: "retry\n" },
+        }),
+      );
+      expect(await readFile(first, "utf8")).toBe("retry\n");
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  }
+});
+
+test("file batch lock waits honor deadlines and cancellation", async () => {
+  const root = await configuredRoot("ast-mcp-batch-lock-wait-");
+  const target = path.join(root, "target.txt");
+  await writeFile(target, "before\n");
+  try {
+    await withFileLock(target, async () => {
+      await expect(
+        withConfig(hermeticConfig(root), () =>
+          writeFilesSafely(
+            {
+              [target]: {
+                expectedSha256: sha256("before\n"),
+                content: "after\n",
+              },
+            },
+            { deadline: Date.now() + 10 },
+          ),
+        ),
+      ).rejects.toMatchObject({ code: "lock_deadline" });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10);
+      try {
+        await expect(
+          withConfig(hermeticConfig(root), () =>
+            patchFiles(
+              {
+                [target]: {
+                  expectedSha256: sha256("before\n"),
+                  patchStrategy: "aider_block",
+                  aiderBlocks: [{ search: "before", replace: "after" }],
+                },
+              },
+              { signal: controller.signal },
+            ),
+          ),
+        ).rejects.toMatchObject({ code: "lock_aborted" });
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+    expect(await readFile(target, "utf8")).toBe("before\n");
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+});
 
 test("batch preflight cleans preview receipts when a later entry fails", async () => {
   const root = await configuredRoot("ast-mcp-preview-cleanup-");

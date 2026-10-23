@@ -8,7 +8,7 @@ import {
   mutationLockPath,
 } from "../../../src/intelligence/mutation/locks.ts";
 
-test.each(["moved", "published"] as const)(
+test.each(["opened", "synced"] as const)(
   "renewal fences an owner changed at the %s boundary",
   async (boundary) => {
     const root = await fs.mkdtemp(
@@ -16,37 +16,30 @@ test.each(["moved", "published"] as const)(
     );
     const file = path.join(root, "value.ts");
     const lease = await acquireFileLock(file);
-    const originalRename = fs.rename;
-    const originalLink = fs.link;
-    async function replaceOwner(recordPath: string) {
-      const record = JSON.parse(await fs.readFile(recordPath, "utf8"));
+    const originalOpen = fs.open;
+    async function replaceOwner() {
+      const source = await fs.readFile(lease.lockPath, "utf8");
+      const record = JSON.parse(source.split("\n")[0]!);
       await fs.writeFile(
-        recordPath,
+        lease.lockPath,
         JSON.stringify({ ...record, token: "concurrent-owner" }),
       );
     }
-    const rename =
-      boundary === "moved"
-        ? spyOn(fs, "rename").mockImplementation(async (from, to) => {
-            await originalRename(from, to);
-            if (
-              String(from) === lease.lockPath &&
-              String(to).includes(".stale-")
-            )
-              await replaceOwner(String(to));
-          })
-        : undefined;
-    const link =
-      boundary === "published"
-        ? spyOn(fs, "link").mockImplementation(async (from, to) => {
-            await originalLink(from, to);
-            if (
-              String(from).includes(".pending-") &&
-              String(to) === lease.lockPath
-            )
-              await replaceOwner(lease.lockPath);
-          })
-        : undefined;
+    const open = spyOn(fs, "open").mockImplementation(async (...args) => {
+      const handle = await originalOpen(...args);
+      if (String(args[0]) === lease.lockPath && args[1] === "r+") {
+        if (boundary === "opened") {
+          await replaceOwner();
+        } else {
+          const sync = handle.sync.bind(handle);
+          handle.sync = async () => {
+            await sync();
+            await replaceOwner();
+          };
+        }
+      }
+      return handle;
+    });
     try {
       await expect(lease.renew()).rejects.toMatchObject({
         code: "lock_fenced",
@@ -58,14 +51,12 @@ test.each(["moved", "published"] as const)(
         code: "lock_fenced",
       });
     } finally {
-      rename?.mockRestore();
-      link?.mockRestore();
+      open.mockRestore();
       await lease.release();
       await fs.rm(root, { force: true, recursive: true });
     }
   },
 );
-
 test("orphan lock cleanup propagates unreadable artifact failures", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ast-mcp-lock-orphan-"));
   const file = path.join(root, "value.ts");

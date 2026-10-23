@@ -27,6 +27,7 @@ const providerMetadata = {
       .concat([
         "dist/ast-mcp.js",
         "dist/workers/code-intelligence-worker.js",
+        "dist/workers/parser-worker.js",
         "dist/workers/dynamic-wasm-worker.js",
         "dist/workers/infra-wasm-worker.js",
         "dist/workers/jvm-wasm-worker.js",
@@ -52,6 +53,11 @@ const nativeExternals = [
   "@lancedb/lancedb-*",
 ];
 const workers = [
+  {
+    client: "src/intelligence/parser/pool.ts",
+    entrypoint: "src/intelligence/parser/worker.ts",
+    output: "parser-worker.js",
+  },
   {
     client: "src/tools/code-intelligence.ts",
     entrypoint: "src/tools/code-intelligence-worker.ts",
@@ -101,7 +107,7 @@ const packagedWorkerPlugin: BunPlugin = {
     build.onLoad(
       {
         filter:
-          /src[\\/]+(?:tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
+          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
       },
       async ({ path: filePath }: { path: string }) => {
         const relative = path
@@ -114,7 +120,9 @@ const packagedWorkerPlugin: BunPlugin = {
         const marker =
           relative === "src/tools/code-intelligence.ts"
             ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
-            : 'new URL("./wasm-worker.ts", import.meta.url)';
+            : relative === "src/intelligence/parser/pool.ts"
+              ? 'new URL("./worker.ts", import.meta.url)'
+              : 'new URL("./wasm-worker.ts", import.meta.url)';
         if (!source.includes(marker))
           throw new Error(`Worker URL marker is missing from ${relative}`);
         return {

@@ -47,6 +47,13 @@ export interface ConfiguredExecution {
   ): Promise<T>;
 }
 
+function requestSignal(context?: ServerContext): AbortSignal | undefined {
+  return (
+    context?.mcpReq?.signal ??
+    (context as { signal?: AbortSignal } | undefined)?.signal
+  );
+}
+
 export const localExecution: ConfiguredExecution = async (
   args,
   operation,
@@ -54,7 +61,7 @@ export const localExecution: ConfiguredExecution = async (
 ) =>
   withResolvedConfig(
     await configRegistry.get({ requestPaths: configRequestPaths(args) }),
-    () => operation((context as { signal?: AbortSignal } | undefined)?.signal),
+    () => operation(requestSignal(context)),
   );
 
 async function configuredWorkspace(
@@ -133,6 +140,7 @@ function isFileOperation(tool: string): boolean {
 }
 
 export interface ExecutionOptions {
+  clientRootsTimeoutMs?: number;
   workspaceRegistry?: WorkspaceRegistry;
   requestScoped?: boolean;
 }
@@ -144,18 +152,66 @@ export function configuredExecution(
 ): ConfiguredExecution {
   const registry = options.workspaceRegistry ?? new WorkspaceRegistry();
   let rootsPromise: Promise<string[]> | undefined;
-  const clientRoots = (context?: ServerContext) => {
+  const cachedClientRoots = (context?: ServerContext) => {
     // Modern MCP carries request capabilities and does not permit legacy roots RPCs.
     if (context?.mcpReq?.envelope) return Promise.resolve([]);
     if (!rootsPromise) {
       const capabilities = server.server.getClientCapabilities();
-      rootsPromise = capabilities?.roots
-        ? server.server
-            .listRoots()
-            .then(({ roots }) => roots.map((root) => root.uri))
-        : Promise.resolve([]);
+      if (!capabilities?.roots) return Promise.resolve([]);
+      const timeoutMs = options.clientRootsTimeoutMs ?? 5000;
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const request = Promise.resolve().then(() =>
+        server.server.listRoots(undefined, {
+          signal: controller.signal,
+          timeout: timeoutMs,
+        }),
+      );
+      const pending = Promise.race([
+        request.then(({ roots }) => roots.map((root) => root.uri)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const error = Object.assign(
+              new Error(
+                "Client roots request timed out; check the MCP connection and retry",
+              ),
+              {
+                code: "timeout",
+                retryable: true,
+                suggestedNextCall: "workspace_open",
+              },
+            );
+            reject(error);
+            controller.abort(error);
+          }, timeoutMs);
+          timer.unref?.();
+        }),
+      ]).finally(() => clearTimeout(timer));
+      rootsPromise = pending;
+      void pending.catch(() => {
+        if (rootsPromise === pending) rootsPromise = undefined;
+      });
     }
     return rootsPromise;
+  };
+  const clientRoots = async (context?: ServerContext): Promise<string[]> => {
+    const signal = requestSignal(context);
+    signal?.throwIfAborted();
+    const pending = cachedClientRoots(context);
+    if (!signal) return pending;
+    let abort: (() => void) | undefined;
+    try {
+      return await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          abort = () => reject(signal.reason);
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        }),
+      ]);
+    } finally {
+      if (abort) signal.removeEventListener("abort", abort);
+    }
   };
   const executeConfigured: ConfiguredExecution = async (
     args,
@@ -210,10 +266,7 @@ export function configuredExecution(
         telemetry?.select(config);
         return withApprovalContext(
           { context, server, tool, requestScoped: options.requestScoped },
-          () =>
-            operation(
-              (context as { signal?: AbortSignal } | undefined)?.signal,
-            ),
+          () => operation(requestSignal(context)),
         );
       });
     }
@@ -237,10 +290,7 @@ export function configuredExecution(
       return withWorkspaceContext(workspace, () =>
         withApprovalContext(
           { context, server, tool, requestScoped: options.requestScoped },
-          () =>
-            operation(
-              (context as { signal?: AbortSignal } | undefined)?.signal,
-            ),
+          () => operation(requestSignal(context)),
         ),
       );
     });

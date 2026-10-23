@@ -1123,20 +1123,18 @@ describe("mutation recovery edges", () => {
     await rm(lock, { force: true });
 
     const raced = await acquireFileLock(file);
-    const actualRename = fsPromises.rename.bind(fsPromises);
-    const renameRace = spyOn(fsPromises, "rename").mockImplementation(
-      async (oldPath, newPath) => {
-        await actualRename(oldPath, newPath);
-        if (
-          oldPath.toString() === raced.lockPath &&
-          newPath.toString().includes(".stale-")
-        ) {
-          const active = JSON.parse(await readFile(newPath, "utf8"));
+    const actualOpen = fsPromises.open.bind(fsPromises);
+    const openRace = spyOn(fsPromises, "open").mockImplementation(
+      async (...args) => {
+        const handle = await actualOpen(...args);
+        if (args[0].toString() === raced.lockPath && args[1] === "r+") {
+          const active = JSON.parse(await readFile(raced.lockPath, "utf8"));
           await writeFile(
             raced.lockPath,
             JSON.stringify({ ...active, token: "racing-owner" }),
           );
         }
+        return handle;
       },
     );
     try {
@@ -1144,10 +1142,253 @@ describe("mutation recovery edges", () => {
         code: "lock_fenced",
       });
     } finally {
-      renameRace.mockRestore();
+      openRace.mockRestore();
     }
     await raced.release();
     await rm(lock, { force: true });
+  });
+
+  test("restores the moved lock when recovery validation cannot read it", async () => {
+    const root = await temporary();
+    const file = path.join(root, "unreadable-recovery.ts");
+    const owner = await acquireFileLock(file, {
+      now: () => 1_000,
+      leaseMs: 100,
+    });
+    const actualFile = Bun.file;
+    const denied = Object.assign(new Error("moved lock unreadable"), {
+      code: "EACCES",
+    });
+    const read = spyOn(Bun, "file").mockImplementation(((target: string) => {
+      if (String(target).startsWith(owner.lockPath + ".stale-"))
+        return {
+          text: async () => {
+            throw denied;
+          },
+        };
+      return actualFile(target);
+    }) as typeof Bun.file);
+    try {
+      await expect(acquireFileLock(file, { now: () => 1_200 })).rejects.toThrow(
+        "moved lock unreadable",
+      );
+      await owner.fence();
+      expect(JSON.parse(await readFile(owner.lockPath, "utf8")).token).toBe(
+        owner.token,
+      );
+    } finally {
+      read.mockRestore();
+      await owner.release();
+    }
+  });
+
+  test("recovers torn renewal tails and rejects changed frame identities", async () => {
+    for (const kind of ["torn", "checksum", "identity", "initial"] as const) {
+      const root = await temporary();
+      const file = path.join(root, "torn-renewal.ts");
+      let clock = 1_000;
+      const owner = await acquireFileLock(file, {
+        leaseMs: 100,
+        now: () => clock,
+      });
+      let successor: Awaited<ReturnType<typeof acquireFileLock>> | undefined;
+      clock = 1_050;
+      await owner.renew();
+      await owner.fence();
+      const source = await readFile(owner.lockPath, "utf8");
+      const initial = JSON.parse(source.split("\n")[0]!);
+      const renewed = {
+        ...initial,
+        expiresAt: 10_000,
+        ...(kind === "identity" ? { token: "foreign-frame-owner" } : {}),
+      };
+      const frame = JSON.stringify({
+        record: renewed,
+        sha256:
+          kind === "checksum" ? "invalid" : sha256(JSON.stringify(renewed)),
+      });
+      await writeFile(
+        owner.lockPath,
+        kind === "initial"
+          ? "malformed\n" + frame + "\n"
+          : source + frame + (kind === "torn" ? "" : "\n"),
+      );
+      try {
+        if (kind === "identity" || kind === "initial") {
+          await expect(
+            acquireFileLock(file, { now: () => 1_200, pollMs: 5 }),
+          ).rejects.toMatchObject({ code: "lock_record_malformed" });
+          await writeFile(owner.lockPath, source);
+        } else {
+          successor = await acquireFileLock(file, { now: () => 1_200 });
+          await successor.fence();
+          await expect(owner.fence()).rejects.toMatchObject({
+            code: "lock_fenced",
+          });
+        }
+      } finally {
+        await owner.release();
+        await successor?.release();
+      }
+    }
+  });
+
+  test("keeps the lock pathname occupied during renewal", async () => {
+    const root = await temporary();
+    const file = path.join(root, "renewal-vacancy.ts");
+    const owner = await acquireFileLock(file, {
+      now: () => 1_000,
+      leaseMs: 1_000,
+    });
+    const actualRename = fsPromises.rename.bind(fsPromises);
+    let intruder: Awaited<ReturnType<typeof acquireFileLock>> | undefined;
+    const rename = spyOn(fsPromises, "rename").mockImplementation(
+      async (source, target) => {
+        await actualRename(source, target);
+        if (
+          source.toString() === owner.lockPath &&
+          target.toString().includes(".stale-")
+        ) {
+          intruder = await acquireFileLock(file, { now: () => 1_050 });
+        }
+      },
+    );
+    try {
+      await owner.renew();
+      await owner.fence();
+      expect(intruder).toBeUndefined();
+    } finally {
+      rename.mockRestore();
+      await owner.release();
+      await intruder?.release();
+      await rm(owner.lockPath, { force: true });
+    }
+  });
+
+  test("does not replace a newer owner through a displaced renewal handle", async () => {
+    const root = await temporary();
+    const file = path.join(root, "renewal-inode.ts");
+    const owner = await acquireFileLock(file, {
+      now: () => 1_000,
+      leaseMs: 1_000,
+    });
+    const displaced = owner.lockPath + ".displaced";
+    const actualOpen = fsPromises.open.bind(fsPromises);
+    let raced = false;
+    const open = spyOn(fsPromises, "open").mockImplementation(
+      async (...args) => {
+        const handle = await actualOpen(...args);
+        if (
+          !raced &&
+          args[0].toString() === owner.lockPath &&
+          args[1] === "r+"
+        ) {
+          raced = true;
+          await fsPromises.rename(owner.lockPath, displaced);
+          const previous = JSON.parse(await readFile(displaced, "utf8"));
+          await writeFile(
+            owner.lockPath,
+            JSON.stringify({
+              ...previous,
+              token: "newer-owner",
+            }),
+          );
+        }
+        return handle;
+      },
+    );
+    try {
+      await expect(owner.renew()).rejects.toMatchObject({
+        code: "lock_fenced",
+      });
+      expect(raced).toBeTrue();
+      expect(JSON.parse(await readFile(owner.lockPath, "utf8")).token).toBe(
+        "newer-owner",
+      );
+    } finally {
+      open.mockRestore();
+      await owner.release();
+      await rm(owner.lockPath, { force: true });
+    }
+  });
+
+  test("preserves a lease renewed between expired-lock inspection and removal", async () => {
+    for (const replacementPublished of [false, true]) {
+      const root = await temporary();
+      const file = path.join(root, "renewal-race.ts");
+      let ownerClock = 1_000;
+      const owner = await acquireFileLock(file, {
+        leaseMs: 100,
+        now: () => ownerClock,
+      });
+      ownerClock = 1_050;
+      const abort = new AbortController();
+      const actualRename = fsPromises.rename.bind(fsPromises);
+      let raced = false;
+      const rename = spyOn(fsPromises, "rename").mockImplementation(
+        async (source, target) => {
+          if (
+            !raced &&
+            source.toString() === owner.lockPath &&
+            target.toString().includes(".stale-")
+          ) {
+            raced = true;
+            const expired = JSON.parse(await readFile(source, "utf8"));
+            await writeFile(
+              source,
+              JSON.stringify({ ...expired, expiresAt: 1_150 }),
+            );
+            await actualRename(source, target);
+            if (replacementPublished) {
+              const renewed = JSON.parse(await readFile(target, "utf8"));
+              await writeFile(
+                owner.lockPath,
+                JSON.stringify({
+                  ...renewed,
+                  token: "third-party-owner",
+                }),
+              );
+            }
+            abort.abort();
+            return;
+          }
+          await actualRename(source, target);
+        },
+      );
+      try {
+        await expect(
+          acquireFileLock(file, {
+            now: () => 1_101,
+            signal: abort.signal,
+          }),
+        ).rejects.toMatchObject({ code: "lock_aborted" });
+        expect(raced).toBeTrue();
+        const record = JSON.parse(await readFile(owner.lockPath, "utf8"));
+        expect(record.expiresAt).toBe(1_150);
+        expect(record.token).toBe(
+          replacementPublished ? "third-party-owner" : owner.token,
+        );
+        if (replacementPublished) {
+          const tombstones = (await fsPromises.readdir(root)).filter((name) =>
+            name.includes(".stale-"),
+          );
+          expect(tombstones).toHaveLength(1);
+          expect(
+            JSON.parse(await readFile(path.join(root, tombstones[0]!), "utf8"))
+              .token,
+          ).toBe(owner.token);
+          await expect(owner.fence()).rejects.toMatchObject({
+            code: "lock_fenced",
+          });
+        } else {
+          await owner.fence();
+        }
+      } finally {
+        rename.mockRestore();
+        await owner.release();
+        await rm(owner.lockPath, { force: true });
+      }
+    }
   });
 
   test("renews active leases and fences expired renewal", async () => {
@@ -1232,9 +1473,10 @@ describe("mutation recovery edges", () => {
         retryable: false,
       });
       await held.fence();
-      expect(JSON.parse(await readFile(held.lockPath, "utf8")).token).toBe(
-        held.token,
-      );
+      expect(
+        JSON.parse((await readFile(held.lockPath, "utf8")).split("\n")[0]!)
+          .token,
+      ).toBe(held.token);
     } finally {
       registration.mockRestore();
       await held.release();
@@ -1459,6 +1701,423 @@ describe("mutation recovery edges", () => {
     );
     await lifecycle.journal.transition(mismatchOperationId, "rolled-back");
     await store.shutdownCoordinator();
+  });
+
+  test("does not recover another active request or initialize unused intelligence", async () => {
+    const root = await temporary();
+    const workspace = fakeWorkspace(root, "serialized");
+    const filePath = path.join(root, "source.txt");
+    await writeFile(filePath, "original");
+    const entered = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const first = withWorkspaceContext(workspace, () =>
+      withLanceMutationLifecycle(async () => {
+        const lifecycle = activeMutationLifecycle() as LanceMutationLifecycle;
+        const operationId = mutationOperationId({
+          files: [],
+          nonce: "active-request",
+          storageDomainId: workspace.storageDomain.domainId,
+          workspaceId: workspace.workspaceId,
+        });
+        await lifecycle.begin({
+          files: [
+            {
+              candidateSha256: sha256("candidate"),
+              filePath,
+              sourceContentBase64: Buffer.from("original").toString("base64"),
+              sourceSha256: sha256("original"),
+            },
+          ],
+          operationId,
+          tool: "file_patch",
+          workspace,
+        });
+        await writeFile(filePath, "candidate");
+        await lifecycle.committed(operationId, {
+          filePath,
+          sha256: sha256("candidate"),
+        });
+        entered.resolve();
+        await finish.promise;
+        const result = await lifecycle.complete(operationId, []);
+        expect(result.generationId).toBeNull();
+        expect(result.parsedFiles).toEqual([]);
+      }),
+    );
+    await entered.promise;
+    const abort = new AbortController();
+    const waiting = withWorkspaceContext(workspace, () =>
+      withLanceMutationLifecycle(
+        async () => {
+          throw new Error("concurrent recovery entered an active transaction");
+        },
+        { signal: abort.signal },
+      ),
+    );
+    try {
+      await Bun.sleep(30);
+      abort.abort();
+      await expect(waiting).rejects.toMatchObject({ code: "lock_aborted" });
+      expect(await readFile(filePath, "utf8")).toBe("candidate");
+    } finally {
+      finish.resolve();
+      await first;
+    }
+    await withWorkspaceContext(workspace, () =>
+      withLanceMutationLifecycle(async () => {
+        expect(await readFile(filePath, "utf8")).toBe("candidate");
+      }),
+    );
+  });
+
+  test("shares a bounded transaction lock across processes and workspace identities", async () => {
+    const root = await temporary();
+    const workspace = fakeWorkspace(root, "parent");
+    const otherWorkspace = fakeWorkspace(root, "child");
+    const service = new URL(
+      "../../../src/intelligence/mutation/service.ts",
+      import.meta.url,
+    ).href;
+    const context = new URL(
+      "../../../src/intelligence/workspace/context.ts",
+      import.meta.url,
+    ).href;
+    await withWorkspaceContext(workspace, () =>
+      withLanceMutationLifecycle(async () => {
+        const script = `
+          import { withLanceMutationLifecycle } from ${JSON.stringify(service)};
+          import { withWorkspaceContext } from ${JSON.stringify(context)};
+          await withWorkspaceContext(${JSON.stringify(otherWorkspace)}, () =>
+            withLanceMutationLifecycle(async () => console.log("entered"), {
+              deadline: Date.now() + 100
+            })
+          ).catch(error => console.log(error.code));
+        `;
+        const child = Bun.spawn([process.execPath, "--eval", script], {
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [output, errors, exit] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect(errors).toBe("");
+        expect(exit).toBe(0);
+        expect(output.trim()).toBe("lock_deadline");
+      }),
+    );
+  });
+
+  test("recovers orphaned transactions after workspace identity changes", async () => {
+    const root = await temporary();
+    const workspace = fakeWorkspace(root, "before-reopen");
+    const reopened = fakeWorkspace(root, "after-reopen");
+    const otherRoot = await temporary();
+    const otherWorkspace = {
+      ...fakeWorkspace(otherRoot, "other-worktree"),
+      storageDomain: workspace.storageDomain,
+    };
+    const filePath = path.join(root, "orphan.txt");
+    const otherFile = path.join(otherRoot, "other.txt");
+    await writeFile(filePath, "candidate");
+    await writeFile(otherFile, "other candidate");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const lifecycle = new LanceMutationLifecycle(store, workspace);
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "orphan",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    const otherId = mutationOperationId({
+      files: [],
+      nonce: "other-orphan",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: otherWorkspace.workspaceId,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256("candidate"),
+          filePath,
+          sourceContentBase64: Buffer.from("original").toString("base64"),
+          sourceSha256: sha256("original"),
+        },
+      ],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256("other candidate"),
+          filePath: otherFile,
+          sourceContentBase64: Buffer.from("other original").toString("base64"),
+          sourceSha256: sha256("other original"),
+        },
+      ],
+      operationId: otherId,
+      tool: "file_patch",
+      workspace: otherWorkspace,
+    });
+    try {
+      const replacement = new LanceMutationLifecycle(store, {
+        ...reopened,
+        storageDomain: workspace.storageDomain,
+      });
+      await replacement.recover();
+      expect(await readFile(filePath, "utf8")).toBe("original");
+      expect(await readFile(otherFile, "utf8")).toBe("other candidate");
+      expect((await lifecycle.journal.get(operationId))?.state).toBe(
+        "recovered",
+      );
+      expect((await lifecycle.journal.get(otherId))?.state).toBe("running");
+    } finally {
+      await store.shutdownCoordinator();
+    }
+  });
+
+  test("bounds recovery file-lock waits and rejects ambiguous legacy checkout ownership", async () => {
+    const root = await realpath(await temporary());
+    const workspace = fakeWorkspace(root, "recovery-wait");
+    const reopened = fakeWorkspace(root, "legacy-reopen");
+    const filePath = path.join(root, "blocked.txt");
+    await writeFile(filePath, "candidate");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    const operationId = mutationOperationId({
+      files: [],
+      nonce: "recovery-wait",
+      storageDomainId: workspace.storageDomain.domainId,
+      workspaceId: workspace.workspaceId,
+    });
+    const lifecycle = new LanceMutationLifecycle(store, workspace, undefined, {
+      deadline: Date.now() + 100,
+    });
+    await lifecycle.journal.begin({
+      files: [
+        {
+          candidateSha256: sha256("candidate"),
+          filePath,
+          sourceContentBase64: Buffer.from("original").toString("base64"),
+          sourceSha256: sha256("original"),
+        },
+      ],
+      operationId,
+      tool: "file_patch",
+      workspace,
+    });
+    const lease = await acquireFileLock(filePath);
+    try {
+      await expect(lifecycle.recover()).rejects.toThrow(
+        "mutation_recovery_required",
+      );
+      expect(await readFile(filePath, "utf8")).toBe("candidate");
+      const record = await lifecycle.journal.get(operationId);
+      expect(record?.state).toBe("recovery-required");
+      const rows = await store.rows("jobs");
+      const row = rows.find((row) => row.job_id === operationId)!;
+      const legacy = JSON.parse(String(row.payload_json));
+      delete legacy.checkoutRoot;
+      await store.putRows(
+        "jobs",
+        [{ ...row, payload_json: JSON.stringify(legacy) }],
+        { immutable: false },
+      );
+      const replacement = new LanceMutationLifecycle(store, reopened);
+      await expect(replacement.recover()).rejects.toThrow(
+        "mutation_recovery_scope_unknown",
+      );
+      expect(await readFile(filePath, "utf8")).toBe("candidate");
+    } finally {
+      await lease.release();
+      await store.shutdownCoordinator();
+    }
+  });
+
+  test("cooperatively aborts slow refreshes before rolling back guarded file changes", async () => {
+    const root = await realpath(await temporary());
+    const workspace = fakeWorkspace(root, "refresh-timeout");
+    const filePath = path.join(root, "notes.txt");
+    await writeFile(filePath, "before");
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    let stopped = false;
+    const lifecycle = new LanceMutationLifecycle(
+      store,
+      workspace,
+      async ({ signal }) => {
+        await new Promise<void>((resolve) => {
+          signal!.addEventListener(
+            "abort",
+            () => {
+              stopped = true;
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        signal!.throwIfAborted();
+        throw new Error("refresh did not abort");
+      },
+      { refreshTimeoutMs: 20 },
+    );
+    try {
+      await expect(
+        withConfig(
+          {
+            cwd: root,
+            env: { AST_MCP_ROOTS: root, AST_MCP_ALLOW_EXTERNAL_ROOTS: "1" },
+          },
+          () =>
+            withWorkspaceContext(workspace, () =>
+              withMutationLifecycle(lifecycle, () =>
+                patchFiles({
+                  [filePath]: {
+                    aiderBlocks: [{ search: "before", replace: "after" }],
+                    expectedSha256: sha256("before"),
+                    patchStrategy: "aider_block",
+                  },
+                }),
+              ),
+            ),
+        ),
+      ).rejects.toMatchObject({
+        code: "intelligence_refresh_timeout",
+        retryable: true,
+      });
+      expect(stopped).toBeTrue();
+      expect(await readFile(filePath, "utf8")).toBe("before");
+      expect(await lifecycle.journal.unfinished()).toEqual([]);
+    } finally {
+      await store.shutdownCoordinator();
+    }
+  });
+
+  test("retains freshness when an indexed workspace identity changes", async () => {
+    const root = await temporary();
+    await git(root, "init");
+    await git(root, "config", "user.email", "test@example.com");
+    await git(root, "config", "user.name", "Test");
+    const filePath = path.join(root, "value.ts");
+    await writeFile(filePath, "export const original = true;");
+    await git(root, "add", "value.ts");
+    await git(root, "commit", "-m", "initial");
+    const workspace = await new WorkspaceRegistry().open({
+      configurationGeneration: 1,
+      directory: root,
+      storage: {
+        kind: "explicit",
+        path: path.join(await temporary(), "index"),
+      },
+    });
+    const store = await LanceIntelligenceStore.open(workspace.storageDomain);
+    let initialGeneration: string | null = null;
+    try {
+      initialGeneration = (
+        await refreshMutationIntelligence({ store, workspace })
+      ).generationId;
+    } finally {
+      await store.shutdownCoordinator();
+    }
+    await writeFile(filePath, "export const dirty = true;");
+    const reopened = await new WorkspaceRegistry().open({
+      configurationGeneration: 2,
+      directory: root,
+      storage: workspace.storageDomain.placement,
+    });
+    expect(reopened.workspaceId).not.toBe(workspace.workspaceId);
+    expect(reopened.dirtyOverlayId).not.toBe(workspace.dirtyOverlayId);
+    await withWorkspaceContext(reopened, () =>
+      withLanceMutationLifecycle(async () => {
+        const lifecycle = activeMutationLifecycle() as LanceMutationLifecycle;
+        const operationId = mutationOperationId({
+          files: [],
+          nonce: "indexed",
+          storageDomainId: reopened.storageDomain.domainId,
+          workspaceId: reopened.workspaceId,
+        });
+        await lifecycle.begin({
+          files: [],
+          operationId,
+          tool: "file_patch",
+          workspace: reopened,
+        });
+        await writeFile(filePath, "export const updated = true;");
+        const result = await lifecycle.complete(operationId, []);
+        expect(result.generationId).not.toBeNull();
+        expect(result.generationId).not.toBe(initialGeneration);
+        expect(result.parsedFiles).toEqual(["value.ts"]);
+      }),
+    );
+    expect(await git(root, "status", "--porcelain")).not.toContain(
+      "ast-mcp-transaction",
+    );
+  });
+
+  test("previews do not open a store or recover unfinished transactions", async () => {
+    const workspace = fakeWorkspace(await temporary(), "preview");
+    const openStore = spyOn(LanceIntelligenceStore, "open").mockImplementation(
+      async () => {
+        throw new Error("preview opened intelligence storage");
+      },
+    );
+    try {
+      expect(
+        await withWorkspaceContext(workspace, () =>
+          withLanceMutationLifecycle(async () => "preview", { preview: true }),
+        ),
+      ).toBe("preview");
+      expect(openStore).not.toHaveBeenCalled();
+    } finally {
+      openStore.mockRestore();
+    }
+  });
+
+  test("renews acquired ownership after acquisition cancellation and deadline", async () => {
+    const root = await temporary();
+    const file = path.join(root, "owned.txt");
+    let clock = Date.now();
+    const abort = new AbortController();
+    const lease = await acquireFileLock(file, {
+      deadline: clock + 50,
+      leaseMs: 1_000,
+      now: () => clock,
+      signal: abort.signal,
+    });
+    try {
+      clock += 100;
+      abort.abort();
+      await lease.renew();
+      await lease.fence();
+      expect(lease.expiresAt).toBe(clock + 1_000);
+    } finally {
+      await lease.release();
+    }
+  });
+
+  test("removes abort listeners after each bounded lock poll", async () => {
+    const root = await temporary();
+    const file = path.join(root, "waiting.txt");
+    const lease = await acquireFileLock(file);
+    const abort = new AbortController();
+    const added = spyOn(abort.signal, "addEventListener");
+    const removed = spyOn(abort.signal, "removeEventListener");
+    try {
+      await expect(
+        acquireFileLock(file, {
+          deadline: Date.now() + 50,
+          pollMs: 5,
+          signal: abort.signal,
+        }),
+      ).rejects.toMatchObject({ code: "lock_deadline" });
+      expect(added.mock.calls.length).toBeGreaterThan(1);
+      expect(removed.mock.calls.length).toBe(added.mock.calls.length);
+    } finally {
+      added.mockRestore();
+      removed.mockRestore();
+      await lease.release();
+    }
   });
 
   test("installs a Lance lifecycle for each workspace request", async () => {

@@ -77,6 +77,41 @@ function exactRecord(value: unknown): LockRecord | null {
   return record as unknown as LockRecord;
 }
 
+function parseLockRecord(source: string): LockRecord | null {
+  const lines = source.split("\n");
+  let initial: LockRecord | null;
+  try {
+    initial = exactRecord(JSON.parse(lines[0] ?? ""));
+  } catch {
+    return null;
+  }
+  if (!initial) return null;
+  let current = initial;
+  // The final line is uncommitted unless its terminating newline was written.
+  for (const line of lines.slice(1, -1)) {
+    if (!line.trim()) continue;
+    let frame: { record?: unknown; sha256?: unknown };
+    try {
+      frame = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!frame || typeof frame !== "object") continue;
+    const record = exactRecord(frame.record);
+    if (!record || frame.sha256 !== sha256(JSON.stringify(record))) continue;
+    if (
+      record.createdAt !== initial.createdAt ||
+      record.epoch !== initial.epoch ||
+      record.ownerId !== initial.ownerId ||
+      record.pid !== initial.pid ||
+      record.token !== initial.token
+    )
+      return null;
+    current = record;
+  }
+  return current;
+}
+
 async function readRecord(lock: string): Promise<LockRecord | null> {
   let source: string;
   try {
@@ -90,16 +125,7 @@ async function readRecord(lock: string): Promise<LockRecord | null> {
       code: "lock_record_initializing",
       retryable: true,
     });
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch {
-    throw Object.assign(new Error("File lock record is malformed"), {
-      code: "lock_record_malformed",
-      retryable: false,
-    });
-  }
-  const record = exactRecord(parsed);
+  const record = parseLockRecord(source);
   if (!record)
     throw Object.assign(new Error("File lock record is malformed"), {
       code: "lock_record_malformed",
@@ -151,14 +177,19 @@ async function delay(
   options: FileLockOptions,
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, milliseconds);
-    const abort = () => {
+    const finish = (error?: Error) => {
       clearTimeout(timer);
-      reject(
+      options.signal?.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve();
+    };
+    const abort = () =>
+      finish(
         lockError("lock_aborted", "File lock acquisition was cancelled", false),
       );
-    };
+    const timer = setTimeout(() => finish(), milliseconds);
     options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
     timer.unref?.();
   });
 }
@@ -166,11 +197,13 @@ async function delay(
 async function restoreMovedLock(
   lock: string,
   tombstone: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await link(tombstone, lock);
+    return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    return false;
   }
 }
 
@@ -182,11 +215,16 @@ async function removeIfOwned(lock: string, token: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
+  let removeTombstone = false;
   try {
     const record = await readRecord(tombstone);
-    if (record?.token !== token) await restoreMovedLock(lock, tombstone);
+    removeTombstone =
+      record?.token === token || (await restoreMovedLock(lock, tombstone));
+  } catch (error) {
+    removeTombstone = await restoreMovedLock(lock, tombstone);
+    throw error;
   } finally {
-    await rm(tombstone, { force: true });
+    if (removeTombstone) await rm(tombstone, { force: true });
   }
 }
 
@@ -225,32 +263,44 @@ async function replaceOwnedRecord(
   active: LockRecord,
   renewed: LockRecord,
 ): Promise<void> {
-  const pending = await writePendingRecord(lock, renewed);
-  const tombstone = `${lock}.stale-${randomUUID()}`;
+  // Keep the lock pathname present throughout renewal. An open handle also
+  // prevents a displaced owner from overwriting a newer owner's inode.
+  const handle = await open(lock, "r+");
   try {
-    await rename(lock, tombstone);
-    const moved = await readRecord(tombstone);
+    const source = await handle.readFile("utf8");
+    const observed = parseLockRecord(source);
     if (
-      !moved ||
-      moved.token !== active.token ||
-      moved.epoch !== active.epoch ||
-      moved.expiresAt !== active.expiresAt
-    ) {
-      await restoreMovedLock(lock, tombstone);
+      !observed ||
+      observed.token !== active.token ||
+      observed.epoch !== active.epoch ||
+      observed.expiresAt !== active.expiresAt
+    )
       throw lockError("lock_fenced", "File lock ownership was fenced", false);
+    // Append committed frames instead of overwriting the last valid lease.
+    // A crash or short write leaves the preceding frame readable and expirable.
+    const bytes = Buffer.from(
+      "\n" +
+        JSON.stringify({
+          record: renewed,
+          sha256: sha256(JSON.stringify(renewed)),
+        }) +
+        "\n",
+    );
+    const position = Buffer.byteLength(source);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesWritten } = await handle.write(
+        bytes,
+        offset,
+        bytes.length - offset,
+        position + offset,
+      );
+      if (bytesWritten === 0) throw new Error("lock_record_write_incomplete");
+      offset += bytesWritten;
     }
-    try {
-      await link(pending, lock);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
-        throw lockError("lock_fenced", "File lock ownership was fenced", false);
-      throw error;
-    }
+    await handle.sync();
   } finally {
-    await Promise.all([
-      rm(pending, { force: true }),
-      rm(tombstone, { force: true }),
-    ]);
+    await handle.close();
   }
 }
 
@@ -297,14 +347,19 @@ async function recoverInitializing(
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
+  let removeTombstone = false;
   try {
     if ((await Bun.file(tombstone).text()).length !== 0) {
-      await restoreMovedLock(lock, tombstone);
+      removeTombstone = await restoreMovedLock(lock, tombstone);
       return false;
     }
+    removeTombstone = true;
     return true;
+  } catch (error) {
+    removeTombstone = await restoreMovedLock(lock, tombstone);
+    throw error;
   } finally {
-    await rm(tombstone, { force: true });
+    if (removeTombstone) await rm(tombstone, { force: true });
   }
 }
 
@@ -334,8 +389,27 @@ async function recoverExpired(
     const latest = await lstat(lock);
     if (latest.dev !== metadata.dev || latest.ino !== metadata.ino) return null;
     await rename(lock, tombstone);
-    await rm(tombstone, { force: true });
-    return Math.max(0, observed.epoch, record.epoch) + 1;
+    let removeTombstone = false;
+    try {
+      const moved = await readRecord(tombstone);
+      if (
+        !moved ||
+        moved.token !== observed.token ||
+        moved.epoch !== observed.epoch ||
+        moved.expiresAt !== observed.expiresAt ||
+        moved.expiresAt > now
+      ) {
+        removeTombstone = await restoreMovedLock(lock, tombstone);
+        return null;
+      }
+      removeTombstone = true;
+      return Math.max(0, observed.epoch, record.epoch) + 1;
+    } catch (error) {
+      removeTombstone = await restoreMovedLock(lock, tombstone);
+      throw error;
+    } finally {
+      if (removeTombstone) await rm(tombstone, { force: true });
+    }
   } catch (error) {
     if (
       ["ENOENT", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")
@@ -390,7 +464,8 @@ export async function acquireFileLock(
           );
       };
       const renewOnce = async () => {
-        assertWaiting(options, now());
+        // Acquisition cancellation must not release ownership while an operation
+        // is still rolling back or completing its journal entry.
         if (released)
           throw lockError(
             "lock_fenced",
@@ -517,11 +592,21 @@ async function withQueue<Result>(
   try {
     while (true) {
       assertWaiting(options, (options.now ?? Date.now)());
-      const won = await Promise.race([
-        previous.then(() => true),
-        delay(options.pollMs ?? DEFAULT_POLL_MS, options).then(() => false),
-      ]);
-      if (won) break;
+      const waiting = new AbortController();
+      try {
+        const won = await Promise.race([
+          previous.then(() => true),
+          delay(options.pollMs ?? DEFAULT_POLL_MS, {
+            ...options,
+            signal: options.signal
+              ? AbortSignal.any([options.signal, waiting.signal])
+              : waiting.signal,
+          }).then(() => false),
+        ]);
+        if (won) break;
+      } finally {
+        waiting.abort();
+      }
     }
     return await operation();
   } finally {

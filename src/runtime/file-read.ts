@@ -1,11 +1,11 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { currentConfig } from "../config";
 import {
   type ParserLanguageId,
-  parseSource,
+  ParserWorkerPool,
 } from "../intelligence/parser/index.ts";
 import {
   currentWorkspace,
@@ -27,6 +27,54 @@ const FILE_READ_DEFAULT_LINES = [0, 100] as const;
 export const FILE_READ_MAX_BATCH = 50;
 export const FILE_READ_MAX_BYTES = 1024 * 1024;
 export const FILE_READ_MAX_LINES = 1000;
+
+export interface FileReadOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+async function withReadDeadline<T>(
+  options: FileReadOptions,
+  operation: (
+    signal: AbortSignal,
+    parse: ParserWorkerPool["parse"],
+  ) => Promise<T>,
+): Promise<T> {
+  const parsers = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 4 });
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(options.signal?.reason);
+  options.signal?.addEventListener("abort", forwardAbort, { once: true });
+  if (options.signal?.aborted) forwardAbort();
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        Object.assign(new Error("File read deadline expired"), {
+          code: "timeout",
+          retryable: true,
+        }),
+      ),
+    options.timeoutMs ?? 30_000,
+  );
+  timer.unref?.();
+  let onAbort: (() => void) | undefined;
+  try {
+    controller.signal.throwIfAborted();
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return await Promise.race([
+      operation(controller.signal, parsers.parse.bind(parsers)),
+      aborted,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", forwardAbort);
+    if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+    controller.abort();
+    await parsers.close();
+  }
+}
 
 export interface FileReadRequest {
   filePath: string;
@@ -181,9 +229,11 @@ async function readLineRange(
   fileSize: number,
   lines: [number, number],
   maxBytes: number,
+  signal: AbortSignal,
 ) {
+  signal.throwIfAborted();
   const collector = new LineRangeCollector(lines, maxBytes);
-  const stream = createReadStream(filePath);
+  const stream = createReadStream(filePath, { signal });
   try {
     for await (const raw of stream) {
       const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
@@ -197,7 +247,9 @@ async function readLineRange(
 
 export async function readWorkspaceRevisionBytes(
   resolved: string,
+  signal?: AbortSignal,
 ): Promise<Uint8Array | undefined> {
+  signal?.throwIfAborted();
   const workspace = currentWorkspace();
   if (!workspace || workspace.selectedRevision.selector.kind === "working")
     return undefined;
@@ -205,12 +257,15 @@ export async function readWorkspaceRevisionBytes(
     workspace.git,
     workspace.selectedRevision,
     resolved,
+    signal,
   );
 }
 
-async function hashFileSafely(filePath: string) {
+async function hashFileSafely(filePath: string, signal: AbortSignal) {
+  signal.throwIfAborted();
   const resolved = await resolveWritablePath(filePath, "read");
-  const bytes = await readWorkspaceRevisionBytes(resolved);
+  signal.throwIfAborted();
+  const bytes = await readWorkspaceRevisionBytes(resolved, signal);
   if (bytes)
     return {
       filePath: resolved,
@@ -221,29 +276,40 @@ async function hashFileSafely(filePath: string) {
   if (!metadata.isFile()) throw new Error(`Not a regular file: ${filePath}`);
   return {
     filePath: resolved,
-    sha256: await sha256File(resolved),
+    sha256: await sha256File(resolved, signal),
     size: metadata.size,
   };
 }
 
 export async function inspectWorkspaceFileCapabilitiesSafely(
   filePaths: string[],
+  options: FileReadOptions = {},
 ) {
-  return mapConcurrently(filePaths, async (filePath) => {
-    const resolved = await resolveWritablePath(filePath, "read");
-    const historical = await readWorkspaceRevisionBytes(resolved);
-    return historical
-      ? historicalCapabilities(resolved, historical)
-      : inspectFileCapabilities(resolved);
-  });
+  return withReadDeadline(options, (signal, parse) =>
+    mapConcurrently(filePaths, async (filePath) => {
+      signal.throwIfAborted();
+      const resolved = await resolveWritablePath(filePath, "read");
+      signal.throwIfAborted();
+      const historical = await readWorkspaceRevisionBytes(resolved, signal);
+      signal.throwIfAborted();
+      return historical
+        ? historicalCapabilities(resolved, historical)
+        : inspectFileCapabilities(resolved, undefined, signal, parse);
+    }),
+  );
 }
 
-export async function hashFilesSafely(filePaths: string[]) {
+export async function hashFilesSafely(
+  filePaths: string[],
+  options: FileReadOptions = {},
+) {
   if (filePaths.length < 1 || filePaths.length > FILE_READ_MAX_BATCH)
     throw new Error(
       `file_hash requires between 1 and ${FILE_READ_MAX_BATCH} paths`,
     );
-  return mapConcurrently(filePaths, hashFileSafely);
+  return withReadDeadline(options, (signal) =>
+    mapConcurrently(filePaths, (filePath) => hashFileSafely(filePath, signal)),
+  );
 }
 
 function resolveReadMode(
@@ -306,13 +372,17 @@ async function readSourceAst(
   resolved: string,
   symbols: string[] | undefined,
   language: string,
-  historicalSource?: string,
+  source: string,
+  signal: AbortSignal,
+  parse: ParserWorkerPool["parse"],
 ): Promise<unknown> {
-  const source = historicalSource ?? (await Bun.file(resolved).text());
-  const facts = parseSource({
-    languageId: language as ParserLanguageId,
-    source,
-  });
+  const facts = await parse(
+    {
+      languageId: language as ParserLanguageId,
+      source,
+    },
+    { signal },
+  );
   const requested = new Set(symbols ?? []);
   const selected = symbols?.length
     ? facts.symbols.filter(
@@ -347,7 +417,9 @@ async function readAst(
   resolved: string,
   size: number,
   capabilities: FileCapabilities,
-  historicalSource?: string,
+  historicalSource: string,
+  signal: AbortSignal,
+  parse: ParserWorkerPool["parse"],
 ): Promise<unknown> {
   if (capabilities.kind === "document")
     return readDocumentAst(resolved, size, request.selectors, historicalSource);
@@ -362,6 +434,8 @@ async function readAst(
     request.symbols,
     capabilities.language,
     historicalSource,
+    signal,
+    parse,
   );
 }
 
@@ -378,7 +452,7 @@ export async function historicalCapabilities(
     extension,
   );
   let parseStatus: FileCapabilities["parseStatus"] = "unsupported";
-  if (document && !binary) {
+  if (document && !binary && bytes.byteLength <= FILE_READ_MAX_BYTES) {
     try {
       parseStructuredDocument(resolved, source.toString("utf8"));
       parseStatus = "parseable";
@@ -418,11 +492,15 @@ export async function historicalCapabilities(
   };
 }
 
-export async function readFileSafely(
+async function readFileWithSignal(
   request: FileReadRequest,
+  signal: AbortSignal,
+  parse: ParserWorkerPool["parse"],
 ): Promise<FileReadResult> {
+  signal.throwIfAborted();
   const resolved = await resolveWritablePath(request.filePath, "read");
-  const historical = await readWorkspaceRevisionBytes(resolved);
+  signal.throwIfAborted();
+  const historical = await readWorkspaceRevisionBytes(resolved, signal);
   const historicalBytes = historical ? Buffer.from(historical) : undefined;
   const metadata = historicalBytes ? undefined : await stat(resolved);
   if (metadata && !metadata.isFile())
@@ -430,20 +508,31 @@ export async function readFileSafely(
   const size = historicalBytes?.byteLength ?? Number(metadata?.size ?? 0);
   const capabilities = historicalBytes
     ? await historicalCapabilities(resolved, historicalBytes, request.language)
-    : await inspectFileCapabilities(resolved, request.language);
+    : await inspectFileCapabilities(resolved, request.language, signal, parse);
+  signal.throwIfAborted();
   const requestedMode = request.mode ?? "auto";
+  if (
+    requestedMode === "ast" &&
+    capabilities.kind === "document" &&
+    size > FILE_READ_MAX_BYTES
+  )
+    await readDocumentAst(resolved, size, request.selectors, "");
   const resolvedMode = resolveReadMode(requestedMode, capabilities);
   assertReadMode(resolved, requestedMode, resolvedMode, capabilities);
   const digest = historicalBytes
     ? sha256(historicalBytes)
-    : await sha256File(resolved);
+    : await sha256File(resolved, signal);
+  signal.throwIfAborted();
   if (resolvedMode === "ast") {
     const ast = await readAst(
       request,
       resolved,
       size,
       capabilities,
-      historicalBytes?.toString("utf8"),
+      historicalBytes?.toString("utf8") ??
+        (await readFile(resolved, { encoding: "utf8", signal })),
+      signal,
+      parse,
     );
     return {
       ast,
@@ -466,7 +555,7 @@ export async function readFileSafely(
         collector.consume(historicalBytes);
         return collector.result(size, size);
       })()
-    : await readLineRange(resolved, size, lines, maxBytes);
+    : await readLineRange(resolved, size, lines, maxBytes, signal);
   return {
     ...slice,
     capabilities,
@@ -478,10 +567,26 @@ export async function readFileSafely(
   };
 }
 
-export async function readFilesSafely(requests: FileReadRequest[]) {
+export async function readFileSafely(
+  request: FileReadRequest,
+  options: FileReadOptions = {},
+): Promise<FileReadResult> {
+  return withReadDeadline(options, (signal, parse) =>
+    readFileWithSignal(request, signal, parse),
+  );
+}
+
+export async function readFilesSafely(
+  requests: FileReadRequest[],
+  options: FileReadOptions = {},
+) {
   if (requests.length < 1 || requests.length > FILE_READ_MAX_BATCH)
     throw new Error(
       `file_read requires between 1 and ${FILE_READ_MAX_BATCH} files`,
     );
-  return mapConcurrently(requests, readFileSafely);
+  return withReadDeadline(options, (signal, parse) =>
+    mapConcurrently(requests, (request) =>
+      readFileWithSignal(request, signal, parse),
+    ),
+  );
 }

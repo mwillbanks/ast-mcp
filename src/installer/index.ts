@@ -27,6 +27,7 @@ import {
 } from "../runtime/dependencies";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
+import { enableCodexElicitation } from "./codex";
 import { type InstallerLaunch, verifyMcpLaunch } from "./health";
 import {
   createServicePlan,
@@ -217,8 +218,19 @@ async function codexMcp(
 ) {
   const old = await Bun.file(file)
     .text()
-    .catch(() => "");
-  const clean = old
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw error;
+    });
+  const inherited = root
+    ? await Bun.file(path.join(home, ".codex/config.toml"))
+        .text()
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+          throw error;
+        })
+    : "";
+  const clean = enableCodexElicitation(old, inherited)
     .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
     .trimEnd();
   const stdio = definition(root, home, "stdio") as InstallerLaunch;

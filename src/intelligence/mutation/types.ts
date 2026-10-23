@@ -69,6 +69,7 @@ export type MutationJournalState =
 
 export interface MutationJournalRecord {
   attempt: number;
+  checkoutRoot?: string;
   createdAt: string;
   errorCode: string | null;
   files: readonly MutationJournalFile[];

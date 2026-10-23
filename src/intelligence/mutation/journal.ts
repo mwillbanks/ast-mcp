@@ -2,6 +2,7 @@ import { isAbsolute, normalize } from "node:path";
 
 import { z } from "zod";
 
+import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import {
   JobIdSchema,
   RevisionIdSchema,
@@ -57,6 +58,7 @@ const MutationJournalFileSchema = z
 const MutationJournalRecordSchema = z
   .object({
     attempt: z.number().int().nonnegative(),
+    checkoutRoot: CanonicalAbsolutePathSchema.optional(),
     createdAt: TimestampSchema,
     errorCode: z.string().min(1).nullable(),
     files: z.array(MutationJournalFileSchema).max(50),
@@ -126,6 +128,7 @@ export class LanceMutationJournal {
     const timestamp = this.now().toISOString();
     const record: MutationJournalRecord = {
       attempt: 0,
+      checkoutRoot: await canonicalizePath(workspace.checkoutRoot),
       createdAt: timestamp,
       errorCode: null,
       files: plan.files.map((file) => ({
@@ -190,10 +193,17 @@ export class LanceMutationJournal {
     }));
   }
 
-  async unfinished(workspaceId?: string): Promise<MutationJournalRecord[]> {
+  async unfinished(
+    workspaceId?: string,
+    checkoutRoot?: string,
+  ): Promise<MutationJournalRecord[]> {
     const rows = await this.store.rows(
       "jobs",
-      workspaceId ? `workspace_id = ${sqlString(workspaceId)}` : undefined,
+      checkoutRoot
+        ? "state = 'running' OR state = 'failed'"
+        : workspaceId
+          ? `workspace_id = ${sqlString(workspaceId)}`
+          : undefined,
     );
     return rows
       .map((row) => parseRecord(row.payload_json))
@@ -206,18 +216,36 @@ export class LanceMutationJournal {
           (record.state === "failed" &&
             record.files.some((file) => file.committedSha256 !== null)),
       )
+      .filter((record) => {
+        if (
+          !checkoutRoot ||
+          record.workspaceId === workspaceId ||
+          record.checkoutRoot === checkoutRoot
+        )
+          return true;
+        if (
+          !record.checkoutRoot &&
+          record.files.some((file) => pathWithin(checkoutRoot, file.filePath))
+        )
+          throw new Error("mutation_recovery_scope_unknown");
+        return false;
+      })
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   async recover(
     workspaceId: string,
     restore: (record: MutationJournalRecord) => Promise<void>,
+    checkoutRoot?: string,
   ): Promise<readonly string[]> {
     const recovered: string[] = [];
-    for (const record of await this.unfinished(workspaceId)) {
+    for (const record of await this.unfinished(workspaceId, checkoutRoot)) {
       try {
         const validated = MutationJournalRecordSchema.parse(record);
-        if (validated.workspaceId !== workspaceId)
+        if (
+          validated.workspaceId !== workspaceId &&
+          (!checkoutRoot || validated.checkoutRoot !== checkoutRoot)
+        )
           throw new Error("mutation_workspace_mismatch");
         await restore(validated);
         await this.transition(record.operationId, "recovered");
