@@ -10,7 +10,12 @@ import {
 import type { ToolInput, ToolName } from "./code-intelligence.ts";
 export type CpuJob =
   | { kind: "compiler-config"; source: string }
-  | { kind: "parse"; languageId: ParserLanguageId; source: string }
+  | {
+      kind: "parse";
+      languageId: ParserLanguageId;
+      source: string;
+      maxReplyBytes?: number;
+    }
   | {
       kind: "compute";
       name: ToolName;
@@ -45,7 +50,11 @@ scope.onmessage = async ({ data }) => {
               data.aliases,
             );
     const bytes = Buffer.byteLength(JSON.stringify(value));
-    if (bytes > 16 * 1024 * 1024)
+    const maxBytes =
+      data.kind === "parse"
+        ? (data.maxReplyBytes ?? 16 * 1024 * 1024)
+        : 16 * 1024 * 1024;
+    if (bytes > maxBytes)
       throw Object.assign(
         new Error(
           "Parsed data exceeds the request byte limit; narrow paths, glob, or scan_limit",
