@@ -71,6 +71,74 @@ test("public paths reject coordination databases and reserved directory descenda
   });
 });
 
+test.each(["ast-mcp-locks", ".ast-mcp-locks", ".ast-mcp-mutation-locks"])(
+  "public paths allow workspace roots below %s ancestors",
+  async (ancestor) => {
+    const outer = await fs.mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-root-ancestor-"),
+    );
+    folders.push(outer);
+    const folder = path.join(outer, ancestor, "project");
+    await fs.mkdir(path.join(folder, "ast-mcp-locks"), { recursive: true });
+    const config = await isolatedConfig(folder);
+    config.safety.allowTempDirectory = false;
+    await withResolvedConfig(config, async () => {
+      for (const relative of ["ordinary.ts", "ast-mcp-locks/ordinary.ts"]) {
+        const target = path.join(folder, relative);
+        await fs.writeFile(target, "export const value = 1;");
+        for (const resolve of [
+          (value: string) => resolveWritablePath(value, "read"),
+          resolveWritablePath,
+          resolveIntelligencePath,
+          resolveWorkspacePath,
+        ]) {
+          expect(await resolve(target)).toBe(await fs.realpath(target));
+          expect(await resolve(relative)).toBe(await fs.realpath(target));
+        }
+      }
+      for (const relative of [
+        ".ast-mcp-locks/owner.sqlite",
+        ".ast-mcp-mutation-locks/owner.sqlite",
+        ".git/ast-mcp-locks/owner.sqlite",
+      ])
+        await expect(
+          resolveWritablePath(path.join(folder, relative)),
+        ).rejects.toMatchObject({
+          code: "coordination_artifact_reserved",
+        });
+    });
+  },
+);
+
+test.each([".git", ".git/ast-mcp-locks"])(
+  "public paths preserve Git guard protection with root %s",
+  async (relativeRoot) => {
+    const outer = await fs.mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-metadata-root-"),
+    );
+    folders.push(outer);
+    const folder = path.join(outer, relativeRoot);
+    await fs.mkdir(folder, { recursive: true });
+    const target = path.join(outer, ".git", "ast-mcp-locks", "owner.sqlite");
+    const config = await isolatedConfig(folder);
+    config.workspace.roots = [folder];
+    config.paths = [];
+    config.safety.allowTempDirectory = false;
+    await withResolvedConfig(config, async () => {
+      for (const resolve of [
+        (value: string) => resolveWritablePath(value, "read"),
+        resolveWritablePath,
+        resolveIntelligencePath,
+        resolveWorkspacePath,
+      ])
+        for (const value of [target, path.relative(folder, target)])
+          await expect(resolve(value)).rejects.toMatchObject({
+            code: "coordination_artifact_reserved",
+          });
+    });
+  },
+);
+
 test.skipIf(process.platform === "win32")(
   "public paths reject symlink aliases to coordination files",
   async () => {

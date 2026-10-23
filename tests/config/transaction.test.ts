@@ -421,3 +421,145 @@ test("migration backup and replacement use one guarded source version", async ()
   expect(await fs.readFile(file + ".v1.bak", "utf8")).toBe(original);
   expect(await fs.readFile(file, "utf8")).toBe(migration.source);
 });
+
+test.skipIf(process.platform === "win32")(
+  "persistent approval preserves symlink targets and mode and rejects staging races",
+  async () => {
+    for (const scenario of [
+      "commit",
+      "retarget",
+      "source-change",
+      "dangling",
+    ] as const) {
+      const { root } = await fixture();
+      const previous = {
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+        APPDATA: process.env.APPDATA,
+      };
+      process.env.XDG_CONFIG_HOME = root;
+      process.env.APPDATA = root;
+      const file = path.join(root, "ast-mcp", "ast-mcp.toml");
+      const directory = path.join(root, "physical");
+      const target = path.join(directory, "shared.toml");
+      const other = path.join(directory, "other.toml");
+      const original = "version = 2\n";
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.mkdir(directory);
+      await fs.writeFile(target, original);
+      await fs.writeFile(other, original);
+      await fs.chmod(target, 0o640);
+      await fs.symlink("../physical/shared.toml", file);
+      const decision = {
+        canonicalPath: path.join(root, "approved.txt"),
+        operation: "write" as const,
+        policy: "request" as const,
+        reason: "test",
+        ruleId: "symlink-test",
+        source: "project" as const,
+        specificity: 1,
+        symlinks: false,
+      };
+      const scope = (inputResponses?: unknown) =>
+        ({
+          context: {
+            sessionId: "approval-symlink-" + root,
+            mcpReq: { inputResponses },
+          },
+          server: {
+            server: { getClientCapabilities: () => ({ elicitation: {} }) },
+          },
+          tool: "file_write",
+        }) as never;
+      let responseKey = "";
+      let staged = "";
+      let writer:
+        | ReturnType<typeof spyOn<typeof fsSync, "writeFileSync">>
+        | undefined;
+      const previousUmask = process.umask();
+      try {
+        try {
+          await withApprovalContext(scope(), async () =>
+            authorizeRequestedDecision(decision, 1),
+          );
+        } catch (error) {
+          expect(error).toBeInstanceOf(InputRequiredSignal);
+          responseKey = Object.keys(
+            (error as InputRequiredSignal).result.inputRequests!,
+          )[0]!;
+        }
+        expect(responseKey.length).toBeGreaterThan(0);
+        const actual = fsSync.writeFileSync;
+        writer = spyOn(fsSync, "writeFileSync").mockImplementation(
+          (...args: Parameters<typeof fsSync.writeFileSync>) => {
+            actual(...args);
+            if (!String(args[0]).includes(".approval-")) return;
+            staged = String(args[0]);
+            if (scenario === "retarget") {
+              fsSync.unlinkSync(file);
+              fsSync.symlinkSync(other, file);
+            } else if (scenario === "source-change") {
+              actual(target, original + "# concurrent update\n");
+            }
+          },
+        );
+        if (scenario === "dangling") await fs.unlink(target);
+        process.umask(0o077);
+        const accepting = withApprovalContext(
+          scope({
+            [responseKey]: {
+              action: "accept",
+              content: { decision: "always_allow" },
+            },
+          }),
+          async () => authorizeRequestedDecision(decision, 1),
+        );
+        if (scenario === "commit") {
+          expect(await accepting).toBe(true);
+          expect(await fs.readlink(file)).toBe("../physical/shared.toml");
+          expect((await fs.stat(target)).mode & 0o777).toBe(0o640);
+          expect(
+            (
+              Bun.TOML.parse(await fs.readFile(target, "utf8")) as {
+                paths: Array<{ path: string }>;
+              }
+            ).paths,
+          ).toContainEqual(
+            expect.objectContaining({ path: decision.canonicalPath }),
+          );
+        } else {
+          await expect(accepting).rejects.toMatchObject({
+            code:
+              scenario === "retarget"
+                ? "configuration_conflict"
+                : scenario === "source-change"
+                  ? "approval_persistence_conflict"
+                  : "ENOENT",
+          });
+          if (scenario !== "dangling") {
+            expect(await fs.readFile(target, "utf8")).toBe(
+              scenario === "source-change"
+                ? original + "# concurrent update\n"
+                : original,
+            );
+          }
+        }
+        expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
+        expect(await fs.readFile(other, "utf8")).toBe(original);
+        if (scenario === "dangling") expect(staged).toBe("");
+        else expect(path.dirname(staged)).toBe(fsSync.realpathSync(directory));
+        expect(
+          (await fs.readdir(directory)).filter((name) =>
+            name.includes(".approval-"),
+          ),
+        ).toEqual([]);
+      } finally {
+        process.umask(previousUmask);
+        writer?.mockRestore();
+        for (const [name, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
+      }
+    }
+  },
+);

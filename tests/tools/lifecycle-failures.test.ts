@@ -8,6 +8,9 @@ import {
   withMutationLifecycle,
   type MutationLifecycle,
 } from "../../src/intelligence/mutation/index.ts";
+import { acquireFileLock } from "../../src/intelligence/mutation/locks.ts";
+import { mutationTransactionLockPath } from "../../src/intelligence/mutation/service.ts";
+import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
 import { withWorkspaceContext } from "../../src/intelligence/workspace/context.ts";
 import { WorkspaceRegistry } from "../../src/intelligence/workspace/registry.ts";
 import * as attributes from "../../src/runtime/attributes";
@@ -18,7 +21,7 @@ type Handler = (
   input: Record<string, unknown>,
 ) => Promise<{ isError?: boolean; structuredContent?: unknown }>;
 
-async function fixture() {
+async function fixture(signal?: AbortSignal) {
   const root = await mkdtemp(join(tmpdir(), "ast-lifecycle-contract-"));
   await mkdir(join(root, ".git"));
   await writeFile(join(root, "ast-mcp.toml"), "version = 2\n");
@@ -33,7 +36,8 @@ async function fixture() {
         handlers.set(name, handler);
       },
     } as never,
-    async (_args, operation) => withConfig(hermeticConfig(root), operation),
+    async (_args, operation) =>
+      withConfig(hermeticConfig(root), () => operation(signal)),
   );
   const hash = (text: string) =>
     new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -244,3 +248,72 @@ test("rename handlers preserve execution failures in the public envelope", async
     error: { message: "workspace unavailable" },
   });
 });
+
+test.each(["file_chattr", "file_delete", "file_rename"] as const)(
+  "%s cancels checkout admission before recovery or filesystem changes",
+  async (tool) => {
+    const abort = new AbortController();
+    const { root, first, second, files, handlers } = await fixture(
+      abort.signal,
+    );
+    const workspace = await new WorkspaceRegistry().open({
+      configurationGeneration: 1,
+      directory: root,
+      storage: { kind: "explicit", path: join(root, "storage") },
+    });
+    const owner = await acquireFileLock(
+      await mutationTransactionLockPath(root),
+    );
+    const before = await stat(first);
+    const open = spyOn(LanceIntelligenceStore, "open");
+    const destination = join(root, "renamed.txt");
+    const request =
+      tool === "file_chattr"
+        ? files
+        : {
+            [first]: {
+              expectedSha256: files[first]!.expectedSha256,
+              ...(tool === "file_rename" ? { destination } : {}),
+            },
+          };
+    let operation: ReturnType<Handler> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      operation = withWorkspaceContext(workspace, () =>
+        handlers.get(tool)!({ files: request }),
+      );
+      await Bun.sleep(30);
+      abort.abort(new Error("caller cancelled"));
+      const result = await Promise.race([
+        operation,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () =>
+              reject(
+                new Error("Checkout admission ignored caller cancellation"),
+              ),
+            1000,
+          );
+        }),
+      ]);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "lock_aborted" },
+      });
+      expect(open).not.toHaveBeenCalled();
+      expect(await Bun.file(first).text()).toBe("first");
+      expect(await Bun.file(second).text()).toBe("second");
+      expect(await Bun.file(destination).exists()).toBe(false);
+      if (process.platform !== "win32")
+        expect((await stat(first)).mode & 0o777).toBe(before.mode & 0o777);
+      await owner.fence();
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      await owner.release();
+      await operation;
+      open.mockRestore();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

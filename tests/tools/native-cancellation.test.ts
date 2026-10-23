@@ -62,9 +62,11 @@ test("native requests honor cancellation from the MCP request envelope during se
 });
 
 test("native inventories exclude reserved artifacts before reading working and revision sources", async () => {
-  const root = await mkdtemp(
+  const outer = await mkdtemp(
     path.join(tmpdir(), "ast-native-reserved-artifacts-"),
   );
+  const root = path.join(outer, ".ast-mcp-locks", "project");
+  await mkdir(root, { recursive: true });
   const git = async (...args: string[]) => {
     const child = Bun.spawn(["git", "-C", root, ...args], {
       stdout: "pipe",
@@ -80,12 +82,15 @@ test("native inventories exclude reserved artifacts before reading working and r
   };
   try {
     await git("init", "-q");
-    const ordinary = ["ordinary.ts", "nested/ordinary.ts"];
+    const ordinary = [
+      "ordinary.ts",
+      "nested/ordinary.ts",
+      "ast-mcp-locks/ordinary.ts",
+      "nested/ast-mcp-locks/ordinary.ts",
+    ];
     const reserved = [
-      "ast-mcp-locks/secret.ts",
       ".ast-mcp-locks/secret.ts",
       "nested/.ast-mcp-mutation-locks/secret.ts",
-      "nested/ast-mcp-locks/secret.ts",
       "nested/guard.ast-mcp.lock.sqlite-wal",
       "nested/.ordinary.ts.ast-mcp.lock",
       "nested/.ordinary.ts.ast-mcp.lock.pending-7ec27d90-cbf1-4ccd-a75c-38fb8538b8da",
@@ -138,10 +143,13 @@ test("native inventories exclude reserved artifacts before reading working and r
       },
       {
         input: { paths: ["nested"], glob: "**/*" },
-        expected: ["nested/ordinary.ts"],
+        expected: ["nested/ordinary.ts", "nested/ast-mcp-locks/ordinary.ts"],
       },
       { input: { glob: "**/*" }, expected: ordinary },
-      { input: { paths: ["ast-mcp-locks"], glob: "**/*" }, expected: [] },
+      {
+        input: { paths: ["ast-mcp-locks"], glob: "**/*" },
+        expected: ["ast-mcp-locks/ordinary.ts"],
+      },
       { input: { file: reserved.at(-1) }, expected: [] },
     ];
     const check = async () => {
@@ -187,6 +195,6 @@ test("native inventories exclude reserved artifacts before reading working and r
       await withWorkspaceContext(workspace, check);
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await rm(outer, { recursive: true, force: true });
   }
 });

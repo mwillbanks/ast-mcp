@@ -22,8 +22,14 @@ import {
 } from "./path-utils";
 import { isTransactionLockArtifact } from "./transaction-lock";
 
-function assertPublicPath(filePath: string): void {
-  if (isTransactionLockArtifact(filePath))
+function assertPublicPath(filePath: string, roots: string[]): void {
+  const lexicalRoot = roots
+    .filter((root) => pathWithin(root, filePath))
+    .sort((left, right) => right.length - left.length)[0];
+  const target = lexicalRoot ? filePath : canonicalizePathSync(filePath);
+  const root =
+    lexicalRoot ?? containingRoot(roots, target) ?? path.parse(target).root;
+  if (isTransactionLockArtifact(target, root))
     throw Object.assign(
       new Error(
         "Coordination artifacts are reserved for internal lock ownership",
@@ -279,7 +285,7 @@ async function resolvedSymlinkTarget(args: {
       `Symbolic-link targets are not permitted by the winning path rule: ${args.filePath}`,
     );
   const target = await realpath(args.resolved);
-  assertPublicPath(target);
+  assertPublicPath(target, args.roots);
   assertWithinBoundary(
     target,
     args.roots,
@@ -302,7 +308,6 @@ async function resolvePath(
   boundary: string,
   operation: PathOperation,
 ): Promise<string> {
-  assertPublicPath(filePath);
   const config = await currentConfig();
   const selected = currentWorkspace();
   allowAnyPath ||= config.safety.filesystem === "unrestricted";
@@ -318,8 +323,9 @@ async function resolvePath(
       },
     );
   const base = selected?.checkoutRoot ?? (roots[0] as string);
+  assertPublicPath(path.resolve(base, filePath), roots);
   const resolved = await canonicalCandidate(filePath, base);
-  assertPublicPath(resolved);
+  assertPublicPath(resolved, roots);
   assertWithinBoundary(
     resolved,
     roots,
@@ -332,7 +338,7 @@ async function resolvePath(
   if (!metadata?.isSymbolicLink()) {
     if (process.platform !== "win32" || !metadata) return resolved;
     const canonical = await realpath(resolved);
-    assertPublicPath(canonical);
+    assertPublicPath(canonical, roots);
     assertWithinBoundary(
       canonical,
       roots,

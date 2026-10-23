@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -20,7 +21,11 @@ import {
 import { z } from "zod";
 
 import { globalConfigPath, type ResolvedConfig } from "../config";
-import { withConfigTransaction } from "../config/transaction";
+import {
+  assertConfigWriteTarget,
+  canonicalConfigPath,
+  withConfigTransaction,
+} from "../config/transaction";
 import type { PolicyDecision } from "./path-policy";
 import { canonicalizePathSync } from "./path-utils";
 
@@ -142,28 +147,36 @@ function persistApproval(
   update: (existing: string) => string | undefined,
 ): void {
   mkdirSync(path.dirname(globalPath), { mode: 0o700, recursive: true });
+  const target = canonicalConfigPath(globalPath);
   const temporary = path.join(
-    path.dirname(globalPath),
-    `.${path.basename(globalPath)}.approval-${randomUUID()}`,
+    path.dirname(target),
+    `.${path.basename(target)}.approval-${randomUUID()}`,
   );
   try {
-    withConfigTransaction(globalPath, () => {
+    withConfigTransaction(target, () => {
       try {
-        const existing = persistentConfig(globalPath);
+        assertConfigWriteTarget(globalPath, target);
+        const existing = persistentConfig(target);
+        const mode = existsSync(target)
+          ? statSync(target).mode & 0o7777
+          : 0o600;
         const next = update(existing);
         if (next === undefined) return;
         writeFileSync(temporary, next, {
           flag: "wx",
-          mode: existsSync(globalPath) ? statSync(globalPath).mode : 0o600,
+          mode,
         });
-        if (persistentConfig(globalPath) !== existing)
+        chmodSync(temporary, mode);
+        assertConfigWriteTarget(globalPath, target);
+        if (persistentConfig(target) !== existing)
           throw Object.assign(
             new Error(
               "User-global configuration changed during approval; retry",
             ),
             { code: "approval_persistence_conflict", retryable: true },
           );
-        renameSync(temporary, globalPath);
+        assertConfigWriteTarget(globalPath, target);
+        renameSync(temporary, target);
       } finally {
         try {
           unlinkSync(temporary);

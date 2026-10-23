@@ -361,7 +361,7 @@ test("coordination artifacts are exact reserved SQLite names and sidecars", () =
   for (const directory of [
     ".ast-mcp-mutation-locks",
     ".ast-mcp-locks",
-    "ast-mcp-locks",
+    ".git/ast-mcp-locks",
   ]) {
     expect(isTransactionLockArtifact(path.join("nested", directory))).toBe(
       true,
@@ -374,6 +374,8 @@ test("coordination artifacts are exact reserved SQLite names and sidecars", () =
     process.platform === "win32" || process.platform === "darwin",
   );
   for (const name of [
+    "ast-mcp-locks/ordinary.ts",
+    "nested/ast-mcp-locks/ordinary.ts",
     ".ast-mcp.locknotes.ts",
     "other.sqlite",
     "entry.ts.ast-mcp.lock",
@@ -386,6 +388,30 @@ test("coordination artifacts are exact reserved SQLite names and sidecars", () =
     ".ast-mcp-checkout.lock.sqlite.ts",
   ])
     expect(isTransactionLockArtifact(name)).toBe(false);
+});
+
+test("artifact scopes preserve Git guards when the root is metadata", () => {
+  const root = path.resolve("fixture", ".git");
+  const guardRoot = path.join(root, "ast-mcp-locks");
+  const guard = path.join(guardRoot, "owner.sqlite");
+  expect(isTransactionLockArtifact(guard, root)).toBe(true);
+  expect(isTransactionLockArtifact(guard, guardRoot)).toBe(true);
+  for (const ancestor of [
+    ".ast-mcp-locks",
+    ".ast-mcp-mutation-locks",
+    "ast-mcp-locks",
+  ]) {
+    const project = path.resolve("fixture", ancestor, "project");
+    expect(
+      isTransactionLockArtifact(path.join(project, "ordinary.ts"), project),
+    ).toBe(false);
+    expect(
+      isTransactionLockArtifact(
+        path.join(project, ".ast-mcp-locks", "owner.sqlite"),
+        project,
+      ),
+    ).toBe(true);
+  }
 });
 
 test("transaction locks bound waits, honor cancellation, and release idempotently", async () => {

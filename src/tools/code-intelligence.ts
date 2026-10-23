@@ -394,7 +394,7 @@ async function requestedFiles(
     for (const value of explicit) {
       throwIfAborted(signal);
       const absolute = path.resolve(root, value);
-      if (isTransactionLockArtifact(absolute)) continue;
+      if (isTransactionLockArtifact(absolute, root)) continue;
       const resolved = await resolveIntelligencePath(absolute);
       const metadata = await Bun.file(resolved)
         .stat()
@@ -409,7 +409,7 @@ async function requestedFiles(
           onlyFiles: true,
         })) {
           throwIfAborted(signal);
-          if (isTransactionLockArtifact(entry)) continue;
+          if (isTransactionLockArtifact(entry, root)) continue;
           if (files.length >= MAX_CANDIDATE_PATHS)
             throw capacityError("File inventory exceeds 100000 paths");
           files.push(entry);
@@ -429,7 +429,7 @@ async function requestedFiles(
   })) {
     throwIfAborted(signal);
     if (
-      !isTransactionLockArtifact(entry) &&
+      !isTransactionLockArtifact(entry, root) &&
       !entry.includes(`${path.sep}node_modules${path.sep}`) &&
       !entry.includes(`${path.sep}.git${path.sep}`) &&
       !entry.includes(`${path.sep}.ast-mcp${path.sep}`)

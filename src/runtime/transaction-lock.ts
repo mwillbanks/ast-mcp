@@ -365,14 +365,23 @@ export function acquireTransactionLockSync(
 }
 
 /** Reserved coordination files must not enter project indexing or dirty-worktree fingerprints. */
-export function isTransactionLockArtifact(filePath: string): boolean {
+export function isTransactionLockArtifact(
+  filePath: string,
+  root?: string,
+): boolean {
   const normalized =
     process.platform === "win32" || process.platform === "darwin"
       ? filePath.toLowerCase()
       : filePath;
+  const scopedPath = root ? path.relative(root, filePath) : filePath;
+  const scoped =
+    process.platform === "win32" || process.platform === "darwin"
+      ? scopedPath.toLowerCase()
+      : scopedPath;
   if (
-    /(?:^|[\\/])(?:\.ast-mcp-mutation-locks|\.ast-mcp-locks|ast-mcp-locks)(?:[\\/]|$)/.test(
-      normalized,
+    /(?:^|[\\/])\.git[\\/]ast-mcp-locks(?:[\\/]|$)/.test(normalized) ||
+    /(?:^|[\\/])(?:\.ast-mcp-mutation-locks|\.ast-mcp-locks)(?:[\\/]|$)/.test(
+      scoped,
     )
   )
     return true;

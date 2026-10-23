@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { acquireTransactionLockSync } from "../runtime/transaction-lock";
 
-function canonicalConfigPath(filePath: string): string {
+export function canonicalConfigPath(filePath: string): string {
   try {
     return realpathSync(filePath);
   } catch (error) {
