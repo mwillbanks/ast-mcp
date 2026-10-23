@@ -27,12 +27,10 @@ import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import {
   applyFileChattr,
   type FileChattr,
-  resultingFileChattr,
+  readFileChattrSnapshot,
 } from "../runtime/attributes";
 import { deleteFilesSafely } from "../runtime/file-delete";
 import { renameFilesSafely } from "../runtime/file-rename";
-import { readFileSnapshot } from "../runtime/file-snapshot";
-import { sha256File } from "../runtime/hash";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
@@ -97,32 +95,21 @@ export default function registerLifecycleTools(
                       };
                       const snapshots = new Map<
                         string,
-                        {
-                          attributes: Awaited<
-                            ReturnType<typeof resultingFileChattr>
-                          >;
-                          content: Buffer;
-                          sha256: string;
-                        }
+                        Awaited<ReturnType<typeof readFileChattrSnapshot>>
                       >();
                       for (const { filePath, request } of entries) {
                         await requireExpectedHash(
                           request.expectedSha256,
                           "file_chattr",
                         );
-                        const captured = await readFileSnapshot(
+                        const captured = await readFileChattrSnapshot(
                           filePath,
                           signal,
                         );
-                        const content = captured.content;
                         const actual = captured.sha256;
                         if (request.expectedSha256)
                           verifyExpectedHash(request.expectedSha256, actual);
-                        snapshots.set(filePath, {
-                          attributes: await resultingFileChattr(filePath),
-                          content,
-                          sha256: actual,
-                        });
+                        snapshots.set(filePath, captured);
                       }
                       const workspace = currentWorkspace() ?? null;
                       const plan = entries.map(({ filePath }) => {
@@ -174,12 +161,22 @@ export default function registerLifecycleTools(
                             filePath,
                             sha256: snapshot.sha256,
                           });
-                          applied.push(filePath);
                           files[filePath] = {
                             chattr: await applyFileChattr(
                               filePath,
                               request.chattr as FileChattr,
-                              fence,
+                              async () => {
+                                signal?.throwIfAborted();
+                                await fence();
+                              },
+                              {
+                                ...snapshot,
+                                signal,
+                                beforeMutation: () => {
+                                  if (!applied.includes(filePath))
+                                    applied.push(filePath);
+                                },
+                              },
                             ),
                           };
                         }
@@ -201,10 +198,6 @@ export default function registerLifecycleTools(
                         const rollbackErrors: unknown[] = [];
                         for (const filePath of applied.reverse())
                           try {
-                            verifyExpectedHash(
-                              snapshots.get(filePath)!.sha256,
-                              await sha256File(filePath),
-                            );
                             await applyFileChattr(
                               filePath,
                               process.platform === "win32"
@@ -214,14 +207,25 @@ export default function registerLifecycleTools(
                                   }
                                 : snapshots.get(filePath)?.attributes,
                               fence,
+                              snapshots.get(filePath)!,
                             );
                           } catch (rollbackError) {
-                            rollbackErrors.push(rollbackError);
+                            rollbackErrors.push(
+                              Object.assign(
+                                new Error("Attribute rollback failed", {
+                                  cause: rollbackError,
+                                }),
+                                { details: { affectedPaths: [filePath] } },
+                              ),
+                            );
                           }
                         if (rollbackErrors.length > 0)
-                          throw new AggregateError(
-                            [error, ...rollbackErrors],
-                            "file_chattr failed and rollback was incomplete",
+                          throw Object.assign(
+                            new AggregateError(
+                              [error, ...rollbackErrors],
+                              "file_chattr failed and rollback was incomplete",
+                            ),
+                            { details: { affectedPaths: applied } },
                           );
                         await recordMutationRollback(operationId);
                         throw error;

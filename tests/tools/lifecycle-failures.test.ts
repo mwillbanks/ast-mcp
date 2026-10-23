@@ -112,7 +112,7 @@ test("attribute rollback failures surface aggregate failure without claiming rol
     async (...args) => {
       calls++;
       if (calls === 2) throw new Error("second mutation failed");
-      if (calls === 4) throw new Error("first restoration failed");
+      if (calls === 3) throw new Error("first restoration failed");
       return original(...args);
     },
   );
@@ -126,7 +126,7 @@ test("attribute rollback failures surface aggregate failure without claiming rol
       error: { message: "file_chattr failed and rollback was incomplete" },
     });
     expect(rolledBack).toBe(false);
-    expect(calls).toBe(4);
+    expect(calls).toBe(3);
     expect(await Bun.file(first).text()).toBe("first");
     expect(await Bun.file(second).text()).toBe("second");
   } finally {
