@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.1...ast-mcp-v0.6.2) (2026-10-22)
+
+### 🐛 Fixes
+
+- **build:** preserve native package loading ([#42](https://github.com/mwillbanks/ast-mcp/issues/42)) ([6984605](https://github.com/mwillbanks/ast-mcp/commit/69846054afaa699fbf72b3ba39d414e4fa6a3163))
+- **ci:** recover partial releases ([dde4d3f](https://github.com/mwillbanks/ast-mcp/commit/dde4d3f5f6030a05909b0b4d3dd6198e7f9a63ef))
+- **ci:** restore release publishing ([dd84898](https://github.com/mwillbanks/ast-mcp/commit/dd84898f468d1a3693f67ce5d948f749bf1149bc))
+- **config:** detect same-size file rewrites ([60f8af6](https://github.com/mwillbanks/ast-mcp/commit/60f8af66f208dec10f987358b3d126b32adcfc42))
+
 ## [0.6.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.0...ast-mcp-v0.6.1) (2026-10-21)
 
 ### 🐛 Fixes
