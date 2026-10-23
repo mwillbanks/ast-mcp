@@ -1,6 +1,7 @@
-import { lstat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open } from "node:fs/promises";
 
-import { sha256File } from "./hash";
+import { sha256 } from "./hash";
 
 export interface FileSnapshot {
   content: Buffer;
@@ -12,19 +13,33 @@ export interface FileSnapshot {
 
 export async function readFileSnapshot(
   filePath: string,
+  signal?: AbortSignal,
 ): Promise<FileSnapshot> {
-  const [sha256, content, metadata] = await Promise.all([
-    sha256File(filePath),
-    Bun.file(filePath)
-      .bytes()
-      .then((bytes) => Buffer.from(bytes)),
-    lstat(filePath),
-  ]);
-  return {
-    content,
-    gid: metadata.gid,
-    mode: metadata.mode,
-    sha256,
-    uid: metadata.uid,
-  };
+  const deadline = AbortSignal.timeout(30_000);
+  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  readSignal.throwIfAborted();
+  const handle = await open(
+    filePath,
+    constants.O_RDONLY | constants.O_NONBLOCK,
+  );
+  try {
+    readSignal.throwIfAborted();
+    const metadata = await handle.stat();
+    if (!metadata.isFile())
+      throw Object.assign(
+        new Error(`Snapshot requires a regular file: ${filePath}`),
+        { code: "file_not_regular", retryable: false },
+      );
+    const content = await handle.readFile({ signal: readSignal });
+    readSignal.throwIfAborted();
+    return {
+      content,
+      gid: metadata.gid,
+      mode: metadata.mode,
+      sha256: sha256(content),
+      uid: metadata.uid,
+    };
+  } finally {
+    await handle.close();
+  }
 }

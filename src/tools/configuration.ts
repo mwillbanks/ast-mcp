@@ -322,12 +322,15 @@ function statusPayload(
   };
 }
 
-async function configStatus(server: McpServer) {
+async function configStatus(
+  server: McpServer,
+  roots?: () => Promise<string[]>,
+) {
   try {
     const workspace = currentWorkspace();
     const clientRoots = workspace
       ? [workspace.checkoutRoot]
-      : await statusClientRoots(server);
+      : await (roots ? roots() : statusClientRoots(server));
     return toolSuccess(
       statusPayload(
         await configRegistry.snapshot({
@@ -372,7 +375,13 @@ export default function registerConfigurationTools(
       try {
         return await execute(
           { revision, workspaceId },
-          () => configStatus(server),
+          () =>
+            configStatus(
+              server,
+              execute.clientRoots
+                ? () => execute.clientRoots!(context)
+                : undefined,
+            ),
           context,
           "config_status",
         );

@@ -9,6 +9,7 @@ import type {
   StoragePlacement,
 } from "../intelligence/contracts/index.ts";
 import type { GenerationDependencies } from "../intelligence/generation/index.ts";
+import { withWorkspaceGitContext } from "../intelligence/workspace/git.ts";
 import {
   currentWorkspace,
   type WorkspaceHandle,
@@ -59,9 +60,14 @@ export const localExecution: ConfiguredExecution = async (
   operation,
   context,
 ) =>
-  withResolvedConfig(
-    await configRegistry.get({ requestPaths: configRequestPaths(args) }),
-    () => operation(requestSignal(context)),
+  withWorkspaceGitContext({ signal: requestSignal(context) }, async () =>
+    withResolvedConfig(
+      await configRegistry.get({ requestPaths: configRequestPaths(args) }),
+      () => {
+        requestSignal(context)?.throwIfAborted();
+        return operation(requestSignal(context));
+      },
+    ),
   );
 
 async function configuredWorkspace(
@@ -301,11 +307,13 @@ export function configuredExecution(
     context,
     tool = "ast-mcp",
   ) =>
-    telemetry
-      ? telemetry.run(tool, () =>
-          executeConfigured(args, operation, context, tool),
-        )
-      : executeConfigured(args, operation, context, tool);
+    withWorkspaceGitContext({ signal: requestSignal(context) }, () =>
+      telemetry
+        ? telemetry.run(tool, () =>
+            executeConfigured(args, operation, context, tool),
+          )
+        : executeConfigured(args, operation, context, tool),
+    );
   execute.clientRoots = clientRoots;
   execute.generationDependencies = {
     mcpClients: {
@@ -336,7 +344,9 @@ export function configuredExecution(
       telemetry?.select(opened.config);
       return opened.workspace;
     };
-    return telemetry ? telemetry.run("workspace_open", open) : open();
+    return withWorkspaceGitContext({ signal: requestSignal(context) }, () =>
+      telemetry ? telemetry.run("workspace_open", open) : open(),
+    );
   };
   execute.refreshRoots = () => {
     rootsPromise = undefined;
@@ -375,11 +385,13 @@ export function configuredExecution(
     };
   };
   execute.workspaceStatus = (workspaceId, context) =>
-    telemetry
-      ? telemetry.run("workspace_status", () =>
-          workspaceStatus(workspaceId, context),
-        )
-      : workspaceStatus(workspaceId, context);
+    withWorkspaceGitContext({ signal: requestSignal(context) }, () =>
+      telemetry
+        ? telemetry.run("workspace_status", () =>
+            workspaceStatus(workspaceId, context),
+          )
+        : workspaceStatus(workspaceId, context),
+    );
   server.server.setNotificationHandler("notifications/roots/list_changed", () =>
     execute.refreshRoots?.(),
   );

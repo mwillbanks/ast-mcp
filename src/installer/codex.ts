@@ -266,17 +266,24 @@ export function enableCodexElicitation(content: string, inheritedContent = "") {
     )
       continue;
     const profilePath = target.keys.slice(0, -1);
-    if (get(document, profilePath) !== undefined)
-      throw new Error(
-        "Expand inline Codex profiles before enabling MCP elicitation",
-      );
-    result =
+    const candidate =
       result.trimEnd() +
       "\n\n[" +
       profilePath.map((part) => JSON.stringify(part)).join(".") +
       "]\napproval_policy = " +
       inlineTable(target.enabled as Record<string, unknown>) +
       "\n";
+    if (get(document, profilePath) !== undefined) {
+      try {
+        Bun.TOML.parse(candidate);
+      } catch (error) {
+        throw new Error(
+          "Expand inline Codex profiles before enabling MCP elicitation",
+          { cause: error },
+        );
+      }
+    }
+    result = candidate;
   }
   const final = parseConfig(result);
   for (const target of changed) {

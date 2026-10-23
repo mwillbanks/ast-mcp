@@ -7,6 +7,7 @@ import type {
   PatchStrategyAdapter,
   PatchStrategyContext,
 } from "../strategy";
+import { preparePatchIsolated } from "./worker-client.ts";
 
 function validate(
   context: PatchStrategyContext,
@@ -64,6 +65,11 @@ function structuralFailure(error: unknown, rule: AstRule): Error {
 }
 
 export const astStrategy: PatchStrategyAdapter = {
+  name: "ast",
+  prepare: (context) => preparePatchIsolated("ast", context),
+};
+
+export const inlineAstStrategy: PatchStrategyAdapter = {
   name: "ast",
   async prepare(context) {
     validate(context);

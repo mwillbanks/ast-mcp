@@ -361,6 +361,12 @@ async function exerciseConsumer(installer: string) {
     archive = path.resolve(archive);
     const archivedPaths = await command(["tar", "-tzf", archive], repository);
     expect(archivedPaths).not.toContain("node_modules");
+    expect(archivedPaths).toContain(
+      "package/dist/workers/embedding-model-worker.js",
+    );
+    expect(archivedPaths).toContain(
+      "package/dist/workers/patch-strategy-worker.js",
+    );
     await command(["tar", "-xzf", archive, "-C", owned], repository);
     await Parser.init();
     for (const grammar of wasmGrammarAssets) {
@@ -527,6 +533,87 @@ async function exerciseConsumer(installer: string) {
     // An ignored stdin reproduces startup with immediate EOF through the real launcher.
     expect(await command([launcher, "mcp"], fixture)).toBe("");
     const executable = path.join(installedPackage, "dist", "ast-mcp.js");
+    expect(await readFile(executable, "utf8")).toContain(
+      "workers/embedding-model-worker.js",
+    );
+    expect(await readFile(executable, "utf8")).toContain(
+      "workers/patch-strategy-worker.js",
+    );
+    const modelWorkerPath = path.join(
+      installedPackage,
+      "dist",
+      "workers",
+      "embedding-model-worker.js",
+    );
+    const modelWorkerResult = JSON.parse(
+      await command(
+        [
+          consumerBun,
+          "--eval",
+          `import { Worker } from "node:worker_threads";
+       import { pathToFileURL } from "node:url";
+       const worker = new Worker(pathToFileURL(${JSON.stringify(modelWorkerPath)}));
+       try {
+         const result = await new Promise((resolve, reject) => {
+           const timer = setTimeout(() => reject(new Error("packaged model worker timed out")), 5000);
+           worker.once("error", reject);
+           worker.once("message", value => { clearTimeout(timer); resolve(value); });
+           worker.postMessage({ id: 1, kind: "transformers", allowDownload: false, config: { artifacts: {}, dimensions: 2 }, texts: ["query"] });
+         });
+         console.log(JSON.stringify(result));
+       } finally { await worker.terminate(); }`,
+        ],
+        consumer,
+      ),
+    );
+    expect(modelWorkerResult).toEqual({
+      id: 1,
+      error: "embedding_model_not_configured",
+      errorName: "EmbeddingUnavailableError",
+    });
+    const patchWorkerPath = path.join(
+      installedPackage,
+      "dist",
+      "workers",
+      "patch-strategy-worker.js",
+    );
+    const patchWorkerResult = JSON.parse(
+      await command(
+        [
+          consumerBun,
+          "--eval",
+          `import { Worker } from "node:worker_threads";
+       import { pathToFileURL } from "node:url";
+       const worker = new Worker(pathToFileURL(${JSON.stringify(patchWorkerPath)}));
+       try {
+         const result = await new Promise((resolve, reject) => {
+           const timer = setTimeout(() => reject(new Error("packaged patch worker timed out")), 5000);
+           worker.once("error", reject);
+           worker.once("message", value => { clearTimeout(timer); resolve(value); });
+           worker.postMessage({ strategy: "ast", context: {
+             original: "const value = 1;", language: "typescript",
+             astRules: [{ pattern: "const value = 1", fix: "const value = 2" }],
+             aiderBlocks: [], capabilities: { effective: { patch: ["ast"] } }
+           } });
+         });
+         console.log(JSON.stringify(result));
+       } finally { await worker.terminate(); }`,
+        ],
+        consumer,
+      ),
+    );
+    expect(patchWorkerResult).toEqual({
+      ok: true,
+      patch: {
+        candidate: "const value = 2",
+        metadata: {
+          engine: "ast-mcp.native",
+          matches: 1,
+          operations: 1,
+          strategy: "ast",
+        },
+      },
+    });
     const canonicalFixture = await realpath(fixture);
     const jsonOutput = JSON.parse(
       await command([consumerBun, executable, "config", "validate"], fixture),

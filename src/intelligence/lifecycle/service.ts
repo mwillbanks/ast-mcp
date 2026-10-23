@@ -154,13 +154,26 @@ export class IntelligenceRuntime {
       this.#closed = true;
       this.#closePromise = (async () => {
         await Promise.allSettled([...this.#operations]);
-        await this.#dispatcher.close();
-        await this.#parserPool.close({ drain: true });
-        await Promise.all([
-          ...[...this.#embeddingPools.values()].map((pool) => pool.close()),
+        const closed = await Promise.allSettled([
+          Promise.resolve().then(() => this.#dispatcher.close()),
+          Promise.resolve().then(() => this.#parserPool.close({ drain: true })),
+          ...[...this.#embeddingPools.values()].map((pool) =>
+            Promise.resolve().then(() => pool.close()),
+          ),
           ...this.#retiredPools,
         ]);
         this.#embeddingPools.clear();
+        const failures = closed
+          .filter(
+            (result): result is PromiseRejectedResult =>
+              result.status === "rejected",
+          )
+          .map((result) => result.reason);
+        if (failures.length > 0)
+          throw new AggregateError(
+            failures,
+            "Intelligence runtime shutdown failed",
+          );
       })();
     }
     await this.#closePromise;

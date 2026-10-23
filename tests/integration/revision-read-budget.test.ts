@@ -184,6 +184,7 @@ test("buffered Git output preserves cancellation ahead of a simultaneous byte li
             chunks.push(chunk.value);
           }
           const bytes = Buffer.concat(chunks);
+          if (bytes.byteLength === 0) return { done: true, value: undefined };
           bufferedBytes = bytes.byteLength;
           controller.abort(reason);
           return { done: false, value: bytes };
@@ -201,7 +202,8 @@ test("buffered Git output preserves cancellation ahead of a simultaneous byte li
           ),
         ).rejects.toBe(reason);
         expect(bufferedBytes).toBe(Buffer.byteLength(small));
-        expect(acquire).toHaveBeenCalledTimes(1);
+        // Both stdout and stderr use bounded readers.
+        expect(acquire).toHaveBeenCalledTimes(2);
       } finally {
         acquire.mockRestore();
       }

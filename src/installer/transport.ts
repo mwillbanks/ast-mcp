@@ -1,8 +1,11 @@
-import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFileSync, renameSync } from "node:fs";
+import { chmod, lstat, mkdir, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 
 import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
+import { withConfigTransaction } from "../config/transaction";
 
 export const transports = ["stdio", "http"] as const;
 export type McpTransport = (typeof transports)[number];
@@ -178,7 +181,37 @@ export async function resolveInstallerEndpoint(
       port: options.port,
     });
     await mkdir(path.dirname(configFile), { recursive: true });
-    await Bun.write(configFile, updated);
+    const temporary = `${configFile}.endpoint-${randomUUID()}`;
+    try {
+      const metadata = await lstat(configFile).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          return undefined;
+        throw error;
+      });
+      await writeFile(temporary, updated, {
+        flag: "wx",
+        mode: metadata?.mode ?? 0o600,
+      });
+      if (metadata) await chmod(temporary, metadata.mode);
+      withConfigTransaction(configFile, () => {
+        let latest = "";
+        try {
+          latest = readFileSync(configFile, "utf8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        if (latest !== current)
+          throw Object.assign(
+            new Error(
+              "Configuration changed before endpoint commit; reload and retry",
+            ),
+            { code: "configuration_conflict", retryable: true },
+          );
+        renameSync(temporary, configFile);
+      });
+    } finally {
+      await unlink(temporary).catch(() => undefined);
+    }
     clearConfigCache();
   }
   const config = await resolveConfig({

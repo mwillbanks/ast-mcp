@@ -294,6 +294,13 @@ export class LanguageRegistry {
       throw new TypeError("Dynamic grammars require a native library asset");
     }
     await validateGrammarAsset(descriptor.dynamicAsset);
+    // Validation yields; parsing or another registration may have won meanwhile.
+    if (this.#dynamicRegistered)
+      throw new TypeError("Dynamic grammars must be configured before parsing");
+    if (this.#grammars.has(descriptor.languageId))
+      throw new TypeError(
+        `Parser language is already registered: ${descriptor.languageId}`,
+      );
     const dynamicAsset = {
       expandoChar: descriptor.dynamicAsset.expandoChar ?? null,
       languageSymbol: descriptor.dynamicAsset.languageSymbol ?? null,

@@ -238,6 +238,12 @@ describe("mutation locks", () => {
       ownerId: "first",
     });
     clock = 2_000;
+    await expect(
+      acquireFileLock(file, { deadline: Date.now() + 30 }),
+    ).rejects.toMatchObject({ code: "lock_deadline" });
+    const abandoned = await readFile(first.lockPath, "utf8");
+    await first.release();
+    await writeFile(first.lockPath, abandoned);
     const second = await acquireFileLock(file, {
       leaseMs: 100,
       now: () => clock,
@@ -1043,13 +1049,16 @@ describe("mutation recovery edges", () => {
     expect(await Bun.file(lock).exists()).toBeFalse();
     await writeFile(lock, "stale");
     await withFencedFileLocks([lock], async (leases) => {
-      expect(leases).toHaveLength(0);
+      expect(leases).toHaveLength(1);
+      await expect(
+        acquireFileLock(lock, { deadline: Date.now() + 20 }),
+      ).rejects.toMatchObject({ code: "lock_deadline" });
       await rm(lock);
     });
     expect(await Bun.file(lock).exists()).toBeFalse();
     expect(await Bun.file(`${lock}.ast-mcp.lock`).exists()).toBeFalse();
     expect(await mutationLockPath(path.join(root, ".hidden"))).toBe(
-      path.join(root, ".hidden.ast-mcp.lock"),
+      path.join(await realpath(root), ".hidden.ast-mcp.lock"),
     );
     const pending = `${lock}.pending-orphan`;
     await writeFile(pending, "orphan");
@@ -1155,6 +1164,9 @@ describe("mutation recovery edges", () => {
       now: () => 1_000,
       leaseMs: 100,
     });
+    const abandoned = await readFile(owner.lockPath, "utf8");
+    await owner.release();
+    await writeFile(owner.lockPath, abandoned);
     const actualFile = Bun.file;
     const denied = Object.assign(new Error("moved lock unreadable"), {
       code: "EACCES",
@@ -1172,7 +1184,6 @@ describe("mutation recovery edges", () => {
       await expect(acquireFileLock(file, { now: () => 1_200 })).rejects.toThrow(
         "moved lock unreadable",
       );
-      await owner.fence();
       expect(JSON.parse(await readFile(owner.lockPath, "utf8")).token).toBe(
         owner.token,
       );
@@ -1207,6 +1218,7 @@ describe("mutation recovery edges", () => {
         sha256:
           kind === "checksum" ? "invalid" : sha256(JSON.stringify(renewed)),
       });
+      await owner.release();
       await writeFile(
         owner.lockPath,
         kind === "initial"
@@ -1322,6 +1334,9 @@ describe("mutation recovery edges", () => {
         now: () => ownerClock,
       });
       ownerClock = 1_050;
+      const abandoned = await readFile(owner.lockPath, "utf8");
+      await owner.release();
+      await writeFile(owner.lockPath, abandoned);
       const abort = new AbortController();
       const actualRename = fsPromises.rename.bind(fsPromises);
       let raced = false;
@@ -1381,7 +1396,7 @@ describe("mutation recovery edges", () => {
             code: "lock_fenced",
           });
         } else {
-          await owner.fence();
+          expect(record.token).toBe(owner.token);
         }
       } finally {
         rename.mockRestore();

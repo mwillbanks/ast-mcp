@@ -18,6 +18,7 @@ import {
   isDynamicWorkerRequest,
 } from "../dynamic/protocol.ts";
 import type { DynamicLanguageId } from "../dynamic/types.ts";
+import { createLanguageLoader } from "./language-loader.ts";
 import {
   resolveWasmGrammarAsset,
   wasmParserFingerprint,
@@ -41,18 +42,13 @@ import {
 } from "./wasm-tree-sitter-support.ts";
 import { installWasmWorker } from "./wasm-worker-runtime.ts";
 
-const languages = new Map<string, Language>();
-let initialized: Promise<void> | undefined;
+const loadGrammar = createLanguageLoader(
+  () => Parser.init(),
+  (id) => Language.load(resolveWasmGrammarAsset(id)),
+);
 
 async function language(languageId: DynamicLanguageId) {
-  initialized ??= Parser.init();
-  await initialized;
-  let loaded = languages.get(languageId);
-  if (!loaded) {
-    loaded = await Language.load(resolveWasmGrammarAsset(languageId));
-    languages.set(languageId, loaded);
-  }
-  return loaded;
+  return await loadGrammar(languageId);
 }
 
 const { descendants, fieldOrFirst, first } = createTreeSitterTraversal();

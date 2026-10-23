@@ -238,9 +238,19 @@ async function pinnedTable(
   }
   if (!pin) throw new Error("mixed_generation");
   const connection = await lancedb.connect(store.storagePath);
-  const table = await connection.openTable(name);
-  await table.checkout(pin.version);
-  return { connection, table };
+  try {
+    const table = await connection.openTable(name);
+    try {
+      await table.checkout(pin.version);
+      return { connection, table };
+    } catch (error) {
+      table.close();
+      throw error;
+    }
+  } catch (error) {
+    connection.close();
+    throw error;
+  }
 }
 
 async function lexicalRanks(

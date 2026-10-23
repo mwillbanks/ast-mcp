@@ -20,6 +20,8 @@ import type {
   MutationJournalState,
 } from "./types.ts";
 
+const journalUpdates = new Map<string, Promise<void>>();
+
 const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`;
 
 function persistentState(
@@ -265,13 +267,29 @@ export class LanceMutationJournal {
     operationId: string,
     update: (record: MutationJournalRecord) => MutationJournalRecord,
   ): Promise<void> {
-    const current = await this.get(operationId);
-    if (!current) throw new Error("mutation_journal_missing");
-    await this.write({
-      ...update(current),
-      attempt: current.attempt + 1,
-      updatedAt: this.now().toISOString(),
+    // Serialize the complete read-modify-write, including updates through
+    // separate journal objects sharing this process and storage directory.
+    const key = `${this.store.storagePath}\0${operationId}`;
+    const previous = journalUpdates.get(key) ?? Promise.resolve();
+    const pending = previous.then(async () => {
+      const current = await this.get(operationId);
+      if (!current) throw new Error("mutation_journal_missing");
+      await this.write({
+        ...update(current),
+        attempt: current.attempt + 1,
+        updatedAt: this.now().toISOString(),
+      });
     });
+    const settled = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    journalUpdates.set(key, settled);
+    try {
+      await pending;
+    } finally {
+      if (journalUpdates.get(key) === settled) journalUpdates.delete(key);
+    }
   }
 
   private async write(record: MutationJournalRecord): Promise<void> {

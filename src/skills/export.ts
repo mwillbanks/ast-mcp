@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import { acquireTransactionLock } from "../runtime/transaction-lock";
 import type { SkillFile } from "./index";
 
 export const SKILL_EXPORT_MANIFEST = ".ast-mcp-export.json";
@@ -280,24 +281,6 @@ async function reconcileFile(
   }
 }
 
-async function releaseLock(handle: FileHandle, lock: string, failed: boolean) {
-  let cleanupError: unknown;
-  try {
-    await handle.close();
-  } catch (error) {
-    cleanupError = error;
-  }
-  try {
-    await unlink(lock);
-  } catch (error) {
-    cleanupError ??= error;
-  }
-  if (cleanupError && !failed)
-    throw new Error("Skill export lock cleanup failed; inspect " + lock, {
-      cause: cleanupError,
-    });
-}
-
 /** Export or refresh one manually installed skill without replacing custom files. */
 export async function reconcileSkillExport(
   destination: string,
@@ -323,20 +306,15 @@ export async function reconcileSkillExport(
   await requireDirectory(root);
   const canonical = await realpath(root);
   const lock = path.join(canonical, lockName);
-  const handle = await open(
-    lock,
-    constants.O_WRONLY |
-      constants.O_CREAT |
-      constants.O_EXCL |
-      constants.O_NOFOLLOW,
-    0o600,
-  ).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "EEXIST" || error.code === "ELOOP")
-      throw new Error(
-        "Skill export is locked; wait for the active export or inspect " + lock,
-      );
-    throw error;
-  });
+  const handle = await acquireTransactionLock(lock, { tryOnly: true }).catch(
+    (error: unknown) => {
+      if ((error as { code?: string }).code === "lock_busy")
+        throw new Error("Skill export is locked; wait for the active export", {
+          cause: error,
+        });
+      throw error;
+    },
+  );
   let failed = false;
   try {
     // Read again under the lock; a concurrent invocation may have just completed.
@@ -388,6 +366,10 @@ export async function reconcileSkillExport(
     failed = true;
     throw error;
   } finally {
-    await releaseLock(handle, lock, failed);
+    try {
+      handle.release();
+    } catch (error) {
+      if (!failed) throw error;
+    }
   }
 }

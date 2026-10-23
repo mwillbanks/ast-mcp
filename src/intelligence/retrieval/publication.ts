@@ -127,15 +127,16 @@ export async function publishRetrievalChunks(
     "create chunks FTS index",
     async (lease) => {
       const connection = await lancedb.connect(store.storagePath);
-      const table = await connection.openTable("chunks");
+      let table: Awaited<ReturnType<typeof connection.openTable>> | undefined;
       try {
+        table = await connection.openTable("chunks");
         const indices = await table.listIndices();
         if (!indices.some((index) => index.columns.includes("text"))) {
           await store.coordinator.fence(lease);
           await table.createIndex("text", { config: lancedb.Index.fts() });
         }
       } finally {
-        table.close();
+        table?.close();
         connection.close();
       }
     },
@@ -307,9 +308,11 @@ export async function publishChunkEmbeddings(
   const concurrency = Math.max(1, config.workers + config.maxQueue);
   for (let offset = 0; offset < chunks.length; offset += concurrency) {
     throwIfCancelled();
-    await Promise.all(
+    const results = await Promise.allSettled(
       chunks.slice(offset, offset + concurrency).map(publishChunk),
     );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
     throwIfCancelled();
   }
   return {

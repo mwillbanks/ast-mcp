@@ -41,6 +41,7 @@ interface LanguageWorkerClientOptions<LanguageId extends string> {
   createError(code: LanguageWorkerErrorCode, message: string): Error;
   label: string;
   limits: LanguageWorkerLimits;
+  /** Retained for caller compatibility; failed transports always retire. */
   terminateOnProtocolError: boolean;
   terminateOnWorkerError: boolean;
   validateResult(
@@ -49,6 +50,9 @@ interface LanguageWorkerClientOptions<LanguageId extends string> {
   ): value is LanguageWorkerResult;
   workerUrl: URL;
 }
+
+// Retirement remains owned and close reports failures to its caller.
+function observeRetirementFailure(): void {}
 
 export class LanguageWorkerClient<LanguageId extends string> {
   private worker: Worker | undefined;
@@ -70,7 +74,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   private notifyDrained(): void {
-    if (this.pending.size !== 0) return;
+    if (this.pending.size !== 0 || this.termination) return;
     for (const resolve of this.drainWaiters) resolve();
     this.drainWaiters.clear();
   }
@@ -100,20 +104,42 @@ export class LanguageWorkerClient<LanguageId extends string> {
   ): Promise<void> {
     if (!this.termination) {
       this.worker = undefined;
-      this.termination = (async () => {
-        if (active) await active.terminate();
-        this.rejectPending(failure);
-      })().finally(() => {
-        this.termination = undefined;
-        this.notifyDrained();
-      });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const retirement = Promise.resolve()
+        .then(async () => {
+          if (active) await active.terminate();
+        })
+        .then(() => {
+          this.rejectPending(failure);
+          this.termination = undefined;
+          this.notifyDrained();
+        });
+      this.termination = Promise.race([
+        retirement,
+        new Promise<void>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(this.error("worker-exit", "worker retirement timed out")),
+            this.options.limits.timeoutMs,
+          );
+        }),
+      ]).finally(() => clearTimeout(timer));
+      void this.termination.catch(observeRetirementFailure);
+      for (const request of this.pending.values()) {
+        request.cleanup();
+        request.reject(failure);
+      }
     }
     await this.termination;
   }
 
   private async cancel(id: number, failure: Error): Promise<void> {
     const active = this.worker;
-    active?.postMessage({ id, type: "cancel" });
+    try {
+      active?.postMessage({ id, type: "cancel" });
+    } catch {
+      /* Terminate even if the cancellation message cannot be delivered. */
+    }
     await this.terminateWorker(active, failure);
   }
 
@@ -137,9 +163,9 @@ export class LanguageWorkerClient<LanguageId extends string> {
           "protocol",
           "worker returned an invalid response",
         );
-        if (this.options.terminateOnProtocolError)
-          void this.terminateWorker(active, failure);
-        else this.rejectPending(failure);
+        void this.terminateWorker(active, failure).catch(
+          observeRetirementFailure,
+        );
         return;
       }
       this.finish(response.id);
@@ -148,12 +174,10 @@ export class LanguageWorkerClient<LanguageId extends string> {
     });
     active.on("error", (error) => {
       if (this.worker !== active) return;
-      if (this.options.terminateOnWorkerError)
-        void this.terminateWorker(
-          active,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-      else this.rejectPending(error);
+      void this.terminateWorker(
+        active,
+        error instanceof Error ? error : new Error(String(error)),
+      ).catch(observeRetirementFailure);
     });
     active.on("exit", (code) => {
       if (this.worker !== active) return;
@@ -166,7 +190,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
 
   analyze(request: LanguageAnalyzeRequest<LanguageId>): Promise<SyntaxFacts> {
     if (this.termination)
-      return this.termination.then(() => this.analyze(request));
+      return Promise.reject(this.error("queue-full", "worker is retiring"));
     const bytes = Buffer.byteLength(request.source);
     if (
       this.pending.size >= this.options.limits.maxPendingRequests ||
@@ -179,10 +203,14 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const timeoutMs = request.timeoutMs ?? this.options.limits.timeoutMs;
     return new Promise<SyntaxFacts>((resolve, reject) => {
       const abort = () => {
-        void this.cancel(id, this.error("aborted", "request aborted"));
+        void this.cancel(id, this.error("aborted", "request aborted")).catch(
+          observeRetirementFailure,
+        );
       };
       const timer = setTimeout(() => {
-        void this.cancel(id, this.error("timeout", "request timed out"));
+        void this.cancel(id, this.error("timeout", "request timed out")).catch(
+          observeRetirementFailure,
+        );
       }, timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
@@ -199,13 +227,20 @@ export class LanguageWorkerClient<LanguageId extends string> {
       this.outstandingBytes += bytes;
       request.signal?.addEventListener("abort", abort, { once: true });
       queueMicrotask(() => {
-        if (!this.pending.has(id)) return;
-        this.parserWorker().postMessage({
-          id,
-          languageId: request.languageId,
-          source: request.source,
-          type: "start",
-        });
+        if (this.termination || !this.pending.has(id)) return;
+        try {
+          this.parserWorker().postMessage({
+            id,
+            languageId: request.languageId,
+            source: request.source,
+            type: "start",
+          });
+        } catch {
+          void this.terminateWorker(
+            this.worker,
+            this.error("worker-exit", "worker could not start request"),
+          ).catch(observeRetirementFailure);
+        }
       });
     });
   }
@@ -223,6 +258,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
   }
 
   drain(): Promise<void> {
+    if (this.termination) return this.termination;
     if (this.pending.size === 0) return Promise.resolve();
     return new Promise((resolve) => this.drainWaiters.add(resolve));
   }
@@ -232,9 +268,7 @@ export class LanguageWorkerClient<LanguageId extends string> {
     const active = this.worker;
     const failure = this.error("closed", "worker closed");
     if (this.options.closeMode === "detach-first") {
-      this.worker = undefined;
-      this.rejectPending(failure);
-      if (active) await active.terminate();
+      await this.terminateWorker(active, failure);
       return;
     }
     if (!active) {

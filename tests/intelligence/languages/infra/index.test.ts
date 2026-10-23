@@ -520,6 +520,7 @@ describe("infrastructure language adapters", () => {
         source: "x".repeat(INFRA_WORKER_LIMITS.maxOutstandingBytes + 1),
       }),
     ).rejects.toBeInstanceOf(InfraWorkerError);
+    await drainInfraLanguageWorker();
     const capacityRequests = Array.from(
       { length: INFRA_WORKER_LIMITS.maxPendingRequests },
       () =>
@@ -570,7 +571,7 @@ describe("infrastructure language adapters", () => {
     expect(restarted.symbols.map(({ name }) => name)).toEqual(["recovered"]);
   });
 
-  test("retains accounting during abort floods and serves queued recovery", async () => {
+  test("retains abort flood accounting and rejects recovery until drain", async () => {
     const controllers = Array.from({ length: 12 }, () => new AbortController());
     const outcomes = controllers.map((controller) =>
       analyzeInfraLanguage({
@@ -581,12 +582,19 @@ describe("infrastructure language adapters", () => {
     );
     for (const controller of controllers) controller.abort();
     expect(infraWorkerStats().pendingRequests).toBeGreaterThan(0);
-    const recovery = analyzeInfraLanguage({
+    await expect(
+      analyzeInfraLanguage({
+        languageId: "sql",
+        source: "CREATE TABLE recovered;",
+      }),
+    ).rejects.toMatchObject({ code: "queue-full" });
+    await Promise.all(outcomes);
+    await drainInfraLanguageWorker();
+    const recovery = await analyzeInfraLanguage({
       languageId: "sql",
       source: "CREATE TABLE recovered;",
     });
-    await Promise.all(outcomes);
-    expect((await recovery).symbols[0]?.name).toBe("recovered");
+    expect(recovery.symbols[0]?.name).toBe("recovered");
     await drainInfraLanguageWorker();
     expect(infraWorkerStats()).toEqual({
       outstandingBytes: 0,

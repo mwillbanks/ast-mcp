@@ -20,6 +20,7 @@ import {
 import { z } from "zod";
 
 import { globalConfigPath, type ResolvedConfig } from "../config";
+import { withConfigTransaction } from "../config/transaction";
 import type { PolicyDecision } from "./path-policy";
 import { canonicalizePathSync } from "./path-utils";
 
@@ -141,45 +142,38 @@ function persistApproval(
   update: (existing: string) => string | undefined,
 ): void {
   mkdirSync(path.dirname(globalPath), { mode: 0o700, recursive: true });
-  const lockPath = `${globalPath}.approval.lock`;
   const temporary = path.join(
     path.dirname(globalPath),
     `.${path.basename(globalPath)}.approval-${randomUUID()}`,
   );
-  let lockOwned = false;
   try {
-    try {
-      writeFileSync(lockPath, "", { flag: "wx", mode: 0o600 });
-      lockOwned = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
-        throw Object.assign(
-          new Error("Another persistent approval update is in progress; retry"),
-          { code: "approval_persistence_busy", retryable: true },
-        );
-      throw error;
-    }
-    const existing = persistentConfig(globalPath);
-    const next = update(existing);
-    if (next === undefined) return;
-    writeFileSync(temporary, next, {
-      flag: "wx",
-      mode: existsSync(globalPath) ? statSync(globalPath).mode : 0o600,
-    });
-    if (persistentConfig(globalPath) !== existing)
-      throw Object.assign(
-        new Error("User-global configuration changed during approval; retry"),
-        { code: "approval_persistence_conflict", retryable: true },
-      );
-    renameSync(temporary, globalPath);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {}
-    if (lockOwned)
+    withConfigTransaction(globalPath, () => {
       try {
-        unlinkSync(lockPath);
-      } catch {}
+        const existing = persistentConfig(globalPath);
+        const next = update(existing);
+        if (next === undefined) return;
+        writeFileSync(temporary, next, {
+          flag: "wx",
+          mode: existsSync(globalPath) ? statSync(globalPath).mode : 0o600,
+        });
+        if (persistentConfig(globalPath) !== existing)
+          throw Object.assign(
+            new Error(
+              "User-global configuration changed during approval; retry",
+            ),
+            { code: "approval_persistence_conflict", retryable: true },
+          );
+        renameSync(temporary, globalPath);
+      } finally {
+        try {
+          unlinkSync(temporary);
+        } catch {}
+      }
+    });
+  } catch (error) {
+    if ((error as { code?: string }).code === "configuration_busy")
+      Object.assign(error as object, { code: "approval_persistence_busy" });
+    throw error;
   }
 }
 

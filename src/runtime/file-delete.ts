@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import {
   chmod,
   chown,
@@ -104,7 +105,23 @@ async function importersFor(
         throw referenceFailure(
           "Reference verification source exceeds the byte limit",
         );
-      const bytes = await file.slice(0, 2 * 1024 * 1024 + 1).arrayBuffer();
+      verification.signal.throwIfAborted();
+      const stream = createReadStream(candidate, {
+        end: 2 * 1024 * 1024,
+        signal: verification.signal,
+      });
+      const chunks: Buffer[] = [];
+      let bytes: Buffer;
+      try {
+        for await (const chunk of stream) {
+          verification.signal.throwIfAborted();
+          chunks.push(Buffer.from(chunk));
+        }
+        verification.signal.throwIfAborted();
+        bytes = Buffer.concat(chunks);
+      } finally {
+        stream.destroy();
+      }
       verification.sourceBytes += bytes.byteLength;
       if (
         bytes.byteLength > 2 * 1024 * 1024 ||
@@ -352,7 +369,7 @@ export async function deleteFilesSafely(
         Awaited<ReturnType<typeof readFileSnapshot>>
       >();
       for (const { filePath, request } of entries) {
-        const snapshot = await readFileSnapshot(filePath);
+        const snapshot = await readFileSnapshot(filePath, signal);
         await requireExpectedHash(request.expectedSha256, "file_delete");
         verifyExpectedHash(request.expectedSha256, snapshot.sha256);
         snapshots.set(filePath, snapshot);
@@ -404,6 +421,11 @@ export async function deleteFilesSafely(
         } of entries) {
           signal?.throwIfAborted();
           await fence();
+          signal?.throwIfAborted();
+          verifyExpectedHash(
+            snapshots.get(filePath)!.sha256,
+            await sha256File(filePath, signal),
+          );
           signal?.throwIfAborted();
           await rm(filePath);
           const snapshot = snapshots.get(filePath);

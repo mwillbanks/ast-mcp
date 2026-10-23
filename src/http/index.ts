@@ -19,185 +19,246 @@ const configuration = resolveConfig;
 function httpBinding(config: ResolvedConfig) {
   return { hostname: config.http.host };
 }
-function updateSessionDurations(config: ResolvedConfig) {
-  SESSION_TIMEOUT_MS = config.http.sessionTimeoutMs;
-  SESSION_SWEEP_INTERVAL_MS = config.http.sessionSweepIntervalMs;
-}
+function sessionRuntime(config: ResolvedConfig) {
+  const SESSION_TIMEOUT_MS = config.http.sessionTimeoutMs;
+  const SESSION_SWEEP_INTERVAL_MS = config.http.sessionSweepIntervalMs;
 
-let SESSION_TIMEOUT_MS = 30 * 60 * 1000;
-let SESSION_SWEEP_INTERVAL_MS = 60 * 1000; // 30 minutes
+  const sessions = new Map<
+    string,
+    {
+      transport: WebStandardStreamableHTTPServerTransport;
+      server: ReturnType<typeof createServer>;
+      lastActivity: number;
+    }
+  >();
 
-const sessions = new Map<
-  string,
-  {
-    transport: WebStandardStreamableHTTPServerTransport;
-    server: ReturnType<typeof createServer>;
-    lastActivity: number;
+  let closing = false;
+  const servers = new Set<ReturnType<typeof createServer>>();
+  const cleanup = new Set<Promise<void>>();
+  const setupAbort = new AbortController();
+
+  function closeServer(server: ReturnType<typeof createServer>) {
+    servers.delete(server);
+    const pending = server.close();
+    cleanup.add(pending);
+    void pending.finally(() => cleanup.delete(pending)).catch(() => undefined);
+    return pending;
   }
->();
 
-// Clean up idle sessions periodically
-let sessionSweep: ReturnType<typeof setInterval> | undefined;
+  // Clean up idle sessions periodically
+  let sessionSweep: ReturnType<typeof setInterval> | undefined;
 
-function discardSession(sessionId: string) {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-  sessions.delete(sessionId);
-  clearSessionApprovals(sessionId);
-  void session.server.close().catch(() => undefined);
-}
-
-async function closeSession(sessionId: string) {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-  sessions.delete(sessionId);
-  clearSessionApprovals(sessionId);
-  await session.server.close();
-}
-
-function sweepExpiredSessions() {
-  const now = Date.now();
-  for (const [id, session] of sessions) {
-    if (now - session.lastActivity > SESSION_TIMEOUT_MS) discardSession(id);
+  function discardSession(sessionId: string) {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    sessions.delete(sessionId);
+    clearSessionApprovals(sessionId);
+    void closeServer(session.server).catch(() => undefined);
   }
-}
 
-function startSessionSweep() {
-  sessionSweep = setInterval(sweepExpiredSessions, SESSION_SWEEP_INTERVAL_MS);
-}
+  async function closeSession(sessionId: string) {
+    const session = sessions.get(sessionId);
+    if (!session) return;
+    sessions.delete(sessionId);
+    clearSessionApprovals(sessionId);
+    await closeServer(session.server);
+  }
 
-async function existingSessionRequest(
-  request: Request,
-  sessionId: string,
-  closeAfterResponse = false,
-) {
-  const session = sessions.get(sessionId);
-  if (!session) return new Response("Session not found", { status: 404 });
-  session.lastActivity = Date.now();
-  const response = await session.transport.handleRequest(request);
-  if (closeAfterResponse) await closeSession(sessionId);
-  return response;
-}
+  function sweepExpiredSessions() {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now - session.lastActivity > SESSION_TIMEOUT_MS) discardSession(id);
+    }
+  }
 
-function sessionTransport(server: ReturnType<typeof createServer>) {
-  let transport: WebStandardStreamableHTTPServerTransport;
-  transport = new WebStandardStreamableHTTPServerTransport({
-    onsessionclosed: discardSession,
-    onsessioninitialized: (sessionId) => {
-      sessions.set(sessionId, {
-        lastActivity: Date.now(),
-        server,
-        transport,
-      });
-    },
-    sessionIdGenerator: () => crypto.randomUUID(),
-  });
-  return transport;
-}
+  function startSessionSweep() {
+    sessionSweep = setInterval(sweepExpiredSessions, SESSION_SWEEP_INTERVAL_MS);
+  }
 
-async function createSession(request: Request) {
-  const server = createServer();
-  const transport = sessionTransport(server);
-  try {
-    await server.connect(transport);
-    const response = await transport.handleRequest(request);
-    if (![...sessions.values()].some((session) => session.server === server))
-      await server.close();
+  async function existingSessionRequest(
+    request: Request,
+    sessionId: string,
+    closeAfterResponse = false,
+  ) {
+    const session = sessions.get(sessionId);
+    if (!session) return new Response("Session not found", { status: 404 });
+    session.lastActivity = Date.now();
+    const response = await session.transport.handleRequest(request);
+    if (closeAfterResponse) await closeSession(sessionId);
     return response;
-  } catch (error) {
-    await server.close().catch((closeError) => {
-      process.stderr.write(
-        `ast-mcp HTTP setup cleanup failed: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
-      );
-    });
-    throw error;
   }
-}
 
-async function sessionRequest(request: Request) {
-  const sessionId = request.headers.get("mcp-session-id");
-  if (request.method === "GET" || request.method === "DELETE") {
-    if (!sessionId) return new Response("Missing session ID", { status: 400 });
-    return existingSessionRequest(
-      request,
-      sessionId,
-      request.method === "DELETE",
+  function sessionTransport(server: ReturnType<typeof createServer>) {
+    let transport: WebStandardStreamableHTTPServerTransport;
+    transport = new WebStandardStreamableHTTPServerTransport({
+      onsessionclosed: discardSession,
+      onsessioninitialized: (sessionId) => {
+        if (closing) return;
+        sessions.set(sessionId, {
+          lastActivity: Date.now(),
+          server,
+          transport,
+        });
+      },
+      sessionIdGenerator: () => crypto.randomUUID(),
+    });
+    return transport;
+  }
+
+  async function createSession(request: Request) {
+    const server = createServer();
+    servers.add(server);
+    const transport = sessionTransport(server);
+    const signal = AbortSignal.any([request.signal, setupAbort.signal]);
+    let interrupt: () => void;
+    const interrupted = new Promise<never>((_resolve, reject) => {
+      interrupt = () => reject(signal.reason);
+      signal.addEventListener("abort", interrupt, { once: true });
+    });
+    const connected = server.connect(transport);
+    // A delayed connection must release resources even after shutdown returned.
+    void connected
+      .then(async () => {
+        if (signal.aborted) {
+          await transport.close();
+          await closeServer(server);
+        }
+      })
+      .catch(() => undefined);
+    try {
+      signal.throwIfAborted();
+      await Promise.race([connected, interrupted]);
+      const response = await Promise.race([
+        transport.handleRequest(request),
+        interrupted,
+      ]);
+      if (![...sessions.values()].some((session) => session.server === server))
+        await closeServer(server);
+      return response;
+    } catch (error) {
+      await closeServer(server).catch((closeError) => {
+        process.stderr.write(
+          `ast-mcp HTTP setup cleanup failed: ${closeError instanceof Error ? closeError.message : String(closeError)}\n`,
+        );
+      });
+      if (closing) return new Response("Server shutting down", { status: 503 });
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", interrupt!);
+    }
+  }
+
+  async function sessionRequest(request: Request) {
+    const sessionId = request.headers.get("mcp-session-id");
+    if (request.method === "GET" || request.method === "DELETE") {
+      if (!sessionId)
+        return new Response("Missing session ID", { status: 400 });
+      return existingSessionRequest(
+        request,
+        sessionId,
+        request.method === "DELETE",
+      );
+    }
+    if (request.method !== "POST")
+      return new Response("Method not allowed", { status: 405 });
+    return sessionId
+      ? existingSessionRequest(request, sessionId)
+      : createSession(request);
+  }
+
+  function modernHttpHandler() {
+    const workspaceRegistry = new WorkspaceRegistry();
+    return createMcpHandler(
+      () => createServer({}, {}, { workspaceRegistry, requestScoped: true }),
+      { legacy: "reject", responseMode: "sse" },
     );
   }
-  if (request.method !== "POST")
-    return new Response("Method not allowed", { status: 405 });
-  return sessionId
-    ? existingSessionRequest(request, sessionId)
-    : createSession(request);
-}
 
-function modernHttpHandler() {
-  const workspaceRegistry = new WorkspaceRegistry();
-  return createMcpHandler(
-    () => createServer({}, {}, { workspaceRegistry, requestScoped: true }),
-    { legacy: "reject", responseMode: "sse" },
-  );
-}
+  async function handleMcpRequest(
+    request: Request,
+    server: Pick<Bun.Server<unknown>, "timeout">,
+    modernHandler: ReturnType<typeof modernHttpHandler>,
+  ) {
+    if (closing) return new Response("Server shutting down", { status: 503 });
+    const url = new URL(request.url);
+    if (url.pathname !== "/mcp")
+      return new Response("Not found", { status: 404 });
+    server.timeout(request, 0);
+    const legacy = await isLegacyRequest(request);
+    if (closing) return new Response("Server shutting down", { status: 503 });
+    return legacy ? sessionRequest(request) : modernHandler.fetch(request);
+  }
 
-async function handleMcpRequest(
-  request: Request,
-  server: Pick<Bun.Server<unknown>, "timeout">,
-  modernHandler: ReturnType<typeof modernHttpHandler>,
-) {
-  const url = new URL(request.url);
-  if (url.pathname !== "/mcp")
-    return new Response("Not found", { status: 404 });
-  server.timeout(request, 0);
-  return (await isLegacyRequest(request))
-    ? sessionRequest(request)
-    : modernHandler.fetch(request);
-}
-
-async function shutdownHttpServer(
-  httpServer: ReturnType<typeof serve>,
-  modernHandler: ReturnType<typeof modernHttpHandler>,
-) {
-  httpServer.stop(false);
-  if (sessionSweep) clearInterval(sessionSweep);
-  const activeSessions = [...sessions.entries()];
-  for (const [sessionId] of activeSessions) clearSessionApprovals(sessionId);
-  const results = await Promise.allSettled([
-    ...activeSessions.map(([, session]) => session.server.close()),
-    modernHandler.close(),
-  ]);
-  sessions.clear();
-  httpServer.stop(true);
-  const failed = results.find((result) => result.status === "rejected");
-  if (failed?.status === "rejected") throw failed.reason;
+  async function shutdownHttpServer(
+    httpServer: ReturnType<typeof serve>,
+    modernHandler: ReturnType<typeof modernHttpHandler>,
+  ) {
+    closing = true;
+    setupAbort.abort(new Error("HTTP server shutting down"));
+    httpServer.stop(false);
+    if (sessionSweep) clearInterval(sessionSweep);
+    const activeSessions = [...sessions.entries()];
+    for (const [sessionId] of activeSessions) clearSessionApprovals(sessionId);
+    const results = await Promise.allSettled([
+      ...[...servers].map(closeServer),
+      ...cleanup,
+      modernHandler.close(),
+    ]);
+    sessions.clear();
+    httpServer.stop(true);
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+  }
+  return {
+    handleMcpRequest,
+    modernHttpHandler,
+    shutdownHttpServer,
+    startSessionSweep,
+    reportException(error: unknown) {
+      for (const session of sessions.values())
+        session.server.telemetry.reportException(error);
+    },
+  };
 }
 
 export async function startHttpServer(
   overrides: { host?: string; port?: number } = {},
 ) {
   const config = await configuration();
-  updateSessionDurations(config);
-  const modernHandler = modernHttpHandler();
+  const runtime = sessionRuntime(config);
+  const modernHandler = runtime.modernHttpHandler();
   const httpServer = serve({
     fetch: (request, server) =>
-      handleMcpRequest(request, server, modernHandler),
+      runtime.handleMcpRequest(request, server, modernHandler),
     port: overrides.port ?? config.http.port,
     ...httpBinding({
       ...config,
       http: { ...config.http, host: overrides.host ?? config.http.host },
     }),
   });
-  startSessionSweep();
+  runtime.startSessionSweep();
+  let disposeSignals: (() => void) | undefined;
+  let disposeFailures: (() => void) | undefined;
   let shutdown: Promise<void> | undefined;
   const close = () => {
-    shutdown ??= shutdownHttpServer(httpServer, modernHandler);
+    shutdown ??= Promise.resolve().then(async () => {
+      try {
+        await runtime.shutdownHttpServer(httpServer, modernHandler);
+      } finally {
+        disposeSignals?.();
+        disposeFailures?.();
+      }
+    });
     return shutdown;
   };
-  installProcessSignalHandlers(close);
-  installProcessFailureHandlers(close, process, 5000, (error) => {
-    for (const session of sessions.values())
-      session.server.telemetry.reportException(error);
-  });
-  return httpServer;
+  disposeSignals = installProcessSignalHandlers(close);
+  disposeFailures = installProcessFailureHandlers(
+    close,
+    process,
+    5000,
+    runtime.reportException,
+  );
+  return Object.assign(httpServer, { close });
 }
 
 if (import.meta.main) await startHttpServer();

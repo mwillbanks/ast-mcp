@@ -7,6 +7,7 @@ import {
   EmbeddingModelConfigSchema,
   POTION_CODE_BENCHMARK_MODEL,
 } from "./types.ts";
+import { ManagedModelSession } from "./worker-session.ts";
 
 export type EmbeddingProviderRuntime = "onnx-transformer" | "static-retrieval";
 
@@ -150,6 +151,8 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
   readonly config: EmbeddingModelConfig;
   readonly runtime = "onnx-transformer" as const;
   private session: Promise<Pipeline> | null = null;
+  private managed?: ManagedModelSession;
+  private managedClosed = false;
 
   constructor(
     config: Partial<EmbeddingModelConfig> = {},
@@ -187,11 +190,25 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
         );
       })();
     }
-    return this.session;
+    const session = this.session;
+    void session.catch(() => {
+      if (this.session === session) this.session = null;
+    });
+    return session;
   }
 
   async embed(texts: readonly string[]): Promise<readonly number[][]> {
     if (texts.length === 0) return [];
+    if (!this.pipelineFactory) {
+      if (this.managedClosed)
+        throw new EmbeddingUnavailableError("embedding_session_closed");
+      this.managed ??= new ManagedModelSession(
+        this.config,
+        "transformers",
+        this.allowDownload,
+      );
+      return await this.managed.embed(texts);
+    }
     const session = await this.load();
     const output = await session(texts, {
       normalize: true,
@@ -212,7 +229,10 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
   }
 
   async close(): Promise<void> {
+    this.managedClosed = true;
     this.session = null;
+    const managed = this.managed;
+    await managed?.close();
   }
 }
 
@@ -376,9 +396,12 @@ export async function createPotionStaticSession(
 }
 
 export class PotionStaticEmbeddingProvider implements EmbeddingProvider {
+  private sessionClose?: Promise<void>;
   readonly config: EmbeddingModelConfig;
   readonly runtime = "static-retrieval" as const;
   private session: Promise<PotionStaticSession> | null = null;
+  private managed?: ManagedModelSession;
+  private managedClosed = false;
 
   constructor(
     config: Partial<EmbeddingModelConfig>,
@@ -408,8 +431,21 @@ export class PotionStaticEmbeddingProvider implements EmbeddingProvider {
 
   async embed(texts: readonly string[]): Promise<readonly number[][]> {
     if (texts.length === 0) return [];
-    this.session ??= this.factory(this.config);
-    const session = await this.session;
+    if (this.factory === createPotionStaticSession) {
+      if (this.managedClosed)
+        throw new EmbeddingUnavailableError("embedding_session_closed");
+      this.managed ??= new ManagedModelSession(this.config, "potion");
+      return await this.managed.embed(texts);
+    }
+    if (!this.session) {
+      this.sessionClose = undefined;
+      this.session = Promise.resolve().then(() => this.factory(this.config));
+    }
+    const loading = this.session;
+    void loading.catch(() => {
+      if (this.session === loading) this.session = null;
+    });
+    const session = await loading;
     const vectors = await session.embed(texts);
     if (vectors.length !== texts.length)
       throw new TypeError("embedding_batch_count_mismatch");
@@ -419,8 +455,15 @@ export class PotionStaticEmbeddingProvider implements EmbeddingProvider {
   }
 
   async close(): Promise<void> {
-    if (this.session) await (await this.session).close?.();
+    this.managedClosed = true;
+    const session = this.session;
+    const managed = this.managed;
+    const closing = (this.sessionClose ??= session?.then((value) =>
+      value.close?.(),
+    ));
     this.session = null;
+    await managed?.close();
+    await closing;
   }
 }
 
@@ -468,13 +511,26 @@ export class EmbeddingWorkerPool {
     return new Promise((resolve, reject) => {
       const task: PendingTask = {
         attempts: 0,
-        reject,
-        resolve,
+        reject: (error) => {
+          options.signal?.removeEventListener("abort", aborted);
+          reject(error);
+        },
+        resolve: (value) => {
+          options.signal?.removeEventListener("abort", aborted);
+          resolve(value);
+        },
         retries: options.retries ?? 2,
         signal: options.signal,
         text,
       };
+      const aborted = () => {
+        const index = this.queue.indexOf(task);
+        if (index >= 0) this.queue.splice(index, 1);
+        task.reject(new EmbeddingCancelledError());
+      };
+      options.signal?.addEventListener("abort", aborted, { once: true });
       this.queue.push(task);
+      if (options.signal?.aborted) aborted();
       this.schedule();
     });
   }
@@ -524,11 +580,17 @@ export class EmbeddingWorkerPool {
         } catch (error) {
           for (const task of batch) {
             task.attempts += 1;
-            if (!task.signal?.aborted && task.attempts <= task.retries)
+            if (
+              !this.closed &&
+              !task.signal?.aborted &&
+              task.attempts <= task.retries
+            )
               this.queue.push(task);
             else
               task.reject(
-                task.signal?.aborted ? new EmbeddingCancelledError() : error,
+                this.closed || task.signal?.aborted
+                  ? new EmbeddingCancelledError()
+                  : error,
               );
           }
         }

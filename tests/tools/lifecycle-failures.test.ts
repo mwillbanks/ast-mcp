@@ -131,6 +131,47 @@ test("attribute rollback failures surface aggregate failure without claiming rol
   }
 });
 
+test("attribute rollback preserves files changed by another writer", async () => {
+  const { root, first, files, handlers } = await fixture();
+  const original = attributes.applyFileChattr;
+  let calls = 0;
+  let rolledBack = false;
+  const lifecycle: MutationLifecycle = {
+    begin: async () => {},
+    committed: async () => {},
+    complete: async () => null,
+    failed: async () => {},
+    rolledBack: async () => {
+      rolledBack = true;
+    },
+  };
+  const injected = spyOn(attributes, "applyFileChattr").mockImplementation(
+    async (...args) => {
+      calls++;
+      if (calls === 2) {
+        await writeFile(first, "concurrent writer");
+        throw new Error("second mutation failed");
+      }
+      return original(...args);
+    },
+  );
+  try {
+    const result = await withMutationLifecycle(lifecycle, () =>
+      handlers.get("file_chattr")!({ files }),
+    );
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { message: "file_chattr failed and rollback was incomplete" },
+    });
+    expect(await Bun.file(first).text()).toBe("concurrent writer");
+    expect(rolledBack).toBe(false);
+    expect(calls).toBe(3);
+  } finally {
+    injected.mockRestore();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
 test("successful lifecycle batches retain workspace identity and hash-guard moves and deletion", async () => {
   const { root, first, second, files, handlers } = await fixture();
   const selected = await new WorkspaceRegistry().open({

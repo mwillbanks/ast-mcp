@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import {
   chmod,
@@ -34,6 +35,7 @@ import {
   validateStructuredCandidate,
 } from "../runtime/file-capabilities";
 import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
+import { readFileSnapshot } from "../runtime/file-snapshot";
 import { formatContent } from "../runtime/format";
 import { sha256 } from "../runtime/hash";
 import {
@@ -52,8 +54,13 @@ import {
   patchStrategyAdapter,
 } from "./strategy";
 
+const patchSignals = new AsyncLocalStorage<AbortSignal | undefined>();
+
 async function readText(filePath: string): Promise<string> {
-  const bytes = Buffer.from(await Bun.file(filePath).arrayBuffer());
+  const { content: bytes } = await readFileSnapshot(
+    filePath,
+    patchSignals.getStore(),
+  );
   const text = bytes.toString("utf8");
   if (!Buffer.from(text, "utf8").equals(bytes))
     throw Object.assign(new Error("File patches require lossless UTF-8 text"), {
@@ -421,6 +428,7 @@ async function createPatchContext(
     mode: (await lstat(filePath)).mode,
     original,
     request,
+    signal: patchSignals.getStore(),
   };
 }
 
@@ -796,7 +804,7 @@ async function rollbackFileBatch(
           resolvedPath,
           snapshot.content,
           process.platform === "win32" ? undefined : snapshot.mode,
-          undefined,
+          String(result.sha256),
           process.platform === "win32"
             ? { chmod: snapshot.chattr.chmod }
             : snapshot.chattr,
@@ -805,6 +813,11 @@ async function rollbackFileBatch(
         );
         continue;
       }
+      verifyExpectedHash(
+        String(result.sha256),
+        sha256(await readText(resolvedPath)),
+      );
+      await fence();
       await unlink(resolvedPath);
       const createdDirectories = result.createdDirectories;
       if (Array.isArray(createdDirectories))
@@ -923,7 +936,9 @@ async function executePreparedFileBatch<T, Prepared>(
     discardPreparedPreviews(prepared);
     if (began) await ignoreFailure(failMutation(operationId, error));
     try {
-      await rollbackFileBatch(committed, snapshots, fence);
+      await patchSignals.run(undefined, () =>
+        rollbackFileBatch(committed, snapshots, fence),
+      );
       if (began) await ignoreFailure(recordMutationRollback(operationId));
     } catch (rollbackError) {
       throw new AggregateError(
@@ -983,13 +998,15 @@ export async function patchFiles(
   requests: PatchBatch,
   options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
-  return processFileBatch(
-    "file_patch",
-    requests,
-    applyPreparedPatch,
-    preflightPatchBatch,
-    (request) => request.preview !== true,
-    options,
+  return patchSignals.run(options.signal, () =>
+    processFileBatch(
+      "file_patch",
+      requests,
+      applyPreparedPatch,
+      preflightPatchBatch,
+      (request) => request.preview !== true,
+      options,
+    ),
   );
 }
 
@@ -1038,22 +1055,24 @@ export async function writeFilesSafely(
   requests: FileWriteBatch,
   options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
-  return processFileBatch(
-    "file_write",
-    requests,
-    (filePath, request, prepared, beforeReplace) =>
-      writeFileResolved(
-        {
-          chattr: request.chattr,
-          content: request.content,
-          expectedSha256: request.expectedSha256,
-          filePath,
-        },
-        prepared,
-        beforeReplace,
-      ),
-    preflightFileWrite,
-    () => true,
-    options,
+  return patchSignals.run(options.signal, () =>
+    processFileBatch(
+      "file_write",
+      requests,
+      (filePath, request, prepared, beforeReplace) =>
+        writeFileResolved(
+          {
+            chattr: request.chattr,
+            content: request.content,
+            expectedSha256: request.expectedSha256,
+            filePath,
+          },
+          prepared,
+          beforeReplace,
+        ),
+      preflightFileWrite,
+      () => true,
+      options,
+    ),
   );
 }

@@ -10,6 +10,7 @@ import {
   type SyntaxRelationship,
   type SyntaxSymbol,
 } from "../../parser/index.ts";
+import { createLanguageLoader } from "./language-loader.ts";
 import {
   resolveWasmGrammarAsset,
   wasmExtractorFingerprint,
@@ -41,18 +42,13 @@ import {
   positiveRequestId,
 } from "./wasm-worker-validation.ts";
 
-const languages = new Map<string, Language>();
-let initialized: Promise<void> | undefined;
+const loadGrammar = createLanguageLoader(
+  () => Parser.init(),
+  (id) => Language.load(resolveWasmGrammarAsset(id)),
+);
 
 async function language(languageId: MainstreamLanguageId) {
-  initialized ??= Parser.init();
-  await initialized;
-  let loaded = languages.get(languageId);
-  if (!loaded) {
-    loaded = await Language.load(resolveWasmGrammarAsset(languageId));
-    languages.set(languageId, loaded);
-  }
-  return loaded;
+  return await loadGrammar(languageId);
 }
 
 const traversals = {

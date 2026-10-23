@@ -150,9 +150,15 @@ async function migrationBackup(
   options: ConfigOptions,
   migration: ReturnType<typeof migrateConfigSource>,
   target: string,
+  expectedSource: string,
 ) {
   if (!options.write || !migration.changed) return undefined;
-  return writeMigratedConfig(target, migration.source, options.backup);
+  return writeMigratedConfig(
+    target,
+    migration.source,
+    options.backup,
+    expectedSource,
+  );
 }
 
 function migrationReport(
@@ -184,12 +190,18 @@ async function runMigration(
   if (options.check && options.write)
     throw new ConfigurationUsageError("--check and --write cannot be combined");
   const target = migrationTarget(options);
-  const migration = migrateConfigSource(await Bun.file(target).text(), target);
+  const expectedSource = await Bun.file(target).text();
+  const migration = migrateConfigSource(expectedSource, target);
   const config = await resolveConfig({
     cwd: options.file ? path.dirname(target) : path.resolve(options.root),
   });
   const format = selectOutputFormat(config, outputFormat, context.isTTY);
-  const backupPath = await migrationBackup(options, migration, target);
+  const backupPath = await migrationBackup(
+    options,
+    migration,
+    target,
+    expectedSource,
+  );
   writeCliOutput(
     migrationReport(options, migration, target, backupPath),
     format,

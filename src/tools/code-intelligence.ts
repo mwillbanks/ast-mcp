@@ -1027,7 +1027,9 @@ export default function registerNativeCodeIntelligenceTools(
             });
           const controller = new AbortController();
           controllers.add(controller);
-          const upstream = (context as { signal?: AbortSignal }).signal;
+          const upstream =
+            context.mcpReq?.signal ??
+            (context as { signal?: AbortSignal }).signal;
           const abortFromUpstream = () => controller.abort(upstream?.reason);
           if (upstream?.aborted) abortFromUpstream();
           else

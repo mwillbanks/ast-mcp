@@ -517,6 +517,8 @@ describe("systems language WASM adapters", () => {
       source: "int active(){}".repeat(10_000),
     });
     activeController.abort();
+    await expect(active).rejects.toMatchObject({ code: "aborted" });
+    await drainSystemsLanguageWorker();
     const queuedRecovery = systemsLanguageAdapter("c").analyze({
       languageId: "c",
       source: "int recovered(){}",
@@ -539,6 +541,7 @@ describe("systems language WASM adapters", () => {
         source: "x".repeat(SYSTEMS_WORKER_LIMITS.maxOutstandingBytes + 1),
       }),
     ).rejects.toBeInstanceOf(SystemsWorkerError);
+    await drainSystemsLanguageWorker();
     const closing = systemsLanguageAdapter("c").analyze({
       languageId: "c",
       source: "int closing(){}".repeat(10_000),

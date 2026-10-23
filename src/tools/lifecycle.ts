@@ -31,7 +31,8 @@ import {
 } from "../runtime/attributes";
 import { deleteFilesSafely } from "../runtime/file-delete";
 import { renameFilesSafely } from "../runtime/file-rename";
-import { sha256 } from "../runtime/hash";
+import { readFileSnapshot } from "../runtime/file-snapshot";
+import { sha256File } from "../runtime/hash";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
@@ -75,8 +76,9 @@ export default function registerLifecycleTools(
         return toolSuccess(
           await execute(
             { files: requests, revision, workspaceId },
-            () =>
+            (signal) =>
               withLanceMutationLifecycle(async () => {
+                signal?.throwIfAborted();
                 const entries = await Promise.all(
                   Object.entries(requests).map(
                     async ([inputPath, request]) => ({
@@ -107,10 +109,9 @@ export default function registerLifecycleTools(
                         request.expectedSha256,
                         "file_chattr",
                       );
-                      const content = Buffer.from(
-                        await Bun.file(filePath).bytes(),
-                      );
-                      const actual = sha256(content);
+                      const captured = await readFileSnapshot(filePath, signal);
+                      const content = captured.content;
+                      const actual = captured.sha256;
                       if (request.expectedSha256)
                         verifyExpectedHash(request.expectedSha256, actual);
                       snapshots.set(filePath, {
@@ -161,6 +162,7 @@ export default function registerLifecycleTools(
                     const applied: string[] = [];
                     try {
                       for (const { filePath, request } of entries) {
+                        signal?.throwIfAborted();
                         const snapshot = snapshots.get(filePath);
                         if (!snapshot)
                           throw new Error("mutation_source_snapshot_missing");
@@ -193,6 +195,10 @@ export default function registerLifecycleTools(
                       const rollbackErrors: unknown[] = [];
                       for (const filePath of applied.reverse())
                         try {
+                          verifyExpectedHash(
+                            snapshots.get(filePath)!.sha256,
+                            await sha256File(filePath),
+                          );
                           await applyFileChattr(
                             filePath,
                             process.platform === "win32"
@@ -215,6 +221,7 @@ export default function registerLifecycleTools(
                       throw error;
                     }
                   },
+                  { signal },
                 );
                 return { files };
               }),
@@ -293,7 +300,10 @@ export default function registerLifecycleTools(
         return toolSuccess(
           await execute(
             { files, revision, workspaceId },
-            () => withLanceMutationLifecycle(() => renameFilesSafely(files)),
+            (signal) =>
+              withLanceMutationLifecycle(() =>
+                renameFilesSafely(files, signal),
+              ),
             context,
             "file_rename",
           ),

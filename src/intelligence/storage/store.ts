@@ -415,6 +415,7 @@ export class LanceIntelligenceStore {
   readonly coordinator: StorageCoordinator;
   readonly domain: StorageDomain;
   readonly storagePath: string;
+  private shutdownPromise?: Promise<void>;
 
   private constructor(
     private readonly connection: Connection,
@@ -457,14 +458,7 @@ export class LanceIntelligenceStore {
     const access = options.access ?? "read-write";
     let store: LanceIntelligenceStore | undefined;
     try {
-      if (access === "read-write") {
-        const table = await connection.createEmptyTable(
-          "coordinator_recovery",
-          toLanceSchema(TABLE_SCHEMAS.coordinator_recovery),
-          { existOk: true, mode: "create" },
-        );
-        table.close();
-      } else {
+      if (access === "read-only") {
         const names = await connection.tableNames();
         if (!names.includes("coordinator_recovery")) {
           throw new StorageError(
@@ -475,7 +469,7 @@ export class LanceIntelligenceStore {
         }
       }
 
-      const coordinator = StorageCoordinator.forStorageDirectory(
+      const coordinator = await StorageCoordinator.acquireForStorageDirectory(
         connection,
         domain.domainId,
         storagePath,
@@ -2825,14 +2819,27 @@ export class LanceIntelligenceStore {
   }
 
   async shutdownCoordinator(): Promise<void> {
-    const coordinatorOwnsConnection = this.coordinator.usesConnection(
-      this.connection,
-    );
-    await this.coordinator.release();
-    if (!coordinatorOwnsConnection) this.connection.close();
+    this.shutdownPromise ??= (async () => {
+      const coordinatorOwnsConnection = this.coordinator.usesConnection(
+        this.connection,
+      );
+      try {
+        const draining = this.coordinator.drain();
+        await Promise.all([this.coordinator.release(), draining]);
+      } finally {
+        if (!coordinatorOwnsConnection) this.connection.close();
+      }
+    })();
+    await this.shutdownPromise;
   }
 
   private assertWritable(): void {
+    if (this.shutdownPromise)
+      throw new StorageError(
+        "storage_unavailable",
+        "LanceDB store is closing",
+        false,
+      );
     if (this.access === "read-only") {
       throw new StorageError(
         "storage_unavailable",

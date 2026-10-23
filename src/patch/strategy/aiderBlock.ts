@@ -1,5 +1,6 @@
 import { applyAiderBlock } from "../aider";
 import type { PatchStrategyAdapter, PatchStrategyContext } from "../strategy";
+import { preparePatchIsolated } from "./worker-client.ts";
 
 function validate(context: PatchStrategyContext): void {
   if (!context.capabilities.effective.patch.includes("aider_block"))
@@ -94,6 +95,11 @@ function prepareAiderBlocks(context: PatchStrategyContext) {
 }
 
 export const aiderBlockStrategy: PatchStrategyAdapter = {
+  name: "aider_block",
+  prepare: (context) => preparePatchIsolated("aider_block", context),
+};
+
+export const inlineAiderBlockStrategy: PatchStrategyAdapter = {
   name: "aider_block",
   async prepare(context) {
     validate(context);

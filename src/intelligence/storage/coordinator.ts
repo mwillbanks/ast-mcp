@@ -1,11 +1,14 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 import type { Connection, Table } from "@lancedb/lancedb";
 
+import { acquireTransactionLock } from "../../runtime/transaction-lock.ts";
 import { createIdentity } from "../contracts/common.ts";
+import { toLanceSchema } from "./arrow.ts";
 import { isRetryableLanceError, StorageError } from "./errors.ts";
 import { storagePathIdentity } from "./relocation.ts";
-import { assertCompatibleSchema } from "./schemas.ts";
+import { assertCompatibleSchema, TABLE_SCHEMAS } from "./schemas.ts";
 
 export interface CoordinatorOptions {
   leaseDurationMs?: number;
@@ -93,6 +96,8 @@ export class StorageCoordinator {
   private leaseMaintenance: Promise<void> = Promise.resolve();
   private lease: CoordinatorLease | null = null;
   private references = 1;
+  private closing: Promise<void> | null = null;
+  private initialized = false;
 
   private constructor(
     private readonly connection: Connection,
@@ -121,6 +126,13 @@ export class StorageCoordinator {
     const canonicalPath = storagePathIdentity(storagePath);
     const existing = coordinators.get(canonicalPath);
     if (existing) {
+      if (existing.closing) {
+        throw new StorageError(
+          "coordinator_unavailable",
+          "Storage coordinator is closing",
+          true,
+        );
+      }
       if (existing.storageDomainId !== storageDomainId) {
         throw new StorageError(
           "storage_unavailable",
@@ -142,44 +154,103 @@ export class StorageCoordinator {
     return coordinator;
   }
 
+  static async acquireForStorageDirectory(
+    connection: Connection,
+    storageDomainId: string,
+    storagePath: string,
+    options: CoordinatorOptions = {},
+  ): Promise<StorageCoordinator> {
+    const canonicalPath = storagePathIdentity(storagePath);
+    while (coordinators.get(canonicalPath)?.closing) {
+      await coordinators.get(canonicalPath)!.closing;
+    }
+    return StorageCoordinator.forStorageDirectory(
+      connection,
+      storageDomainId,
+      canonicalPath,
+      options,
+    );
+  }
+
   async exclusive<T>(
     operation: string,
     action: (lease: CoordinatorLease) => Promise<T>,
   ): Promise<T> {
-    const run = this.tail.then(async () => {
-      const lease = await this.acquireOrRenew();
-      let heartbeatError: unknown;
-      let heartbeatInFlight: Promise<void> = Promise.resolve();
-      const heartbeat = setInterval(
-        () => {
-          heartbeatInFlight = heartbeatInFlight
-            .then(() => this.fence(lease))
-            .catch((error: unknown) => {
-              heartbeatError ??= error;
-              this.options.onLeaseLost?.(error);
-            });
-        },
-        Math.max(10, Math.floor(this.leaseDurationMs / 3)),
+    if (this.closing) {
+      throw new StorageError(
+        "coordinator_unavailable",
+        "Storage coordinator is closing",
+        true,
       );
-      try {
-        const result = await withLanceRetry(
-          operation,
-          () => action(lease),
-          this.options,
+    }
+    const run = this.tail.then(() =>
+      this.withWriterTransaction(async () => {
+        const lease = await this.acquireOrRenew();
+        let heartbeatError: unknown;
+        let heartbeatInFlight: Promise<void> = Promise.resolve();
+        const heartbeat = setInterval(
+          () => {
+            heartbeatInFlight = heartbeatInFlight
+              .then(() => this.fence(lease))
+              .catch((error: unknown) => {
+                heartbeatError ??= error;
+                this.options.onLeaseLost?.(error);
+              });
+          },
+          Math.max(10, Math.floor(this.leaseDurationMs / 3)),
         );
-        await heartbeatInFlight;
-        if (heartbeatError) throw heartbeatError;
-        await this.assertOwnership(lease);
-        return result;
-      } finally {
-        clearInterval(heartbeat);
-      }
-    });
+        try {
+          const result = await withLanceRetry(
+            operation,
+            () => action(lease),
+            this.options,
+          );
+          await heartbeatInFlight;
+          if (heartbeatError) throw heartbeatError;
+          await this.assertOwnership(lease);
+          return result;
+        } finally {
+          clearInterval(heartbeat);
+          await heartbeatInFlight;
+        }
+      }),
+    );
     this.tail = run.then(
       () => undefined,
       () => undefined,
     );
     return run;
+  }
+
+  private async withWriterTransaction<T>(
+    action: () => Promise<T>,
+    waitForWriter = false,
+  ): Promise<T> {
+    let transaction;
+    try {
+      transaction = await acquireTransactionLock(
+        path.join(this.storagePath, ".ast-mcp-storage-writer"),
+        { tryOnly: !waitForWriter, deadline: Date.now() + 10_000 },
+      );
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "lock_busy" || error.code === "lock_deadline")
+      )
+        throw new StorageError(
+          "coordinator_unavailable",
+          "Another process is executing a LanceDB storage write",
+          true,
+        );
+      throw error;
+    }
+    try {
+      return await action();
+    } finally {
+      transaction.release();
+    }
   }
 
   async fence(expected: CoordinatorLease): Promise<void> {
@@ -193,39 +264,54 @@ export class StorageCoordinator {
     return maintenance;
   }
 
+  async drain(): Promise<void> {
+    await this.tail;
+    await this.leaseMaintenance;
+  }
+
   usesConnection(connection: Connection): boolean {
     return this.connection === connection;
   }
 
   async release(): Promise<void> {
-    if (this.references === 0) return;
+    if (this.closing) return this.closing;
     this.references -= 1;
     if (this.references > 0) return;
+    // Publish the closing state before yielding, so an opener cannot revive a
+    // coordinator whose connection is already scheduled for disposal.
+    this.closing = Promise.resolve().then(() => this.close());
+    return this.closing;
+  }
+
+  private async close(): Promise<void> {
     try {
       await this.tail;
+      await this.leaseMaintenance;
       const lease = this.lease;
       if (lease) {
-        const table = await this.coordinatorTable();
-        try {
-          const now = this.now().toISOString();
-          await withLanceRetry(
-            "release coordinator lease",
-            () =>
-              table.update({
-                values: {
-                  heartbeat_at: now,
-                  lease_expires_at: now,
-                  state: "clean",
-                },
-                where:
-                  `lease_key = 'writer' AND owner_id = ${sqlString(this.ownerId)} ` +
-                  `AND epoch = ${lease.epoch}`,
-              }),
-            this.options,
-          );
-        } finally {
-          table.close();
-        }
+        await this.withWriterTransaction(async () => {
+          const table = await this.coordinatorTable();
+          try {
+            const now = this.now().toISOString();
+            await withLanceRetry(
+              "release coordinator lease",
+              () =>
+                table.update({
+                  values: {
+                    heartbeat_at: now,
+                    lease_expires_at: now,
+                    state: "clean",
+                  },
+                  where:
+                    `lease_key = 'writer' AND owner_id = ${sqlString(this.ownerId)} ` +
+                    `AND epoch = ${lease.epoch}`,
+                }),
+              this.options,
+            );
+          } finally {
+            table.close();
+          }
+        }, true);
       }
     } finally {
       this.lease = null;
@@ -249,6 +335,15 @@ export class StorageCoordinator {
   }
 
   private async acquireOrRenew(): Promise<CoordinatorLease> {
+    if (!this.initialized) {
+      const bootstrap = await this.connection.createEmptyTable(
+        "coordinator_recovery",
+        toLanceSchema(TABLE_SCHEMAS.coordinator_recovery),
+        { existOk: true, mode: "create" },
+      );
+      bootstrap.close();
+      this.initialized = true;
+    }
     const table = await this.coordinatorTable();
     try {
       return await this.acquireOrRenewWithTable(table);

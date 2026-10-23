@@ -3,6 +3,10 @@ import { lstat, mkdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 
+import {
+  readSubprocessOutput,
+  terminateProcessTree,
+} from "../runtime/subprocess";
 import type { HttpEndpoint } from "./transport";
 
 export type ServiceScope = "local" | "global";
@@ -155,31 +159,67 @@ async function assertPortAvailable(endpoint: HttpEndpoint) {
   }
 }
 
-export const runServiceCommand: ServiceCommandRunner = async (
-  command,
-  ignoreFailure,
-) => {
-  const child = Bun.spawn(command, { stderr: "pipe", stdout: "pipe" });
-  const [exitCode, stderr] = await Promise.all([
-    child.exited,
-    new Response(child.stderr).text(),
-  ]);
-  if (exitCode !== 0 && !ignoreFailure)
-    throw new Error(
-      `Service command failed (${command.join(" ")}): ${stderr.trim() || `exit ${exitCode}`}`,
-    );
-};
+export async function runServiceCommand(
+  command: string[],
+  ignoreFailure = false,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const child = Bun.spawn(command, {
+    detached: process.platform !== "win32",
+    stderr: "pipe",
+    stdin: "ignore",
+    stdout: "ignore",
+  });
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () =>
+      controller.abort(
+        new Error(
+          `Service command interrupted (${command.join(" ")}): deadline expired`,
+        ),
+      ),
+    timeoutMs,
+  );
+  try {
+    const [exitCode, stderr] = await Promise.all([
+      child.exited,
+      readSubprocessOutput(child.stderr, controller.signal, () =>
+        terminateProcessTree(child, { force: true }),
+      ),
+    ]);
+    if (child.signalCode)
+      throw new Error(
+        `Service command interrupted (${command.join(" ")}): ${child.signalCode}`,
+      );
+    if (exitCode !== 0 && !ignoreFailure)
+      throw new Error(
+        `Service command failed (${command.join(" ")}): ${stderr.trim() || `exit ${exitCode}`}`,
+      );
+  } catch (error) {
+    await terminateProcessTree(child, { force: true });
+    throw error;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
 const defaultRunner = runServiceCommand;
 
-export async function waitForService(url: string) {
-  for (let attempt = 0; attempt < 25; attempt += 1) {
+export async function waitForService(url: string, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (let attempt = 0; attempt < 25 && Date.now() < deadline; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(
+          Math.max(1, Math.min(500, deadline - Date.now())),
+        ),
+      });
+      await response.body?.cancel();
       if (response.status < 500) return;
     } catch {
       // The service may still be starting.
     }
-    await Bun.sleep(100);
+    const remaining = deadline - Date.now();
+    if (remaining > 0) await Bun.sleep(Math.min(100, remaining));
   }
   throw new Error(`Managed ast-mcp service did not become ready at ${url}`);
 }
