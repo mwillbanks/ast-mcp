@@ -10,6 +10,7 @@ import {
   writeMigratedConfig,
 } from "../../src/config/migrate";
 import {
+  assertConfigWriteTarget,
   configWriteTarget,
   withConfigTransaction,
 } from "../../src/config/transaction";
@@ -110,6 +111,15 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("configuration staging and commit use the same canonical target spelling", async () => {
+  const { file } = await fixture();
+  const { target } = await configWriteTarget(file);
+  expect(target).toBe(fsSync.realpathSync(file));
+  expect(() => assertConfigWriteTarget(file, target)).not.toThrow();
+  await writeConfigSource(file, "version = 2\n# committed\n");
+  expect(await fs.readFile(file, "utf8")).toContain("# committed");
+});
 
 test("missing and broken configuration targets fail safely without staging bytes", async () => {
   const { root, file } = await fixture();

@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
 
 import { acquireTransactionLockSync } from "../runtime/transaction-lock";
@@ -28,7 +28,7 @@ export async function configWriteTarget(
   allowMissing = false,
 ) {
   try {
-    const target = await realpath(filePath);
+    const target = canonicalConfigPath(filePath);
     const metadata = await stat(target);
     if (!metadata.isFile())
       throw new Error("Configuration must be a regular file");

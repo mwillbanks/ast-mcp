@@ -201,7 +201,7 @@ function acquireDatabaseNow(
   let database: Database | undefined;
   try {
     guard.fence();
-    database = new Database(databasePath, { create: false });
+    database = new Database(databasePath, { create: false, readwrite: true });
     guard.fence();
     database.exec("PRAGMA busy_timeout = 0");
     database.exec("BEGIN IMMEDIATE");

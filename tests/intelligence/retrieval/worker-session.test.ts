@@ -470,13 +470,13 @@ test("model requests use separate queue and initialization budgets before infere
     config,
     "transformers",
     false,
-    25,
+    250,
     url(
-      'globalThis.tail = (globalThis.tail ?? Promise.resolve()).then(async () => { await new Promise(resolve => setTimeout(resolve, 40)); parentPort.postMessage({id:request.id,type:"started"}); await new Promise(resolve => setTimeout(resolve,5)); parentPort.postMessage({id:request.id,vectors:[[1,0]]}); });',
+      'globalThis.tail = (globalThis.tail ?? Promise.resolve()).then(async () => { await new Promise(resolve => setTimeout(resolve, 300)); parentPort.postMessage({id:request.id,type:"started"}); await new Promise(resolve => setTimeout(resolve,5)); parentPort.postMessage({id:request.id,vectors:[[1,0]]}); });',
       false,
     ),
     undefined,
-    250,
+    5000,
   );
   try {
     expect(
@@ -489,7 +489,7 @@ test("model requests use separate queue and initialization budgets before infere
     config,
     "transformers",
     false,
-    5,
+    500,
     url("", false),
     undefined,
     20,
