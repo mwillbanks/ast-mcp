@@ -20,7 +20,9 @@
 `run.write: true` fails with `use_file_patch`. Never use it as a mutation escape hatch.
 Preview returns an unformatted candidate. Commit runs enabled formatters.
 A receipt commit supplies `previewReceipt` without `patchStrategy`, patch operations, or `preview`.
-Receipts bind the inspected candidate and effective context. Rebuild a stale receipt rather than bypassing it.
+Receipts bind the inspected candidate, workspace, configuration, and expiry. The complete batch reserves receipts against concurrent replay.
+Receipts are consumed only after mutation completion succeeds. Confirmed no-change failures or verified rollback release reservations.
+Changed sources or uncertain recovery invalidate receipts. Reinspect and preview again after stale, expired, or uncertain results.
 
 Each file has one lock and an atomic replacement.
 Batch preflight checks all targets before committing entries. Do not assume crash atomicity across files.
@@ -69,11 +71,15 @@ Use shared `chattr` metadata for permissions or ownership; do not add independen
 Use `file_rename` for moves.
 Hash every source and verify each absent destination.
 The tool checks source delete policy and destination write policy.
+Moves create authorized missing destination parents without marker files. Parent policies and physical paths are revalidated before side effects.
 Moves never replace destinations. Ordinary failures attempt rollback; moves are not crash-atomic.
+Rollback removes only operation-owned empty directories and preserves directories created or replaced by other actors.
 
 Use `file_delete` for files.
 The tool checks references before deletion; referenced source requires explicit `forceReferences`.
-Cleanup removes empty ancestors only after successful file deletion.
+Cleanup removes authorized empty ancestors only after successful file deletion.
+Reference inventory and parsing are shared across all targets in a batch. Explicit overrides remain required for unverifiable references.
+Default cancellation returns the string error code `aborted`. Incomplete rollback reports bounded cause codes and affected paths; inspect recovery information before retrying.
 
 ## Rejection recovery
 

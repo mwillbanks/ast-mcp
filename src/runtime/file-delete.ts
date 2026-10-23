@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, type Dirent } from "node:fs";
 import {
   chmod,
   chown,
@@ -49,6 +49,9 @@ interface ReferenceVerification {
   targets: Set<string>;
   candidates: number;
   sourceBytes: number;
+  directories: Map<string, Dirent[]>;
+  imports: Map<string, string[]>;
+  roots: Map<string, Map<string, string[]>>;
 }
 
 function referenceFailure(message: string, cause?: unknown): Error {
@@ -68,12 +71,23 @@ async function* referenceCandidates(
   const pending = [root];
   while (pending.length) {
     signal.throwIfAborted();
-    for await (const entry of await opendir(pending.pop()!)) {
+    const directory = pending.pop()!;
+    // Cache inventories, including overlapping roots, within this batch only.
+    let entries = verification.directories.get(directory);
+    if (!entries) {
+      entries = [];
+      for await (const entry of await opendir(directory)) {
+        signal.throwIfAborted();
+        if (++verification.candidates > 100_000)
+          throw referenceFailure(
+            "Reference verification exceeds the inventory limit",
+          );
+        entries.push(entry);
+      }
+      verification.directories.set(directory, entries);
+    }
+    for (const entry of entries) {
       signal.throwIfAborted();
-      if (++verification.candidates > 100_000)
-        throw referenceFailure(
-          "Reference verification exceeds the inventory limit",
-        );
       if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
       const candidate = path.join(entry.parentPath, entry.name);
       if (entry.isDirectory()) pending.push(candidate);
@@ -87,11 +101,12 @@ async function importersFor(
   root: string,
   verification: ReferenceVerification,
 ): Promise<string[]> {
-  const importers: string[] = [];
-  const target = path.resolve(filePath);
+  const cached = verification.roots.get(root);
+  if (cached) return cached.get(filePath) ?? [];
+  const importers = new Map<string, string[]>();
   try {
     for await (const candidate of referenceCandidates(root, verification)) {
-      if (candidate === target || verification.targets.has(candidate)) continue;
+      if (verification.targets.has(candidate)) continue;
       const language = detectAstLanguage(candidate);
       if (
         !language ||
@@ -100,60 +115,74 @@ async function importersFor(
         )
       )
         continue;
-      const file = Bun.file(candidate);
-      if (file.size > 2 * 1024 * 1024)
-        throw referenceFailure(
-          "Reference verification source exceeds the byte limit",
-        );
-      verification.signal.throwIfAborted();
-      const stream = createReadStream(candidate, {
-        end: 2 * 1024 * 1024,
-        signal: verification.signal,
-      });
-      const chunks: Buffer[] = [];
-      let bytes: Buffer;
-      try {
-        for await (const chunk of stream) {
-          verification.signal.throwIfAborted();
-          chunks.push(Buffer.from(chunk));
-        }
+      let bases = verification.imports.get(candidate);
+      if (!bases) {
+        const file = Bun.file(candidate);
+        if (file.size > 2 * 1024 * 1024)
+          throw referenceFailure(
+            "Reference verification source exceeds the byte limit",
+          );
         verification.signal.throwIfAborted();
-        bytes = Buffer.concat(chunks);
-      } finally {
-        stream.destroy();
+        const stream = createReadStream(candidate, {
+          end: 2 * 1024 * 1024,
+          signal: verification.signal,
+        });
+        const chunks: Buffer[] = [];
+        let bytes: Buffer;
+        try {
+          for await (const chunk of stream) {
+            verification.signal.throwIfAborted();
+            chunks.push(Buffer.from(chunk));
+          }
+          verification.signal.throwIfAborted();
+          bytes = Buffer.concat(chunks);
+        } finally {
+          stream.destroy();
+        }
+        verification.sourceBytes += bytes.byteLength;
+        if (
+          bytes.byteLength > 2 * 1024 * 1024 ||
+          verification.sourceBytes > 16 * 1024 * 1024
+        )
+          throw referenceFailure(
+            "Reference verification exceeds the source byte limit",
+          );
+        const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        const facts = await verification.pool.parse(
+          {
+            languageId: language,
+            source,
+          },
+          { signal: verification.signal, timeoutMs: 1_000 },
+        );
+        if (
+          facts.diagnostics.some(
+            (diagnostic) => diagnostic.severity === "error",
+          )
+        )
+          throw referenceFailure(
+            "Reference verification encountered invalid source",
+          );
+        bases = facts.imports
+          .filter((entry) => entry.source.startsWith("."))
+          .map((entry) => path.resolve(path.dirname(candidate), entry.source));
+        verification.imports.set(candidate, bases);
       }
-      verification.sourceBytes += bytes.byteLength;
-      if (
-        bytes.byteLength > 2 * 1024 * 1024 ||
-        verification.sourceBytes > 16 * 1024 * 1024
-      )
-        throw referenceFailure(
-          "Reference verification exceeds the source byte limit",
-        );
-      const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-      const facts = await verification.pool.parse(
-        {
-          languageId: language,
-          source,
-        },
-        { signal: verification.signal, timeoutMs: 1_000 },
-      );
-      if (
-        facts.diagnostics.some((diagnostic) => diagnostic.severity === "error")
-      )
-        throw referenceFailure(
-          "Reference verification encountered invalid source",
-        );
-      const referenced = facts.imports.some((entry) => {
-        if (!entry.source.startsWith(".")) return false;
-        const base = path.resolve(path.dirname(candidate), entry.source);
-        return (
-          base === target ||
-          `${base}${path.extname(target)}` === target ||
-          path.join(base, `index${path.extname(target)}`) === target
-        );
-      });
-      if (referenced) importers.push(path.relative(root, candidate));
+      for (const target of verification.targets) {
+        verification.signal.throwIfAborted();
+        if (
+          bases.some(
+            (base) =>
+              base === target ||
+              `${base}${path.extname(target)}` === target ||
+              path.join(base, `index${path.extname(target)}`) === target,
+          )
+        ) {
+          const matches = importers.get(target) ?? [];
+          matches.push(path.relative(root, candidate));
+          importers.set(target, matches);
+        }
+      }
     }
   } catch (error) {
     throw referenceFailure(
@@ -161,7 +190,9 @@ async function importersFor(
       error,
     );
   }
-  return importers.sort();
+  for (const matches of importers.values()) matches.sort();
+  verification.roots.set(root, importers);
+  return importers.get(filePath) ?? [];
 }
 
 function ancestorPaths(filePath: string, root: string): string[] {
@@ -320,7 +351,10 @@ export async function deleteFilesSafely(
   signal?: AbortSignal,
 ) {
   const pool = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
-  const verification = {
+  const verification: ReferenceVerification = {
+    directories: new Map(),
+    imports: new Map(),
+    roots: new Map(),
     pool,
     targets: new Set<string>(),
     candidates: 0,
@@ -456,6 +490,7 @@ export async function deleteFilesSafely(
       } catch (error) {
         if (began) await ignoreFailure(failMutation(operationId, error));
         const rollbackErrors: unknown[] = [];
+        const affectedPaths: string[] = [];
         for (const commit of [...commits].reverse()) {
           const snapshot = snapshots.get(commit.filePath);
           if (!snapshot) continue;
@@ -481,15 +516,26 @@ export async function deleteFilesSafely(
             )
               throw new Error("file_delete_rollback_verification_failed");
           } catch (rollbackError) {
-            rollbackErrors.push(rollbackError);
+            affectedPaths.push(commit.filePath);
+            rollbackErrors.push(
+              Object.assign(
+                new Error("Delete rollback failed", { cause: rollbackError }),
+                {
+                  details: { affectedPaths: [commit.filePath] },
+                },
+              ),
+            );
           }
         }
         if (began && rollbackErrors.length === 0)
           await ignoreFailure(recordMutationRollback(operationId));
         if (rollbackErrors.length > 0)
-          throw new AggregateError(
-            [error, ...rollbackErrors],
-            "file_delete failed and rollback requires recovery",
+          throw Object.assign(
+            new AggregateError(
+              [error, ...rollbackErrors],
+              "file_delete failed and rollback requires recovery",
+            ),
+            { details: { affectedPaths } },
           );
         throw error;
       }

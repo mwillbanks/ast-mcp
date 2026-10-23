@@ -27,25 +27,106 @@ export function boundedFileBatch<T extends z.ZodType>(
   return z.object({ files: boundedRecord(schema, label) }).strict();
 }
 
+function failureCode(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const error = value as { code?: unknown; name?: unknown };
+  if (error.name === "AbortError") return "aborted";
+  if (error.name === "TimeoutError") return "timeout";
+  return typeof error.code === "string" &&
+    error.code.length <= 64 &&
+    /^[A-Za-z][A-Za-z0-9_.-]*$/.test(error.code)
+    ? error.code
+    : undefined;
+}
+
+// Nested errors can contain source or credentials in messages. Expose only
+// bounded machine diagnostics and explicitly identified filesystem paths.
+function aggregateDiagnostics(error: AggregateError) {
+  const causes: Array<{ code: string; name: string }> = [];
+  const affectedPaths = new Set<string>();
+  const seen = new Set<unknown>();
+  const pending: unknown[] = [error];
+  let visited = 0;
+  let omitted = false;
+  while (pending.length && visited < 32) {
+    const item = pending.shift();
+    if (!item || typeof item !== "object" || seen.has(item)) continue;
+    seen.add(item);
+    visited++;
+    const value = item as {
+      name?: unknown;
+      details?: unknown;
+      cause?: unknown;
+      path?: unknown;
+    };
+    if (item !== error && causes.length >= 16) omitted = true;
+    if (item !== error && causes.length < 16)
+      causes.push({
+        code: failureCode(item) ?? "execution_failed",
+        name:
+          typeof value.name === "string" &&
+          [
+            "Error",
+            "AggregateError",
+            "TypeError",
+            "RangeError",
+            "SyntaxError",
+            "ReferenceError",
+            "URIError",
+            "EvalError",
+            "AbortError",
+            "TimeoutError",
+          ].includes(value.name)
+            ? value.name
+            : "Error",
+      });
+    const details = value.details as { affectedPaths?: unknown } | undefined;
+    const paths = Array.isArray(details?.affectedPaths)
+      ? details.affectedPaths
+      : [];
+    if (paths.length > 20) omitted = true;
+    for (const path of [...paths.slice(0, 20), value.path]) {
+      if (path === undefined) continue;
+      if (typeof path !== "string" || path.length > 1024) {
+        omitted = true;
+      } else if (!affectedPaths.has(path)) {
+        if (affectedPaths.size < 20) affectedPaths.add(path);
+        else omitted = true;
+      }
+    }
+    if (item instanceof AggregateError) {
+      if (item.errors.length > 16) omitted = true;
+      pending.push(...item.errors.slice(0, 16));
+    }
+    if (value.cause) pending.push(value.cause);
+  }
+  return {
+    affectedPaths: [...affectedPaths],
+    causes,
+    truncated: omitted || pending.length > 0,
+  };
+}
+
 export function toolFailure(error: unknown) {
   if (error instanceof InputRequiredSignal) return error.result;
-  const value = error as Error & {
-    code?: string;
+  const value = (error ?? {}) as Error & {
+    code?: unknown;
     decision?: unknown;
     details?: unknown;
     retryable?: boolean;
     suggestedNextCall?: string;
   };
   const message = error instanceof Error ? error.message : String(error);
+  const normalizedCode = failureCode(value);
   const operatingSystemCode =
-    value.code === "EACCES" || value.code === "EPERM"
+    normalizedCode === "EACCES" || normalizedCode === "EPERM"
       ? "permission_denied"
-      : value.code === "ENOENT"
+      : normalizedCode === "ENOENT"
         ? "file_not_found"
         : undefined;
   const code =
     operatingSystemCode ??
-    value.code ??
+    normalizedCode ??
     (/(?:hash|expectedSha256|stale file context)/i.test(message)
       ? "stale_or_missing_hash"
       : /format/i.test(message)
@@ -64,9 +145,11 @@ export function toolFailure(error: unknown) {
     error: {
       code,
       details:
-        value.details ??
-        value.decision ??
-        (operatingSystemCode ? { osCode: value.code } : undefined),
+        error instanceof AggregateError
+          ? aggregateDiagnostics(error)
+          : (value.details ??
+            value.decision ??
+            (operatingSystemCode ? { osCode: normalizedCode } : undefined)),
       message,
       retryable:
         value.retryable ??

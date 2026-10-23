@@ -183,13 +183,67 @@ export async function mutationLockPath(filePath: string): Promise<string> {
   return path.join(directory, name);
 }
 
+interface CoordinationDiscovery {
+  stats: Map<string, Promise<Awaited<ReturnType<typeof lstat>>>>;
+  metadata: Map<string, Promise<string>>;
+}
+
+function coordinationDiscovery(): CoordinationDiscovery {
+  return { stats: new Map(), metadata: new Map() };
+}
+
+function discoveryStat(discovery: CoordinationDiscovery, target: string) {
+  let pending = discovery.stats.get(target);
+  if (!pending) {
+    pending = lstat(target);
+    discovery.stats.set(target, pending);
+  }
+  return pending;
+}
+
+async function gitMetadataPointer(
+  directory: string,
+  marker: string,
+): Promise<string> {
+  const handle = await open(marker, "r");
+  try {
+    const bytes = Buffer.alloc(4097);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    const match = bytes
+      .subarray(0, bytesRead)
+      .toString("utf8")
+      .trim()
+      .match(/^gitdir: (.+)$/);
+    if (bytesRead > 4096 || !match)
+      throw new Error("Invalid Git metadata pointer");
+    const metadata = await canonicalizePath(path.resolve(directory, match[1]!));
+    if (!(await lstat(metadata)).isDirectory())
+      throw new Error("Git metadata is not a directory");
+    return metadata;
+  } catch (cause) {
+    throw new Error("Git metadata pointer is unavailable or invalid", {
+      cause,
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function mutationSharedDatabasePath(
   filePath: string,
+): Promise<string> {
+  return discoverSharedDatabasePath(filePath, coordinationDiscovery());
+}
+
+async function discoverSharedDatabasePath(
+  filePath: string,
+  discovery: CoordinationDiscovery,
 ): Promise<string> {
   const canonical = await canonicalizePath(filePath);
   let directory = path.dirname(canonical);
   try {
-    if ((await lstat(canonical)).isDirectory()) directory = canonical;
+    if ((await discoveryStat(discovery, canonical)).isDirectory())
+      directory = canonical;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -198,46 +252,33 @@ export async function mutationSharedDatabasePath(
   let metadata: string | undefined;
   for (let depth = 0; depth < 256; depth++) {
     try {
-      if ((await lstat(directory)).isDirectory()) fallback ??= directory;
+      if ((await discoveryStat(discovery, directory)).isDirectory())
+        fallback ??= directory;
       const marker = path.join(directory, ".git");
       let git;
       try {
-        git = await lstat(marker);
+        git = await discoveryStat(discovery, marker);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       if (git) {
         if (git.isDirectory()) metadata = marker;
         else if (git.isFile() && git.size <= 4096) {
-          const handle = await open(marker, "r");
-          try {
-            const bytes = Buffer.alloc(4097);
-            const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-            const match = bytes
-              .subarray(0, bytesRead)
-              .toString("utf8")
-              .trim()
-              .match(/^gitdir: (.+)$/);
-            if (bytesRead > 4096 || !match)
-              throw new Error("Invalid Git metadata pointer");
-            metadata = await canonicalizePath(
-              path.resolve(directory, match[1]!),
-            );
-            if (!(await lstat(metadata)).isDirectory())
-              throw new Error("Git metadata is not a directory");
-          } catch (cause) {
-            throw new Error("Git metadata pointer is unavailable or invalid", {
-              cause,
-            });
-          } finally {
-            await handle.close();
+          let pending = discovery.metadata.get(marker);
+          if (!pending) {
+            pending = gitMetadataPointer(directory, marker);
+            discovery.metadata.set(marker, pending);
           }
+          metadata = await pending;
         } else throw new Error("Unsafe Git metadata marker");
         break;
       }
       if (!configured) {
         try {
-          const config = await lstat(path.join(directory, "ast-mcp.toml"));
+          const config = await discoveryStat(
+            discovery,
+            path.join(directory, "ast-mcp.toml"),
+          );
           if (config.isFile()) configured = directory;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -783,10 +824,30 @@ export async function withFencedFileLock<Result>(
   operation: (lease: FileLockLease) => Promise<Result>,
   options: FileLockOptions = {},
 ): Promise<Result> {
+  return withFencedFileLockDiscovery(filePath, operation, options);
+}
+
+async function withFencedFileLockDiscovery<Result>(
+  filePath: string,
+  operation: (lease: FileLockLease) => Promise<Result>,
+  options: FileLockOptions,
+  discovery?: CoordinationDiscovery,
+): Promise<Result> {
   const canonical = canonicalizePathSync(filePath);
   const identity = lockPathIdentity(canonical);
   return withQueue(identity, options, async () => {
-    const lease = await acquireFileLock(canonical, options);
+    const lease = await acquireFileLock(
+      canonical,
+      discovery && !options.sharedDatabasePath
+        ? {
+            ...options,
+            sharedDatabasePath: await discoverSharedDatabasePath(
+              canonical,
+              discovery,
+            ),
+          }
+        : options,
+    );
     const heartbeatMs = Math.max(
       25,
       Math.floor((options.leaseMs ?? DEFAULT_LEASE_MS) / 3),
@@ -818,12 +879,14 @@ export async function withFencedFileLocks<Result>(
   const sorted = [...canonicalPaths.entries()]
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([, canonical]) => canonical);
+  // Cache observations only for this acquisition batch; later calls revalidate markers.
+  const discovery = coordinationDiscovery();
   const leases: FileLockLease[] = [];
   const acquire = async (index: number): Promise<Result> => {
     if (index === sorted.length) return operation(leases);
     const filePath = sorted[index];
     if (!filePath) return operation(leases);
-    return withFencedFileLock(
+    return withFencedFileLockDiscovery(
       filePath,
       async (lease) => {
         leases.push(lease);
@@ -834,6 +897,7 @@ export async function withFencedFileLocks<Result>(
         }
       },
       options,
+      discovery,
     );
   };
   return acquire(0);

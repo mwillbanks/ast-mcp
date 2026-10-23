@@ -4,7 +4,7 @@ description: Hash, read, write, patch, rename, change attributes, and delete wit
 icon: Files
 ---
 
-File operations are batch-oriented and explicit about state. Mutation tools declare a `files` object whose keys are paths, avoiding dictionary-only top-level schemas that some hosts cannot encode.
+File operations are batch-oriented and explicit about state. Mutation tools declare a `files` object whose keys are paths, avoiding dictionary-only top-level schemas that some hosts cannot encode. Each batch accepts 1–50 requests, including renames.
 
 ## file_hash
 
@@ -31,12 +31,18 @@ The agent selects either strategy when `file_capabilities` reports it as effecti
 
 Set `preview: true` to execute the strategy dry-run without formatting or committing and receive an opaque one-use `previewReceipt`. Preview diffs show only the AST or Aider change. Commit with that receipt to reuse the reviewed unformatted candidate after policy, approval, generation, and hash checks; if formatting is enabled, it runs only at commit, including `previewReceipt` commit. AST and Aider failures include per-operation evidence and a recovery suggestion. A fresh hash is required by default; `safety.require_hash = false` permits omission while retaining internal compare-and-swap protection and verification of any supplied hash. Formatting is disabled by default. When enabled, the first enabled matching external formatter runs in `stdout` or staged `in_place` mode. Formatter executables must already be available; ast-mcp does not download them. See the [optional formatting guide](/docs/guides/formatting).
 
+Receipts remain reserved during the entire batch, including mutation completion and freshness publication. Confirmed no-change failures and verified rollback release reservations for retry. Success consumes receipts; changed source, expiry, configuration changes, or uncertain recovery require a new preview. Concurrent replay is rejected.
+
 ## file_rename
 
-Accepts `file_rename({ files: { ... } })` and preflights multiple regular files as one operation. Every source requires `delete` policy and every destination requires `write`; one denied or unapproved endpoint prevents all renames. Destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
+Accepts `file_rename({ files: { ... } })` and preflights multiple regular files as one operation. Every source requires `delete` policy and every destination requires `write`; one denied or unapproved endpoint prevents all renames. Destinations must not already exist, and every endpoint is locked for cooperating ast-mcp processes. Source hashes are required by default and optional only when `safety.require_hash = false`; supplied hashes are always enforced. Authorized missing destination parents are created without marker files. Policy and physical paths are revalidated before side effects. Rollback removes only operation-owned empty directories. Ordinary failures are rolled back when possible; the operation is no-replace but not crash-atomic, and external actors can race pathname checks.
 
 ## file_chattr and file_delete
 
-`file_chattr({ files: { ... } })` applies bounded chmod and same-owner chown changes under `write` policy. `file_delete({ files: { ... } })` requires `delete` policy and a fresh hash by default, checks AST import references before deletion, and removes only newly empty authorized ancestors. `safety.require_hash = false` permits omission, while supplied hashes remain enforced. File access is restricted by default and can use an explicitly approved unrestricted mode. See the [filesystem access guide](/docs/guides/filesystem-access) for its scope, approval, and preserved safeguards. Deleting AST-capable files when a bounded reference scan cannot be proven requires `forceReferences: true`, and the result reports `referenceVerificationBypassed: true` separately from known forced importers.
+`file_chattr({ files: { ... } })` applies bounded chmod and same-owner chown changes under `write` policy. It rechecks hashes and file identity after journaling and applies metadata through the verified open handle. `file_delete({ files: { ... } })` requires `delete` policy and a fresh hash by default, checks AST import references before deletion, and removes only newly empty authorized ancestors. `safety.require_hash = false` permits omission, while supplied hashes remain enforced. File access is restricted by default and can use an explicitly approved unrestricted mode. See the [filesystem access guide](/docs/guides/filesystem-access) for its scope, approval, and preserved safeguards. Deleting AST-capable files when a bounded reference scan cannot be proven requires `forceReferences: true`, and the result reports `referenceVerificationBypassed: true` separately from known forced importers.
+
+Reference roots are inventoried and candidate files parsed once per delete batch. Internal batch references do not block a jointly deleted target; external importers still require explicit overrides.
+
+Default cancellation returns the string code `aborted`. Incomplete rollback failures include bounded cause codes and affected paths. Preserve this recovery information, inspect current state, and obtain fresh hashes before retrying.
 
 Reference verification requires effective AST read access. If `[files.read].modes` excludes `ast`, deletion of AST-capable files fails with `reference_verification_failed` before parsing. Restore AST reads or use a reviewed `forceReferences: true` override; OS permissions and hash guards remain enforced.

@@ -1,15 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  realpath,
-  rename,
-  rmdir,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, lstat, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { currentConfig } from "../config";
@@ -44,6 +35,11 @@ import {
   withFencedFileLock,
   withFencedFileLocks,
 } from "../runtime/locks";
+import {
+  ensureParentDirectories,
+  removeCreatedDirectories,
+  revalidateWritePath,
+} from "../runtime/parent-directories";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
 import {
@@ -113,46 +109,10 @@ async function removeTemporary(filePath: string) {
   } catch {}
 }
 
-async function ensureParent(filePath: string): Promise<string[]> {
-  const parent = path.dirname(filePath);
-  const first = await mkdir(parent, { recursive: true });
-  const revalidated = await resolveWritablePath(filePath);
-  if (revalidated !== filePath)
-    throw new Error("Parent creation changed the resolved write path");
-  if (!first) return [];
-  // Recursive mkdir can return a different physical alias on Windows.
-  const [canonicalFirst, canonicalParent] = await Promise.all([
-    realpath(first),
-    realpath(parent),
-  ]);
-  const relative = path.relative(canonicalFirst, canonicalParent);
-  if (
-    relative === ".." ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-    throw new Error(
-      "Created parent directory escaped its first created ancestor",
-    );
-  const created = [canonicalFirst];
-  let current = canonicalFirst;
-  for (const segment of relative.split(path.sep)) {
-    if (!segment) continue;
-    current = path.join(current, segment);
-    created.push(current);
-  }
-  return created;
-}
-
 async function ignoreFailure(operation: Promise<unknown>): Promise<void> {
   try {
     await operation;
   } catch {}
-}
-
-async function removeCreatedDirectories(directories: string[]): Promise<void> {
-  for (const directory of [...directories].reverse())
-    await ignoreFailure(rmdir(directory));
 }
 
 async function commit(
@@ -169,18 +129,16 @@ async function commit(
   sha256: string;
 }> {
   const next = temporary(filePath);
-  let createdDirectories: string[] = [];
+  const createdDirectories: string[] = [];
   let committed = false;
+  let primaryFailure: unknown;
   try {
-    const parentExists = await lstat(path.dirname(filePath)).then(
-      () => true,
-      () => false,
-    );
-    createdDirectories = parentExists ? [] : await ensureParent(filePath);
+    await ensureParentDirectories(filePath, createdDirectories, beforeReplace);
     const formatted = alreadyFormatted
       ? content
       : await formatContent(filePath, content);
     await beforeReplace?.();
+    await revalidateWritePath(filePath);
     await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
     if (mode !== undefined) {
       await beforeReplace?.();
@@ -195,6 +153,7 @@ async function commit(
       verifyExpectedHash(expectedSha256, actual);
     }
     await beforeReplace?.();
+    await revalidateWritePath(filePath);
     await rename(next, filePath);
     committed = true;
     return {
@@ -202,9 +161,26 @@ async function commit(
       createdDirectories,
       sha256: committedSha256,
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
     await removeTemporary(next);
-    if (!committed) await removeCreatedDirectories(createdDirectories);
+    if (!committed) {
+      try {
+        await removeCreatedDirectories(createdDirectories);
+      } catch (cleanupError) {
+        throw Object.assign(
+          new AggregateError(
+            [primaryFailure, cleanupError],
+            "File write failed and parent cleanup was incomplete",
+          ),
+          {
+            details: { affectedPaths: createdDirectories },
+          },
+        );
+      }
+    }
   }
 }
 function previewDiff(filePath: string, before: string, after: string): string {
@@ -295,6 +271,60 @@ const MAX_PREVIEW_SESSION_BYTES = 16 * 1024 * 1024;
 const MAX_PREVIEW_SESSION_RECEIPTS = 32;
 const previewReceipts = new Map<string, PreviewReceipt>();
 const expiredPreviewReceipts = new Set<string>();
+const reservedPreviewReceipts = new Map<string, symbol>();
+const previewReservation = new AsyncLocalStorage<symbol>();
+
+interface ReceiptBatchState {
+  completed: boolean;
+  safeToRelease: boolean;
+}
+
+async function withReservedPreviewReceipts<T>(
+  requests: unknown[],
+  state: ReceiptBatchState,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const owner = Symbol("patch receipt batch");
+  const tokens = requests.flatMap((request) => {
+    const token = (request as PatchBatchRequest).previewReceipt;
+    return typeof token === "string" ? [token] : [];
+  });
+  if (
+    new Set(tokens).size !== tokens.length ||
+    tokens.some((token) => reservedPreviewReceipts.has(token))
+  )
+    throw receiptError(
+      "preview_receipt_reserved",
+      "Preview receipt is already reserved by an active batch",
+    );
+  const receipts = tokens.map(
+    (token) => [token, previewReceipts.get(token)] as const,
+  );
+  for (const token of tokens) reservedPreviewReceipts.set(token, owner);
+  try {
+    return await previewReservation.run(owner, operation);
+  } finally {
+    for (const [token, receipt] of receipts) {
+      let reusable = state.safeToRelease && !state.completed;
+      if (receipt && reusable) {
+        try {
+          reusable = await patchSignals.run(
+            undefined,
+            async () =>
+              sha256(await readText(receipt.filePath)) === receipt.sourceSha256,
+          );
+        } catch {
+          reusable = false;
+        }
+      }
+      if (!reusable && receipt) {
+        clearTimeout(receipt.expiryTimer);
+        previewReceipts.delete(token);
+      }
+      reservedPreviewReceipts.delete(token);
+    }
+  }
+}
 
 function expirePreviewReceipt(token: string): void {
   previewReceipts.delete(token);
@@ -343,6 +373,14 @@ function previewPayloadBytes(
 }
 
 async function validatePreviewReceipt(filePath: string, token: string) {
+  if (
+    reservedPreviewReceipts.has(token) &&
+    reservedPreviewReceipts.get(token) !== previewReservation.getStore()
+  )
+    throw receiptError(
+      "preview_receipt_reserved",
+      "Preview receipt is already reserved by an active batch",
+    );
   const receipt = previewReceipts.get(token);
   if (!receipt)
     throw receiptError(
@@ -649,11 +687,8 @@ async function applyPreparedPatch(
     prepared.candidate,
     await inspectFileCapabilities(filePath),
   );
-  if (prepared.receiptToken) {
-    const receipt = previewReceipts.get(prepared.receiptToken);
-    if (receipt) clearTimeout(receipt.expiryTimer);
-    previewReceipts.delete(prepared.receiptToken);
-  }
+  if (prepared.receiptToken)
+    await validatePreviewReceipt(filePath, prepared.receiptToken);
   await commit(
     filePath,
     candidate,
@@ -699,20 +734,35 @@ async function preflightFileWrite(
       );
     mode = (await lstat(filePath)).mode;
   }
-  const parentExists = await lstat(path.dirname(filePath)).then(
-    () => true,
-    () => false,
-  );
-  const createdDirectories = parentExists ? [] : await ensureParent(filePath);
+  const createdDirectories: string[] = [];
+  let primaryFailure: unknown;
   try {
+    await ensureParentDirectories(filePath, createdDirectories, async () =>
+      patchSignals.getStore()?.throwIfAborted(),
+    );
     return {
       actual,
       content: await formatContent(filePath, request.content),
       existing: existing !== undefined,
       mode,
     };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await removeCreatedDirectories(createdDirectories);
+    try {
+      await removeCreatedDirectories(createdDirectories);
+    } catch (cleanupError) {
+      throw Object.assign(
+        new AggregateError(
+          [primaryFailure, cleanupError],
+          "File write preflight failed and parent cleanup was incomplete",
+        ),
+        {
+          details: { affectedPaths: createdDirectories },
+        },
+      );
+    }
   }
 }
 
@@ -795,6 +845,7 @@ async function rollbackFileBatch(
   fence: () => Promise<void>,
 ): Promise<void> {
   const failures: unknown[] = [];
+  const affectedPaths: string[] = [];
   for (const { resolvedPath, result } of committed.reverse()) {
     const snapshot = snapshots.get(resolvedPath);
     try {
@@ -821,20 +872,26 @@ async function rollbackFileBatch(
       await unlink(resolvedPath);
       const createdDirectories = result.createdDirectories;
       if (Array.isArray(createdDirectories))
-        await removeCreatedDirectories(
-          createdDirectories.filter(
-            (value): value is string => typeof value === "string",
-          ),
-        );
+        await removeCreatedDirectories(createdDirectories);
     } catch (error) {
-      failures.push(error);
+      affectedPaths.push(resolvedPath);
+      failures.push(
+        Object.assign(new Error("File rollback failed", { cause: error }), {
+          details: { affectedPaths: [resolvedPath] },
+        }),
+      );
     }
   }
   if (failures.length > 0)
-    throw new AggregateError(failures, "Mutation rollback requires recovery");
+    throw Object.assign(
+      new AggregateError(failures, "Mutation rollback requires recovery"),
+      {
+        details: { affectedPaths },
+      },
+    );
 }
 
-async function executePreparedFileBatch<T, Prepared>(
+async function executeReservedFileBatch<T, Prepared>(
   tool: "file_patch" | "file_write",
   entries: ResolvedBatchEntry<T>[],
   handler: (
@@ -846,7 +903,8 @@ async function executePreparedFileBatch<T, Prepared>(
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
   fence: () => Promise<void>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  receiptState: ReceiptBatchState,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
   const snapshots = await captureBatchSnapshots(entries);
@@ -888,6 +946,7 @@ async function executePreparedFileBatch<T, Prepared>(
   try {
     signal?.throwIfAborted();
     if (plannedEntries.length > 0) {
+      receiptState.safeToRelease = false;
       await beginMutation({
         files: sourcePlan,
         operationId,
@@ -931,6 +990,7 @@ async function executePreparedFileBatch<T, Prepared>(
       began && commits.length > 0
         ? await completeMutation(operationId, commits)
         : null;
+    receiptState.completed = true;
     return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
   } catch (error) {
     discardPreparedPreviews(prepared);
@@ -939,11 +999,20 @@ async function executePreparedFileBatch<T, Prepared>(
       await patchSignals.run(undefined, () =>
         rollbackFileBatch(committed, snapshots, fence),
       );
-      if (began) await ignoreFailure(recordMutationRollback(operationId));
+      if (began) await recordMutationRollback(operationId);
+      // A failed begin can leave an uncertain journal even without file commits.
+      receiptState.safeToRelease = began || receiptState.safeToRelease;
     } catch (rollbackError) {
-      throw new AggregateError(
-        [error, rollbackError],
-        "Mutation failed and rollback requires recovery",
+      throw Object.assign(
+        new AggregateError(
+          [error, rollbackError],
+          "Mutation failed and rollback requires recovery",
+        ),
+        {
+          details: {
+            affectedPaths: committed.map(({ resolvedPath }) => resolvedPath),
+          },
+        },
       );
     }
     throw error;
@@ -976,19 +1045,29 @@ async function processFileBatch<T, Prepared>(
       resolvedPath: await resolveWritablePath(inputPath),
     })),
   );
+  const receiptState: ReceiptBatchState = {
+    completed: false,
+    safeToRelease: true,
+  };
   return withFencedFileLocks(
     resolvedEntries.map(({ resolvedPath }) => resolvedPath),
     (leases: readonly FileLockLease[]) =>
-      executePreparedFileBatch(
-        tool,
-        resolvedEntries,
-        handler,
-        preflight,
-        mutates,
-        async () => {
-          for (const lease of leases) await lease.fence();
-        },
-        options.signal,
+      withReservedPreviewReceipts(
+        resolvedEntries.map(({ request }) => request),
+        receiptState,
+        () =>
+          executeReservedFileBatch(
+            tool,
+            resolvedEntries,
+            handler,
+            preflight,
+            mutates,
+            async () => {
+              for (const lease of leases) await lease.fence();
+            },
+            options.signal,
+            receiptState,
+          ),
       ),
     { ...options, deadline: options.deadline ?? Date.now() + 10_000 },
   );

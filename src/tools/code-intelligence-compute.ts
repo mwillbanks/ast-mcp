@@ -415,16 +415,14 @@ export async function computeNative(
     );
   const schema = `ast-mcp.${name}.v1`;
   if (name === "map" || name === "digest") {
+    const memberLimit = input.max_members ?? (name === "digest" ? 50 : 200);
     const mapped = flatMapFilesWithAbort(files, signal, (file) => [
       {
         diagnostics: file.facts.diagnostics,
         language: file.facts.languageId,
         partial: file.facts.partial,
         path: relative(root, file.path),
-        symbols: symbolView(file, root).slice(
-          0,
-          input.max_members ?? (name === "digest" ? 50 : 200),
-        ),
+        symbols: symbolView(file, root).slice(0, memberLimit),
       },
     ]);
     const result = bounded(mapped, input);
@@ -432,7 +430,9 @@ export async function computeNative(
       files: result.items,
       schema,
       total: result.total,
-      truncated: result.truncated,
+      truncated:
+        result.truncated ||
+        files.some((file) => file.facts.symbols.length > memberLimit),
     };
   }
   if (name === "show") {
@@ -566,7 +566,15 @@ export async function computeNative(
   if (name === "cycles") {
     const limit = input.limit ?? input.top_k ?? 200;
     const result = graphCycles(visibleEdges, limit, signal);
-    return { ...result, schema };
+    const page = bounded(result.cycles, {
+      ...input,
+      budget: input.budget ?? 1_000_000,
+    });
+    return {
+      cycles: page.items,
+      schema,
+      truncated: result.truncated || page.truncated,
+    };
   }
   if (name === "deps" || name === "reverse_deps") {
     const selectedPath = input.file ?? input.path;

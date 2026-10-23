@@ -189,7 +189,9 @@ function toolDescription(name: (typeof TOOL_NAMES)[number]): string {
     surface: "Returns exported native AST symbols.",
     trace: "Returns a bounded native call trace.",
   };
-  return descriptions[name];
+  return name === "squeeze"
+    ? descriptions[name]
+    : `${descriptions[name]} Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.`;
 }
 
 async function requestRoot(input: ToolInput): Promise<string> {
@@ -443,11 +445,12 @@ async function requestedFiles(
   return files.sort();
 }
 
+type BudgetOmission = "sourceSize" | "sourceBytes" | "parsedFacts";
 type ScanOmissions = {
   scanLimit: number;
   unreadable: number;
   unsupported: number;
-};
+} & Record<BudgetOmission, number>;
 
 type ScanCoverage = {
   candidates: number;
@@ -457,6 +460,9 @@ type ScanCoverage = {
     scanLimit: string[];
     unreadable: string[];
     unsupported: string[];
+    sourceSize: string[];
+    sourceBytes: string[];
+    parsedFacts: string[];
   };
   omittedPathsTruncated: boolean;
   omissions: ScanOmissions;
@@ -470,6 +476,7 @@ async function sourceFor(
   filePath: string,
   workspace: WorkspaceHandle | undefined,
   signal?: AbortSignal,
+  maxBytes = MAX_SOURCE_BYTES,
 ): Promise<string> {
   throwIfAborted(signal);
   if (workspace && workspace.selectedRevision.selector.kind !== "working") {
@@ -480,7 +487,7 @@ async function sourceFor(
           workspace.selectedRevision,
           filePath,
           signal,
-          MAX_SOURCE_BYTES,
+          maxBytes,
         ),
       ).toString("utf8");
     } catch (error) {
@@ -490,9 +497,13 @@ async function sourceFor(
     }
   }
   const file = Bun.file(filePath);
-  if ((await file.stat()).size > MAX_SOURCE_BYTES)
+  if ((await file.stat()).size > maxBytes)
     throw capacityError("Source exceeds the parser byte limit");
-  return file.text();
+  // Bound the read even when the file grows after stat.
+  const source = await file.slice(0, maxBytes + 1).text();
+  if (Buffer.byteLength(source) > maxBytes)
+    throw capacityError("Source exceeds the parser byte limit");
+  return source;
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -577,9 +588,25 @@ async function loadFiles(
     .map((item) => relative(root, item.path));
   const files: NativeFile[] = [];
   const unreadable: string[] = [];
+  const budgetPaths: Record<BudgetOmission, string[]> = {
+    sourceSize: [],
+    sourceBytes: [],
+    parsedFacts: [],
+  };
+  const explicit = [
+    ...(input.paths ?? []),
+    ...(input.file ? [input.file] : []),
+    ...(input.path ? [input.path] : []),
+  ];
+  const exactFile =
+    !input.glob &&
+    selected.length === 1 &&
+    explicit.length === 1 &&
+    path.resolve(root, explicit[0] as string) === selected[0];
   let sourceBytes = 0;
-  for (const item of selectedEligible) {
+  for (const [index, item] of selectedEligible.entries()) {
     throwIfAborted(signal);
+    let budgetReason: BudgetOmission = "sourceSize";
     try {
       if (
         (!workspace ||
@@ -587,49 +614,83 @@ async function loadFiles(
         (await Bun.file(item.path).stat()).size > MAX_SOURCE_BYTES
       )
         throw capacityError("Source exceeds the parser byte limit");
-      const source = await sourceFor(item.path, workspace, signal);
-      const bytes = Buffer.byteLength(source);
-      if (bytes > MAX_SOURCE_BYTES)
-        throw capacityError("Source exceeds the parser byte limit");
-      sourceBytes += bytes;
-      if (sourceBytes > MAX_REQUEST_BYTES)
-        throw capacityError("Selected sources exceed the request byte limit");
+      const remainingBytes = MAX_REQUEST_BYTES - sourceBytes;
+      if (remainingBytes < MAX_SOURCE_BYTES) budgetReason = "sourceBytes";
+      const source = await sourceFor(
+        item.path,
+        workspace,
+        signal,
+        Math.min(MAX_SOURCE_BYTES, remainingBytes),
+      );
+      sourceBytes += Buffer.byteLength(source);
       throwIfAborted(signal);
+      budgetReason = "parsedFacts";
       const facts = await cpu.run<NativeFile["facts"]>({
         kind: "parse",
         languageId: item.language,
         source,
       });
       files.push({ facts, path: item.path, source });
+      // The parser's node cap also produces incomplete facts.
+      if (facts.partial)
+        budgetPaths.parsedFacts.push(relative(root, item.path));
     } catch (error) {
-      if (signal?.aborted) throw abortError(signal);
-      if ((error as { code?: string })?.code === "intelligence_budget_exceeded")
-        throw error;
+      if (signal.aborted) throw abortError(signal);
+      if (
+        (error as { code?: string })?.code === "intelligence_budget_exceeded"
+      ) {
+        if (exactFile) throw error;
+        if (budgetReason === "sourceSize") {
+          budgetPaths.sourceSize.push(relative(root, item.path));
+          continue;
+        }
+        // Stop at aggregate exhaustion. Report every remaining candidate without
+        // reading or parsing it, so resource use stays bounded and deterministic.
+        budgetPaths[budgetReason].push(
+          ...selectedEligible
+            .slice(index)
+            .map((entry) => relative(root, entry.path)),
+        );
+        break;
+      }
       unreadable.push(relative(root, item.path));
     }
   }
-  const omittedPathCount =
-    unsupported.length + limited.length + unreadable.length;
+  const omittedPaths = {
+    scanLimit: limited,
+    unreadable,
+    unsupported,
+    ...budgetPaths,
+  };
+  const omissions = Object.fromEntries(
+    Object.entries(omittedPaths).map(([reason, paths]) => [
+      reason,
+      paths.length,
+    ]),
+  ) as ScanOmissions;
+  const incomplete =
+    limited.length > 0 ||
+    unreadable.length > 0 ||
+    Object.values(budgetPaths).some((paths) => paths.length > 0);
   return {
     files,
     root,
     scan: {
       candidates: selected.length,
       eligible: eligible.length,
-      exhaustive: limited.length === 0 && unreadable.length === 0,
-      omissions: {
-        scanLimit: limited.length,
-        unreadable: unreadable.length,
-        unsupported: unsupported.length,
-      },
-      omittedPaths: {
-        scanLimit: limited.slice(0, MAX_OMITTED_PATHS),
-        unreadable: unreadable.slice(0, MAX_OMITTED_PATHS),
-        unsupported: unsupported.slice(0, MAX_OMITTED_PATHS),
-      },
-      omittedPathsTruncated: omittedPathCount > MAX_OMITTED_PATHS,
+      exhaustive: !incomplete,
+      omissions,
+      omittedPaths: Object.fromEntries(
+        Object.entries(omittedPaths).map(([reason, paths]) => [
+          reason,
+          paths.slice(0, MAX_OMITTED_PATHS),
+        ]),
+      ) as ScanCoverage["omittedPaths"],
+      omittedPathsTruncated: Object.values(omittedPaths).some(
+        (paths) => paths.length > MAX_OMITTED_PATHS,
+      ),
       parsed: files.length,
-      truncated: limited.length > 0,
+      truncated: incomplete,
     },
   };
 }
@@ -663,8 +724,22 @@ function emptyScanCoverage(): ScanCoverage {
     candidates: 0,
     eligible: 0,
     exhaustive: true,
-    omissions: { scanLimit: 0, unreadable: 0, unsupported: 0 },
-    omittedPaths: { scanLimit: [], unreadable: [], unsupported: [] },
+    omissions: {
+      scanLimit: 0,
+      unreadable: 0,
+      unsupported: 0,
+      sourceSize: 0,
+      sourceBytes: 0,
+      parsedFacts: 0,
+    },
+    omittedPaths: {
+      scanLimit: [],
+      unreadable: [],
+      unsupported: [],
+      sourceSize: [],
+      sourceBytes: [],
+      parsedFacts: [],
+    },
     omittedPathsTruncated: false,
     parsed: 0,
     truncated: false,
@@ -700,13 +775,14 @@ function compactIdentity(value: string | null | undefined): string | null {
 }
 
 function compactScan(scan: ScanCoverage) {
-  const omitted =
-    scan.omissions.scanLimit +
-    scan.omissions.unreadable +
-    scan.omissions.unsupported;
+  const omitted = Object.values(scan.omissions).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   return {
     candidates: scan.candidates,
     eligible: scan.eligible,
+    exhaustive: scan.exhaustive,
     omitted: omitted === 0 ? 0 : scan.omissions,
     parsed: scan.parsed,
     ...(omitted === 0
@@ -727,11 +803,14 @@ async function withScopeMetadata(
   const workspace = currentWorkspace();
   return {
     ...payload,
+    exhaustive:
+      scan.exhaustive && resultOmissions === 0 && payload.truncated !== true,
     generation: await generationFor(workspace),
     repository: workspace?.repositoryId ?? null,
     revision: workspace?.selectedRevision.revisionId ?? null,
     scan: compactScan(scan),
-    truncated: payload.truncated === true || resultOmissions > 0,
+    truncated:
+      scan.truncated || payload.truncated === true || resultOmissions > 0,
     workspace: workspace?.workspaceId ?? null,
   };
 }
@@ -868,7 +947,7 @@ class RequestCpu {
       const message = (event: MessageEvent<CpuReply>) => {
         cleanup();
         if (event.data.ok) {
-          this.transferredBytes += event.data.bytes;
+          if (job.kind === "parse") this.transferredBytes += event.data.bytes;
           if (this.transferredBytes > MAX_REQUEST_BYTES)
             reject(capacityError("Parsed data exceeds the request byte limit"));
           else resolve(event.data.value as T);
@@ -898,7 +977,14 @@ class RequestCpu {
       this.worker.addEventListener("error", failed);
       this.signal.addEventListener("abort", aborted, { once: true });
       try {
-        this.worker.postMessage(job);
+        this.worker.postMessage(
+          job.kind === "parse"
+            ? {
+                ...job,
+                maxReplyBytes: MAX_REQUEST_BYTES - this.transferredBytes,
+              }
+            : job,
+        );
       } catch (error) {
         cleanup();
         reject(error);

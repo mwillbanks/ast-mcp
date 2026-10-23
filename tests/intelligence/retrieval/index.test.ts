@@ -909,18 +909,17 @@ describe("retrieval embedding provider", () => {
 });
 
 describe("LanceDB hybrid retrieval", () => {
-  test("associates zero-width chunks and declarations at matching source coordinates", async () => {
-    const point = {
-      start: { line: 0, column: 0 },
-      end: { line: 0, column: 0 },
-      startByte: 0,
-      endByte: 0,
-    };
-    for (const [chunkRange, occurrenceRange] of [
-      [point, point],
-      [point, RANGE],
-      [RANGE, point],
-    ]) {
+  test.each(["both", "chunk", "occurrence"] as const)(
+    "associates zero-width %s ranges at matching source coordinates",
+    async (zeroWidth) => {
+      const point = {
+        start: { line: 0, column: 0 },
+        end: { line: 0, column: 0 },
+        startByte: 0,
+        endByte: 0,
+      };
+      const chunkRange = zeroWidth === "occurrence" ? RANGE : point;
+      const occurrenceRange = zeroWidth === "chunk" ? RANGE : point;
       const { scope, store, workspace } = await harness("zero-width");
       try {
         const corpus = chunks().slice(0, 2);
@@ -960,8 +959,8 @@ describe("LanceDB hybrid retrieval", () => {
       } finally {
         await store.shutdownCoordinator();
       }
-    }
-  });
+    },
+  );
 
   test("propagates storage failures instead of reporting a timeout", async () => {
     const { scope, store, workspace } = await harness("read-error");

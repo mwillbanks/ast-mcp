@@ -55,7 +55,7 @@ Do not transfer options between tools.
 
 Use absolute paths when workspace selection or the working directory could be unclear.
 File inspection batches accept 1–50 paths or read targets.
-Mutation `files` objects contain 1–50 path-keyed entries.
+Mutation `files` objects contain 1–50 path-keyed entries. Rename destinations can have authorized missing parents; marker files are unnecessary.
 File tools accept optional `workspaceId` and `revision`.
 
 A read target accepts `filePath`, `mode`, `language`, `lines`, `range`, `maxBytes`, `selectors`, and `symbols`.
@@ -107,6 +107,9 @@ All these numeric bounds require positive integers.
 `search` and `find_related` require `query`, `target`, or `path`.
 `run` requires `pattern`; `rewrite` previews a replacement.
 `run.write: true` fails with `use_file_patch`; commit through `file_patch`.
+Bulk source-size, aggregate source-byte, and parsed-data omissions return partial results with bounded reason counts and paths.
+Inspect incomplete coverage, `exhaustive`, and `truncated` before treating absent matches or edges as complete evidence.
+Oversized exact-file requests retain typed errors. Mutation verification remains strict.
 `squeeze` requires supplied `text` or `query`. It does not read a file path.
 `impact` accepts `paths`, but rejects singular `file` and `path`.
 

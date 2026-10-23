@@ -201,7 +201,7 @@ export default function registerFileTools(
         readOnlyHint: false,
       },
       description:
-        "Creates or replaces multiple files in one declared files batch. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
+        "Creates or replaces 1–50 files and creates authorized missing parents without marker files. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
       inputSchema: boundedFileBatch(
         writeTarget,
         "file_write requires between 1 and 50 files",
@@ -239,7 +239,7 @@ export default function registerFileTools(
         readOnlyHint: false,
       },
       description:
-        "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview applies the strategy without formatting or committing; formatting runs only at commit, including previewReceipt commit.",
+        "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview applies the strategy without formatting or committing; formatting runs only at commit, including previewReceipt commit. Receipts are reserved across the batch and consumed after mutation completion; confirmed no-change or verified rollback permits retry until expiry, while changed source or uncertain recovery requires a new preview.",
       inputSchema: boundedFileBatch(
         z
           .object({

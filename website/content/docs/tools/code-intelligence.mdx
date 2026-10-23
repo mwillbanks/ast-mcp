@@ -41,6 +41,12 @@ ast-mcp exposes native intelligence tools directly. There is no generic proxy an
 
 `run` uses structural syntax patterns. `$NODE` matches one node and a metavariable beginning with three dollar signs matches zero or more nodes.
 
-Search omits `rewrite`. A dry-run includes `rewrite` and leaves `write` false. Direct `write: true` is an exceptional lower-level escape hatch; normal edits belong in guarded `file_patch` batches.
+Search omits `rewrite`. A dry-run includes `rewrite` and leaves `write` false. `write: true` fails with `use_file_patch`; commit edits through guarded `file_patch` batches.
 
-Native structural writes require a fresh hash and an explicit expected match count for every reviewed rule.
+Guarded structural patches require a fresh hash by default. Supply an explicit expected match count for each reviewed rule.
+
+## Bounded coverage
+
+Bulk scans return available results when source-size, aggregate source-byte, or parsed-data budgets omit files. Coverage reports omission reasons, total counts, and bounded example paths. Inspect `incomplete`, `exhaustive`, and `truncated` before interpreting absent search matches or graph edges. Dependency, digest, search, and graph consumers preserve incomplete status. Narrow the root or paths to obtain complete evidence.
+
+An oversized exact-file request still returns a typed error. Mutation reference verification remains strict and does not treat partial intelligence as proof of safety.
