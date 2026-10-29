@@ -45,10 +45,18 @@ The token has read-only contents, pull request, and Actions permissions.
 Selected runs explicitly leave full final acceptance pending.
 Freeze the head, then run full exact-head qualification once before merge or release.
 If that head already passed a full PR run, use that result instead of manually dispatching a duplicate.
-Otherwise dispatch CI with `expected_sha` equal to the frozen commit.
+Otherwise dispatch CI from a same-repository branch or tag that points exactly to the frozen commit, with matching `expected_sha`.
+A fork-only head requires a reviewed same-repository ref before dispatch.
 Main package pushes, explicit dispatches, and release qualification retain the full matrix.
 The existing automated release dispatch remains unchanged.
 
 Selected paths travel through JSON environment values and validated argument arrays.
 They are never interpolated into shell commands.
 Partial Linux runs do not report full coverage.
+
+Full acceptance checks required flags and exact supported platform, consumer, and native matrix sets within the workflow.
+A failed or missing gate writes a failure summary and cannot report completed qualification.
+Review workflow and selector changes before trusting their results.
+The full summary assumes that reviewed workflow definition; a PR can edit both its selector and acceptance workflow.
+This workflow does not provide an independent governance boundary against changes to that definition.
+Tokens remain read-only; validation does not use privileged `pull_request_target` execution.

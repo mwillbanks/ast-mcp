@@ -265,7 +265,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ matrix.shards }}
         run: |
-          bun -e 'const args = process.env.SELECTED === "true" ? ["--selected"] : ["--shard", process.env.SHARD, "--shards", process.env.SHARDS]; const child = Bun.spawnSync([process.execPath, "scripts/testing/test-shard.ts", ...args], {stdio:"inherit"}); process.exit(child.exitCode ?? 1)'
+          bun -e 'const args = process.env.SELECTED === "true" ? ["--selected"] : ["--shard", process.env.SHARD, "--shards", process.env.SHARDS]; const child = Bun.spawnSync([process.execPath, "scripts/testing/test-shard.ts", ...args], {stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(child.exitCode ?? 1)'
 
   package-native:
     name: Native package qualification (${{ matrix.os }})
@@ -361,18 +361,69 @@ jobs:
         with:
           script: |
             const results = JSON.parse(process.env.RESULTS);
-            if (results.changes.result !== "success") core.setFailed("Change selection did not succeed");
-            const packageExpected = results.changes.outputs.package === "true" ? "success" : "skipped";
+            const failures = [];
+            const outputs = results.changes?.outputs ?? {};
+            for (const flag of ["package", "full", "coverage", "website", "consumers", "native"]) {
+              if (outputs[flag] !== "true" && outputs[flag] !== "false") {
+                failures.push(flag + " must be an exact boolean string");
+              }
+            }
+            if (results.changes?.result !== "success") failures.push("Change selection did not succeed");
+            const packageExpected = outputs.package === "true" ? "success" : "skipped";
             for (const key of ["package-static", "package-coverage", "package-platform-tests"]) {
-              if (results[key].result !== packageExpected) core.setFailed(key + " did not cover its requested scope");
+              if (results[key]?.result !== packageExpected) failures.push(key + " did not cover its requested scope");
             }
             for (const [key, flag] of [["package-consumers", "consumers"], ["package-native", "native"], ["website", "website"]]) {
-              const expected = results.changes.outputs[flag] === "true" ? "success" : "skipped";
-              if (results[key].result !== expected) core.setFailed(key + " did not cover its requested scope");
+              const expected = outputs[flag] === "true" ? "success" : "skipped";
+              if (results[key]?.result !== expected) failures.push(key + " did not cover its requested scope");
             }
-            await core.summary.addRaw(results.changes.outputs.package !== "true"
+            if (outputs.full === "true") {
+              for (const flag of ["package", "coverage", "consumers", "native"]) {
+                if (outputs[flag] !== "true") failures.push("Full qualification requires " + flag);
+              }
+              // These supported sets belong to the reviewed workflow, independently
+              // of the selector's full label and generated matrices.
+              const expectedPlatforms = ["macos-latest", "windows-latest"].flatMap(os =>
+                [0, 1, 2].map(shard => ({ os, shard, shards: 3, selected: false })));
+              const consumerPlatforms = [
+                { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.4" },
+                { os: "ubuntu-24.04-arm", platform: "linux", arch: "arm64", bun: "1.4.4" },
+                { os: "ubuntu-24.04", platform: "linux", arch: "x64", bun: "1.4.4" },
+                { os: "windows-2025", platform: "win32", arch: "x64", bun: "1.4.4" },
+                { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.3" },
+                { os: "ubuntu-24.04-arm", platform: "linux", arch: "arm64", bun: "1.4.3" },
+              ];
+              const expectedConsumers = consumerPlatforms.flatMap(platform =>
+                ["bun", "npm"].map(installer => ({ platform, installer })));
+              const expectedNative = ["ubuntu-latest", "macos-latest", "windows-latest"].map(os => ({ os }));
+              function canonical(value) {
+                if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+                if (value !== null && typeof value === "object")
+                  return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+                return JSON.stringify(value);
+              }
+              for (const [name, expected] of [["platforms", expectedPlatforms], ["consumer_matrix", expectedConsumers], ["native_matrix", expectedNative]]) {
+                try {
+                  const matrix = JSON.parse(outputs[name]);
+                  if (!matrix || Object.keys(matrix).length !== 1 || !Array.isArray(matrix.include) ||
+                      matrix.include.length !== expected.length) throw new Error("Invalid matrix shape");
+                  const actual = matrix.include.map(canonical).sort();
+                  const supported = expected.map(canonical).sort();
+                  if (new Set(actual).size !== actual.length || actual.some((value, index) => value !== supported[index]))
+                    throw new Error("Unsupported matrix entries");
+                } catch {
+                  failures.push(name + " does not match the full supported matrix");
+                }
+              }
+            }
+            if (failures.length) {
+              core.setFailed(failures.join("\n"));
+              await core.summary.addRaw("CI qualification failed.\n\n" + failures.join("\n")).write();
+              return;
+            }
+            await core.summary.addRaw(outputs.package !== "true"
               ? "Documentation/website scope completed; package qualification was not requested."
-              : results.changes.outputs.full === "true" ? "Full exact-head qualification completed."
+              : outputs.full === "true" ? "Full exact-head qualification completed."
               : "Affected scope completed. Full exact-head acceptance remains required before merge/release.").write();
 
   release:
