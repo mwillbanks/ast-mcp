@@ -1,21 +1,28 @@
 import { randomUUID } from "node:crypto";
-import {
-  chmod,
-  chown,
-  lstat,
-  rename,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, type FileHandle, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { sha256 } from "../../runtime/hash.ts";
+import { sha256, sha256Handle } from "../../runtime/hash.ts";
 import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import {
   ensurePrivateLockDirectory as ensureMutationLockDirectory,
   systemAccount,
 } from "../../runtime/private-lock-directory.ts";
+import {
+  openSnapshotBlob,
+  inspectSnapshotBlob,
+  closeSnapshotHandles,
+  copySnapshotBlob,
+  publishSnapshotNoReplace,
+  releaseSnapshotCapture,
+  removeSnapshotBlob,
+  removeSnapshotTemporary,
+  snapshotNamespace,
+  sweepSnapshotBlobs,
+  syncDirectory,
+} from "../../runtime/snapshot-blob.ts";
 import { createIdentity } from "../contracts/common.ts";
 import { ParserWorkerPool } from "../parser/pool.ts";
 import { LanceIntelligenceStore } from "../storage/store.ts";
@@ -32,6 +39,7 @@ import type {
   MutationBatchPlan,
   MutationFileCommit,
   MutationJournalRecord,
+  MutationJournalFile,
   MutationLifecycle,
   MutationRefreshResult,
 } from "./types.ts";
@@ -53,7 +61,14 @@ export function mutationOperationId(input: {
   workspaceId: string;
 }): string {
   return createIdentity("job", {
-    operationId: createIdentity("mutation-operation", input),
+    operationId: createIdentity("mutation-operation", {
+      ...input,
+      files: input.files.map(({ candidateSha256, filePath, sourceSha256 }) => ({
+        candidateSha256,
+        filePath,
+        sourceSha256,
+      })),
+    }),
     storageDomainId: input.storageDomainId,
     workspaceId: input.workspaceId,
   });
@@ -62,14 +77,283 @@ export function mutationOperationId(input: {
 async function assertRecoveryPath(
   workspace: WorkspaceHandle,
   filePath: string,
+  retained?: FileHandle,
 ): Promise<void> {
   const canonicalRoot = await canonicalizePath(workspace.checkoutRoot);
-  const canonicalTarget = await canonicalizePath(filePath);
+  let canonicalTarget: string;
+  if (retained) {
+    const held = await retained.stat();
+    const current = await lstat(filePath);
+    if (
+      !held.isFile() ||
+      current.isSymbolicLink() ||
+      held.dev !== current.dev ||
+      held.ino !== current.ino
+    )
+      throw new Error("mutation_recovery_hash_mismatch");
+    // macOS realpath requires read permission on mode-zero regular files.
+    canonicalTarget = path.join(
+      await canonicalizePath(path.dirname(filePath)),
+      path.basename(filePath),
+    );
+  } else canonicalTarget = await canonicalizePath(filePath);
   if (
     path.relative(canonicalRoot, canonicalTarget) === "" ||
     !pathWithin(canonicalRoot, canonicalTarget)
   )
     throw new Error("mutation_path_outside_workspace");
+}
+
+function remainingRecoveryBudget(deadline?: Date | number): number | undefined {
+  if (deadline === undefined) return undefined;
+  const absolute = deadline instanceof Date ? deadline.getTime() : deadline;
+  if (!Number.isFinite(absolute))
+    throw new RangeError("Invalid recovery deadline");
+  const remaining = Math.ceil(absolute - Date.now());
+  if (remaining <= 0)
+    throw new DOMException(
+      "Mutation recovery deadline exceeded",
+      "TimeoutError",
+    );
+  return Math.min(remaining, 0xffffffff);
+}
+
+async function hashRecoveryFile(
+  filePath: string,
+  signal?: AbortSignal,
+  retained?: FileHandle,
+  hashTimeoutMs?: number,
+): Promise<string> {
+  const handle =
+    retained ??
+    (await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    ));
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error("mutation_recovery_hash_mismatch");
+    const digest = await sha256Handle(handle, signal, hashTimeoutMs);
+    const after = await handle.stat();
+    const current = await lstat(filePath);
+    if (
+      before.dev !== current.dev ||
+      before.ino !== current.ino ||
+      current.isSymbolicLink() ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    )
+      throw new Error("mutation_recovery_hash_mismatch");
+    return digest;
+  } finally {
+    if (!retained) await handle.close();
+  }
+}
+
+interface NamespaceOnlyRename {
+  rollback: boolean;
+  signal?: AbortSignal;
+  deadline?: Date | number;
+}
+
+async function syncMutationFile(
+  filePath: string,
+  readonlySource?: { mode: number; sha256: string },
+  options?: NamespaceOnlyRename,
+): Promise<void> {
+  let handle: FileHandle;
+  let readonly = false;
+  try {
+    handle = await open(
+      filePath,
+      (process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY) |
+        constants.O_NONBLOCK |
+        constants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      process.platform !== "win32" ||
+      !readonlySource ||
+      (code !== "EACCES" && code !== "EPERM")
+    )
+      throw error;
+    const current = await lstat(filePath);
+    if (
+      current.isSymbolicLink() ||
+      (current.mode & 0o200) !== 0 ||
+      (current.mode & 0o7777) !== readonlySource.mode
+    )
+      throw error;
+    handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    readonly = true;
+  }
+  try {
+    const held = await handle.stat();
+    const current = await lstat(filePath);
+    if (
+      !held.isFile() ||
+      current.isSymbolicLink() ||
+      held.dev !== current.dev ||
+      held.ino !== current.ino
+    )
+      throw new Error("mutation_recovery_hash_mismatch");
+    if (readonly) {
+      if (
+        (held.mode & 0o200) !== 0 ||
+        (held.mode & 0o7777) !== readonlySource!.mode ||
+        (current.mode & 0o7777) !== readonlySource!.mode ||
+        (await hashRecoveryFile(
+          filePath,
+          options?.signal,
+          handle,
+          remainingRecoveryBudget(options?.deadline),
+        )) !== readonlySource!.sha256 ||
+        ((await handle.stat()).mode & 0o7777) !== readonlySource!.mode
+      )
+        throw new Error("mutation_recovery_hash_mismatch");
+      // Rename changed directory entries only; these readonly bytes and mode match the journal.
+    } else await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+/** Include created directory entries, without syncing unchanged ancestors. */
+async function mutationDirectories(
+  files: readonly { filePath: string }[],
+  fence: () => Promise<void>,
+): Promise<Set<string>> {
+  const directories = new Set<string>();
+  for (const { filePath } of files) {
+    let directory = await canonicalizePath(path.dirname(filePath));
+    for (;;) {
+      await fence();
+      directories.add(directory);
+      try {
+        await lstat(directory);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = path.dirname(directory);
+        if (parent === directory) throw error;
+        directory = parent;
+      }
+    }
+  }
+  return directories;
+}
+
+async function syncMutationPaths(
+  workspace: WorkspaceHandle,
+  files: MutationBatchPlan["files"],
+  fence: () => Promise<void>,
+  requireCheckout = true,
+  syncFiles = true,
+  capturedDirectories: ReadonlySet<string> = new Set(),
+  namespaceRename?: NamespaceOnlyRename,
+): Promise<void> {
+  const directories = await mutationDirectories(files, fence);
+  for (const directory of capturedDirectories) directories.add(directory);
+  const root = await canonicalizePath(workspace.checkoutRoot);
+  for (const [index, file] of files.entries()) {
+    const { filePath } = file;
+    await fence();
+    let readonlySource: { mode: number; sha256: string } | undefined;
+    if (namespaceRename) {
+      const source = namespaceRename.rollback ? file : files[index - 1];
+      const digest = namespaceRename.rollback
+        ? file.sourceSha256
+        : file.candidateSha256;
+      // The rename producer journals adjacent source/destination pairs.
+      if (
+        source &&
+        digest &&
+        source.sourceSha256 === digest &&
+        source.sourceMode != null &&
+        (namespaceRename.rollback ||
+          (source.filePath !== filePath &&
+            source.candidateSha256 === null &&
+            file.sourceSha256 === null))
+      )
+        readonlySource = { mode: source.sourceMode & 0o7777, sha256: digest };
+    }
+    if (syncFiles)
+      await syncMutationFile(filePath, readonlySource, namespaceRename).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        },
+      );
+    const directory = await canonicalizePath(path.dirname(filePath));
+    const withinCheckout = directory === root || pathWithin(root, directory);
+    if (requireCheckout && !withinCheckout)
+      throw new Error("mutation_path_outside_workspace");
+  }
+  for (const directory of [...directories].sort(
+    (a, b) => b.length - a.length,
+  )) {
+    await fence();
+    await syncDirectory(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+
+class RecoveryMaterials extends Map<string, FileHandle> {
+  readonly targets = new Map<string, FileHandle>();
+  readonly extraTargets = new Set<FileHandle>();
+  readonly cleanReadonly = new Set<string>();
+  readonly inline = new Map<string, Buffer>();
+  constructor(readonly namespace: string) {
+    super();
+  }
+  async prepare(
+    file: MutationJournalFile,
+    signal?: AbortSignal,
+    hashTimeoutMs?: number,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    if (file.sourceBlob) {
+      if (file.sourceBlob.sha256 !== file.sourceSha256)
+        throw new Error("mutation_recovery_material_mismatch");
+      this.set(
+        file.filePath,
+        await openSnapshotBlob(
+          file.sourceBlob,
+          this.namespace,
+          signal,
+          hashTimeoutMs,
+        ),
+      );
+    } else if (file.sourceContentBase64 !== null) {
+      const source = Buffer.from(file.sourceContentBase64, "base64");
+      if (sha256(source) !== file.sourceSha256)
+        throw new Error("mutation_recovery_material_mismatch");
+      this.inline.set(file.filePath, source);
+    } else if (file.sourceSha256 !== null) {
+      throw new Error("mutation_recovery_material_missing");
+    }
+  }
+  async [Symbol.asyncDispose](): Promise<void> {
+    try {
+      await closeSnapshotHandles(
+        new Set([
+          ...this.values(),
+          ...this.targets.values(),
+          ...this.extraTargets,
+        ]),
+      );
+    } finally {
+      this.clear();
+      this.targets.clear();
+      this.extraTargets.clear();
+      this.cleanReadonly.clear();
+      this.inline.clear();
+    }
+  }
 }
 
 async function restoreMutationRecord(
@@ -81,6 +365,16 @@ async function restoreMutationRecord(
     signal?: AbortSignal;
   } = {},
 ): Promise<void> {
+  const remaining = remainingRecoveryBudget(options.deadline);
+  if (remaining !== undefined) {
+    const deadlineSignal = AbortSignal.timeout(remaining);
+    options = {
+      ...options,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, deadlineSignal])
+        : deadlineSignal,
+    };
+  }
   for (const file of record.files) {
     await assertRecoveryPath(workspace, file.filePath);
     if (
@@ -96,10 +390,38 @@ async function restoreMutationRecord(
         await options.fence?.();
         for (const lease of leases) await lease.fence();
       };
-      const fencePath = async (filePath: string) => {
+      const fencePath = async (filePath: string, retained?: FileHandle) => {
         await fence();
-        await assertRecoveryPath(workspace, filePath);
+        await assertRecoveryPath(workspace, filePath, retained);
       };
+      const hashTimeout = () => remainingRecoveryBudget(options.deadline);
+      const recoveryHash = (
+        filePath: string,
+        signal?: AbortSignal,
+        retained?: FileHandle,
+      ) => hashRecoveryFile(filePath, signal, retained, hashTimeout());
+      await using materials = new RecoveryMaterials(
+        snapshotNamespace(workspace),
+      );
+      const directories = await mutationDirectories(record.files, fence);
+      // Validate every source and current target before the first recovery write.
+      for (const file of record.files) {
+        await materials.prepare(file, options.signal, hashTimeout());
+        await assertRecoveryPath(workspace, file.filePath);
+        const actual = await recoveryHash(file.filePath, options.signal).catch(
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          },
+        );
+        if (
+          actual !== null &&
+          actual !== file.sourceSha256 &&
+          actual !== file.candidateSha256 &&
+          actual !== file.committedSha256
+        )
+          throw new Error("mutation_recovery_hash_mismatch");
+      }
       for (const file of record.files) {
         await assertRecoveryPath(workspace, file.filePath);
         const exists = await lstat(file.filePath).then(
@@ -110,9 +432,9 @@ async function restoreMutationRecord(
             throw error;
           },
         );
-        if (file.sourceContentBase64 === null) {
+        if (file.sourceSha256 === null) {
           if (!exists) continue;
-          const actual = sha256(await Bun.file(file.filePath).bytes());
+          const actual = await recoveryHash(file.filePath, options.signal);
           if (
             actual !== file.candidateSha256 &&
             actual !== file.committedSha256
@@ -122,20 +444,79 @@ async function restoreMutationRecord(
           await unlink(file.filePath);
           continue;
         }
-        const source = Buffer.from(file.sourceContentBase64, "base64");
-        if (sha256(source) !== file.sourceSha256)
-          throw new Error("mutation_recovery_material_mismatch");
+        const source = materials.inline.get(file.filePath);
+        let expectedCurrent: string | null = null;
         if (exists) {
-          const actual = sha256(await Bun.file(file.filePath).bytes());
+          const actual = await recoveryHash(file.filePath, options.signal);
+          expectedCurrent = actual;
           if (actual === file.sourceSha256) {
+            const readonlyWindows =
+              process.platform === "win32" &&
+              ((await lstat(file.filePath)).mode & 0o200) === 0;
+            let handle = await open(
+              file.filePath,
+              (process.platform === "win32" && !readonlyWindows
+                ? constants.O_RDWR
+                : constants.O_RDONLY) |
+                constants.O_NONBLOCK |
+                constants.O_NOFOLLOW,
+            );
+            materials.targets.set(file.filePath, handle);
+            if (
+              (await recoveryHash(file.filePath, options.signal, handle)) !==
+              file.sourceSha256
+            )
+              throw new Error("mutation_recovery_hash_mismatch");
+            if (readonlyWindows) {
+              const metadata = await handle.stat();
+              const stillReadonly = (metadata.mode & 0o200) === 0;
+              if (
+                stillReadonly &&
+                (file.sourceMode === null ||
+                  (metadata.mode & 0o7777) === (file.sourceMode & 0o7777)) &&
+                (file.sourceUid === null || metadata.uid === file.sourceUid) &&
+                (file.sourceGid === null || metadata.gid === file.sourceGid)
+              ) {
+                // No recovery change needs flushing; retain identity through final verification.
+                materials.cleanReadonly.add(file.filePath);
+                continue;
+              }
+              await fencePath(file.filePath, handle);
+              if (stillReadonly) {
+                if (file.sourceMode === null || (file.sourceMode & 0o200) === 0)
+                  throw new Error("mutation_recovery_metadata_unflushable");
+                await handle.chmod(file.sourceMode);
+              }
+              const writable = await open(
+                file.filePath,
+                constants.O_RDWR | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+              );
+              materials.extraTargets.add(writable);
+              await fencePath(file.filePath, handle);
+              const opened = await writable.stat();
+              if (
+                opened.dev !== metadata.dev ||
+                opened.ino !== metadata.ino ||
+                (await recoveryHash(
+                  file.filePath,
+                  options.signal,
+                  writable,
+                )) !== file.sourceSha256
+              )
+                throw new Error("mutation_recovery_hash_mismatch");
+              materials.extraTargets.add(handle);
+              materials.targets.set(file.filePath, writable);
+              handle = writable;
+            }
             if (file.sourceUid !== null && file.sourceGid !== null) {
               await fencePath(file.filePath);
-              await chown(file.filePath, file.sourceUid, file.sourceGid);
+              await handle.chown(file.sourceUid, file.sourceGid);
             }
             if (file.sourceMode !== null) {
               await fencePath(file.filePath);
-              await chmod(file.filePath, file.sourceMode);
+              await handle.chmod(file.sourceMode);
             }
+            await handle.sync();
             continue;
           }
           if (
@@ -149,31 +530,122 @@ async function restoreMutationRecord(
           `.${path.basename(file.filePath)}.recovery-${randomUUID()}`,
         );
         await fencePath(temporary);
-        await writeFile(temporary, source, {
-          flag: "wx",
-          mode:
-            process.platform === "win32"
-              ? undefined
-              : (file.sourceMode ?? undefined),
-        });
+        let temporaryCreated = false;
+        let temporaryIdentity: { dev: number; ino: number } | undefined;
+        const restorationErrors: unknown[] = [];
         try {
+          let output: FileHandle;
+          if (file.sourceBlob) {
+            const identity = await copySnapshotBlob(
+              materials.get(file.filePath)!,
+              temporary,
+              file.sourceBlob,
+              options.signal,
+            );
+            temporaryCreated = true;
+            temporaryIdentity = identity;
+            output = await open(
+              temporary,
+              (process.platform === "win32"
+                ? constants.O_RDWR
+                : constants.O_RDONLY) | constants.O_NOFOLLOW,
+            );
+            materials.targets.set(file.filePath, output);
+            const actual = await output.stat();
+            if (actual.dev !== identity.dev || actual.ino !== identity.ino)
+              throw new Error("mutation_recovery_hash_mismatch");
+          } else {
+            output = await open(temporary, "wx+", 0o600);
+            temporaryCreated = true;
+            materials.targets.set(file.filePath, output);
+            temporaryIdentity = await output.stat();
+            await output.writeFile(source!);
+            await output.sync();
+          }
           if (file.sourceUid !== null && file.sourceGid !== null) {
             await fencePath(temporary);
-            await chown(temporary, file.sourceUid, file.sourceGid);
+            await output.chown(file.sourceUid, file.sourceGid);
           }
           if (file.sourceMode !== null) {
             await fencePath(temporary);
-            await chmod(temporary, file.sourceMode);
+            await output.chmod(file.sourceMode);
           }
+          await fencePath(temporary, output);
+          await output.sync();
           await fencePath(file.filePath);
-          await assertRecoveryPath(workspace, temporary);
-          await rename(temporary, file.filePath);
+          await assertRecoveryPath(workspace, temporary, output);
+          const actualBeforeReplace = await recoveryHash(
+            file.filePath,
+            options.signal,
+          ).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return null;
+            throw error;
+          });
+          if (actualBeforeReplace !== expectedCurrent)
+            throw new Error("mutation_recovery_hash_mismatch");
+          await fencePath(file.filePath);
+          const held = await output.stat();
+          const published = await lstat(temporary);
+          if (
+            published.isSymbolicLink() ||
+            held.dev !== published.dev ||
+            held.ino !== published.ino
+          )
+            throw new Error("mutation_recovery_hash_mismatch");
+          if (expectedCurrent === null) {
+            const target = await publishSnapshotNoReplace(
+              temporary,
+              file.filePath,
+              output,
+              { sha256: file.sourceSha256, size: held.size },
+              async (retained) => {
+                await fencePath(file.filePath, retained);
+                await assertRecoveryPath(workspace, temporary, output);
+              },
+              {
+                signal: options.signal,
+                hashTimeoutMs: remainingRecoveryBudget(options.deadline),
+              },
+            );
+            if (target !== output) {
+              materials.extraTargets.add(output);
+              materials.targets.set(file.filePath, target);
+            }
+          } else {
+            await rename(temporary, file.filePath);
+          }
+        } catch (error) {
+          restorationErrors.push(error);
+          throw error;
         } finally {
-          await unlink(temporary).catch(() => undefined);
+          const failures = [...restorationErrors];
+          if (temporaryCreated && temporaryIdentity) {
+            try {
+              await removeSnapshotTemporary(temporary, temporaryIdentity);
+            } catch (error) {
+              failures.push(error);
+            }
+            if (restorationErrors.length) {
+              try {
+                await syncDirectory(path.dirname(temporary));
+              } catch (error) {
+                failures.push(error);
+              }
+            }
+          }
+          if (failures.length > restorationErrors.length)
+            throw new AggregateError(
+              failures,
+              "Mutation recovery temporary cleanup failed",
+            );
         }
       }
       for (const file of record.files) {
-        await assertRecoveryPath(workspace, file.filePath);
+        await assertRecoveryPath(
+          workspace,
+          file.filePath,
+          materials.targets.get(file.filePath),
+        );
         const exists = await lstat(file.filePath).then(
           () => true,
           () => false,
@@ -183,9 +655,11 @@ async function restoreMutationRecord(
         } else {
           if (!exists) throw new Error("mutation_recovery_verification_failed");
           const [actual, metadata] = await Promise.all([
-            Bun.file(file.filePath)
-              .bytes()
-              .then((content) => sha256(content)),
+            recoveryHash(
+              file.filePath,
+              options.signal,
+              materials.targets.get(file.filePath),
+            ),
             lstat(file.filePath),
           ]);
           if (
@@ -196,8 +670,18 @@ async function restoreMutationRecord(
             (file.sourceGid !== null && metadata.gid !== file.sourceGid)
           )
             throw new Error("mutation_recovery_verification_failed");
+          if (!materials.cleanReadonly.has(file.filePath))
+            await materials.targets.get(file.filePath)!.sync();
         }
       }
+      await syncMutationPaths(
+        workspace,
+        record.files,
+        fence,
+        true,
+        false,
+        directories,
+      );
     },
     {
       deadline: options.deadline ?? Date.now() + 10_000,
@@ -209,6 +693,7 @@ async function restoreMutationRecord(
 export class LanceMutationLifecycle implements MutationLifecycle {
   readonly journal: LanceMutationJournal;
   readonly #plans = new Map<string, MutationBatchPlan>();
+  readonly #directories = new Map<string, ReadonlySet<string>>();
 
   constructor(
     private readonly store: LanceIntelligenceStore,
@@ -227,16 +712,37 @@ export class LanceMutationLifecycle implements MutationLifecycle {
   async recover(): Promise<void> {
     await this.options.fence?.();
     const checkoutRoot = await canonicalizePath(this.workspace.checkoutRoot);
-    await this.journal.recover(
+    const recovered = await this.journal.recover(
       this.workspace.workspaceId,
       (record) => restoreMutationRecord(this.workspace, record, this.options),
       checkoutRoot,
     );
-    if (
-      (await this.journal.unfinished(this.workspace.workspaceId, checkoutRoot))
-        .length > 0
-    )
-      throw new Error("mutation_recovery_required");
+    for (const operationId of recovered) {
+      this.#plans.delete(operationId);
+      this.#directories.delete(operationId);
+      const record = await this.journal.get(operationId);
+      for (const file of record?.files ?? [])
+        if (file.sourceBlob)
+          await removeSnapshotBlob(
+            file.sourceBlob,
+            snapshotNamespace(this.workspace),
+          ).catch(() => undefined);
+    }
+    const unfinished = await this.journal.unfinished(
+      this.workspace.workspaceId,
+      checkoutRoot,
+    );
+    await sweepSnapshotBlobs(
+      snapshotNamespace(this.workspace),
+      new Set(
+        unfinished.flatMap((record) =>
+          record.files.flatMap((file) =>
+            file.sourceBlob ? [file.sourceBlob.id] : [],
+          ),
+        ),
+      ),
+    );
+    if (unfinished.length > 0) throw new Error("mutation_recovery_required");
   }
 
   async begin(plan: MutationBatchPlan): Promise<void> {
@@ -252,8 +758,28 @@ export class LanceMutationLifecycle implements MutationLifecycle {
       throw new Error("mutation_workspace_mismatch");
     if (!this.workspace.writeEligibility.eligible)
       throw new Error("workspace_read_only");
-    this.#plans.set(plan.operationId, plan);
+    // Begin only journals. Producers fully verify all captured bytes after begin,
+    // before changing any target, so a durable rollback owner exists on failure.
+    for (const file of plan.files)
+      if (file.sourceBlob)
+        await inspectSnapshotBlob(
+          file.sourceBlob,
+          snapshotNamespace(this.workspace),
+          this.options.signal,
+        );
+    const directories = await mutationDirectories(plan.files, async () => {
+      this.options.signal?.throwIfAborted();
+      await this.options.fence?.();
+    });
     await this.journal.begin(plan);
+    this.#directories.set(plan.operationId, directories);
+    for (const file of plan.files)
+      if (file.sourceBlob)
+        releaseSnapshotCapture(
+          file.sourceBlob,
+          snapshotNamespace(this.workspace),
+        );
+    this.#plans.set(plan.operationId, plan);
   }
 
   async committed(
@@ -300,8 +826,27 @@ export class LanceMutationLifecycle implements MutationLifecycle {
       });
       signal.throwIfAborted();
       await this.options.fence?.();
+      await syncMutationPaths(
+        this.workspace,
+        plan.files,
+        async () => {
+          await this.options.fence?.();
+        },
+        false,
+        // Attribute and text producers sync retained descriptors before closing.
+        !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
+        this.#directories.get(operationId),
+        plan.tool === "file_rename"
+          ? {
+              rollback: false,
+              signal: this.options.signal,
+              deadline: this.options.deadline,
+            }
+          : undefined,
+      );
       await this.journal.transition(operationId, "succeeded");
       this.#plans.delete(operationId);
+      this.#directories.delete(operationId);
       return result;
     } catch (error) {
       const failure =
@@ -322,13 +867,36 @@ export class LanceMutationLifecycle implements MutationLifecycle {
 
   async failed(operationId: string, error: unknown): Promise<void> {
     if (!this.#plans.has(operationId)) return;
-    await this.journal.transition(operationId, "failed", errorCode(error));
+    await this.journal.transition(
+      operationId,
+      "recovery-required",
+      errorCode(error),
+    );
   }
 
   async rolledBack(operationId: string): Promise<void> {
-    if (!this.#plans.has(operationId)) return;
+    const plan = this.#plans.get(operationId);
+    if (!plan) return;
+    await syncMutationPaths(
+      this.workspace,
+      plan.files,
+      async () => {
+        await this.options.fence?.();
+      },
+      false,
+      !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
+      this.#directories.get(operationId),
+      plan.tool === "file_rename"
+        ? {
+            rollback: true,
+            signal: this.options.signal,
+            deadline: this.options.deadline,
+          }
+        : undefined,
+    );
     await this.journal.transition(operationId, "rolled-back");
     this.#plans.delete(operationId);
+    this.#directories.delete(operationId);
   }
 }
 

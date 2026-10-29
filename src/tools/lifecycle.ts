@@ -28,6 +28,7 @@ import {
   applyFileChattr,
   type FileChattr,
   readFileChattrSnapshot,
+  FileChattrSnapshots,
 } from "../runtime/attributes";
 import { deleteFilesSafely } from "../runtime/file-delete";
 import { renameFilesSafely } from "../runtime/file-rename";
@@ -93,10 +94,7 @@ export default function registerLifecycleTools(
                       const fence = async (): Promise<void> => {
                         await Promise.all(leases.map((lease) => lease.fence()));
                       };
-                      const snapshots = new Map<
-                        string,
-                        Awaited<ReturnType<typeof readFileChattrSnapshot>>
-                      >();
+                      await using snapshots = new FileChattrSnapshots();
                       for (const { filePath, request } of entries) {
                         await requireExpectedHash(
                           request.expectedSha256,
@@ -106,10 +104,10 @@ export default function registerLifecycleTools(
                           filePath,
                           signal,
                         );
+                        snapshots.set(filePath, captured);
                         const actual = captured.sha256;
                         if (request.expectedSha256)
                           verifyExpectedHash(request.expectedSha256, actual);
-                        snapshots.set(filePath, captured);
                       }
                       const workspace = currentWorkspace() ?? null;
                       const plan = entries.map(({ filePath }) => {
@@ -119,8 +117,8 @@ export default function registerLifecycleTools(
                         return {
                           candidateSha256: snapshot.sha256,
                           filePath,
-                          sourceContentBase64:
-                            snapshot.content.toString("base64"),
+                          sourceContentBase64: null,
+                          sourceBlob: snapshot.sourceBlob,
                           sourceGid:
                             process.platform === "win32"
                               ? null
@@ -144,6 +142,7 @@ export default function registerLifecycleTools(
                             workspaceId: workspace.workspaceId,
                           })
                         : randomUUID();
+                      snapshots.disposable = false;
                       await beginMutation({
                         files: plan,
                         operationId,
@@ -152,6 +151,7 @@ export default function registerLifecycleTools(
                       });
                       const applied: string[] = [];
                       try {
+                        await snapshots.verify(signal);
                         for (const { filePath, request } of entries) {
                           signal?.throwIfAborted();
                           const snapshot = snapshots.get(filePath);
@@ -188,6 +188,7 @@ export default function registerLifecycleTools(
                             return { filePath, sha256: snapshot.sha256 };
                           }),
                         );
+                        snapshots.disposable = true;
                       } catch (error) {
                         await failMutation(operationId, error).catch(
                           () => undefined,
@@ -225,6 +226,7 @@ export default function registerLifecycleTools(
                             { details: { affectedPaths: applied } },
                           );
                         await recordMutationRollback(operationId);
+                        snapshots.disposable = true;
                         throw error;
                       }
                     },

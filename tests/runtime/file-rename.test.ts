@@ -147,11 +147,11 @@ test("file_rename cleans the current destination after source unlink failure", a
   const destination = path.join(root, "destination.txt");
   await writeFile(source, "source\n");
   const actualUnlink = fsPromises.unlink.bind(fsPromises);
-  let calls = 0;
+  const canonicalSource = await fsPromises.realpath(source);
   const unlink = spyOn(fsPromises, "unlink").mockImplementation(
     async (file) => {
-      calls += 1;
-      if (calls === 2) throw new Error("source unlink failed");
+      if (String(file) === canonicalSource)
+        throw new Error("source unlink failed");
       return actualUnlink(file);
     },
   );
@@ -174,12 +174,17 @@ test("file_rename reports current cleanup and rollback failures", async () => {
   const cleanupDestination = path.join(cleanupRoot, "destination.txt");
   await writeFile(cleanupSource, "source\n");
   const actualUnlink = fsPromises.unlink.bind(fsPromises);
-  let cleanupCalls = 0;
+  const canonicalCleanupSource = await fsPromises.realpath(cleanupSource);
+  const canonicalCleanupDestination = path.join(
+    path.dirname(canonicalCleanupSource),
+    path.basename(cleanupDestination),
+  );
   const cleanupUnlink = spyOn(fsPromises, "unlink").mockImplementation(
     async (file) => {
-      cleanupCalls += 1;
-      if (cleanupCalls === 2) throw new Error("source unlink failed");
-      if (cleanupCalls === 3) throw new Error("destination cleanup failed");
+      if (String(file) === canonicalCleanupSource)
+        throw new Error("source unlink failed");
+      if (String(file) === canonicalCleanupDestination)
+        throw new Error("destination cleanup failed");
       return actualUnlink(file);
     },
   );
@@ -203,12 +208,17 @@ test("file_rename reports current cleanup and rollback failures", async () => {
   const secondDestination = path.join(rollbackRoot, "second-new.txt");
   await writeFile(first, "first\n");
   await writeFile(second, "second\n");
-  let rollbackCalls = 0;
+  const canonicalSecond = await fsPromises.realpath(second);
+  const canonicalFirstDestination = path.join(
+    path.dirname(canonicalSecond),
+    path.basename(firstDestination),
+  );
   const rollbackUnlink = spyOn(fsPromises, "unlink").mockImplementation(
     async (file) => {
-      rollbackCalls += 1;
-      if (rollbackCalls === 4) throw new Error("second unlink failed");
-      if (rollbackCalls === 6) throw new Error("rollback unlink failed");
+      if (String(file) === canonicalSecond)
+        throw new Error("second unlink failed");
+      if (String(file) === canonicalFirstDestination)
+        throw new Error("rollback unlink failed");
       return actualUnlink(file);
     },
   );
