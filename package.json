@@ -36,7 +36,7 @@
     "diff-match-patch-ts": "^2.0.0",
     "onnxruntime-common": "1.30.0",
     "parse5": "8.0.1",
-    "posthog-node": "5.56.2",
+    "posthog-node": "5.56.4",
     "tree-sitter-systemverilog": "0.4.1",
     "tree-sitter-wasm": "2.0.4",
     "typescript-strada": "npm:@typescript/typescript6@6.0.2",
