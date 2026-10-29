@@ -35,19 +35,44 @@ export function selectTestShard(
   return files.filter((_, index) => index % shards === shard);
 }
 
+export function selectedTestFiles(
+  value: string | undefined,
+  available: readonly string[],
+): string[] {
+  const files: unknown = JSON.parse(value ?? "null");
+  if (
+    !Array.isArray(files) ||
+    files.length === 0 ||
+    files.length > available.length ||
+    files.some(
+      (file) => typeof file !== "string" || !available.includes(file),
+    ) ||
+    new Set(files).size !== files.length
+  )
+    throw new Error("Selected tests must be unique discovered test paths");
+  return files as string[];
+}
+
 export function runTestShard(
   args = process.argv.slice(2),
   root = process.cwd(),
   output: "inherit" | "ignore" = "inherit",
 ): number {
-  if (args.length !== 4 || args[0] !== "--shard" || args[2] !== "--shards") {
+  const selected = args.length === 1 && args[0] === "--selected";
+  if (
+    !selected &&
+    (args.length !== 4 || args[0] !== "--shard" || args[2] !== "--shards")
+  ) {
     throw new Error(
-      "Usage: bun scripts/testing/test-shard.ts --shard <zero-based index> --shards <count>",
+      "Usage: bun scripts/testing/test-shard.ts --selected | --shard <zero-based index> --shards <count>",
     );
   }
-  const shard = Number(args[1]);
-  const shards = Number(args[3]);
-  const files = selectTestShard(discoverTestFiles(root), shard, shards);
+  const shard = selected ? 0 : Number(args[1]);
+  const shards = selected ? 1 : Number(args[3]);
+  const discovered = discoverTestFiles(root);
+  const files = selected
+    ? selectedTestFiles(process.env.AST_MCP_SELECTED_TESTS, discovered)
+    : selectTestShard(discovered, shard, shards);
   if (files.length === 0) throw new Error(`Test shard ${shard} is empty`);
   if (output === "inherit")
     console.log(

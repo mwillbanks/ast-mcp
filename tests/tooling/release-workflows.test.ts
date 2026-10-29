@@ -20,11 +20,18 @@ type Job = {
   steps?: Step[];
   strategy?: {
     "fail-fast"?: boolean;
-    matrix?: {
-      os?: string[];
-      installer?: string[];
-      platform?: { os: string; platform: string; arch: string; bun: string }[];
-    };
+    matrix?:
+      | string
+      | {
+          os?: string[];
+          installer?: string[];
+          platform?: {
+            os: string;
+            platform: string;
+            arch: string;
+            bun: string;
+          }[];
+        };
   };
 };
 type Workflow = {
@@ -114,9 +121,46 @@ describe("release workflow contracts", () => {
       for (const step of candidate.steps ?? []) {
         if (!step.uses?.startsWith("actions/checkout@")) continue;
         checkouts++;
-        expect(step.with?.ref).toBe("${{ inputs.expected_sha || github.sha }}");
+        expect(step.with?.ref).toBe(
+          "${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}",
+        );
       }
     expect(checkouts).toBeGreaterThanOrEqual(6);
+  });
+  test("PR selection preserves full final acceptance and safe selected argv", () => {
+    const changes = job(ci, "changes");
+    expect(changes.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "read",
+      actions: "read",
+    });
+    expect(
+      changes.steps?.find(
+        (step) => step.run === "bun scripts/testing/ci-selection.ts",
+      )?.env?.GITHUB_TOKEN,
+    ).toBe("${{ secrets.GITHUB_TOKEN }}");
+    expect(job(ci, "package-platform-tests").strategy?.matrix).toBe(
+      "${{ fromJSON(needs.changes.outputs.platforms) }}",
+    );
+    expect(job(ci, "package-native").if).toContain("outputs.native");
+    expect(job(ci, "package-consumers").if).toContain("outputs.consumers");
+    const coverage = job(ci, "package-coverage").steps ?? [];
+    expect(
+      coverage.find((step) => step.run === "bun run test:coverage")?.if,
+    ).toContain("coverage == 'true'");
+    expect(
+      coverage.find((step) => step.run?.endsWith("--selected"))?.env
+        ?.AST_MCP_SELECTED_TESTS,
+    ).toBe("${{ needs.changes.outputs.selected_tests }}");
+    const acceptance = job(ci, "ci-acceptance");
+    expect(acceptance.if).toBe("always()");
+    expect(acceptance).toMatchObject({
+      name: "${{ format('{0} CI acceptance [PR {1}; base {2}; website {3}]', needs.changes.outputs.package != 'true' && 'No package' || needs.changes.outputs.full == 'true' && 'Full' || 'Selected', github.event.pull_request.number || 0, github.event.pull_request.base.sha || github.sha, needs.changes.outputs.website == 'true' && 'true' || 'false') }}",
+    });
+    expect(acceptance.steps?.[0]?.with?.script).toContain(
+      "results[key].result !== expected",
+    );
+    expect(job(ci, "release").needs).toContain("ci-acceptance");
   });
   test("release recovery uses the registered CI workflow", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
@@ -252,8 +296,34 @@ describe("release workflow contracts", () => {
   test("packed qualification covers actual platforms, installers, and minimum Bun", () => {
     const qualification = job(consumers, "consumers");
     expect(qualification.strategy?.["fail-fast"]).toBe(false);
-    expect(qualification.strategy?.matrix?.installer).toEqual(["bun", "npm"]);
-    expect(qualification.strategy?.matrix?.platform).toEqual([
+    expect(qualification.strategy?.matrix).toBe(
+      "${{ fromJSON(inputs.matrix) }}",
+    );
+    const inputs = (
+      consumers.on.workflow_call as {
+        inputs: Record<
+          string,
+          { default?: string; required?: boolean; type?: string }
+        >;
+      }
+    ).inputs;
+    const combinations = JSON.parse(inputs.matrix!.default!).include as Array<{
+      installer: string;
+      platform: { os: string; platform: string; arch: string; bun: string };
+    }>;
+    expect(combinations).toHaveLength(12);
+    expect([...new Set(combinations.map((item) => item.installer))]).toEqual([
+      "bun",
+      "npm",
+    ]);
+    expect([
+      ...new Map(
+        combinations.map((item) => [
+          JSON.stringify(item.platform),
+          item.platform,
+        ]),
+      ).values(),
+    ]).toEqual([
       { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.4" },
       {
         os: "ubuntu-24.04-arm",
@@ -273,10 +343,19 @@ describe("release workflow contracts", () => {
     ]);
     const steps = qualification.steps ?? [];
     const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
-    expect(checkout?.with?.ref).toBe("${{ github.sha }}");
-    expect(consumers.on.workflow_call).toEqual({
-      inputs: { artifact_name: { required: true, type: "string" } },
+    expect(checkout?.with?.ref).toBe(
+      "${{ inputs.checkout_ref || github.sha }}",
+    );
+    expect(inputs.artifact_name).toEqual({ required: true, type: "string" });
+    expect(inputs.checkout_ref).toMatchObject({
+      required: false,
+      type: "string",
     });
+    expect(inputs.matrix).toMatchObject({ required: false, type: "string" });
+    expect(job(ci, "package-consumers").with?.matrix).toBe(
+      "${{ needs.changes.outputs.consumer_matrix }}",
+    );
+    expect(job(release, "consumers").with?.matrix).toBeUndefined();
     const architecture = steps.find((s) => s.env?.EXPECTED_ARCH);
     expect(architecture?.run).toContain(
       "process.arch !== process.env.EXPECTED_ARCH",
@@ -310,7 +389,12 @@ describe("release workflow contracts", () => {
     }
   });
   test("publishing uses the qualified archive without rebuilding", () => {
-    expect(job(release, "validate").strategy?.matrix?.os).toEqual([
+    const matrix = job(release, "validate").strategy?.matrix;
+    if (!matrix || typeof matrix === "string")
+      throw new Error(
+        "Release validation requires an explicit platform matrix",
+      );
+    expect(matrix.os).toEqual([
       "ubuntu-24.04",
       "ubuntu-24.04-arm",
       "macos-15",

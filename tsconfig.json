@@ -26,6 +26,7 @@
     "scripts/validation/check-runtime-imports.ts",
     "scripts/release/dispatch-release-ci.ts",
     "scripts/testing/test-shard.ts",
+    "scripts/testing/ci-selection.ts",
     "scripts/testing/host-smoke.ts",
     "templates/skills/ast-mcp/scripts/**/*"
   ]
