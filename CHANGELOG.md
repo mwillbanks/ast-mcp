@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.6](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.5...ast-mcp-v0.6.6) (2026-10-29)
+
+
+### 🚦 Automation
+
+* **50:** select affected PR validation ([94762c8](https://github.com/mwillbanks/ast-mcp/commit/94762c8f338c31d0ba6e7e3c0bd0d6f430e0e4fb))
+
 ## [0.6.5](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.4...ast-mcp-v0.6.5) (2026-10-29)
 
 ### 🐛 Fixes
