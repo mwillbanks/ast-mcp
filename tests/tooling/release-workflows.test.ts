@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import { $ } from "bun";
+
+import { discoverTestFiles } from "../../scripts/testing/test-shard.ts";
 type Step = {
   uses?: string;
   run?: string;
@@ -20,11 +22,18 @@ type Job = {
   steps?: Step[];
   strategy?: {
     "fail-fast"?: boolean;
-    matrix?: {
-      os?: string[];
-      installer?: string[];
-      platform?: { os: string; platform: string; arch: string; bun: string }[];
-    };
+    matrix?:
+      | string
+      | {
+          os?: string[];
+          installer?: string[];
+          platform?: {
+            os: string;
+            platform: string;
+            arch: string;
+            bun: string;
+          }[];
+        };
   };
 };
 type Workflow = {
@@ -47,6 +56,234 @@ function job(source: Workflow, name: string): Job {
   if (!result) throw new Error(`Missing job ${name}`);
   return result;
 }
+describe("executed CI acceptance contracts", () => {
+  function fullOutputs(): Record<string, string> {
+    const inputs = (
+      consumers.on.workflow_call as { inputs: { matrix: { default: string } } }
+    ).inputs;
+    return {
+      package: "true",
+      full: "true",
+      coverage: "true",
+      consumers: "true",
+      native: "true",
+      website: "false",
+      platforms: JSON.stringify({
+        include: ["macos-latest", "windows-latest"].flatMap((os) =>
+          [0, 1, 2].map((shard) => ({ os, shard, shards: 3, selected: false })),
+        ),
+      }),
+      consumer_matrix: inputs.matrix.default,
+      native_matrix: JSON.stringify({
+        include: ["ubuntu-latest", "macos-latest", "windows-latest"].map(
+          (os) => ({ os }),
+        ),
+      }),
+    };
+  }
+  type Results = Record<
+    string,
+    { result: string; outputs?: Record<string, string> }
+  >;
+  function results(outputs = fullOutputs()): Results {
+    return {
+      changes: { result: "success", outputs },
+      ...Object.fromEntries(
+        [
+          "package-static",
+          "package-coverage",
+          "package-platform-tests",
+          "package-consumers",
+          "package-native",
+        ].map((name) => [name, { result: "success" }]),
+      ),
+      website: { result: outputs.website === "true" ? "success" : "skipped" },
+    };
+  }
+  async function execute(value: Results) {
+    const script = job(ci, "ci-acceptance").steps?.[0]?.with?.script;
+    if (typeof script !== "string")
+      throw new Error("Missing acceptance JavaScript");
+    const failures: string[] = [],
+      summaries: string[] = [];
+    const core = {
+      setFailed: (message: string) => {
+        failures.push(message);
+      },
+      summary: {
+        addRaw: (message: string) => ({
+          write: async () => {
+            summaries.push(message);
+          },
+        }),
+      },
+    };
+    await new Function(
+      "core",
+      "process",
+      "return (async () => {\n" + script + "\n})();",
+    )(core, { env: { RESULTS: JSON.stringify(value) } });
+    return { failures, summaries };
+  }
+  test("only exact supported full matrices and successful gates report full completion", async () => {
+    const outputs = fullOutputs();
+    // Matrix order is immaterial, but every supported combination is required.
+    for (const name of ["platforms", "consumer_matrix", "native_matrix"]) {
+      const matrix = JSON.parse(outputs[name]!) as { include: unknown[] };
+      outputs[name] = JSON.stringify({ include: matrix.include.reverse() });
+    }
+    const outcome = await execute(results(outputs));
+    expect(outcome.failures).toEqual([]);
+    expect(outcome.summaries).toEqual([
+      "Full exact-head qualification completed.",
+    ]);
+  });
+  test.each(["failure", "skipped", "missing"])(
+    "failed, skipped or missing gates never produce a completion summary: %s",
+    async (state) => {
+      for (const name of [
+        "changes",
+        "package-static",
+        "package-coverage",
+        "package-platform-tests",
+        "package-consumers",
+        "package-native",
+        "website",
+      ]) {
+        const value = results({ ...fullOutputs(), website: "true" });
+        if (state === "missing") delete value[name];
+        else value[name]!.result = state;
+        const outcome = await execute(value);
+        expect(outcome.failures).toHaveLength(1);
+        expect(outcome.summaries).toHaveLength(1);
+        expect(outcome.summaries[0]).toContain("CI qualification failed.");
+        expect(outcome.summaries[0]).not.toContain("completed");
+      }
+    },
+  );
+  test.each(["package", "full", "coverage", "website", "consumers", "native"])(
+    "missing and malformed selection flags cannot pass as false: %s",
+    async (flag) => {
+      for (const invalid of [
+        undefined,
+        null,
+        true,
+        false,
+        0,
+        "",
+        "TRUE",
+        " false ",
+      ]) {
+        const outputs = fullOutputs();
+        for (const name of [
+          "package",
+          "full",
+          "coverage",
+          "website",
+          "consumers",
+          "native",
+        ])
+          outputs[name] = "false";
+        if (invalid === undefined) delete outputs[flag];
+        else Object.assign(outputs, { [flag]: invalid });
+        const value = results(outputs);
+        for (const [name, result] of Object.entries(value))
+          if (name !== "changes") result.result = "skipped";
+        const outcome = await execute(value);
+        expect(outcome.failures.join("\n")).toContain(
+          flag + " must be an exact boolean string",
+        );
+        expect(outcome.summaries).toHaveLength(1);
+        expect(outcome.summaries[0]).toContain("CI qualification failed.");
+        expect(outcome.summaries[0]).not.toContain("completed");
+      }
+    },
+  );
+  test.each(["package", "coverage", "consumers", "native"])(
+    "a full label cannot disable a required flag: %s",
+    async (flag) => {
+      const outcome = await execute(
+        results({ ...fullOutputs(), [flag]: "false" }),
+      );
+      expect(outcome.failures.join("\n")).toContain(
+        "Full qualification requires " + flag,
+      );
+      expect(outcome.summaries.join("\n")).not.toContain(
+        "Full exact-head qualification completed.",
+      );
+    },
+  );
+  test.each(["platforms", "consumer_matrix", "native_matrix"])(
+    "reduced, duplicate, unsupported and malformed full matrix entries fail: %s",
+    async (name) => {
+      const original = JSON.parse(fullOutputs()[name]!) as {
+        include: Record<string, unknown>[];
+      };
+      const invalid = [
+        JSON.stringify({ include: original.include.slice(1) }),
+        JSON.stringify({
+          include: [...original.include.slice(0, -1), original.include[0]],
+        }),
+        JSON.stringify({
+          include: [
+            { ...original.include[0], unsupported: true },
+            ...original.include.slice(1),
+          ],
+        }),
+        JSON.stringify({
+          include: [
+            {
+              ...original.include[0],
+              ...(name === "consumer_matrix"
+                ? { installer: "unsupported" }
+                : { os: "unsupported" }),
+            },
+            ...original.include.slice(1),
+          ],
+        }),
+        JSON.stringify({ include: "not-an-array" }),
+        "invalid JSON",
+      ];
+      for (const matrix of invalid) {
+        const outcome = await execute(
+          results({ ...fullOutputs(), [name]: matrix }),
+        );
+        expect(outcome.failures.join("\n")).toContain(
+          name + " does not match the full supported matrix",
+        );
+        expect(outcome.summaries.join("\n")).not.toContain("completed");
+      }
+    },
+  );
+  test("selected and no-package acceptance retain their explicit qualification boundaries", async () => {
+    const selected = results({
+      ...fullOutputs(),
+      full: "false",
+      coverage: "false",
+      consumers: "false",
+      native: "false",
+    });
+    selected["package-consumers"]!.result = "skipped";
+    selected["package-native"]!.result = "skipped";
+    const partial = await execute(selected);
+    expect(partial.failures).toEqual([]);
+    expect(partial.summaries).toEqual([
+      "Affected scope completed. Full exact-head acceptance remains required before merge/release.",
+    ]);
+    selected.changes!.outputs!.package = "false";
+    for (const name of [
+      "package-static",
+      "package-coverage",
+      "package-platform-tests",
+    ])
+      selected[name]!.result = "skipped";
+    const documentation = await execute(selected);
+    expect(documentation.failures).toEqual([]);
+    expect(documentation.summaries).toEqual([
+      "Documentation/website scope completed; package qualification was not requested.",
+    ]);
+  });
+});
 describe("release workflow contracts", () => {
   test("dispatch requires exact commit and forces every cohort", () => {
     expect(ci.on.workflow_dispatch).toEqual({
@@ -114,9 +351,80 @@ describe("release workflow contracts", () => {
       for (const step of candidate.steps ?? []) {
         if (!step.uses?.startsWith("actions/checkout@")) continue;
         checkouts++;
-        expect(step.with?.ref).toBe("${{ inputs.expected_sha || github.sha }}");
+        expect(step.with?.ref).toBe(
+          "${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}",
+        );
       }
     expect(checkouts).toBeGreaterThanOrEqual(6);
+  });
+  test.each(["true", "false"])(
+    "actual platform launcher executes the same single test file in selected=%s mode",
+    async (selected) => {
+      const launcher = job(ci, "package-platform-tests").steps?.find(
+        (step) => step.env?.SELECTED,
+      )?.run;
+      if (!launcher) throw new Error("Missing platform test launcher");
+      const files = discoverTestFiles();
+      const testPath = "tests/tooling/test-shard.test.ts";
+      const shard = files.indexOf(testPath);
+      if (shard < 0)
+        throw new Error("Launcher regression test is not discoverable");
+      const result = await $`bash -c ${launcher}`
+        .env({
+          ...process.env,
+          AST_MCP_SKIP_PACKAGE_SMOKE: "1",
+          AST_MCP_SELECTED_TESTS: JSON.stringify([testPath]),
+          SELECTED: selected,
+          SHARD: String(shard),
+          SHARDS: String(files.length),
+        })
+        .quiet()
+        .nothrow();
+      expect({
+        exitCode: result.exitCode,
+        stderr: result.stderr.toString(),
+      }).toMatchObject({ exitCode: 0 });
+      expect(result.stdout.toString()).toContain(
+        selected === "true"
+          ? "Running test shard index 0 of 1: 1 files"
+          : `Running test shard index ${shard} of ${files.length}: 1 files`,
+      );
+    },
+  );
+  test("PR selection preserves full final acceptance and safe selected argv", () => {
+    const changes = job(ci, "changes");
+    expect(changes.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "read",
+      actions: "read",
+    });
+    expect(
+      changes.steps?.find(
+        (step) => step.run === "bun scripts/testing/ci-selection.ts",
+      )?.env?.GITHUB_TOKEN,
+    ).toBe("${{ secrets.GITHUB_TOKEN }}");
+    expect(job(ci, "package-platform-tests").strategy?.matrix).toBe(
+      "${{ fromJSON(needs.changes.outputs.platforms) }}",
+    );
+    expect(job(ci, "package-native").if).toContain("outputs.native");
+    expect(job(ci, "package-consumers").if).toContain("outputs.consumers");
+    const coverage = job(ci, "package-coverage").steps ?? [];
+    expect(
+      coverage.find((step) => step.run === "bun run test:coverage")?.if,
+    ).toContain("coverage == 'true'");
+    expect(
+      coverage.find((step) => step.run?.endsWith("--selected"))?.env
+        ?.AST_MCP_SELECTED_TESTS,
+    ).toBe("${{ needs.changes.outputs.selected_tests }}");
+    const acceptance = job(ci, "ci-acceptance");
+    expect(acceptance.if).toBe("always()");
+    expect(acceptance).toMatchObject({
+      name: "${{ format('{0} CI acceptance [PR {1}; base {2}; website {3}]', needs.changes.outputs.package != 'true' && 'No package' || needs.changes.outputs.full == 'true' && 'Full' || 'Selected', github.event.pull_request.number || 0, github.event.pull_request.base.sha || github.sha, needs.changes.outputs.website == 'true' && 'true' || 'false') }}",
+    });
+    expect(acceptance.steps?.[0]?.with?.script).toContain(
+      "results[key]?.result !== expected",
+    );
+    expect(job(ci, "release").needs).toContain("ci-acceptance");
   });
   test("release recovery uses the registered CI workflow", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
@@ -252,8 +560,34 @@ describe("release workflow contracts", () => {
   test("packed qualification covers actual platforms, installers, and minimum Bun", () => {
     const qualification = job(consumers, "consumers");
     expect(qualification.strategy?.["fail-fast"]).toBe(false);
-    expect(qualification.strategy?.matrix?.installer).toEqual(["bun", "npm"]);
-    expect(qualification.strategy?.matrix?.platform).toEqual([
+    expect(qualification.strategy?.matrix).toBe(
+      "${{ fromJSON(inputs.matrix) }}",
+    );
+    const inputs = (
+      consumers.on.workflow_call as {
+        inputs: Record<
+          string,
+          { default?: string; required?: boolean; type?: string }
+        >;
+      }
+    ).inputs;
+    const combinations = JSON.parse(inputs.matrix!.default!).include as Array<{
+      installer: string;
+      platform: { os: string; platform: string; arch: string; bun: string };
+    }>;
+    expect(combinations).toHaveLength(12);
+    expect([...new Set(combinations.map((item) => item.installer))]).toEqual([
+      "bun",
+      "npm",
+    ]);
+    expect([
+      ...new Map(
+        combinations.map((item) => [
+          JSON.stringify(item.platform),
+          item.platform,
+        ]),
+      ).values(),
+    ]).toEqual([
       { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.4" },
       {
         os: "ubuntu-24.04-arm",
@@ -273,10 +607,19 @@ describe("release workflow contracts", () => {
     ]);
     const steps = qualification.steps ?? [];
     const checkout = steps.find((s) => s.uses?.startsWith("actions/checkout@"));
-    expect(checkout?.with?.ref).toBe("${{ github.sha }}");
-    expect(consumers.on.workflow_call).toEqual({
-      inputs: { artifact_name: { required: true, type: "string" } },
+    expect(checkout?.with?.ref).toBe(
+      "${{ inputs.checkout_ref || github.sha }}",
+    );
+    expect(inputs.artifact_name).toEqual({ required: true, type: "string" });
+    expect(inputs.checkout_ref).toMatchObject({
+      required: false,
+      type: "string",
     });
+    expect(inputs.matrix).toMatchObject({ required: false, type: "string" });
+    expect(job(ci, "package-consumers").with?.matrix).toBe(
+      "${{ needs.changes.outputs.consumer_matrix }}",
+    );
+    expect(job(release, "consumers").with?.matrix).toBeUndefined();
     const architecture = steps.find((s) => s.env?.EXPECTED_ARCH);
     expect(architecture?.run).toContain(
       "process.arch !== process.env.EXPECTED_ARCH",
@@ -310,7 +653,12 @@ describe("release workflow contracts", () => {
     }
   });
   test("publishing uses the qualified archive without rebuilding", () => {
-    expect(job(release, "validate").strategy?.matrix?.os).toEqual([
+    const matrix = job(release, "validate").strategy?.matrix;
+    if (!matrix || typeof matrix === "string")
+      throw new Error(
+        "Release validation requires an explicit platform matrix",
+      );
+    expect(matrix.os).toEqual([
       "ubuntu-24.04",
       "ubuntu-24.04-arm",
       "macos-15",

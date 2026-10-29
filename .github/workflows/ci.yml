@@ -28,16 +28,28 @@ jobs:
     name: Detect changes
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     outputs:
-      package: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.package }}
+      package: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.selection.outputs.package }}
       release: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.release }}
       templates: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.templates }}
-      website: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.filter.outputs.website }}
+      website: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.selection.outputs.website == 'true' && 'true' || steps.filter.outputs.website }}
+      full: ${{ steps.selection.outputs.full }}
+      coverage: ${{ steps.selection.outputs.coverage }}
+      selected_tests: ${{ steps.selection.outputs.selected_tests }}
+      platforms: ${{ steps.selection.outputs.platforms }}
+      consumers: ${{ steps.selection.outputs.consumers }}
+      consumer_matrix: ${{ steps.selection.outputs.consumer_matrix }}
+      native: ${{ steps.selection.outputs.native }}
+      native_matrix: ${{ steps.selection.outputs.native_matrix }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
       - name: Verify dispatched request
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -94,6 +106,14 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'website/**'
               - '.github/workflows/docs.yml'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Select affected and previously failing areas
+        id: selection
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun scripts/testing/ci-selection.ts
 
   package-static:
     name: Package static checks and distribution
@@ -104,7 +124,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -161,13 +181,15 @@ jobs:
   package-consumers:
     name: Packed package consumers
     needs: [changes, package-static]
-    if: ${{ needs.changes.outputs.package == 'true' }}
+    if: ${{ needs.changes.outputs.consumers == 'true' }}
     uses: ./.github/workflows/package-consumers.yml
     with:
       artifact_name: package-candidate
+      matrix: ${{ needs.changes.outputs.consumer_matrix }}
+      checkout_ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
 
   package-coverage:
-    name: Package tests and 95% coverage (Linux)
+    name: ${{ needs.changes.outputs.coverage == 'true' && 'Package tests and 95% coverage (Linux)' || 'Affected package tests (Linux)' }}
     needs: changes
     if: ${{ needs.changes.outputs.package == 'true' }}
     runs-on: ubuntu-latest
@@ -175,7 +197,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -194,25 +216,30 @@ jobs:
       - name: Warm formatter plugins
         run: bun run tools:check
       - name: Test package with 95% coverage
+        if: needs.changes.outputs.coverage == 'true'
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
         run: bun run test:coverage
+      - name: Test affected package files
+        if: needs.changes.outputs.coverage != 'true'
+        env:
+          AST_MCP_SKIP_PACKAGE_SMOKE: "1"
+          AST_MCP_SELECTED_TESTS: ${{ needs.changes.outputs.selected_tests }}
+        run: bun scripts/testing/test-shard.ts --selected
 
   package-platform-tests:
-    name: Package tests (${{ matrix.os }}, shard ${{ matrix.shard }})
+    name: ${{ matrix.selected && format('Affected package tests ({0})', matrix.os) || format('Package tests ({0}, shard {1})', matrix.os, matrix.shard) }}
     needs: changes
     if: ${{ needs.changes.outputs.package == 'true' }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-        shard: [0, 1, 2]
+      matrix: ${{ fromJSON(needs.changes.outputs.platforms) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -233,22 +260,26 @@ jobs:
       - name: Test package shard
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
-        run: bun scripts/testing/test-shard.ts --shard ${{ matrix.shard }} --shards 3
+          AST_MCP_SELECTED_TESTS: ${{ needs.changes.outputs.selected_tests }}
+          SELECTED: ${{ matrix.selected }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+        run: |
+          bun -e 'const args = process.env.SELECTED === "true" ? ["--selected"] : ["--shard", process.env.SHARD, "--shards", process.env.SHARDS]; const child = Bun.spawnSync([process.execPath, "scripts/testing/test-shard.ts", ...args], {stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(child.exitCode ?? 1)'
 
   package-native:
     name: Native package qualification (${{ matrix.os }})
     needs: changes
-    if: ${{ needs.changes.outputs.package == 'true' }}
+    if: ${{ needs.changes.outputs.native == 'true' }}
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+      matrix: ${{ fromJSON(needs.changes.outputs.native_matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -282,7 +313,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.expected_sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.expected_sha || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -308,6 +339,93 @@ jobs:
       - name: Validate root and Pages builds and browser behavior
         run: bun run --cwd website test:browser
 
+  ci-acceptance:
+    name: ${{ format('{0} CI acceptance [PR {1}; base {2}; website {3}]', needs.changes.outputs.package != 'true' && 'No package' || needs.changes.outputs.full == 'true' && 'Full' || 'Selected', github.event.pull_request.number || 0, github.event.pull_request.base.sha || github.sha, needs.changes.outputs.website == 'true' && 'true' || 'false') }}
+    needs:
+      [
+        changes,
+        package-static,
+        package-coverage,
+        package-platform-tests,
+        package-consumers,
+        package-native,
+        website,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const results = JSON.parse(process.env.RESULTS);
+            const failures = [];
+            const outputs = results.changes?.outputs ?? {};
+            for (const flag of ["package", "full", "coverage", "website", "consumers", "native"]) {
+              if (outputs[flag] !== "true" && outputs[flag] !== "false") {
+                failures.push(flag + " must be an exact boolean string");
+              }
+            }
+            if (results.changes?.result !== "success") failures.push("Change selection did not succeed");
+            const packageExpected = outputs.package === "true" ? "success" : "skipped";
+            for (const key of ["package-static", "package-coverage", "package-platform-tests"]) {
+              if (results[key]?.result !== packageExpected) failures.push(key + " did not cover its requested scope");
+            }
+            for (const [key, flag] of [["package-consumers", "consumers"], ["package-native", "native"], ["website", "website"]]) {
+              const expected = outputs[flag] === "true" ? "success" : "skipped";
+              if (results[key]?.result !== expected) failures.push(key + " did not cover its requested scope");
+            }
+            if (outputs.full === "true") {
+              for (const flag of ["package", "coverage", "consumers", "native"]) {
+                if (outputs[flag] !== "true") failures.push("Full qualification requires " + flag);
+              }
+              // These supported sets belong to the reviewed workflow, independently
+              // of the selector's full label and generated matrices.
+              const expectedPlatforms = ["macos-latest", "windows-latest"].flatMap(os =>
+                [0, 1, 2].map(shard => ({ os, shard, shards: 3, selected: false })));
+              const consumerPlatforms = [
+                { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.4" },
+                { os: "ubuntu-24.04-arm", platform: "linux", arch: "arm64", bun: "1.4.4" },
+                { os: "ubuntu-24.04", platform: "linux", arch: "x64", bun: "1.4.4" },
+                { os: "windows-2025", platform: "win32", arch: "x64", bun: "1.4.4" },
+                { os: "macos-15", platform: "darwin", arch: "arm64", bun: "1.4.3" },
+                { os: "ubuntu-24.04-arm", platform: "linux", arch: "arm64", bun: "1.4.3" },
+              ];
+              const expectedConsumers = consumerPlatforms.flatMap(platform =>
+                ["bun", "npm"].map(installer => ({ platform, installer })));
+              const expectedNative = ["ubuntu-latest", "macos-latest", "windows-latest"].map(os => ({ os }));
+              function canonical(value) {
+                if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+                if (value !== null && typeof value === "object")
+                  return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+                return JSON.stringify(value);
+              }
+              for (const [name, expected] of [["platforms", expectedPlatforms], ["consumer_matrix", expectedConsumers], ["native_matrix", expectedNative]]) {
+                try {
+                  const matrix = JSON.parse(outputs[name]);
+                  if (!matrix || Object.keys(matrix).length !== 1 || !Array.isArray(matrix.include) ||
+                      matrix.include.length !== expected.length) throw new Error("Invalid matrix shape");
+                  const actual = matrix.include.map(canonical).sort();
+                  const supported = expected.map(canonical).sort();
+                  if (new Set(actual).size !== actual.length || actual.some((value, index) => value !== supported[index]))
+                    throw new Error("Unsupported matrix entries");
+                } catch {
+                  failures.push(name + " does not match the full supported matrix");
+                }
+              }
+            }
+            if (failures.length) {
+              core.setFailed(failures.join("\n"));
+              await core.summary.addRaw("CI qualification failed.\n\n" + failures.join("\n")).write();
+              return;
+            }
+            await core.summary.addRaw(outputs.package !== "true"
+              ? "Documentation/website scope completed; package qualification was not requested."
+              : outputs.full === "true" ? "Full exact-head qualification completed."
+              : "Affected scope completed. Full exact-head acceptance remains required before merge/release.").write();
+
   release:
     name: Release
     needs:
@@ -319,8 +437,9 @@ jobs:
         package-platform-tests,
         package-native,
         website,
+        ci-acceptance,
       ]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.package-static.result == 'success' && needs.package-consumers.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.ci-acceptance.result == 'success' && needs.package-static.result == 'success' && needs.package-consumers.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
     with:
       recovery_tag: ${{ inputs.recovery_tag }}

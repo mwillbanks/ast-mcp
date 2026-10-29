@@ -6,6 +6,15 @@ on:
       artifact_name:
         required: true
         type: string
+      checkout_ref:
+        description: Exact caller commit; release callers retain their current commit
+        required: false
+        type: string
+      matrix:
+        description: Explicit consumer combinations; omitted input runs every supported combination
+        required: false
+        type: string
+        default: '{"include":[{"platform":{"os":"macos-15","platform":"darwin","arch":"arm64","bun":"1.4.4"},"installer":"bun"},{"platform":{"os":"macos-15","platform":"darwin","arch":"arm64","bun":"1.4.4"},"installer":"npm"},{"platform":{"os":"ubuntu-24.04-arm","platform":"linux","arch":"arm64","bun":"1.4.4"},"installer":"bun"},{"platform":{"os":"ubuntu-24.04-arm","platform":"linux","arch":"arm64","bun":"1.4.4"},"installer":"npm"},{"platform":{"os":"ubuntu-24.04","platform":"linux","arch":"x64","bun":"1.4.4"},"installer":"bun"},{"platform":{"os":"ubuntu-24.04","platform":"linux","arch":"x64","bun":"1.4.4"},"installer":"npm"},{"platform":{"os":"windows-2025","platform":"win32","arch":"x64","bun":"1.4.4"},"installer":"bun"},{"platform":{"os":"windows-2025","platform":"win32","arch":"x64","bun":"1.4.4"},"installer":"npm"},{"platform":{"os":"macos-15","platform":"darwin","arch":"arm64","bun":"1.4.3"},"installer":"bun"},{"platform":{"os":"macos-15","platform":"darwin","arch":"arm64","bun":"1.4.3"},"installer":"npm"},{"platform":{"os":"ubuntu-24.04-arm","platform":"linux","arch":"arm64","bun":"1.4.3"},"installer":"bun"},{"platform":{"os":"ubuntu-24.04-arm","platform":"linux","arch":"arm64","bun":"1.4.3"},"installer":"npm"}]}'
 
 permissions:
   contents: read
@@ -15,21 +24,13 @@ jobs:
     name: Consumer (${{ matrix.platform.os }}, ${{ matrix.installer }}, Bun ${{ matrix.platform.bun }})
     strategy:
       fail-fast: false
-      matrix:
-        installer: [bun, npm]
-        platform:
-          - { os: macos-15, platform: darwin, arch: arm64, bun: "1.4.4" }
-          - { os: ubuntu-24.04-arm, platform: linux, arch: arm64, bun: "1.4.4" }
-          - { os: ubuntu-24.04, platform: linux, arch: x64, bun: "1.4.4" }
-          - { os: windows-2025, platform: win32, arch: x64, bun: "1.4.4" }
-          - { os: macos-15, platform: darwin, arch: arm64, bun: "1.4.3" }
-          - { os: ubuntu-24.04-arm, platform: linux, arch: arm64, bun: "1.4.3" }
+      matrix: ${{ fromJSON(inputs.matrix) }}
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.checkout_ref || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
