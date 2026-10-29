@@ -359,7 +359,10 @@ export async function openSnapshotBlob(
   }
 }
 
-/** Remove only the temporary inode created by the current operation. */
+/**
+ * Check current pathname identity before unlinking.
+ * A concurrent directory writer can still replace it between lstat and unlink.
+ */
 export async function removeSnapshotTemporary(
   filePath: string,
   identity: { dev: number; ino: number },
@@ -425,11 +428,19 @@ export async function copySnapshotBlob(
   } finally {
     await cleanupSnapshot(errors, [
       async () => {
+        // Retry once while the owned descriptor remains open; unknown paths stay intact.
+        if (!succeeded && !identity) identity = await output.stat();
+      },
+      async () => {
         if (!closed) await output.close();
       },
       async () => {
         if (!succeeded && identity)
           await removeSnapshotTemporary(destination, identity);
+      },
+      async () => {
+        if (!succeeded && identity)
+          await syncDirectory(path.dirname(destination));
       },
     ]);
   }

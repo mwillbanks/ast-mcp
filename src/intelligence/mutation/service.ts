@@ -157,13 +157,47 @@ async function hashRecoveryFile(
   }
 }
 
-async function syncMutationFile(filePath: string): Promise<void> {
-  const handle = await open(
-    filePath,
-    (process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY) |
-      constants.O_NONBLOCK |
-      constants.O_NOFOLLOW,
-  );
+interface NamespaceOnlyRename {
+  rollback: boolean;
+  signal?: AbortSignal;
+  deadline?: Date | number;
+}
+
+async function syncMutationFile(
+  filePath: string,
+  readonlySource?: { mode: number; sha256: string },
+  options?: NamespaceOnlyRename,
+): Promise<void> {
+  let handle: FileHandle;
+  let readonly = false;
+  try {
+    handle = await open(
+      filePath,
+      (process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY) |
+        constants.O_NONBLOCK |
+        constants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      process.platform !== "win32" ||
+      !readonlySource ||
+      (code !== "EACCES" && code !== "EPERM")
+    )
+      throw error;
+    const current = await lstat(filePath);
+    if (
+      current.isSymbolicLink() ||
+      (current.mode & 0o200) !== 0 ||
+      (current.mode & 0o7777) !== readonlySource.mode
+    )
+      throw error;
+    handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
+    readonly = true;
+  }
   try {
     const held = await handle.stat();
     const current = await lstat(filePath);
@@ -174,36 +208,95 @@ async function syncMutationFile(filePath: string): Promise<void> {
       held.ino !== current.ino
     )
       throw new Error("mutation_recovery_hash_mismatch");
-    await handle.sync();
+    if (readonly) {
+      if (
+        (held.mode & 0o200) !== 0 ||
+        (held.mode & 0o7777) !== readonlySource!.mode ||
+        (current.mode & 0o7777) !== readonlySource!.mode ||
+        (await hashRecoveryFile(
+          filePath,
+          options?.signal,
+          handle,
+          remainingRecoveryBudget(options?.deadline),
+        )) !== readonlySource!.sha256 ||
+        ((await handle.stat()).mode & 0o7777) !== readonlySource!.mode
+      )
+        throw new Error("mutation_recovery_hash_mismatch");
+      // Rename changed directory entries only; these readonly bytes and mode match the journal.
+    } else await handle.sync();
   } finally {
     await handle.close();
   }
 }
+/** Include created directory entries, without syncing unchanged ancestors. */
+async function mutationDirectories(
+  files: readonly { filePath: string }[],
+  fence: () => Promise<void>,
+): Promise<Set<string>> {
+  const directories = new Set<string>();
+  for (const { filePath } of files) {
+    let directory = await canonicalizePath(path.dirname(filePath));
+    for (;;) {
+      await fence();
+      directories.add(directory);
+      try {
+        await lstat(directory);
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        const parent = path.dirname(directory);
+        if (parent === directory) throw error;
+        directory = parent;
+      }
+    }
+  }
+  return directories;
+}
 
 async function syncMutationPaths(
   workspace: WorkspaceHandle,
-  files: readonly { filePath: string }[],
+  files: MutationBatchPlan["files"],
   fence: () => Promise<void>,
   requireCheckout = true,
   syncFiles = true,
+  capturedDirectories: ReadonlySet<string> = new Set(),
+  namespaceRename?: NamespaceOnlyRename,
 ): Promise<void> {
-  const directories = new Set<string>();
+  const directories = await mutationDirectories(files, fence);
+  for (const directory of capturedDirectories) directories.add(directory);
   const root = await canonicalizePath(workspace.checkoutRoot);
-  for (const { filePath } of files) {
+  for (const [index, file] of files.entries()) {
+    const { filePath } = file;
     await fence();
+    let readonlySource: { mode: number; sha256: string } | undefined;
+    if (namespaceRename) {
+      const source = namespaceRename.rollback ? file : files[index - 1];
+      const digest = namespaceRename.rollback
+        ? file.sourceSha256
+        : file.candidateSha256;
+      // The rename producer journals adjacent source/destination pairs.
+      if (
+        source &&
+        digest &&
+        source.sourceSha256 === digest &&
+        source.sourceMode != null &&
+        (namespaceRename.rollback ||
+          (source.filePath !== filePath &&
+            source.candidateSha256 === null &&
+            file.sourceSha256 === null))
+      )
+        readonlySource = { mode: source.sourceMode & 0o7777, sha256: digest };
+    }
     if (syncFiles)
-      await syncMutationFile(filePath).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
-      });
-    let directory = await canonicalizePath(path.dirname(filePath));
+      await syncMutationFile(filePath, readonlySource, namespaceRename).catch(
+        (error: NodeJS.ErrnoException) => {
+          if (error.code !== "ENOENT") throw error;
+        },
+      );
+    const directory = await canonicalizePath(path.dirname(filePath));
     const withinCheckout = directory === root || pathWithin(root, directory);
     if (requireCheckout && !withinCheckout)
       throw new Error("mutation_path_outside_workspace");
-    const boundary = withinCheckout ? root : path.parse(directory).root;
-    for (; ; directory = path.dirname(directory)) {
-      directories.add(directory);
-      if (directory === boundary) break;
-    }
   }
   for (const directory of [...directories].sort(
     (a, b) => b.length - a.length,
@@ -217,6 +310,8 @@ async function syncMutationPaths(
 
 class RecoveryMaterials extends Map<string, FileHandle> {
   readonly targets = new Map<string, FileHandle>();
+  readonly extraTargets = new Set<FileHandle>();
+  readonly cleanReadonly = new Set<string>();
   readonly inline = new Map<string, Buffer>();
   constructor(readonly namespace: string) {
     super();
@@ -250,10 +345,18 @@ class RecoveryMaterials extends Map<string, FileHandle> {
   }
   async [Symbol.asyncDispose](): Promise<void> {
     try {
-      await closeSnapshotHandles([...this.values(), ...this.targets.values()]);
+      await closeSnapshotHandles(
+        new Set([
+          ...this.values(),
+          ...this.targets.values(),
+          ...this.extraTargets,
+        ]),
+      );
     } finally {
       this.clear();
       this.targets.clear();
+      this.extraTargets.clear();
+      this.cleanReadonly.clear();
       this.inline.clear();
     }
   }
@@ -306,6 +409,7 @@ async function restoreMutationRecord(
       await using materials = new RecoveryMaterials(
         snapshotNamespace(workspace),
       );
+      const directories = await mutationDirectories(record.files, fence);
       // Validate every source and current target before the first recovery write.
       for (const file of record.files) {
         await materials.prepare(file, options.signal, hashTimeout());
@@ -352,9 +456,12 @@ async function restoreMutationRecord(
           const actual = await recoveryHash(file.filePath, options.signal);
           expectedCurrent = actual;
           if (actual === file.sourceSha256) {
-            const handle = await open(
+            const readonlyWindows =
+              process.platform === "win32" &&
+              ((await lstat(file.filePath)).mode & 0o200) === 0;
+            let handle = await open(
               file.filePath,
-              (process.platform === "win32"
+              (process.platform === "win32" && !readonlyWindows
                 ? constants.O_RDWR
                 : constants.O_RDONLY) |
                 constants.O_NONBLOCK |
@@ -366,6 +473,47 @@ async function restoreMutationRecord(
               file.sourceSha256
             )
               throw new Error("mutation_recovery_hash_mismatch");
+            if (readonlyWindows) {
+              const metadata = await handle.stat();
+              const stillReadonly = (metadata.mode & 0o200) === 0;
+              if (
+                stillReadonly &&
+                (file.sourceMode === null ||
+                  (metadata.mode & 0o7777) === (file.sourceMode & 0o7777)) &&
+                (file.sourceUid === null || metadata.uid === file.sourceUid) &&
+                (file.sourceGid === null || metadata.gid === file.sourceGid)
+              ) {
+                // No recovery change needs flushing; retain identity through final verification.
+                materials.cleanReadonly.add(file.filePath);
+                continue;
+              }
+              await fencePath(file.filePath, handle);
+              if (stillReadonly) {
+                if (file.sourceMode === null || (file.sourceMode & 0o200) === 0)
+                  throw new Error("mutation_recovery_metadata_unflushable");
+                await handle.chmod(file.sourceMode);
+              }
+              const writable = await open(
+                file.filePath,
+                constants.O_RDWR | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+              );
+              materials.extraTargets.add(writable);
+              await fencePath(file.filePath, handle);
+              const opened = await writable.stat();
+              if (
+                opened.dev !== metadata.dev ||
+                opened.ino !== metadata.ino ||
+                (await recoveryHash(
+                  file.filePath,
+                  options.signal,
+                  writable,
+                )) !== file.sourceSha256
+              )
+                throw new Error("mutation_recovery_hash_mismatch");
+              materials.extraTargets.add(handle);
+              materials.targets.set(file.filePath, writable);
+              handle = writable;
+            }
             if (file.sourceUid !== null && file.sourceGid !== null) {
               await fencePath(file.filePath);
               await handle.chown(file.sourceUid, file.sourceGid);
@@ -511,10 +659,18 @@ async function restoreMutationRecord(
             (file.sourceGid !== null && metadata.gid !== file.sourceGid)
           )
             throw new Error("mutation_recovery_verification_failed");
-          await materials.targets.get(file.filePath)!.sync();
+          if (!materials.cleanReadonly.has(file.filePath))
+            await materials.targets.get(file.filePath)!.sync();
         }
       }
-      await syncMutationPaths(workspace, record.files, fence, true, false);
+      await syncMutationPaths(
+        workspace,
+        record.files,
+        fence,
+        true,
+        false,
+        directories,
+      );
     },
     {
       deadline: options.deadline ?? Date.now() + 10_000,
@@ -526,6 +682,7 @@ async function restoreMutationRecord(
 export class LanceMutationLifecycle implements MutationLifecycle {
   readonly journal: LanceMutationJournal;
   readonly #plans = new Map<string, MutationBatchPlan>();
+  readonly #directories = new Map<string, ReadonlySet<string>>();
 
   constructor(
     private readonly store: LanceIntelligenceStore,
@@ -551,6 +708,7 @@ export class LanceMutationLifecycle implements MutationLifecycle {
     );
     for (const operationId of recovered) {
       this.#plans.delete(operationId);
+      this.#directories.delete(operationId);
       const record = await this.journal.get(operationId);
       for (const file of record?.files ?? [])
         if (file.sourceBlob)
@@ -598,7 +756,12 @@ export class LanceMutationLifecycle implements MutationLifecycle {
           snapshotNamespace(this.workspace),
           this.options.signal,
         );
+    const directories = await mutationDirectories(plan.files, async () => {
+      this.options.signal?.throwIfAborted();
+      await this.options.fence?.();
+    });
     await this.journal.begin(plan);
+    this.#directories.set(plan.operationId, directories);
     for (const file of plan.files)
       if (file.sourceBlob)
         releaseSnapshotCapture(
@@ -652,19 +815,27 @@ export class LanceMutationLifecycle implements MutationLifecycle {
       });
       signal.throwIfAborted();
       await this.options.fence?.();
-      if (plan.files.some((file) => file.sourceBlob))
-        await syncMutationPaths(
-          this.workspace,
-          plan.files,
-          async () => {
-            await this.options.fence?.();
-          },
-          false,
-          // Attribute and text producers sync retained descriptors before closing.
-          !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
-        );
+      await syncMutationPaths(
+        this.workspace,
+        plan.files,
+        async () => {
+          await this.options.fence?.();
+        },
+        false,
+        // Attribute and text producers sync retained descriptors before closing.
+        !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
+        this.#directories.get(operationId),
+        plan.tool === "file_rename"
+          ? {
+              rollback: false,
+              signal: this.options.signal,
+              deadline: this.options.deadline,
+            }
+          : undefined,
+      );
       await this.journal.transition(operationId, "succeeded");
       this.#plans.delete(operationId);
+      this.#directories.delete(operationId);
       return result;
     } catch (error) {
       const failure =
@@ -695,18 +866,26 @@ export class LanceMutationLifecycle implements MutationLifecycle {
   async rolledBack(operationId: string): Promise<void> {
     const plan = this.#plans.get(operationId);
     if (!plan) return;
-    if (plan.files.some((file) => file.sourceBlob))
-      await syncMutationPaths(
-        this.workspace,
-        plan.files,
-        async () => {
-          await this.options.fence?.();
-        },
-        false,
-        !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
-      );
+    await syncMutationPaths(
+      this.workspace,
+      plan.files,
+      async () => {
+        await this.options.fence?.();
+      },
+      false,
+      !["file_chattr", "file_patch", "file_write"].includes(plan.tool),
+      this.#directories.get(operationId),
+      plan.tool === "file_rename"
+        ? {
+            rollback: true,
+            signal: this.options.signal,
+            deadline: this.options.deadline,
+          }
+        : undefined,
+    );
     await this.journal.transition(operationId, "rolled-back");
     this.#plans.delete(operationId);
+    this.#directories.delete(operationId);
   }
 }
 

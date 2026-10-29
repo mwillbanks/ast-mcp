@@ -1,5 +1,6 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -30,6 +31,8 @@ import {
   stageFileSnapshot,
   type StagedFileSnapshot,
 } from "../../../src/runtime/snapshot-blob.ts";
+import * as snapshotStorage from "../../../src/runtime/snapshot-blob.ts";
+import registerFileTools from "../../../src/tools/files.ts";
 import registerLifecycleTools from "../../../src/tools/lifecycle.ts";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -632,29 +635,335 @@ test.each(["delete", "rename"] as const)(
     const target = path.join(external, "source.bin");
     const destination = path.join(external, "new", "nested", "renamed.bin");
     await fs.writeFile(target, "external bytes");
-    await withConfig({ cwd: external }, () =>
-      withWorkspaceContext(workspace, () =>
-        withMutationLifecycle(lifecycle, () =>
-          operation === "delete"
-            ? deleteFilesSafely({
-                [target]: { expectedSha256: sha256("external bytes") },
-              })
-            : renameFilesSafely({
-                [target]: {
-                  destination,
-                  expectedSha256: sha256("external bytes"),
-                },
-              }),
+    const directories: string[] = [];
+    const actualSync = snapshotStorage.syncDirectory;
+    const sync = spyOn(snapshotStorage, "syncDirectory").mockImplementation(
+      async (directory) => {
+        if (directory === path.dirname(external))
+          throw Object.assign(new Error("execute-only unchanged ancestor"), {
+            code: "EACCES",
+          });
+        if (directory === external || directory.startsWith(external + path.sep))
+          directories.push(directory);
+        await actualSync(directory);
+      },
+    );
+    try {
+      await withConfig({ cwd: external }, () =>
+        withWorkspaceContext(workspace, () =>
+          withMutationLifecycle(lifecycle, () =>
+            operation === "delete"
+              ? deleteFilesSafely({
+                  [target]: { expectedSha256: sha256("external bytes") },
+                })
+              : renameFilesSafely({
+                  [target]: {
+                    destination,
+                    expectedSha256: sha256("external bytes"),
+                  },
+                }),
+          ),
         ),
-      ),
+      );
+      expect(await Bun.file(target).exists()).toBeFalse();
+      if (operation === "rename")
+        expect(await fs.readFile(destination, "utf8")).toBe("external bytes");
+      expect(directories).toEqual(
+        operation === "rename"
+          ? [path.dirname(destination), path.join(external, "new"), external]
+          : [external],
+      );
+      expect(await lifecycle.journal.unfinished(workspace.workspaceId)).toEqual(
+        [],
+      );
+      expect(await fs.readdir(snapshotRoot)).toEqual([]);
+    } finally {
+      sync.mockRestore();
+    }
+  },
+);
+
+test("directory durability ledger survives a failed terminal sync and releases after rollback", async () => {
+  const { root, workspace, lifecycle } = await fixture();
+  const target = path.join(root, "original.bin");
+  const destination = path.join(root, "new", "nested", "candidate.bin");
+  await fs.writeFile(target, "original");
+  const snapshot = await withWorkspaceContext(workspace, () =>
+    stageFileSnapshot(target),
+  );
+  const operationId = `job:v1:${sha256("parent ledger rollback")}`;
+  await lifecycle.begin({
+    operationId,
+    workspace,
+    tool: "file_rename",
+    files: [
+      sourcePlan(target, snapshot),
+      {
+        filePath: destination,
+        sourceSha256: null,
+        candidateSha256: snapshot.sha256,
+      },
+    ],
+  });
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const directories: string[] = [];
+  const actualSync = snapshotStorage.syncDirectory;
+  let fails = true;
+  const sync = spyOn(snapshotStorage, "syncDirectory").mockImplementation(
+    async (directory) => {
+      directories.push(directory);
+      if (fails && directory === path.join(root, "new"))
+        throw new Error("parent durability failed");
+      await actualSync(directory);
+    },
+  );
+  try {
+    await expect(lifecycle.complete(operationId, [])).rejects.toThrow(
+      "parent durability failed",
     );
-    expect(await Bun.file(target).exists()).toBeFalse();
-    if (operation === "rename")
-      expect(await fs.readFile(destination, "utf8")).toBe("external bytes");
-    expect(await lifecycle.journal.unfinished(workspace.workspaceId)).toEqual(
-      [],
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "recovery-required",
     );
-    expect(await fs.readdir(snapshotRoot)).toEqual([]);
+    await fs.rmdir(path.dirname(destination));
+    await fs.rmdir(path.join(root, "new"));
+    fails = false;
+    directories.length = 0;
+    await lifecycle.rolledBack(operationId);
+    expect(directories).toEqual([
+      path.dirname(destination),
+      path.join(root, "new"),
+      root,
+    ]);
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "rolled-back",
+    );
+    directories.length = 0;
+    await lifecycle.rolledBack(operationId);
+    expect(directories).toEqual([]);
+    await expect(lifecycle.complete(operationId, [])).rejects.toThrow(
+      "mutation_operation_unknown",
+    );
+    expect(await fs.readFile(target, "utf8")).toBe("original");
+  } finally {
+    sync.mockRestore();
+  }
+});
+
+test.each(["permission", "abort", "journal"] as const)(
+  "parent ledger collection fails before mutation and releases staging: %s",
+  async (phase) => {
+    const {
+      root,
+      workspace,
+      store,
+      lifecycle: ordinary,
+      snapshotRoot,
+    } = await fixture();
+    const target = path.join(root, "source.bin");
+    const destination = path.join(root, "new", "nested", "candidate.bin");
+    await fs.writeFile(target, "original");
+    const abort = new AbortController();
+    const lifecycle =
+      phase === "abort"
+        ? new LanceMutationLifecycle(store, workspace, undefined, {
+            signal: abort.signal,
+          })
+        : ordinary;
+    const actualBegin = lifecycle.begin.bind(lifecycle),
+      actualStat = fs.lstat;
+    let collecting = false;
+    const begin = spyOn(lifecycle, "begin").mockImplementation(async (plan) => {
+      collecting = true;
+      return actualBegin(plan);
+    });
+    const stat = spyOn(fs, "lstat").mockImplementation((async (
+      ...args: Parameters<typeof fs.lstat>
+    ) => {
+      if (collecting && String(args[0]) === path.dirname(destination)) {
+        if (phase === "permission")
+          throw Object.assign(new Error("parent denied"), { code: "EACCES" });
+        if (phase === "abort")
+          abort.abort(new Error("parent collection aborted"));
+      }
+      return actualStat(...args);
+    }) as typeof fs.lstat);
+    const journal =
+      phase === "journal"
+        ? spyOn(lifecycle.journal, "begin").mockRejectedValue(
+            new Error("journal failed"),
+          )
+        : null;
+    try {
+      await expect(
+        withWorkspaceContext(workspace, () =>
+          withMutationLifecycle(lifecycle, () =>
+            withConfig({ cwd: root }, () =>
+              renameFilesSafely(
+                {
+                  [target]: { destination, expectedSha256: sha256("original") },
+                },
+                abort.signal,
+              ),
+            ),
+          ),
+        ),
+      ).rejects.toThrow(
+        phase === "permission"
+          ? "parent denied"
+          : phase === "abort"
+            ? "parent collection aborted"
+            : "journal failed",
+      );
+      expect(await fs.readFile(target, "utf8")).toBe("original");
+      expect(await Bun.file(destination).exists()).toBeFalse();
+      expect(
+        await fs.lstat(path.join(root, "new")).catch(() => null),
+      ).toBeNull();
+      expect(await lifecycle.journal.unfinished(workspace.workspaceId)).toEqual(
+        [],
+      );
+      // An uncertain begin retains captures until journal reconciliation.
+      await ordinary.recover();
+      expect(await fs.readdir(snapshotRoot)).toEqual([]);
+    } finally {
+      begin.mockRestore();
+      stat.mockRestore();
+      journal?.mockRestore();
+    }
+  },
+);
+
+test.each(["success", "fence", "mkdir"] as const)(
+  "registered all-new nested writes sync changed parents without blobs: %s",
+  async (phase) => {
+    const { root, workspace, store } = await fixture();
+    const target = path.join(root, "new", "nested", "created.txt");
+    let failFence = false;
+    const lifecycle = new LanceMutationLifecycle(
+      store,
+      workspace,
+      async () => ({
+        dirtyOverlayId: null,
+        generationId: null,
+        indexedAt: new Date().toISOString(),
+        parsedFiles: [],
+        skippedFiles: [],
+      }),
+      {
+        fence: async () => {
+          if (failFence) {
+            failFence = false;
+            throw new Error("terminal parent fence failed");
+          }
+        },
+      },
+    );
+    let handler!: (
+      input: Record<string, unknown>,
+    ) => Promise<{ isError?: boolean }>;
+    registerFileTools(
+      {
+        registerTool(
+          name: string,
+          _definition: unknown,
+          callback: typeof handler,
+        ) {
+          if (name === "file_write") handler = callback;
+        },
+      } as never,
+      async (_args, operation) => withConfig({ cwd: root }, () => operation()),
+    );
+    const actualBegin = lifecycle.journal.begin.bind(lifecycle.journal);
+    let began = false;
+    const begin = spyOn(lifecycle.journal, "begin").mockImplementation(
+      async (plan) => {
+        expect(
+          plan.files.every(
+            (file) => !file.sourceBlob && file.sourceSha256 === null,
+          ),
+        ).toBeTrue();
+        expect(
+          await fs.lstat(path.join(root, "new")).catch(() => null),
+        ).toBeNull();
+        const record = await actualBegin(plan);
+        began = true;
+        return record;
+      },
+    );
+    const actualSync = snapshotStorage.syncDirectory,
+      actualMkdir = fs.mkdir;
+    const directories: string[] = [];
+    let injected = false;
+    const sync = spyOn(snapshotStorage, "syncDirectory").mockImplementation(
+      async (directory) => {
+        if (directory === path.dirname(root))
+          throw Object.assign(new Error("unchanged ancestor denied"), {
+            code: "EACCES",
+          });
+        directories.push(directory);
+        await actualSync(directory);
+        if (phase === "fence" && !injected) {
+          injected = true;
+          failFence = true;
+        }
+      },
+    );
+    const mkdir = spyOn(fs, "mkdir").mockImplementation((async (
+      ...args: Parameters<typeof fs.mkdir>
+    ) => {
+      if (
+        phase === "mkdir" &&
+        began &&
+        String(args[0]) === path.dirname(target)
+      ) {
+        injected = true;
+        throw new Error("parent creation failed");
+      }
+      return actualMkdir(...args);
+    }) as typeof fs.mkdir);
+    try {
+      const result = await withWorkspaceContext(workspace, () =>
+        withMutationLifecycle(lifecycle, () =>
+          handler({ files: { [target]: { content: "new durable output" } } }),
+        ),
+      );
+      expect(Boolean(result.isError)).toBe(phase !== "success");
+      expect(began).toBeTrue();
+      if (phase === "success") {
+        expect(await fs.readFile(target, "utf8")).toBe("new durable output");
+        expect(directories).toEqual([
+          path.dirname(target),
+          path.join(root, "new"),
+          root,
+        ]);
+      } else {
+        expect(injected).toBeTrue();
+        expect(await Bun.file(target).exists()).toBeFalse();
+        expect(
+          await fs.lstat(path.join(root, "new")).catch(() => null),
+        ).toBeNull();
+        expect(directories.slice(-3)).toEqual([
+          path.dirname(target),
+          path.join(root, "new"),
+          root,
+        ]);
+      }
+      const rows = await store.rows("jobs");
+      const record = rows
+        .map((row) => JSON.parse(String(row.payload_json)))
+        .find((row) => row.tool === "file_write");
+      expect(record.files[0].sourceBlob).toBeNull();
+      expect(record.state).toBe(
+        phase === "success" ? "succeeded" : "rolled-back",
+      );
+      expect(await lifecycle.journal.unfinished(workspace.workspaceId)).toEqual(
+        [],
+      );
+    } finally {
+      begin.mockRestore();
+      sync.mockRestore();
+      mkdir.mockRestore();
+    }
   },
 );
 
@@ -962,6 +1271,325 @@ test.each(["absent", "original", "candidate"] as const)(
       await fs.chmod(target, 0o640).catch(() => undefined);
     }
     expect(await fs.readFile(target, "utf8")).toBe("original");
+  },
+);
+
+test.each([
+  "clean",
+  "clean-null",
+  "upgrade",
+  "inverse",
+  "open",
+  "sync",
+  "race",
+  "same-byte-race",
+  "unflushable",
+] as const)(
+  "Windows recovery keeps readonly originals and flushes every mutation: %s",
+  async (phase) => {
+    const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "readonly-recovery.bin");
+    const initial = phase === "inverse" ? 0o644 : 0o444;
+    const desired =
+      phase === "clean"
+        ? 0o444
+        : phase === "clean-null"
+          ? null
+          : phase === "inverse"
+            ? 0o444
+            : phase === "unflushable"
+              ? 0o400
+              : 0o644;
+    await fs.writeFile(target, "original");
+    let sourceMode = desired;
+    if (desired !== null && phase !== "unflushable") {
+      await fs.chmod(target, desired);
+      sourceMode = (await fs.stat(target)).mode & 0o7777;
+    }
+    await fs.chmod(target, initial);
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(target),
+    );
+    const operationId = `job:v1:${sha256("readonly recovery " + phase)}`;
+    await lifecycle.journal.begin({
+      operationId,
+      workspace,
+      tool: "file_chattr",
+      files: [
+        {
+          ...sourcePlan(target, snapshot),
+          sourceMode,
+          sourceUid: null,
+          sourceGid: null,
+        },
+      ],
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const actualOpen = fs.open;
+    const handles: Array<Awaited<ReturnType<typeof fs.open>>> = [];
+    let writeOpens = 0,
+      flushes = 0,
+      readonlyFlushes = 0;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const isTarget = String(args[0]) === target;
+      const writable =
+        isTarget &&
+        typeof args[1] === "number" &&
+        (args[1] & constants.O_RDWR) !== 0;
+      if (writable) {
+        writeOpens++;
+        if (phase === "open") throw new Error("recovery writable open denied");
+        if (((await fs.stat(target)).mode & 0o200) === 0)
+          throw Object.assign(new Error("Windows readonly open denied"), {
+            code: "EACCES",
+          });
+      }
+      const openArgs = [...args] as Parameters<typeof fs.open>;
+      if (writable && phase === "same-byte-race") {
+        openArgs[0] = target + ".replacement";
+        await fs.writeFile(openArgs[0], "original");
+        await fs.chmod(openArgs[0], sourceMode!);
+      }
+      const handle = await actualOpen(...openArgs);
+      if (isTarget) {
+        handles.push(handle);
+        const sync = handle.sync.bind(handle);
+        spyOn(handle, "sync").mockImplementation(async () => {
+          if (!writable) {
+            readonlyFlushes++;
+            throw new Error("readonly FlushFileBuffers denied");
+          }
+          flushes++;
+          if (phase === "sync") throw new Error("recovery flush failed");
+          await sync();
+        });
+        if (writable && phase === "same-byte-race") {
+          const stat = handle.stat.bind(handle);
+          let swapped = false;
+          spyOn(handle, "stat").mockImplementation((async () => {
+            if (!swapped) {
+              swapped = true;
+              await fs.rename(target, target + ".owned");
+              await fs.rename(target + ".replacement", target);
+            }
+            return stat();
+          }) as typeof handle.stat);
+        }
+        if (writable && phase === "race") {
+          await fs.rename(target, target + ".owned");
+          await fs.writeFile(target, "external replacement");
+        }
+      }
+      return handle;
+    }) as typeof fs.open);
+    const fails = [
+      "open",
+      "sync",
+      "race",
+      "same-byte-race",
+      "unflushable",
+    ].includes(phase);
+    try {
+      if (fails)
+        await expect(lifecycle.recover()).rejects.toThrow(
+          "mutation_recovery_required",
+        );
+      else await lifecycle.recover();
+      expect(readonlyFlushes).toBe(0);
+      if (phase === "same-byte-race") {
+        expect((await fs.stat(target)).ino).not.toBe(snapshot.ino);
+        expect((await fs.stat(target)).mode & 0o7777).toBe(sourceMode!);
+      }
+      expect(await fs.readFile(target, "utf8")).toBe(
+        phase === "race" ? "external replacement" : "original",
+      );
+      expect((await lifecycle.journal.get(operationId))?.state).toBe(
+        fails ? "recovery-required" : "recovered",
+      );
+      if (
+        phase === "clean" ||
+        phase === "clean-null" ||
+        phase === "unflushable"
+      )
+        expect(writeOpens).toBe(0);
+      else expect(writeOpens).toBe(1);
+      if (!fails && phase !== "clean" && phase !== "clean-null")
+        expect(flushes).toBeGreaterThan(0);
+      if (fails)
+        expect(await fs.readdir(snapshotRoot)).toContain(
+          snapshot.sourceBlob.id,
+        );
+      else expect(await fs.readdir(snapshotRoot)).toEqual([]);
+      for (const handle of handles)
+        await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      open.mockRestore();
+      await fs.chmod(target, 0o644).catch(() => undefined);
+      await fs.chmod(target + ".owned", 0o644).catch(() => undefined);
+    }
+  },
+);
+
+test.each(["success", "rollback", "wrong-digest", "replacement"] as const)(
+  "Windows readonly rename preserves namespace-only durability: %s",
+  async (phase) => {
+    const { root, workspace, store, snapshotRoot } = await fixture();
+    const sources = [
+      path.join(root, "readonly.bin"),
+      path.join(root, "writable.bin"),
+    ];
+    const destinations = [
+      path.join(root, "new", "nested", "readonly.bin"),
+      path.join(root, "new", "nested", "writable.bin"),
+    ];
+    await fs.writeFile(sources[0]!, "identical bytes");
+    await fs.writeFile(sources[1]!, "identical bytes");
+    await fs.chmod(sources[0]!, 0o444);
+    await fs.chmod(sources[1]!, 0o644);
+    const original = await Promise.all(
+      sources.map((source) => fs.stat(source)),
+    );
+    const lifecycle = new LanceMutationLifecycle(store, workspace, async () => {
+      if (phase === "rollback") throw new Error("refresh failed");
+      if (phase === "wrong-digest") {
+        await fs.chmod(destinations[0]!, 0o644);
+        await fs.writeFile(destinations[0]!, "external bytes");
+        await fs.chmod(destinations[0]!, original[0]!.mode & 0o777);
+      }
+      return {
+        dirtyOverlayId: null,
+        generationId: null,
+        indexedAt: new Date().toISOString(),
+        parsedFiles: [],
+        skippedFiles: [],
+      };
+    });
+    let handler!: (
+      input: Record<string, unknown>,
+    ) => Promise<{ isError?: boolean }>;
+    registerLifecycleTools(
+      {
+        registerTool(
+          name: string,
+          _definition: unknown,
+          callback: typeof handler,
+        ) {
+          if (name === "file_rename") handler = callback;
+        },
+      } as never,
+      async (_args, operation) => withConfig({ cwd: root }, () => operation()),
+    );
+    const actualOpen = fs.open;
+    const handles: Array<Awaited<ReturnType<typeof fs.open>>> = [];
+    let readonlyAttempts = 0,
+      readonlySyncs = 0,
+      writableSyncs = 0,
+      replaced = false;
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const name = String(args[0]),
+        target = [...sources, ...destinations].includes(name);
+      const writable =
+        typeof args[1] === "number" && (args[1] & constants.O_RDWR) !== 0;
+      const metadata = target ? await fs.lstat(name).catch(() => null) : null;
+      const readonly = metadata && (metadata.mode & 0o200) === 0;
+      if (target && writable && readonly) {
+        readonlyAttempts++;
+        throw Object.assign(new Error("Windows readonly descriptor denied"), {
+          code: "EPERM",
+        });
+      }
+      const handle = await actualOpen(...args);
+      if (target) {
+        handles.push(handle);
+        const sync = handle.sync.bind(handle);
+        spyOn(handle, "sync").mockImplementation(async () => {
+          if (!writable) {
+            readonlySyncs++;
+            throw new Error("readonly descriptor cannot flush");
+          }
+          writableSyncs++;
+          await sync();
+        });
+        if (
+          phase === "replacement" &&
+          name === destinations[0] &&
+          !writable &&
+          !replaced
+        ) {
+          replaced = true;
+          await fs.rename(name, name + ".owned");
+          await fs.writeFile(name, "external bytes");
+          await fs.chmod(name, original[0]!.mode & 0o777);
+        }
+      }
+      return handle;
+    }) as typeof fs.open);
+    try {
+      const result = await withWorkspaceContext(workspace, () =>
+        withMutationLifecycle(lifecycle, () =>
+          handler({
+            files: Object.fromEntries(
+              sources.map((source, index) => [
+                source,
+                {
+                  destination: destinations[index],
+                  expectedSha256: sha256("identical bytes"),
+                },
+              ]),
+            ),
+          }),
+        ),
+      );
+      expect(Boolean(result.isError)).toBe(phase !== "success");
+      expect(readonlyAttempts).toBeGreaterThan(0);
+      expect(readonlySyncs).toBe(0);
+      const rows = await store.rows("jobs");
+      const record = rows
+        .map((row) => JSON.parse(String(row.payload_json)))
+        .find((row) => row.tool === "file_rename");
+      if (phase === "success" || phase === "rollback") {
+        const outputs = phase === "success" ? destinations : sources;
+        for (let index = 0; index < outputs.length; index++) {
+          const metadata = await fs.stat(outputs[index]!);
+          expect(metadata.ino).toBe(original[index]!.ino);
+          expect(metadata.mode & 0o777).toBe(original[index]!.mode & 0o777);
+          expect(await fs.readFile(outputs[index]!, "utf8")).toBe(
+            "identical bytes",
+          );
+        }
+        expect(writableSyncs).toBeGreaterThan(0);
+        expect(record.state).toBe(
+          phase === "success" ? "succeeded" : "rolled-back",
+        );
+        expect(await fs.readdir(snapshotRoot)).toEqual([]);
+      } else {
+        expect(await fs.readFile(destinations[0]!, "utf8")).toBe(
+          "external bytes",
+        );
+        expect(record.state).toBe("recovery-required");
+        expect((await fs.readdir(snapshotRoot)).length).toBeGreaterThan(0);
+      }
+      for (const handle of handles)
+        await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      open.mockRestore();
+      for (const file of [
+        ...sources,
+        ...destinations,
+        destinations[0] + ".owned",
+      ])
+        await fs.chmod(file, 0o644).catch(() => undefined);
+    }
   },
 );
 

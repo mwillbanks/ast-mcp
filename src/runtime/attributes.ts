@@ -60,7 +60,14 @@ export async function readFileChattrSnapshot(
       },
     };
   } catch (error) {
-    await removeSnapshotBlob(snapshot.sourceBlob, snapshot.namespace);
+    try {
+      await removeSnapshotBlob(snapshot.sourceBlob, snapshot.namespace);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Attribute snapshot open and cleanup failed",
+      );
+    }
     throw error;
   }
 }

@@ -469,6 +469,145 @@ for (const failWrite of [false, true]) {
   });
 }
 
+test.each(["transient", "persistent", "replacement"] as const)(
+  "failed copy retries descriptor identity once and preserves unknown paths: %s",
+  async (phase) => {
+    const { root, workspace } = await fixture();
+    const source = path.join(root, "identity-source.bin"),
+      destination = path.join(root, "identity-copy.bin");
+    await fs.writeFile(source, "preserved");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(source),
+    );
+    snapshots.push(snapshot);
+    const input = await openSnapshotBlob(
+      snapshot.sourceBlob,
+      snapshot.namespace,
+    );
+    const primary = new Error("initial identity failed"),
+      retry = new Error("identity retry failed");
+    const actualOpen = fs.open;
+    let output: Awaited<ReturnType<typeof fs.open>> | undefined;
+    let calls = 0;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      if (String(args[0]) === destination) {
+        output = handle;
+        const stat = handle.stat.bind(handle);
+        spyOn(handle, "stat").mockImplementation((async () => {
+          calls++;
+          if (calls === 1) {
+            if (phase === "replacement") {
+              await fs.rename(destination, destination + ".owned");
+              await fs.writeFile(destination, "replacement");
+            }
+            throw primary;
+          }
+          if (phase === "persistent") throw retry;
+          return stat();
+        }) as typeof handle.stat);
+      }
+      return handle;
+    }) as typeof fs.open);
+    try {
+      const error = await copySnapshotBlob(
+        input,
+        destination,
+        snapshot.sourceBlob,
+      ).catch((error) => error);
+      expect(calls).toBe(2);
+      if (phase === "transient") expect(error).toBe(primary);
+      else {
+        expect(error).toBeInstanceOf(AggregateError);
+        expect(error.errors).toContain(primary);
+        if (phase === "persistent") expect(error.errors).toContain(retry);
+        else
+          expect(
+            error.errors.some((item: Error) =>
+              item.message.includes("mutation_snapshot_temporary_replaced"),
+            ),
+          ).toBeTrue();
+      }
+      if (phase === "transient")
+        expect(await Bun.file(destination).exists()).toBeFalse();
+      else
+        expect(await fs.readFile(destination, "utf8")).toBe(
+          phase === "replacement" ? "replacement" : "",
+        );
+      await expect(
+        output!.read(Buffer.alloc(1), 0, 1, 0),
+      ).rejects.toMatchObject({ code: "EBADF" });
+      expect((await input.stat()).size).toBe(snapshot.sourceBlob.size);
+    } finally {
+      open.mockRestore();
+      await input.close();
+    }
+  },
+);
+
+test.each([false, true])(
+  "failed copy persists temporary removal and preserves sync errors: %s",
+  async (fails) => {
+    if (process.platform === "win32") return;
+    const { root, workspace } = await fixture();
+    const source = path.join(root, "copy-sync-source.bin"),
+      destination = path.join(root, "copy-sync-output.bin");
+    await fs.writeFile(source, "preserved");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(source),
+    );
+    snapshots.push(snapshot);
+    const input = await openSnapshotBlob(
+      snapshot.sourceBlob,
+      snapshot.namespace,
+    );
+    const primary = new Error("copy write failed"),
+      cleanup = new Error("copy cleanup sync failed");
+    const actualOpen = fs.open,
+      actualUnlink = fs.unlink;
+    const events: string[] = [];
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      if (String(args[0]) === destination)
+        spyOn(handle, "write").mockRejectedValue(primary);
+      if (String(args[0]) === root) {
+        const sync = handle.sync.bind(handle);
+        spyOn(handle, "sync").mockImplementation(async () => {
+          events.push("sync");
+          if (fails) throw cleanup;
+          await sync();
+        });
+      }
+      return handle;
+    }) as typeof fs.open);
+    const unlink = spyOn(fs, "unlink").mockImplementation(async (file) => {
+      if (String(file) === destination) events.push("unlink");
+      return actualUnlink(file);
+    });
+    try {
+      const error = await copySnapshotBlob(
+        input,
+        destination,
+        snapshot.sourceBlob,
+      ).catch((error) => error);
+      if (fails) {
+        expect(error).toBeInstanceOf(AggregateError);
+        expect(error.errors).toEqual([primary, cleanup]);
+      } else expect(error).toBe(primary);
+      expect(events).toEqual(["unlink", "sync"]);
+      expect(await Bun.file(destination).exists()).toBeFalse();
+    } finally {
+      open.mockRestore();
+      unlink.mockRestore();
+      await input.close();
+    }
+  },
+);
+
 test.each([false, true])(
   "failed restore syncs temporary removal, sync failure=%s",
   async (fails) => {
@@ -598,6 +737,39 @@ for (const [failingHandle, failFence] of [
     }
   });
 }
+
+test("attribute snapshot preserves open and cleanup failures", async () => {
+  const { root, workspace } = await fixture();
+  const source = path.join(root, "chattr-open-cleanup.bin");
+  await fs.writeFile(source, "preserved");
+  const primary = new Error("retained open failed"),
+    cleanup = new Error("snapshot cleanup failed");
+  const actualOpen = fs.open,
+    actualUnlink = fs.unlink;
+  let opens = 0;
+  const open = spyOn(fs, "open").mockImplementation((async (
+    ...args: Parameters<typeof fs.open>
+  ) => {
+    if (String(args[0]) === source && ++opens === 2) throw primary;
+    return actualOpen(...args);
+  }) as typeof fs.open);
+  const unlink = spyOn(fs, "unlink").mockImplementation(async (file) => {
+    if (String(file).endsWith(".blob")) throw cleanup;
+    return actualUnlink(file);
+  });
+  try {
+    const error = await withWorkspaceContext(workspace, () =>
+      readFileChattrSnapshot(source),
+    ).catch((error) => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([primary, cleanup]);
+    expect(await fs.readFile(source, "utf8")).toBe("preserved");
+  } finally {
+    open.mockRestore();
+    unlink.mockRestore();
+    await sweepSnapshotBlobs(snapshotNamespace(workspace), new Set());
+  }
+});
 
 test("chattr retained-open failure reclaims its completed snapshot", async () => {
   const { root, workspace } = await fixture();
