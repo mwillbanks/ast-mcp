@@ -1,13 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  lstat,
-  link,
-  open,
-  type FileHandle,
-  rename,
-  unlink,
-} from "node:fs/promises";
+import { lstat, open, type FileHandle, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 
 import { sha256, sha256Handle } from "../../runtime/hash.ts";
@@ -22,6 +15,7 @@ import {
   inspectSnapshotBlob,
   closeSnapshotHandles,
   copySnapshotBlob,
+  publishSnapshotNoReplace,
   releaseSnapshotCapture,
   removeSnapshotBlob,
   removeSnapshotTemporary,
@@ -599,7 +593,24 @@ async function restoreMutationRecord(
           )
             throw new Error("mutation_recovery_hash_mismatch");
           if (expectedCurrent === null) {
-            await link(temporary, file.filePath);
+            const target = await publishSnapshotNoReplace(
+              temporary,
+              file.filePath,
+              output,
+              { sha256: file.sourceSha256, size: held.size },
+              async (retained) => {
+                await fencePath(file.filePath, retained);
+                await assertRecoveryPath(workspace, temporary, output);
+              },
+              {
+                signal: options.signal,
+                hashTimeoutMs: remainingRecoveryBudget(options.deadline),
+              },
+            );
+            if (target !== output) {
+              materials.extraTargets.add(output);
+              materials.targets.set(file.filePath, target);
+            }
           } else {
             await rename(temporary, file.filePath);
           }

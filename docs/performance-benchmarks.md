@@ -114,10 +114,10 @@ It includes duplicate and missing bases, full paths, extensionless paths, and in
 It excludes parsing, traversal, journal work, and complete deletion latency.
 Synthetic 1,000-target experiments exceed the public batch limit and are not production batch claims.
 
-## Final refreshed evidence
+## Measurements before publication compatibility changes
 
 These measurements include the changed-directory ledger, bounded cleanup fixes, snapshot identity guards, and cooperative hash deadlines.
-They replace earlier final-review observations.
+They precede the subsequent exclusive-copy publication change; the follow-up below remeasures affected recovery paths.
 All commands ran serially with production deadlines and no deadline override.
 
 ```sh
@@ -217,12 +217,57 @@ Configured hashing did not reproduce a maximum-string-size failure.
 ]
 ```
 
+## Recovery publication compatibility follow-up
+
+After adding exclusive-copy publication fallback, rerun only the affected recovery paths.
+The runtime, dependency set, fixtures, cache protocol, observers, and production deadlines match the preceding measurements.
+The normal hard-link publication path was exercised; fallback latency was not benchmarked.
+Targeted fault tests separately verify fallback bytes, metadata, ownership, and cleanup.
+
+```sh
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=134217728 --iterations=3 --dataset=dense --operations=recovery --representation=blob
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=dense --operations=recovery --representation=blob --allow-large=true
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=sparse --operations=recovery --representation=blob --allow-large=true
+```
+
+| Workload                   | Raw latency samples ms             |   Median ms | Raw lifetime peak RSS samples bytes |
+| -------------------------- | ---------------------------------- | ----------: | ----------------------------------- |
+| Dense 128 MiB              | 220.547000, 217.999208, 223.545167 |  220.547000 | 142410752, 131138560, 126174208     |
+| Dense 2,321,660,787 bytes  | 3221.114625                        | 3221.114625 | 149849088                           |
+| Sparse 2,321,660,787 bytes | 3209.513041                        | 3209.513041 | 154895360                           |
+
+All five samples passed independent digest verification and reached recovered journals with zero staged snapshot directories.
+The 128 MiB median corresponds to 580.38 MiB/s in this warm-cache workload.
+Single large-file samples do not establish stable tail latency or a causal improvement over the preceding phase.
+The earlier snapshot, serialization, deletion, rename, and retention observations remain phase-specific evidence.
+
+Changed measured source hashes are:
+
+```json
+[
+  {
+    "path": "src/runtime/snapshot-blob.ts",
+    "sha256": "3492f1f50b31d6f2e49a415802ec3d2b5bf4a78a0214d3206b329adfaa29c275"
+  },
+  {
+    "path": "src/intelligence/mutation/service.ts",
+    "sha256": "e17a9957849e75ae0911acee7fd6d5f068ab08ea95ab81bf8eaf988430b22179"
+  }
+]
+```
+
+Other measured source and dependency hashes remain as listed in the preceding manifest.
+
 ## Safety costs and limits
 
-Durable snapshots synchronize blobs and directories, adding I/O compared with memory-only capture.
+Snapshots synchronize blob contents and, on supported POSIX filesystems, changed directories, adding I/O compared with memory-only capture.
 Recovery retains full digest verification and guarded target checks.
 Clean readonly Windows recovery and rename preserve verified identity, digest, and mode.
-Directory synchronization remains mandatory; modified targets still require file synchronization.
+Modified targets still require file synchronization.
+The Windows directory-sync helper currently performs no flush: the portable runtime path does not provide the POSIX directory-fsync operation.
+A terminal journal state therefore does not establish Windows directory-entry persistence across power loss.
+This is an explicit platform limitation, not a verified durable-publication guarantee.
+Microsoft documents separate requirements for [directory handles](https://learn.microsoft.com/en-us/windows/win32/fileio/obtaining-a-handle-to-a-directory) and [buffer flushing](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
 Windows behavior requires regression validation; these latency results were measured on macOS.
 
 Hash deadlines are cooperative between reads and cannot forcibly cancel an operating-system read already in progress.
@@ -230,6 +275,13 @@ Temporary cleanup checks pathname identity before unlinking.
 A concurrent directory writer can replace the pathname between lstat and unlink; this is not atomic compare-and-unlink.
 Inaccessible mode-000 recovery targets can fail closed and retain material until permissions permit repair.
 Authorization checks remain enforced.
+
+Restore publication prefers atomic hard links.
+If publication returns a recognized unsupported-link error or EPERM, recovery can stream into an exclusively created mode-0600 destination.
+This fallback never overwrites an existing entry, but the partial pathname is visible while copying; permissions broaden only after complete bytes are verified.
+Failure cleanup checks owned inode identity and retains the original recovery material.
+The adjacent mutation-lock protocol still requires hard-link support; an entirely linkless target filesystem fails closed before guarded deletion.
+The publication fallback does not establish general support for such filesystems.
 
 The harness reports cleanup failures as failures and preserves all disposer diagnostics.
 A failed sample must not contribute successful throughput.

@@ -154,6 +154,7 @@ async function blobDirectory(
 }
 
 export async function syncDirectory(directory: string): Promise<void> {
+  // Windows has no portable directory fsync here; directory-entry power-loss durability is not guaranteed.
   if (process.platform === "win32") return;
   const handle = await open(
     directory,
@@ -383,6 +384,29 @@ export async function removeSnapshotTemporary(
   await unlink(filePath);
 }
 
+async function copyVerifiedBytes(
+  handle: FileHandle,
+  output: FileHandle,
+  blob: Pick<SnapshotBlob, "sha256" | "size">,
+  signal?: AbortSignal,
+): Promise<void> {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(CHUNK_SIZE);
+  let position = 0;
+  for (;;) {
+    signal?.throwIfAborted();
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    if (!bytesRead) break;
+    const bytes = buffer.subarray(0, bytesRead);
+    hash.update(bytes);
+    await writeAll(output, bytes, position);
+    position += bytesRead;
+  }
+  signal?.throwIfAborted();
+  if (position !== blob.size || hash.digest("hex") !== blob.sha256)
+    throw failure("mutation_recovery_material_mismatch");
+}
+
 /** Copy from the already verified descriptor, preserving its identity. */
 export async function copySnapshotBlob(
   handle: FileHandle,
@@ -397,26 +421,7 @@ export async function copySnapshotBlob(
   const errors: unknown[] = [];
   try {
     identity = await output.stat();
-    const hash = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(CHUNK_SIZE);
-    let position = 0;
-    for (;;) {
-      signal?.throwIfAborted();
-      const { bytesRead } = await handle.read(
-        buffer,
-        0,
-        buffer.length,
-        position,
-      );
-      if (!bytesRead) break;
-      const bytes = buffer.subarray(0, bytesRead);
-      hash.update(bytes);
-      await writeAll(output, bytes, position);
-      position += bytesRead;
-    }
-    signal?.throwIfAborted();
-    if (position !== blob.size || hash.digest("hex") !== blob.sha256)
-      throw failure("mutation_recovery_material_mismatch");
+    await copyVerifiedBytes(handle, output, blob, signal);
     await output.sync();
     await output.close();
     closed = true;
@@ -443,6 +448,108 @@ export async function copySnapshotBlob(
           await syncDirectory(path.dirname(destination));
       },
     ]);
+  }
+}
+
+/**
+ * Link atomically when supported; otherwise copy to an exclusively created mode-0600 path.
+ * The fallback exposes a partial pathname while copying, but never replaces another entry.
+ * Returns the borrowed source on link, or a caller-owned writable descriptor on copy.
+ */
+export async function publishSnapshotNoReplace(
+  temporary: string,
+  destination: string,
+  source: FileHandle,
+  expected: Pick<SnapshotBlob, "sha256" | "size">,
+  fence: (target?: FileHandle) => Promise<void>,
+  options: { signal?: AbortSignal; hashTimeoutMs?: number } = {},
+): Promise<FileHandle> {
+  let linkError: unknown;
+  try {
+    await link(temporary, destination);
+    return source;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      !["EXDEV", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EPERM"].includes(
+        code ?? "",
+      )
+    )
+      throw error;
+    linkError = error;
+  }
+  let output: FileHandle | undefined;
+  let identity: { dev: number; ino: number } | undefined;
+  let succeeded = false;
+  const errors: unknown[] = [linkError];
+  try {
+    await fence();
+    options.signal?.throwIfAborted();
+    const metadata = await source.stat();
+    const staged = await lstat(temporary);
+    if (
+      !metadata.isFile() ||
+      staged.isSymbolicLink() ||
+      !unchanged(metadata, staged)
+    )
+      throw failure("mutation_recovery_material_mismatch");
+    output = await open(destination, "wx+", 0o600);
+    identity = await output.stat();
+    await copyVerifiedBytes(source, output, expected, options.signal);
+    // Persist complete bytes before broadening permissions or making the file readonly.
+    await output.sync();
+    await fence(output);
+    if (process.platform !== "win32")
+      await output.chown(metadata.uid, metadata.gid);
+    await output.chmod(metadata.mode);
+    const verified = await output.stat();
+    if (
+      (await sha256Handle(output, options.signal, options.hashTimeoutMs)) !==
+      expected.sha256
+    )
+      throw failure("mutation_recovery_material_mismatch");
+    await output.sync();
+    await fence(output);
+    options.signal?.throwIfAborted();
+    const held = await output.stat();
+    const current = await lstat(destination);
+    const sourceNow = await source.stat();
+    const stagedNow = await lstat(temporary);
+    if (
+      current.isSymbolicLink() ||
+      held.dev !== identity.dev ||
+      held.ino !== identity.ino ||
+      !unchanged(verified, held) ||
+      !unchanged(held, current) ||
+      (held.mode & 0o7777) !== (metadata.mode & 0o7777) ||
+      (process.platform !== "win32" &&
+        (held.uid !== metadata.uid || held.gid !== metadata.gid)) ||
+      !unchanged(metadata, sourceNow) ||
+      stagedNow.isSymbolicLink() ||
+      !unchanged(sourceNow, stagedNow)
+    )
+      throw failure("mutation_recovery_material_mismatch");
+    succeeded = true;
+    return output;
+  } catch (error) {
+    errors.push(error);
+    throw new AggregateError(errors, "Snapshot exclusive publication failed");
+  } finally {
+    if (!succeeded)
+      await cleanupSnapshot(errors, [
+        async () => {
+          if (output && !identity) identity = await output.stat();
+        },
+        async () => {
+          await output?.close();
+        },
+        async () => {
+          if (identity) await removeSnapshotTemporary(destination, identity);
+        },
+        async () => {
+          if (identity) await syncDirectory(path.dirname(destination));
+        },
+      ]);
   }
 }
 
@@ -473,6 +580,7 @@ export async function restoreSnapshotBlob(
         constants.O_NOFOLLOW,
     );
     const metadataErrors: unknown[] = [];
+    let published: FileHandle | undefined;
     try {
       const held = await output.stat();
       const current = await lstat(temporary);
@@ -489,15 +597,26 @@ export async function restoreSnapshotBlob(
         await output.chown(snapshot.uid, snapshot.gid);
       await output.chmod(snapshot.mode);
       await output.sync();
+      await fence();
+      published = await publishSnapshotNoReplace(
+        temporary,
+        destination,
+        output,
+        snapshot.sourceBlob,
+        fence,
+      );
+      await syncDirectory(path.dirname(destination));
     } catch (error) {
       metadataErrors.push(error);
       throw error;
     } finally {
-      await cleanupSnapshot(metadataErrors, [() => output.close()]);
+      await cleanupSnapshot(metadataErrors, [
+        () => output.close(),
+        async () => {
+          if (published && published !== output) await published.close();
+        },
+      ]);
     }
-    await fence();
-    await link(temporary, destination);
-    await syncDirectory(path.dirname(destination));
   } catch (error) {
     errors.push(error);
     throw error;

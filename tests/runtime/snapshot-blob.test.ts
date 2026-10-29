@@ -20,6 +20,7 @@ import {
 } from "../../src/runtime/private-lock-directory.ts";
 import {
   copySnapshotBlob,
+  publishSnapshotNoReplace,
   closeSnapshotHandles,
   FileSnapshotCollection,
   openSnapshotBlob,
@@ -69,6 +70,239 @@ async function blobPath(snapshot: StagedFileSnapshot) {
     `${snapshot.sha256}.blob`,
   );
 }
+
+async function publicationFixture() {
+  const { root } = await fixture();
+  const source = path.join(root, "publication-staged.bin");
+  const destination = path.join(root, "publication-target.bin");
+  const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0xa7);
+  await fs.writeFile(source, bytes, { mode: 0o640 });
+  const handle = await fs.open(source, "r");
+  return {
+    root,
+    source,
+    destination,
+    bytes,
+    handle,
+    expected: { sha256: sha256(bytes), size: bytes.length },
+  };
+}
+
+test.each(["EXDEV", "ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EPERM"])(
+  "snapshot rollback preserves verified binary bytes without hard links: %s",
+  async (code) => {
+    const { root, workspace } = await fixture();
+    const source = path.join(root, "unsupported-link.bin");
+    const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0xe3);
+    await fs.writeFile(source, bytes, { mode: 0o640 });
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(source),
+    );
+    snapshots.push(snapshot);
+    await fs.unlink(source);
+    const link = spyOn(fs, "link").mockRejectedValue(
+      Object.assign(new Error("unsupported link"), { code }),
+    );
+    try {
+      await restoreSnapshotBlob(snapshot, source, async () => {});
+      expect(await sha256File(source)).toBe(snapshot.sha256);
+      expect((await fs.stat(source)).mode & 0o777).toBe(snapshot.mode & 0o777);
+      expect(await sha256File(await blobPath(snapshot))).toBe(snapshot.sha256);
+      expect(
+        (await fs.readdir(root)).some((entry) => entry.includes(".rollback-")),
+      ).toBeFalse();
+    } finally {
+      link.mockRestore();
+    }
+  },
+);
+
+test.each(["EACCES", "EEXIST", "EIO"])(
+  "snapshot publication preserves genuine hard-link failures: %s",
+  async (code) => {
+    const { source, destination, handle, expected } =
+      await publicationFixture();
+    const failure = Object.assign(new Error("direct link failure"), { code });
+    const link = spyOn(fs, "link").mockRejectedValue(failure);
+    try {
+      await expect(
+        publishSnapshotNoReplace(
+          source,
+          destination,
+          handle,
+          expected,
+          async () => {},
+        ),
+      ).rejects.toBe(failure);
+      expect(await Bun.file(destination).exists()).toBeFalse();
+      expect(await sha256File(source)).toBe(expected.sha256);
+    } finally {
+      link.mockRestore();
+      await handle.close();
+    }
+  },
+);
+
+test.each(["existing", "racing", "denied"] as const)(
+  "exclusive fallback preserves destinations and original diagnostics: %s",
+  async (kind) => {
+    const { source, destination, handle, expected } =
+      await publicationFixture();
+    const original = Object.assign(new Error("link privilege unavailable"), {
+      code: "EPERM",
+    });
+    const denied = Object.assign(new Error("exclusive create denied"), {
+      code: "EACCES",
+    });
+    const link = spyOn(fs, "link").mockRejectedValue(original);
+    const actualOpen = fs.open;
+    if (kind === "existing") await fs.writeFile(destination, "existing");
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      if (String(args[0]) === destination) {
+        if (kind === "racing") await fs.writeFile(destination, "racer");
+        if (kind === "denied") throw denied;
+      }
+      return actualOpen(...args);
+    }) as typeof fs.open);
+    try {
+      const failure = await publishSnapshotNoReplace(
+        source,
+        destination,
+        handle,
+        expected,
+        async () => {},
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors[0]).toBe(original);
+      expect(errors[1]).toMatchObject({
+        code: kind === "denied" ? "EACCES" : "EEXIST",
+      });
+      if (kind === "denied")
+        expect(await Bun.file(destination).exists()).toBeFalse();
+      else
+        expect(await fs.readFile(destination, "utf8")).toBe(
+          kind === "existing" ? "existing" : "racer",
+        );
+      expect(await handle.stat()).toMatchObject({ size: expected.size });
+    } finally {
+      open.mockRestore();
+      link.mockRestore();
+      await handle.close();
+    }
+  },
+);
+
+test.each([
+  "write",
+  "hash",
+  "chmod",
+  "sync",
+  "metadata-sync",
+  "stat",
+  "stat-persistent",
+  "write-close",
+  "write-unlink",
+  "aborted",
+  "replaced",
+] as const)(
+  "exclusive publication cleans only owned material after %s failure",
+  async (kind) => {
+    const { source, destination, handle, expected } =
+      await publicationFixture();
+    const original = Object.assign(new Error("unsupported link"), {
+      code: "ENOTSUP",
+    });
+    const link = spyOn(fs, "link").mockRejectedValue(original);
+    const controller = new AbortController();
+    const actualOpen = fs.open;
+    const actualUnlink = fs.unlink;
+    let closed = false;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const output = await actualOpen(...args);
+      if (String(args[0]) !== destination) return output;
+      const close = output.close.bind(output);
+      spyOn(output, "close").mockImplementation(async () => {
+        await close();
+        closed = true;
+        if (kind === "write-close") throw new Error("close failed");
+      });
+      if (kind === "stat" || kind === "stat-persistent") {
+        const stat = output.stat.bind(output);
+        let calls = 0;
+        spyOn(output, "stat").mockImplementation((async (
+          ...statArgs: Parameters<typeof output.stat>
+        ) => {
+          if (++calls === 1 || kind === "stat-persistent")
+            throw new Error("identity unavailable");
+          return stat(...statArgs);
+        }) as typeof output.stat);
+      }
+      const write = output.write.bind(output);
+      spyOn(output, "write").mockImplementation((async (
+        ...writeArgs: Parameters<typeof output.write>
+      ) => {
+        if (kind.startsWith("write")) throw new Error("copy failed");
+        if (kind === "aborted")
+          controller.abort(new Error("publication cancelled"));
+        if (kind === "replaced") {
+          await fs.rename(destination, destination + ".owned");
+          await fs.writeFile(destination, "replacement");
+        }
+        const result = await write(...writeArgs);
+        if (kind === "hash") await output.writeFile("corrupt");
+        return result;
+      }) as typeof output.write);
+      if (kind === "chmod")
+        spyOn(output, "chmod").mockRejectedValue(new Error("chmod failed"));
+      if (kind === "sync" || kind === "metadata-sync") {
+        const sync = output.sync.bind(output);
+        let calls = 0;
+        spyOn(output, "sync").mockImplementation(async () => {
+          if (++calls === (kind === "sync" ? 1 : 2))
+            throw new Error("sync failed");
+          return sync();
+        });
+      }
+      return output;
+    }) as typeof fs.open);
+    const unlink = spyOn(fs, "unlink").mockImplementation(async (...args) => {
+      if (kind === "write-unlink" && String(args[0]) === destination)
+        throw new Error("cleanup unlink failed");
+      return actualUnlink(...args);
+    });
+    try {
+      const failure = await publishSnapshotNoReplace(
+        source,
+        destination,
+        handle,
+        expected,
+        async () => {},
+        { signal: controller.signal },
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect(closed).toBeTrue();
+      if (["stat-persistent", "write-unlink", "replaced"].includes(kind)) {
+        expect(await Bun.file(destination).exists()).toBeTrue();
+        if (kind === "replaced")
+          expect(await fs.readFile(destination, "utf8")).toBe("replacement");
+      } else expect(await Bun.file(destination).exists()).toBeFalse();
+      expect(await sha256File(source)).toBe(expected.sha256);
+      expect(await handle.stat()).toMatchObject({ size: expected.size });
+      if (kind === "write-close" || kind === "write-unlink")
+        expect((failure as AggregateError).errors.length).toBeGreaterThan(2);
+    } finally {
+      open.mockRestore();
+      unlink.mockRestore();
+      link.mockRestore();
+      await handle.close();
+    }
+  },
+);
 
 test("staged binary snapshots stream verified bytes and preserve metadata", async () => {
   const { root, workspace } = await fixture();

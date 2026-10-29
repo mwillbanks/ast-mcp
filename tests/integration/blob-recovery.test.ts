@@ -5,35 +5,35 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { withConfig } from "../../../src/config/index.ts";
-import { withMutationLifecycle } from "../../../src/intelligence/mutation/lifecycle.ts";
+import { withConfig } from "../../src/config/index.ts";
+import { withMutationLifecycle } from "../../src/intelligence/mutation/lifecycle.ts";
 import {
   LanceMutationLifecycle,
   mutationOperationId,
-} from "../../../src/intelligence/mutation/service.ts";
-import type { MutationFilePlan } from "../../../src/intelligence/mutation/types.ts";
-import { LanceIntelligenceStore } from "../../../src/intelligence/storage/store.ts";
+} from "../../src/intelligence/mutation/service.ts";
+import type { MutationFilePlan } from "../../src/intelligence/mutation/types.ts";
+import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
 import {
   WorkspaceRegistry,
   withWorkspaceContext,
-} from "../../../src/intelligence/workspace/index.ts";
-import { patchFiles, writeFilesSafely } from "../../../src/patch/engine.ts";
-import { deleteFilesSafely } from "../../../src/runtime/file-delete.ts";
-import { renameFilesSafely } from "../../../src/runtime/file-rename.ts";
-import { sha256, sha256File } from "../../../src/runtime/hash.ts";
-import * as hashing from "../../../src/runtime/hash.ts";
+} from "../../src/intelligence/workspace/index.ts";
+import { patchFiles, writeFilesSafely } from "../../src/patch/engine.ts";
+import { deleteFilesSafely } from "../../src/runtime/file-delete.ts";
+import { renameFilesSafely } from "../../src/runtime/file-rename.ts";
+import { sha256, sha256File } from "../../src/runtime/hash.ts";
+import * as hashing from "../../src/runtime/hash.ts";
 import {
   ensurePrivateLockDirectory,
   systemAccount,
-} from "../../../src/runtime/private-lock-directory.ts";
+} from "../../src/runtime/private-lock-directory.ts";
 import {
   snapshotNamespace,
   stageFileSnapshot,
   type StagedFileSnapshot,
-} from "../../../src/runtime/snapshot-blob.ts";
-import * as snapshotStorage from "../../../src/runtime/snapshot-blob.ts";
-import registerFileTools from "../../../src/tools/files.ts";
-import registerLifecycleTools from "../../../src/tools/lifecycle.ts";
+} from "../../src/runtime/snapshot-blob.ts";
+import * as snapshotStorage from "../../src/runtime/snapshot-blob.ts";
+import registerFileTools from "../../src/tools/files.ts";
+import registerLifecycleTools from "../../src/tools/lifecycle.ts";
 
 const cleanup: Array<() => Promise<void>> = [];
 const previousRoots = process.env.AST_MCP_ROOTS;
@@ -97,6 +97,161 @@ function sourcePlan(
     sourceGid: process.platform === "win32" ? null : snapshot.gid,
   };
 }
+
+test.each(["blob", "legacy"] as const)(
+  "journal recovery exclusively copies %s material when links are unsupported",
+  async (representation) => {
+    const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "linkless-recovery.bin");
+    const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x9b);
+    await fs.writeFile(target, bytes, { mode: 0o640 });
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(target),
+    );
+    const operationId = `job:v1:${sha256("linkless " + representation)}`;
+    const file = sourcePlan(target, snapshot);
+    if (representation === "legacy") {
+      file.sourceBlob = null;
+      file.sourceContentBase64 = bytes.toString("base64");
+      await snapshotStorage.removeSnapshotBlob(
+        snapshot.sourceBlob,
+        snapshot.namespace,
+      );
+    }
+    await lifecycle.journal.begin({
+      operationId,
+      workspace,
+      tool: "file_delete",
+      files: [file],
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await fs.unlink(target);
+    const actualLink = fs.link;
+    const link = spyOn(fs, "link").mockImplementation(async (...args) => {
+      if (String(args[1]) === target)
+        throw Object.assign(new Error("links unavailable"), { code: "EPERM" });
+      return actualLink(...args);
+    });
+    try {
+      await lifecycle.recover();
+    } finally {
+      link.mockRestore();
+    }
+    expect(await sha256File(target)).toBe(snapshot.sha256);
+    expect((await fs.stat(target)).mode & 0o777).toBe(snapshot.mode & 0o777);
+    expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
+    expect(await fs.readdir(snapshotRoot)).toEqual([]);
+    expect(
+      (await fs.readdir(root)).some((entry) => entry.includes(".recovery-")),
+    ).toBeFalse();
+  },
+);
+
+test("guarded deletion rolls back when restore publication links fail", async () => {
+  const { root, workspace, store, lifecycle, snapshotRoot } = await fixture();
+  const target = path.join(root, "linkless-delete.bin");
+  const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x71);
+  await fs.writeFile(target, bytes, { mode: 0o640 });
+  const metadata = await fs.stat(target);
+  const committed = spyOn(lifecycle.journal, "committed").mockRejectedValue(
+    new Error("commit unavailable"),
+  );
+  const actualLink = fs.link;
+  const link = spyOn(fs, "link").mockImplementation(async (...args) => {
+    if (String(args[1]) === target)
+      throw Object.assign(new Error("links unavailable"), { code: "ENOTSUP" });
+    return actualLink(...args);
+  });
+  try {
+    await expect(
+      withWorkspaceContext(workspace, () =>
+        withMutationLifecycle(lifecycle, () =>
+          deleteFilesSafely({ [target]: { expectedSha256: sha256(bytes) } }),
+        ),
+      ),
+    ).rejects.toThrow("commit unavailable");
+  } finally {
+    committed.mockRestore();
+    link.mockRestore();
+  }
+  expect(await sha256File(target)).toBe(sha256(bytes));
+  expect((await fs.stat(target)).mode & 0o777).toBe(metadata.mode & 0o777);
+  const records = (await store.rows("jobs")).map((row) =>
+    JSON.parse(String(row.payload_json)),
+  );
+  expect(records.find((record) => record.tool === "file_delete").state).toBe(
+    "rolled-back",
+  );
+  expect(await fs.readdir(snapshotRoot)).toEqual([]);
+});
+
+test.each(["write", "sync", "racing"] as const)(
+  "failed publication fallback retains recovery material and exclusive ownership: %s",
+  async (kind) => {
+    const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "failed-linkless.bin");
+    await fs.writeFile(target, "original", { mode: 0o640 });
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(target),
+    );
+    const operationId = `job:v1:${sha256("failed linkless " + kind)}`;
+    await lifecycle.journal.begin({
+      operationId,
+      workspace,
+      tool: "file_delete",
+      files: [sourcePlan(target, snapshot)],
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await fs.unlink(target);
+    const actualLink = fs.link;
+    const link = spyOn(fs, "link").mockImplementation(async (...args) => {
+      if (String(args[1]) === target)
+        throw Object.assign(new Error("links unavailable"), {
+          code: "ENOTSUP",
+        });
+      return actualLink(...args);
+    });
+    const actualOpen = fs.open;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      if (String(args[0]) === target && args[1] === "wx+" && kind === "racing")
+        await fs.writeFile(target, "external");
+      const output = await actualOpen(...args);
+      if (String(args[0]) === target && args[1] === "wx+") {
+        if (kind === "write")
+          spyOn(output, "write").mockRejectedValue(
+            new Error("fallback write failed"),
+          );
+        if (kind === "sync")
+          spyOn(output, "sync").mockRejectedValue(
+            new Error("fallback flush failed"),
+          );
+      }
+      return output;
+    }) as typeof fs.open);
+    try {
+      await expect(lifecycle.recover()).rejects.toThrow(
+        "mutation_recovery_required",
+      );
+    } finally {
+      open.mockRestore();
+      link.mockRestore();
+    }
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      "recovery-required",
+    );
+    expect(await fs.readdir(snapshotRoot)).toContain(snapshot.sourceBlob.id);
+    if (kind === "racing") {
+      expect(await fs.readFile(target, "utf8")).toBe("external");
+      await fs.unlink(target);
+    } else expect(await Bun.file(target).exists()).toBeFalse();
+    await lifecycle.recover();
+    expect(await sha256File(target)).toBe(snapshot.sha256);
+    expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
+    expect(await fs.readdir(snapshotRoot)).toEqual([]);
+  },
+);
 
 test("guarded binary deletion journals compact durable snapshots", async () => {
   const { root, workspace, store, lifecycle, snapshotRoot } = await fixture();
