@@ -220,6 +220,10 @@ test.each([
     const actualOpen = fs.open;
     const actualUnlink = fs.unlink;
     let closed = false;
+    let writes = 0;
+    let replacementInjected = false;
+    let ownedIdentity: { dev: number; ino: number } | undefined;
+    let replacementIdentity: { dev: number; ino: number } | undefined;
     const open = spyOn(fs, "open").mockImplementation((async (
       ...args: Parameters<typeof fs.open>
     ) => {
@@ -246,12 +250,18 @@ test.each([
       spyOn(output, "write").mockImplementation((async (
         ...writeArgs: Parameters<typeof output.write>
       ) => {
+        writes++;
         if (kind.startsWith("write")) throw new Error("copy failed");
         if (kind === "aborted")
           controller.abort(new Error("publication cancelled"));
-        if (kind === "replaced") {
+        if (kind === "replaced" && !replacementInjected) {
+          const held = await output.stat();
+          ownedIdentity = { dev: held.dev, ino: held.ino };
           await fs.rename(destination, destination + ".owned");
           await fs.writeFile(destination, "replacement");
+          const replacement = await fs.lstat(destination);
+          replacementIdentity = { dev: replacement.dev, ino: replacement.ino };
+          replacementInjected = true;
         }
         const result = await write(...writeArgs);
         if (kind === "hash") await output.writeFile("corrupt");
@@ -286,10 +296,25 @@ test.each([
       ).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(AggregateError);
       expect(closed).toBeTrue();
+      if (kind === "replaced") expect(replacementInjected).toBeTrue();
       if (["stat-persistent", "write-unlink", "replaced"].includes(kind)) {
         expect(await Bun.file(destination).exists()).toBeTrue();
-        if (kind === "replaced")
+        if (kind === "replaced") {
+          expect(writes).toBeGreaterThan(1);
+          expect(ownedIdentity).toBeDefined();
+          expect(replacementIdentity).toBeDefined();
+          expect(replacementIdentity).not.toEqual(ownedIdentity);
+          expect(await fs.lstat(destination)).toMatchObject(
+            replacementIdentity!,
+          );
           expect(await fs.readFile(destination, "utf8")).toBe("replacement");
+          expect(await fs.lstat(destination + ".owned")).toMatchObject(
+            ownedIdentity!,
+          );
+          expect(await sha256File(destination + ".owned")).toBe(
+            expected.sha256,
+          );
+        }
       } else expect(await Bun.file(destination).exists()).toBeFalse();
       expect(await sha256File(source)).toBe(expected.sha256);
       expect(await handle.stat()).toMatchObject({ size: expected.size });
