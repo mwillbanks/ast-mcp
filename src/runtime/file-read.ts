@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
@@ -20,7 +21,7 @@ import {
   type FileReadMode,
   inspectFileCapabilities,
 } from "./file-capabilities";
-import { sha256, sha256File } from "./hash";
+import { FILE_HASH_CHUNK_BYTES, sha256, sha256File } from "./hash";
 import { resolveWritablePath } from "./paths";
 
 const FILE_READ_DEFAULT_LINES = [0, 100] as const;
@@ -219,7 +220,12 @@ class LineRangeCollector {
 
 function bufferLineCount(content: Buffer) {
   let count = 0;
-  for (const byte of content) if (byte === 10) count += 1;
+  for (
+    let newline = content.indexOf(10);
+    newline >= 0;
+    newline = content.indexOf(10, newline + 1)
+  )
+    count += 1;
   if (content.length > 0 && content.at(-1) !== 10) count += 1;
   return count;
 }
@@ -233,16 +239,31 @@ async function readLineRange(
 ) {
   signal.throwIfAborted();
   const collector = new LineRangeCollector(lines, maxBytes);
-  const stream = createReadStream(filePath, { signal });
+  const hash = createHash("sha256");
+  const stream = createReadStream(filePath, {
+    highWaterMark: FILE_HASH_CHUNK_BYTES,
+    signal,
+  });
+  let collecting = true;
+  let rangeBytesRead = 0;
   try {
     for await (const raw of stream) {
+      signal.throwIfAborted();
       const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-      if (collector.consume(chunk)) break;
+      hash.update(chunk);
+      if (collecting) {
+        rangeBytesRead += chunk.length;
+        if (collector.consume(chunk)) collecting = false;
+      }
     }
+    signal.throwIfAborted();
+    return {
+      ...collector.result(fileSize, rangeBytesRead),
+      sha256: hash.digest("hex"),
+    };
   } finally {
     stream.destroy();
   }
-  return collector.result(fileSize, stream.bytesRead);
 }
 
 export async function readWorkspaceRevisionBytes(
@@ -519,11 +540,11 @@ async function readFileWithSignal(
     await readDocumentAst(resolved, size, request.selectors, "");
   const resolvedMode = resolveReadMode(requestedMode, capabilities);
   assertReadMode(resolved, requestedMode, resolvedMode, capabilities);
-  const digest = historicalBytes
-    ? sha256(historicalBytes)
-    : await sha256File(resolved, signal);
-  signal.throwIfAborted();
   if (resolvedMode === "ast") {
+    const digest = historicalBytes
+      ? sha256(historicalBytes)
+      : await sha256File(resolved, signal);
+    signal.throwIfAborted();
     const ast = await readAst(
       request,
       resolved,
@@ -553,7 +574,10 @@ async function readFileWithSignal(
     ? (() => {
         const collector = new LineRangeCollector(lines, maxBytes);
         collector.consume(historicalBytes);
-        return collector.result(size, size);
+        return {
+          ...collector.result(size, size),
+          sha256: sha256(historicalBytes),
+        };
       })()
     : await readLineRange(resolved, size, lines, maxBytes, signal);
   return {
@@ -562,7 +586,6 @@ async function readFileWithSignal(
     filePath: resolved,
     requestedMode,
     resolvedMode,
-    sha256: digest,
     size,
   };
 }

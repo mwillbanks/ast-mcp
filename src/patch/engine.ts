@@ -1,6 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { chmod, lstat, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  open,
+  type FileHandle,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 
 import { currentConfig } from "../config";
@@ -42,6 +50,10 @@ import {
 } from "../runtime/parent-directories";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
+import {
+  FileSnapshotCollection,
+  stageFileSnapshot,
+} from "../runtime/snapshot-blob";
 import {
   type AiderBlock,
   type AstRule,
@@ -106,7 +118,9 @@ function temporary(filePath: string): string {
 async function removeTemporary(filePath: string) {
   try {
     await unlink(filePath);
-  } catch {}
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 async function ignoreFailure(operation: Promise<unknown>): Promise<void> {
@@ -131,7 +145,9 @@ async function commit(
   const next = temporary(filePath);
   const createdDirectories: string[] = [];
   let committed = false;
-  let primaryFailure: unknown;
+  let output: FileHandle | undefined;
+  let temporaryCreated = false;
+  const primaryFailures: unknown[] = [];
   try {
     await ensureParentDirectories(filePath, createdDirectories, beforeReplace);
     const formatted = alreadyFormatted
@@ -139,12 +155,17 @@ async function commit(
       : await formatContent(filePath, content);
     await beforeReplace?.();
     await revalidateWritePath(filePath);
-    await writeFile(next, formatted, { encoding: "utf8", flag: "wx", mode });
+    output = await open(next, "wx", mode);
+    temporaryCreated = true;
+    await output.writeFile(formatted, { encoding: "utf8" });
     if (mode !== undefined) {
       await beforeReplace?.();
       await chmod(next, mode);
     }
     await applyFileChattr(next, chattr, beforeReplace);
+    await output.sync();
+    await output.close();
+    output = undefined;
     const committedChattr = await resultingFileChattr(next);
     const committedSha256 = sha256(formatted);
     if (expectedSha256) {
@@ -162,25 +183,40 @@ async function commit(
       sha256: committedSha256,
     };
   } catch (error) {
-    primaryFailure = error;
+    primaryFailures.push(error);
     throw error;
   } finally {
-    await removeTemporary(next);
+    const failures = [...primaryFailures];
+    const affectedPaths = new Set<string>();
+    try {
+      await output?.close();
+    } catch (error) {
+      failures.push(error);
+      affectedPaths.add(next);
+    }
+    try {
+      if (temporaryCreated) await removeTemporary(next);
+    } catch (error) {
+      failures.push(error);
+      affectedPaths.add(next);
+    }
     if (!committed) {
       try {
         await removeCreatedDirectories(createdDirectories);
-      } catch (cleanupError) {
-        throw Object.assign(
-          new AggregateError(
-            [primaryFailure, cleanupError],
-            "File write failed and parent cleanup was incomplete",
-          ),
-          {
-            details: { affectedPaths: createdDirectories },
-          },
-        );
+      } catch (error) {
+        failures.push(error);
+        for (const directory of createdDirectories)
+          affectedPaths.add(directory);
       }
     }
+    if (failures.length > primaryFailures.length)
+      throw Object.assign(
+        new AggregateError(
+          failures,
+          "File write failed and cleanup was incomplete",
+        ),
+        { details: { affectedPaths: [...affectedPaths] } },
+      );
   }
 }
 function previewDiff(filePath: string, before: string, after: string): string {
@@ -907,21 +943,28 @@ async function executeReservedFileBatch<T, Prepared>(
   receiptState: ReceiptBatchState,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
+  await using durableSnapshots = new FileSnapshotCollection();
   const snapshots = await captureBatchSnapshots(entries);
   const prepared = await prepareFileBatch(entries, preflight);
   const files: Record<string, unknown> = {};
   const committed: CommittedBatchEntry[] = [];
   const workspace = currentWorkspace() ?? null;
   const plannedEntries = entries.filter((entry) => mutates(entry.request));
+  for (const entry of plannedEntries) {
+    const snapshot = snapshots.get(entry.resolvedPath);
+    if (!snapshot) continue;
+    const durable = await stageFileSnapshot(entry.resolvedPath, signal);
+    durableSnapshots.set(entry.resolvedPath, durable);
+    verifyExpectedHash(sha256(snapshot.content), durable.sha256);
+  }
   const sourcePlan = plannedEntries.map((entry) => {
     const entryIndex = entries.indexOf(entry);
     const snapshot = snapshots.get(entry.resolvedPath);
     return {
       candidateSha256: preparedCandidateSha256(prepared[entryIndex]),
       filePath: entry.resolvedPath,
-      sourceContentBase64: snapshot
-        ? Buffer.from(snapshot.content).toString("base64")
-        : null,
+      sourceContentBase64: null,
+      sourceBlob: durableSnapshots.get(entry.resolvedPath)?.sourceBlob ?? null,
       sourceGid:
         process.platform === "win32"
           ? null
@@ -947,6 +990,7 @@ async function executeReservedFileBatch<T, Prepared>(
     signal?.throwIfAborted();
     if (plannedEntries.length > 0) {
       receiptState.safeToRelease = false;
+      durableSnapshots.disposable = false;
       await beginMutation({
         files: sourcePlan,
         operationId,
@@ -954,6 +998,7 @@ async function executeReservedFileBatch<T, Prepared>(
         workspace,
       });
       began = true;
+      await durableSnapshots.verify(signal);
     }
     for (const [
       index,
@@ -990,6 +1035,7 @@ async function executeReservedFileBatch<T, Prepared>(
       began && commits.length > 0
         ? await completeMutation(operationId, commits)
         : null;
+    durableSnapshots.disposable = true;
     receiptState.completed = true;
     return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
   } catch (error) {
@@ -999,7 +1045,10 @@ async function executeReservedFileBatch<T, Prepared>(
       await patchSignals.run(undefined, () =>
         rollbackFileBatch(committed, snapshots, fence),
       );
-      if (began) await recordMutationRollback(operationId);
+      if (began) {
+        await recordMutationRollback(operationId);
+        durableSnapshots.disposable = true;
+      }
       // A failed begin can leave an uncertain journal even without file commits.
       receiptState.safeToRelease = began || receiptState.safeToRelease;
     } catch (rollbackError) {

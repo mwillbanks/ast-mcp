@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, chown, lstat, open, type FileHandle } from "node:fs/promises";
 
-import { sha256 } from "./hash";
+import {
+  stageFileSnapshot,
+  removeSnapshotBlob,
+  FileSnapshotCollection,
+  closeSnapshotHandles,
+} from "./snapshot-blob";
 
 export interface FileChattrGuard {
   dev: number;
@@ -10,6 +15,7 @@ export interface FileChattrGuard {
   sha256: string;
   signal?: AbortSignal;
   beforeMutation?: () => void;
+  handle?: FileHandle;
 }
 
 function changedFile(filePath: string) {
@@ -23,28 +29,37 @@ export async function readFileChattrSnapshot(
   filePath: string,
   signal?: AbortSignal,
 ) {
-  signal?.throwIfAborted();
-  const handle = await open(
-    filePath,
-    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-  );
+  const snapshot = await stageFileSnapshot(filePath, signal);
   try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile()) throw changedFile(filePath);
-    const content = await handle.readFile({ signal });
-    signal?.throwIfAborted();
+    const handle = await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    );
     return {
+      ...snapshot,
+      handle,
       attributes: {
-        chmod: metadata.mode & 0o777,
-        chown: { gid: metadata.gid, uid: metadata.uid },
+        chmod: snapshot.mode & 0o777,
+        chown: { gid: snapshot.gid, uid: snapshot.uid },
       },
-      content,
-      dev: metadata.dev,
-      ino: metadata.ino,
-      sha256: sha256(content),
     };
-  } finally {
-    await handle.close();
+  } catch (error) {
+    await removeSnapshotBlob(snapshot.sourceBlob, snapshot.namespace);
+    throw error;
+  }
+}
+
+export class FileChattrSnapshots extends FileSnapshotCollection<
+  Awaited<ReturnType<typeof readFileChattrSnapshot>>
+> {
+  override async [Symbol.asyncDispose](): Promise<void> {
+    try {
+      await closeSnapshotHandles(
+        [...this.values()].map((snapshot) => snapshot.handle),
+      );
+    } finally {
+      await super[Symbol.asyncDispose]();
+    }
   }
 }
 
@@ -95,10 +110,12 @@ async function applyGuardedChattr(
   guard: FileChattrGuard,
 ) {
   const validated = validateFileChattr(chattr);
-  const handle = await open(
-    filePath,
-    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-  );
+  const handle =
+    guard.handle ??
+    (await open(
+      filePath,
+      constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    ));
   try {
     await verifyChattrHandle(handle, filePath, guard);
     const before = await handle.stat();
@@ -125,6 +142,7 @@ async function applyGuardedChattr(
         changed = true;
       }
       await verifyChattrHandle(handle, filePath, guard);
+      await handle.sync();
     } catch (error) {
       if (changed) {
         try {
@@ -133,6 +151,7 @@ async function applyGuardedChattr(
             await handle.chown(before.uid, before.gid);
           await check(true);
           await handle.chmod(before.mode & 0o777);
+          await handle.sync();
         } catch (rollbackError) {
           throw Object.assign(
             new AggregateError(
@@ -151,7 +170,7 @@ async function applyGuardedChattr(
       chown: { gid: after.gid, uid: after.uid },
     };
   } finally {
-    await handle.close();
+    if (!guard.handle) await handle.close();
   }
 }
 

@@ -1,3 +1,4 @@
+import type { SnapshotBlob } from "../../runtime/snapshot-blob.ts";
 import type { WorkspaceHandle } from "../workspace/context.ts";
 
 export type MutationTool =
@@ -11,6 +12,7 @@ export interface MutationFilePlan {
   candidateSha256: string | null;
   filePath: string;
   sourceContentBase64?: string | null;
+  sourceBlob?: SnapshotBlob | null;
   sourceGid?: number | null;
   sourceMode?: number | null;
   sourceSha256: string | null;

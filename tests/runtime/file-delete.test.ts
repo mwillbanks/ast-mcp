@@ -78,7 +78,14 @@ test("file_delete keeps completed deletion successful when cleanup races", async
   const cleanupRace = Object.assign(new Error("directory became non-empty"), {
     code: "ENOTEMPTY",
   });
-  const rmdir = spyOn(fsPromises, "rmdir").mockRejectedValueOnce(cleanupRace);
+  const actualRmdir = fsPromises.rmdir;
+  const cleanupDirectory = await realpath(path.dirname(filePath));
+  const rmdir = spyOn(fsPromises, "rmdir").mockImplementation(
+    async (directory) => {
+      if (String(directory) === cleanupDirectory) throw cleanupRace;
+      return actualRmdir(directory);
+    },
+  );
   try {
     const result = await deleteFilesSafely({
       [filePath]: { expectedSha256: sha256("delete me\n") },
@@ -202,8 +209,13 @@ test("file_delete reports cleanup errors after successful target deletion", asyn
     const cleanupError = Object.assign(new Error("private cleanup path"), {
       code,
     });
-    const rmdir = spyOn(fsPromises, "rmdir").mockRejectedValueOnce(
-      cleanupError,
+    const actualRmdir = fsPromises.rmdir;
+    const cleanupDirectory = await realpath(path.dirname(filePath));
+    const rmdir = spyOn(fsPromises, "rmdir").mockImplementation(
+      async (directory) => {
+        if (String(directory) === cleanupDirectory) throw cleanupError;
+        return actualRmdir(directory);
+      },
     );
     try {
       const result = await deleteFilesSafely({

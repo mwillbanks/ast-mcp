@@ -91,7 +91,7 @@ test("write commit reports rename failure and incomplete owned-parent cleanup", 
       expect(committing).toBe(true);
       expect(failure).toBeInstanceOf(AggregateError);
       expect(failure).toMatchObject({
-        message: "File write failed and parent cleanup was incomplete",
+        message: "File write failed and cleanup was incomplete",
         details: { affectedPaths: [parent] },
       });
       expect((failure as AggregateError).errors[0]).toMatchObject({
@@ -101,6 +101,128 @@ test("write commit reports rename failure and incomplete owned-parent cleanup", 
     } finally {
       rename.mockRestore();
       remove.mockRestore();
+    }
+  });
+});
+
+for (const existing of [false, true]) {
+  for (const failWrite of [false, true]) {
+    test(`commit close failure reclaims temporary and owned parents, existing=${existing}, write failure=${failWrite}`, async () => {
+      await fixture(async (root) => {
+        const parent = existing ? root : path.join(root, "new", "nested");
+        const target = path.join(parent, "file.txt");
+        if (existing) await fs.writeFile(target, "original");
+        const primary = new Error("temporary write failed");
+        const cleanup = new Error("temporary close failed");
+        const actualOpen = fs.open;
+        let temporary: string | undefined;
+        let output: fs.FileHandle | undefined;
+        const open = spyOn(fs, "open").mockImplementation((async (
+          ...args: Parameters<typeof fs.open>
+        ) => {
+          const handle = await actualOpen(...args);
+          if (
+            path.dirname(String(args[0])) === parent &&
+            String(args[0]).includes(".ast-mcp-") &&
+            args[1] === "wx"
+          ) {
+            temporary = String(args[0]);
+            output = handle;
+            if (failWrite)
+              spyOn(handle, "writeFile").mockRejectedValue(primary);
+            const close = handle.close.bind(handle);
+            spyOn(handle, "close").mockImplementation(async () => {
+              await close();
+              throw cleanup;
+            });
+          }
+          return handle;
+        }) as typeof fs.open);
+        try {
+          const failure = await writeFilesSafely({
+            [target]: {
+              content: "candidate",
+              ...(existing ? { expectedSha256: sha256("original") } : {}),
+            },
+          }).catch((error) => error);
+          expect(failure).toBeInstanceOf(AggregateError);
+          expect(failure.errors).toContain(cleanup);
+          if (failWrite) expect(failure.errors).toContain(primary);
+          expect(failure.details.affectedPaths).toContain(temporary);
+          expect(temporary).toBeDefined();
+          expect(await fs.lstat(temporary!).catch(() => null)).toBeNull();
+          await expect(output!.stat()).rejects.toMatchObject({ code: "EBADF" });
+          if (existing)
+            expect(await fs.readFile(target, "utf8")).toBe("original");
+          else
+            expect(
+              await fs.lstat(path.join(root, "new")).catch(() => null),
+            ).toBeNull();
+        } finally {
+          open.mockRestore();
+        }
+      });
+    });
+  }
+}
+
+test("commit reports denied temporary cleanup and still attempts owned-parent cleanup", async () => {
+  await fixture(async (root) => {
+    const parent = path.join(root, "new");
+    const target = path.join(parent, "file.txt");
+    const primary = new Error("temporary write failed");
+    const closeFailure = new Error("temporary close failed");
+    const unlinkFailure = Object.assign(new Error("temporary unlink denied"), {
+      code: "EACCES",
+    });
+    const actualOpen = fs.open,
+      actualUnlink = fs.unlink,
+      actualRmdir = fs.rmdir;
+    let temporary: string | undefined;
+    let attemptedParent = false;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      if (
+        path.dirname(String(args[0])) === parent &&
+        String(args[0]).includes(".ast-mcp-") &&
+        args[1] === "wx"
+      ) {
+        temporary = String(args[0]);
+        spyOn(handle, "writeFile").mockRejectedValue(primary);
+        const close = handle.close.bind(handle);
+        spyOn(handle, "close").mockImplementation(async () => {
+          await close();
+          throw closeFailure;
+        });
+      }
+      return handle;
+    }) as typeof fs.open);
+    const unlink = spyOn(fs, "unlink").mockImplementation(async (file) => {
+      if (String(file) === temporary) throw unlinkFailure;
+      return actualUnlink(file);
+    });
+    const rmdir = spyOn(fs, "rmdir").mockImplementation(async (file) => {
+      if (temporary && String(file) === parent) attemptedParent = true;
+      return actualRmdir(file);
+    });
+    try {
+      const failure = await writeFilesSafely({
+        [target]: { content: "candidate" },
+      }).catch((error) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect(failure.errors).toContain(primary);
+      expect(failure.errors).toContain(closeFailure);
+      expect(failure.errors).toContain(unlinkFailure);
+      expect(failure.details.affectedPaths).toContain(temporary);
+      expect(attemptedParent).toBeTrue();
+      expect(await Bun.file(target).exists()).toBeFalse();
+      expect(await Bun.file(temporary!).exists()).toBeTrue();
+    } finally {
+      open.mockRestore();
+      unlink.mockRestore();
+      rmdir.mockRestore();
     }
   });
 });

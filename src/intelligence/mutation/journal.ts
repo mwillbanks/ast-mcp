@@ -40,22 +40,62 @@ const CanonicalAbsolutePathSchema = z
     message: "Expected a canonical absolute path",
   });
 
+function validBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  for (let index = 0; index < value.length - padding; index++) {
+    const code = value.charCodeAt(index);
+    if (
+      !(
+        (code >= 65 && code <= 90) ||
+        (code >= 97 && code <= 122) ||
+        (code >= 48 && code <= 57) ||
+        code === 43 ||
+        code === 47
+      )
+    )
+      return false;
+  }
+  return true;
+}
+
+const SnapshotBlobSchema = z
+  .object({
+    id: z.string().regex(/^[1-9][0-9]*-[a-f0-9-]{36}$/),
+    sha256: Sha256Schema,
+    size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict();
+
 const MutationJournalFileSchema = z
   .object({
     candidateSha256: Sha256Schema.nullable(),
     committedDeleted: z.boolean(),
     committedSha256: Sha256Schema.nullable(),
     filePath: CanonicalAbsolutePathSchema,
+    sourceBlob: SnapshotBlobSchema.nullable().optional(),
     sourceContentBase64: z
       .string()
-      .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/)
+      .refine(validBase64, "Invalid Base64")
       .nullable(),
     sourceGid: z.number().int().nonnegative().nullable(),
     sourceMode: z.number().int().nonnegative().nullable(),
     sourceSha256: Sha256Schema.nullable(),
     sourceUid: z.number().int().nonnegative().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((file, context) => {
+    if (
+      file.sourceBlob &&
+      (file.sourceContentBase64 !== null ||
+        file.sourceBlob.sha256 !== file.sourceSha256)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Snapshot identity must match its source digest",
+        path: ["sourceBlob"],
+      });
+  });
 
 const MutationJournalRecordSchema = z
   .object({

@@ -12,7 +12,6 @@ import {
   recordMutationRollback,
 } from "../intelligence/mutation/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
-import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import {
@@ -22,6 +21,7 @@ import {
 } from "./parent-directories";
 import { pathsShareRoot, resolveWritablePath } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
+import { stageFileSnapshot, FileSnapshotCollection } from "./snapshot-blob";
 
 export interface FileRenameRequest {
   destination: string;
@@ -299,15 +299,12 @@ export async function renameFilesSafely(
       const fence = async () => {
         for (const lease of leases) await lease.fence();
       };
-      const sourceSnapshots = new Map<
-        string,
-        Awaited<ReturnType<typeof readFileSnapshot>>
-      >();
+      await using sourceSnapshots = new FileSnapshotCollection();
       for (const { filePath, request } of entries) {
-        const snapshot = await readFileSnapshot(filePath, signal);
         await requireExpectedHash(request.expectedSha256, "file_rename");
-        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
+        const snapshot = await stageFileSnapshot(filePath, signal);
         sourceSnapshots.set(filePath, snapshot);
+        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
       }
       const sourceHashes = new Map(
         [...sourceSnapshots].map(([filePath, snapshot]) => [
@@ -323,7 +320,8 @@ export async function renameFilesSafely(
           {
             candidateSha256: null,
             filePath,
-            sourceContentBase64: snapshot?.content.toString("base64") ?? null,
+            sourceContentBase64: null,
+            sourceBlob: snapshot?.sourceBlob ?? null,
             sourceGid:
               process.platform === "win32" ? null : (snapshot?.gid ?? null),
             sourceMode: snapshot?.mode ?? null,
@@ -357,6 +355,7 @@ export async function renameFilesSafely(
       const createdDirectories: string[] = [];
       try {
         signal?.throwIfAborted();
+        sourceSnapshots.disposable = false;
         await beginMutation({
           files: sourcePlan,
           operationId,
@@ -364,6 +363,7 @@ export async function renameFilesSafely(
           workspace,
         });
         began = true;
+        await sourceSnapshots.verify(signal);
         for (const entry of entries) {
           await ensureParentDirectories(
             entry.destinationPath,
@@ -417,6 +417,7 @@ export async function renameFilesSafely(
           commits,
         );
         completed = true;
+        sourceSnapshots.disposable = true;
         return intelligenceRefresh ? { files, intelligenceRefresh } : { files };
       } catch (error) {
         primaryFailure = error;
@@ -444,8 +445,12 @@ export async function renameFilesSafely(
               ),
           ]),
         );
-        if (began && restored.every(Boolean))
-          await ignoreFailure(recordMutationRollback(operationId));
+        if (began && restored.every(Boolean)) {
+          try {
+            await recordMutationRollback(operationId);
+            sourceSnapshots.disposable = true;
+          } catch {}
+        }
         throw error;
       } finally {
         if (!completed) {

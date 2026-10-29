@@ -505,7 +505,7 @@ describe("destructive mutation lifecycle", () => {
       );
       expect(unfinished).toHaveLength(1);
       expect(unfinished[0]?.tool).toBe("file_delete");
-      expect(unfinished[0]?.state).toBe("failed");
+      expect(unfinished[0]?.state).toBe("recovery-required");
       if (unfinished[0])
         await lifecycle.journal.transition(
           unfinished[0].operationId,

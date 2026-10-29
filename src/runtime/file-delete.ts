@@ -8,7 +8,6 @@ import {
   readdir,
   rm,
   rmdir,
-  writeFile,
 } from "node:fs/promises";
 import path from "node:path";
 
@@ -24,7 +23,6 @@ import {
 import { ParserWorkerPool } from "../intelligence/parser/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { detectAstLanguage } from "../patch/languages";
-import { readFileSnapshot } from "./file-snapshot";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
@@ -35,6 +33,15 @@ import {
   resolveWritablePath,
 } from "./paths";
 import { requireExpectedHash, verifyExpectedHash } from "./policy";
+import {
+  createReferenceTargetIndex,
+  referencedTargets,
+} from "./reference-target-index";
+import {
+  stageFileSnapshot,
+  restoreSnapshotBlob,
+  FileSnapshotCollection,
+} from "./snapshot-blob";
 
 export interface FileDeleteRequest {
   expectedSha256?: string;
@@ -47,6 +54,7 @@ interface ReferenceVerification {
   pool: ParserWorkerPool;
   signal: AbortSignal;
   targets: Set<string>;
+  targetIndex: Map<string, string[]>;
   candidates: number;
   sourceBytes: number;
   directories: Map<string, Dirent[]>;
@@ -168,20 +176,11 @@ async function importersFor(
           .map((entry) => path.resolve(path.dirname(candidate), entry.source));
         verification.imports.set(candidate, bases);
       }
-      for (const target of verification.targets) {
-        verification.signal.throwIfAborted();
-        if (
-          bases.some(
-            (base) =>
-              base === target ||
-              `${base}${path.extname(target)}` === target ||
-              path.join(base, `index${path.extname(target)}`) === target,
-          )
-        ) {
-          const matches = importers.get(target) ?? [];
-          matches.push(path.relative(root, candidate));
-          importers.set(target, matches);
-        }
+      verification.signal.throwIfAborted();
+      for (const target of referencedTargets(verification.targetIndex, bases)) {
+        const matches = importers.get(target) ?? [];
+        matches.push(path.relative(root, candidate));
+        importers.set(target, matches);
       }
     }
   } catch (error) {
@@ -357,6 +356,7 @@ export async function deleteFilesSafely(
     roots: new Map(),
     pool,
     targets: new Set<string>(),
+    targetIndex: new Map<string, string[]>(),
     candidates: 0,
     sourceBytes: 0,
     signal: AbortSignal.any([
@@ -370,6 +370,7 @@ export async function deleteFilesSafely(
       verification.signal.throwIfAborted();
       verification.targets.add(await resolveWritablePath(inputPath, "delete"));
     }
+    verification.targetIndex = createReferenceTargetIndex(verification.targets);
     for (const [inputPath, request] of Object.entries(requests)) {
       verification.signal.throwIfAborted();
       entries.push(await prepareDeleteEntry(inputPath, request, verification));
@@ -398,15 +399,12 @@ export async function deleteFilesSafely(
       const fence = async () => {
         for (const lease of leases) await lease.fence();
       };
-      const snapshots = new Map<
-        string,
-        Awaited<ReturnType<typeof readFileSnapshot>>
-      >();
+      await using snapshots = new FileSnapshotCollection();
       for (const { filePath, request } of entries) {
-        const snapshot = await readFileSnapshot(filePath, signal);
         await requireExpectedHash(request.expectedSha256, "file_delete");
-        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
+        const snapshot = await stageFileSnapshot(filePath, signal);
         snapshots.set(filePath, snapshot);
+        verifyExpectedHash(request.expectedSha256, snapshot.sha256);
       }
       const workspace = currentWorkspace() ?? null;
       const sourcePlan = entries.map(({ filePath }) => {
@@ -414,7 +412,8 @@ export async function deleteFilesSafely(
         return {
           candidateSha256: null,
           filePath,
-          sourceContentBase64: snapshot?.content.toString("base64") ?? null,
+          sourceContentBase64: null,
+          sourceBlob: snapshot?.sourceBlob ?? null,
           sourceGid:
             process.platform === "win32" ? null : (snapshot?.gid ?? null),
           sourceMode: snapshot?.mode ?? null,
@@ -439,6 +438,7 @@ export async function deleteFilesSafely(
       let began = false;
       try {
         signal?.throwIfAborted();
+        snapshots.disposable = false;
         await beginMutation({
           files: sourcePlan,
           operationId,
@@ -446,6 +446,7 @@ export async function deleteFilesSafely(
           workspace,
         });
         began = true;
+        await snapshots.verify(signal);
         const files: Record<string, unknown> = {};
         for (const {
           filePath,
@@ -483,6 +484,7 @@ export async function deleteFilesSafely(
           operationId,
           commits,
         );
+        snapshots.disposable = true;
         return {
           files,
           ...(intelligenceRefresh ? { intelligenceRefresh } : {}),
@@ -496,7 +498,7 @@ export async function deleteFilesSafely(
           if (!snapshot) continue;
           try {
             await fence();
-            await writeFile(commit.filePath, snapshot.content, { flag: "wx" });
+            await restoreSnapshotBlob(snapshot, commit.filePath, fence);
             if (process.platform !== "win32") {
               await fence();
               await chown(commit.filePath, snapshot.uid, snapshot.gid);
@@ -527,8 +529,12 @@ export async function deleteFilesSafely(
             );
           }
         }
-        if (began && rollbackErrors.length === 0)
-          await ignoreFailure(recordMutationRollback(operationId));
+        if (began && rollbackErrors.length === 0) {
+          try {
+            await recordMutationRollback(operationId);
+            snapshots.disposable = true;
+          } catch {}
+        }
         if (rollbackErrors.length > 0)
           throw Object.assign(
             new AggregateError(

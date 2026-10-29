@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   applyFileChattr,
   readFileChattrSnapshot,
+  FileChattrSnapshots,
 } from "../../src/runtime/attributes";
 
 async function fixture() {
@@ -19,7 +20,9 @@ async function fixture() {
 test("guarded attributes reject identical-content inode replacements before application", async () => {
   const { root, path } = await fixture();
   try {
+    await using snapshots = new FileChattrSnapshots();
     const snapshot = await readFileChattrSnapshot(path);
+    snapshots.set(path, snapshot);
     await rename(path, join(root, "original.txt"));
     await writeFile(path, "source");
     await chmod(path, 0o644);
@@ -38,7 +41,9 @@ test("guarded attributes reject identical-content inode replacements before appl
 test("replacement during fencing never receives metadata changes", async () => {
   const { root, path } = await fixture();
   try {
+    await using snapshots = new FileChattrSnapshots();
     const snapshot = await readFileChattrSnapshot(path);
+    snapshots.set(path, snapshot);
     await expect(
       applyFileChattr(
         path,
@@ -65,7 +70,9 @@ test("default abort during fencing prevents guarded chmod", async () => {
   const { root, path } = await fixture();
   const controller = new AbortController();
   try {
+    await using snapshots = new FileChattrSnapshots();
     const snapshot = await readFileChattrSnapshot(path);
+    snapshots.set(path, snapshot);
     await expect(
       applyFileChattr(
         path,
@@ -92,7 +99,9 @@ test("guarded attribute rollback preserves concurrent content and metadata", asy
     return;
   const { root, path } = await fixture();
   try {
+    await using snapshots = new FileChattrSnapshots();
     const snapshot = await readFileChattrSnapshot(path);
+    snapshots.set(path, snapshot);
     let calls = 0;
     await expect(
       applyFileChattr(
