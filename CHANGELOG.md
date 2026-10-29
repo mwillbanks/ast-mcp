@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.5](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.4...ast-mcp-v0.6.5) (2026-10-29)
+
+
+### 🐛 Fixes
+
+* **50:** stream snapshots and optimize I/O ([91c21a6](https://github.com/mwillbanks/ast-mcp/commit/91c21a64b8b0e6a2baafd475a296d78a13388e61))
+
+
+### 🔧 Maintenance
+
+* **deps:** bump the minor-and-patch group across 2 directories with 3 updates ([#49](https://github.com/mwillbanks/ast-mcp/issues/49)) ([d79d64e](https://github.com/mwillbanks/ast-mcp/commit/d79d64ed7dddfff6327560d91a65231b1b34dd19))
+
 ## [0.6.4](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.3...ast-mcp-v0.6.4) (2026-10-23)
 
 ### 🐛 Fixes
