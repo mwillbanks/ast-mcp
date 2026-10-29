@@ -10,15 +10,20 @@ export function sha256(content: string | Uint8Array): string {
 /**
  * Hash an open regular file without closing it or changing its read position.
  * The caller owns descriptor identity and metadata consistency checks.
+ * Cancellation and timeout are cooperative at completed I/O boundaries.
+ * Pending reads must settle before rejection; the caller can then reuse or close
+ * the handle safely. The timeout uses AbortSignal.timeout argument semantics.
  */
 export async function sha256Handle(
   handle: FileHandle,
   signal?: AbortSignal,
+  timeoutMs = 30_000,
 ): Promise<string> {
-  const deadline = AbortSignal.timeout(30_000);
+  const deadline = AbortSignal.timeout(timeoutMs);
   const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   readSignal.throwIfAborted();
   const metadata = await handle.stat();
+  readSignal.throwIfAborted();
   if (!metadata.isFile())
     throw Object.assign(new Error("Hashing requires a regular file"), {
       code: "file_not_regular",

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import path from "node:path";
 
 import {
@@ -18,6 +18,101 @@ function original(targets: string[], bases: string[]): string[] {
     )
     .sort();
 }
+
+const pathImplementations = [
+  ["posix", { extname: path.posix.extname, join: path.posix.join }],
+  ["win32", { extname: path.win32.extname, join: path.win32.join }],
+] as const;
+
+for (const [name, implementation] of pathImplementations)
+  test(`reference aliases preserve literal and normalized path behavior on ${name}`, () => {
+    const join = spyOn(path, "join").mockImplementation(implementation.join);
+    const extname = spyOn(path, "extname").mockImplementation(
+      implementation.extname,
+    );
+    try {
+      const roots = [
+        "",
+        ".",
+        "..",
+        "/",
+        "/app/",
+        "/app//",
+        "/app/./",
+        "/app/nested/../",
+        "C:",
+        "C:.",
+        "C:/",
+        "C:\\",
+        "\\\\server\\share\\",
+        "//server/share/",
+      ];
+      const names = ["file", "index", "index.", ".hidden", "multi.part"];
+      const targets = [
+        ...new Set([
+          ...roots.flatMap((root) =>
+            names.flatMap((file) =>
+              ["", ".ts", ".tsx", ".js"].map(
+                (extension) => root + file + extension,
+              ),
+            ),
+          ),
+          ...roots.flatMap((root) =>
+            ["index", "index.ts"].map((file) => path.join(root, file)),
+          ),
+          "/app/index.ts/",
+          "/app//index.ts",
+          "/app/./index.ts",
+          "C:\\app\\index.ts",
+          "C:app\\index.ts",
+        ]),
+      ];
+      const candidates = [
+        ...roots,
+        ...targets,
+        ...targets.map((target) =>
+          target.slice(0, target.length - path.extname(target).length),
+        ),
+        ...targets.map((target) => target + "/"),
+      ];
+      const index = createReferenceTargetIndex(targets);
+      for (const base of candidates)
+        expect([...referencedTargets(index, [base, base])].sort()).toEqual(
+          original(targets, [base]),
+        );
+    } finally {
+      join.mockRestore();
+      extname.mockRestore();
+    }
+  });
+
+test("reference matching uses bounded lookups without rescanning target extensions", () => {
+  const targets = Array.from({ length: 50 }, (_, index) =>
+    path.join("/app", String(index), "index.ts"),
+  );
+  const bases = Array.from({ length: 250 }, (_, index) =>
+    path.join("/app", String(index % targets.length)),
+  );
+  const extname = spyOn(path, "extname");
+  const join = spyOn(path, "join");
+  try {
+    const index = createReferenceTargetIndex(targets);
+    const get = spyOn(index, "get");
+    try {
+      expect([...referencedTargets(index, bases)].sort()).toEqual(
+        [...targets].sort(),
+      );
+      expect(extname).toHaveBeenCalledTimes(targets.length);
+      expect(join).toHaveBeenCalledTimes(bases.length);
+      expect(get).toHaveBeenCalledTimes(2 * bases.length);
+    } finally {
+      get.mockRestore();
+    }
+  } finally {
+    extname.mockRestore();
+    join.mockRestore();
+  }
+});
 
 test("reference aliases preserve collisions, index files, extensionless files, and duplicate imports", () => {
   const targets = [

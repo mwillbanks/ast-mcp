@@ -24,6 +24,7 @@ import {
   copySnapshotBlob,
   releaseSnapshotCapture,
   removeSnapshotBlob,
+  removeSnapshotTemporary,
   snapshotNamespace,
   sweepSnapshotBlobs,
   syncDirectory,
@@ -109,10 +110,25 @@ async function assertRecoveryPath(
     throw new Error("mutation_path_outside_workspace");
 }
 
-async function recoveryHash(
+function remainingRecoveryBudget(deadline?: Date | number): number | undefined {
+  if (deadline === undefined) return undefined;
+  const absolute = deadline instanceof Date ? deadline.getTime() : deadline;
+  if (!Number.isFinite(absolute))
+    throw new RangeError("Invalid recovery deadline");
+  const remaining = Math.ceil(absolute - Date.now());
+  if (remaining <= 0)
+    throw new DOMException(
+      "Mutation recovery deadline exceeded",
+      "TimeoutError",
+    );
+  return Math.min(remaining, 0xffffffff);
+}
+
+async function hashRecoveryFile(
   filePath: string,
   signal?: AbortSignal,
   retained?: FileHandle,
+  hashTimeoutMs?: number,
 ): Promise<string> {
   const handle =
     retained ??
@@ -123,7 +139,7 @@ async function recoveryHash(
   try {
     const before = await handle.stat();
     if (!before.isFile()) throw new Error("mutation_recovery_hash_mismatch");
-    const digest = await sha256Handle(handle, signal);
+    const digest = await sha256Handle(handle, signal, hashTimeoutMs);
     const after = await handle.stat();
     const current = await lstat(filePath);
     if (
@@ -144,10 +160,19 @@ async function recoveryHash(
 async function syncMutationFile(filePath: string): Promise<void> {
   const handle = await open(
     filePath,
-    constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+    (process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY) |
+      constants.O_NONBLOCK |
+      constants.O_NOFOLLOW,
   );
   try {
-    if (!(await handle.stat()).isFile())
+    const held = await handle.stat();
+    const current = await lstat(filePath);
+    if (
+      !held.isFile() ||
+      current.isSymbolicLink() ||
+      held.dev !== current.dev ||
+      held.ino !== current.ino
+    )
       throw new Error("mutation_recovery_hash_mismatch");
     await handle.sync();
   } finally {
@@ -199,6 +224,7 @@ class RecoveryMaterials extends Map<string, FileHandle> {
   async prepare(
     file: MutationJournalFile,
     signal?: AbortSignal,
+    hashTimeoutMs?: number,
   ): Promise<void> {
     signal?.throwIfAborted();
     if (file.sourceBlob) {
@@ -206,7 +232,12 @@ class RecoveryMaterials extends Map<string, FileHandle> {
         throw new Error("mutation_recovery_material_mismatch");
       this.set(
         file.filePath,
-        await openSnapshotBlob(file.sourceBlob, this.namespace, signal),
+        await openSnapshotBlob(
+          file.sourceBlob,
+          this.namespace,
+          signal,
+          hashTimeoutMs,
+        ),
       );
     } else if (file.sourceContentBase64 !== null) {
       const source = Buffer.from(file.sourceContentBase64, "base64");
@@ -237,6 +268,16 @@ async function restoreMutationRecord(
     signal?: AbortSignal;
   } = {},
 ): Promise<void> {
+  const remaining = remainingRecoveryBudget(options.deadline);
+  if (remaining !== undefined) {
+    const deadlineSignal = AbortSignal.timeout(remaining);
+    options = {
+      ...options,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, deadlineSignal])
+        : deadlineSignal,
+    };
+  }
   for (const file of record.files) {
     await assertRecoveryPath(workspace, file.filePath);
     if (
@@ -256,12 +297,18 @@ async function restoreMutationRecord(
         await fence();
         await assertRecoveryPath(workspace, filePath, retained);
       };
+      const hashTimeout = () => remainingRecoveryBudget(options.deadline);
+      const recoveryHash = (
+        filePath: string,
+        signal?: AbortSignal,
+        retained?: FileHandle,
+      ) => hashRecoveryFile(filePath, signal, retained, hashTimeout());
       await using materials = new RecoveryMaterials(
         snapshotNamespace(workspace),
       );
       // Validate every source and current target before the first recovery write.
       for (const file of record.files) {
-        await materials.prepare(file, options.signal);
+        await materials.prepare(file, options.signal, hashTimeout());
         await assertRecoveryPath(workspace, file.filePath);
         const actual = await recoveryHash(file.filePath, options.signal).catch(
           (error: NodeJS.ErrnoException) => {
@@ -307,7 +354,11 @@ async function restoreMutationRecord(
           if (actual === file.sourceSha256) {
             const handle = await open(
               file.filePath,
-              constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+              (process.platform === "win32"
+                ? constants.O_RDWR
+                : constants.O_RDONLY) |
+                constants.O_NONBLOCK |
+                constants.O_NOFOLLOW,
             );
             materials.targets.set(file.filePath, handle);
             if (
@@ -338,6 +389,8 @@ async function restoreMutationRecord(
         );
         await fencePath(temporary);
         let temporaryCreated = false;
+        let temporaryIdentity: { dev: number; ino: number } | undefined;
+        const restorationErrors: unknown[] = [];
         try {
           let output: FileHandle;
           if (file.sourceBlob) {
@@ -348,9 +401,12 @@ async function restoreMutationRecord(
               options.signal,
             );
             temporaryCreated = true;
+            temporaryIdentity = identity;
             output = await open(
               temporary,
-              constants.O_RDONLY | constants.O_NOFOLLOW,
+              (process.platform === "win32"
+                ? constants.O_RDWR
+                : constants.O_RDONLY) | constants.O_NOFOLLOW,
             );
             materials.targets.set(file.filePath, output);
             const actual = await output.stat();
@@ -360,6 +416,7 @@ async function restoreMutationRecord(
             output = await open(temporary, "wx+", 0o600);
             temporaryCreated = true;
             materials.targets.set(file.filePath, output);
+            temporaryIdentity = await output.stat();
             await output.writeFile(source!);
             await output.sync();
           }
@@ -398,8 +455,30 @@ async function restoreMutationRecord(
           } else {
             await rename(temporary, file.filePath);
           }
+        } catch (error) {
+          restorationErrors.push(error);
+          throw error;
         } finally {
-          if (temporaryCreated) await unlink(temporary).catch(() => undefined);
+          const failures = [...restorationErrors];
+          if (temporaryCreated && temporaryIdentity) {
+            try {
+              await removeSnapshotTemporary(temporary, temporaryIdentity);
+            } catch (error) {
+              failures.push(error);
+            }
+            if (restorationErrors.length) {
+              try {
+                await syncDirectory(path.dirname(temporary));
+              } catch (error) {
+                failures.push(error);
+              }
+            }
+          }
+          if (failures.length > restorationErrors.length)
+            throw new AggregateError(
+              failures,
+              "Mutation recovery temporary cleanup failed",
+            );
         }
       }
       for (const file of record.files) {

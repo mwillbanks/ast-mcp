@@ -57,7 +57,8 @@ export interface Observation {
   dataset: Dataset;
   durationMs: number;
   error?: string;
-  phase?: "setup" | "operation";
+  phase?: "setup" | "operation" | "cleanup";
+  cleanupErrors?: string[];
   representation?: Representation;
   operation: Operation;
   peakRssBytes: number;
@@ -404,6 +405,7 @@ export async function worker(
   soakRequests: number,
   settleMs: number,
   setup: {
+    disposers?: ReadonlyArray<() => Promise<void>>;
     writeConfiguration?: (
       filePath: string,
       content: string,
@@ -424,7 +426,8 @@ export async function worker(
     operation === "read" ? "fixture.txt" : "fixture.bin",
   );
   const destination = path.join(root, "moved.bin");
-  const cleanup: Array<() => Promise<void>> = [];
+  const cleanup: Array<() => Promise<void>> = [...(setup.disposers ?? [])];
+  let observation: Observation | undefined;
   try {
     process.env.AST_MCP_ROOTS = root;
     process.env.AST_MCP_ALLOW_EXTERNAL_ROOTS = "1";
@@ -436,6 +439,11 @@ export async function worker(
     await fixture(source, bytes, dataset, operation === "read");
     // Independent verification deliberately warms the cache before each sample.
     const expected = await independentHash(source);
+    const expectedReadPrefix =
+      operation === "read" ? Buffer.alloc(Math.min(bytes, 800)) : undefined;
+    if (expectedReadPrefix)
+      for (let index = 0; index < expectedReadPrefix.length; index++)
+        expectedReadPrefix[index] = index % 80 === 79 ? 10 : 65 + (index % 26);
     const sources = [source];
     const expectedByPath = new Map([[source, expected]]);
     if (operation === "durable-batch-delete") {
@@ -506,7 +514,8 @@ export async function worker(
         ]);
         if (
           result[0]?.sha256 !== expected ||
-          Buffer.byteLength(result[0].content) > 4096
+          Buffer.byteLength(result[0].content) > 4096 ||
+          result[0].content !== expectedReadPrefix?.toString("utf8")
         )
           throw new Error("read_contract_mismatch");
       };
@@ -684,7 +693,7 @@ export async function worker(
           ? `${failure.name}: ${failure.message}`
           : String(failure);
     }
-    return {
+    return (observation = {
       bytes,
       dataset,
       operation,
@@ -707,9 +716,9 @@ export async function worker(
         : {}),
       phase: "operation",
       ...(error ? { error } : {}),
-    };
+    });
   } catch (failure) {
-    return {
+    return (observation = {
       bytes,
       dataset,
       operation,
@@ -723,16 +732,43 @@ export async function worker(
         failure instanceof Error
           ? `${failure.name}: ${failure.message}`
           : String(failure),
-    };
+    });
   } finally {
+    const cleanupFailures: unknown[] = [];
+    for (const dispose of cleanup.reverse()) {
+      try {
+        await dispose();
+      } catch (failure) {
+        cleanupFailures.push(failure);
+      }
+    }
     try {
-      for (const dispose of cleanup.reverse()) await dispose();
       await rm(root, { recursive: true, force: true });
+    } catch (failure) {
+      cleanupFailures.push(failure);
     } finally {
       for (const [name, value] of environment) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
+    }
+    if (cleanupFailures.length) {
+      const messages = cleanupFailures.map((failure) =>
+        failure instanceof Error
+          ? `${failure.name}: ${failure.message}`
+          : String(failure),
+      );
+      if (!observation)
+        throw new AggregateError(cleanupFailures, "Benchmark cleanup failed");
+      if (observation.success) observation.phase = "cleanup";
+      observation.success = false;
+      observation.cleanupErrors = messages;
+      observation.error = [
+        observation.error,
+        ...messages.map((message) => `cleanup: ${message}`),
+      ]
+        .filter(Boolean)
+        .join("; ");
     }
   }
 }

@@ -9,11 +9,14 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const benchmarkPath = new URL(
-  "../../scripts/benchmark/benchmark-file-operations.ts",
-  import.meta.url,
-).pathname;
+const benchmarkPath = fileURLToPath(
+  new URL(
+    "../../scripts/benchmark/benchmark-file-operations.ts",
+    import.meta.url,
+  ),
+);
 const { parseOptions, summarize } = await import(benchmarkPath);
 
 test("benchmark workers validate every bounded operation in process and restore environment", async () => {
@@ -54,6 +57,8 @@ test("benchmark workers validate every bounded operation in process and restore 
   const failedRead = await worker("read", 4096, "sparse", "blob", 3, 0);
   expect(failedRead.success).toBe(false);
   expect(failedRead.phase).toBe("operation");
+  expect(failedRead.error).toContain("file_read mode 'text' is unavailable");
+  expect(failedRead.error).toContain("available modes: none");
   const failedSetup = await worker("invalid", 4096, "dense", "blob", 3, 0);
   expect(failedSetup.success).toBe(false);
   expect(failedSetup.phase).toBe("setup");
@@ -114,6 +119,63 @@ test("configuration write failure removes temporary data and restores defined an
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+  }
+}, 30000);
+
+test("worker attempts every disposer and removes its root without hiding operation failures", async () => {
+  const { worker } = await import(benchmarkPath);
+  const names = [
+    "AST_MCP_ROOTS",
+    "AST_MCP_ALLOW_EXTERNAL_ROOTS",
+    "AST_MCP_TELEMETRY",
+  ];
+  const previous = new Map(names.map((name) => [name, process.env[name]]));
+  for (const operation of ["hash", "read"]) {
+    let root = "";
+    const calls: string[] = [];
+    const sample = await worker(
+      operation,
+      4096,
+      operation === "read" ? "sparse" : "dense",
+      "blob",
+      3,
+      0,
+      {
+        writeConfiguration: async (filePath: string, content: string) => {
+          root = path.dirname(filePath);
+          return writeFile(filePath, content);
+        },
+        disposers: [
+          async () => {
+            calls.push("first");
+            throw new Error("disposer failed");
+          },
+          async () => {
+            calls.push("second");
+            throw "second disposer failed";
+          },
+          async () => {
+            calls.push("third");
+          },
+        ],
+      },
+    );
+    expect(calls).toEqual(["third", "second", "first"]);
+    expect(sample.success).toBe(false);
+    expect(sample.phase).toBe(operation === "hash" ? "cleanup" : "operation");
+    expect(sample.cleanupErrors).toEqual([
+      "second disposer failed",
+      "Error: disposer failed",
+    ]);
+    expect(sample.error).toContain("cleanup: second disposer failed");
+    expect(sample.error).toContain("cleanup: Error: disposer failed");
+    if (operation === "read")
+      expect(sample.error).toContain("file_read mode 'text' is unavailable");
+    expect(summarize([sample]).mibPerSecond).toBeNull();
+    expect(
+      await stat(root).catch((error: NodeJS.ErrnoException) => error.code),
+    ).toBe("ENOENT");
+    for (const [name, value] of previous) expect(process.env[name]).toBe(value);
   }
 }, 30000);
 
@@ -231,10 +293,7 @@ test("benchmark exercises the registered hash tool and guarded mutation paths", 
   const process = Bun.spawn(
     [
       Bun.argv[0]!,
-      new URL(
-        "../../scripts/benchmark/benchmark-file-operations.ts",
-        import.meta.url,
-      ).pathname,
+      benchmarkPath,
       "--bytes=65536",
       "--iterations=1",
       "--operations=hash-tool,hash-configured,delete,rename",
@@ -348,5 +407,9 @@ test("benchmark exits unsuccessfully when an operation fails", async () => {
   const report = JSON.parse(stdout);
   expect(report.samples[0].success).toBe(false);
   expect(report.samples[0].phase).toBe("operation");
+  expect(report.samples[0].error).toContain(
+    "file_read mode 'text' is unavailable",
+  );
+  expect(report.samples[0].error).toContain("available modes: none");
   expect(report.summaries[0].mibPerSecond).toBeNull();
 }, 30000);

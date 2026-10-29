@@ -311,8 +311,12 @@ async function openSnapshotMaterial(
   );
   try {
     const metadata = await handle.stat();
+    const current = await lstat(target);
     const account = await systemAccount();
     if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      !unchanged(metadata, current) ||
       !metadata.isFile() ||
       metadata.nlink !== 1 ||
       metadata.size !== blob.size ||
@@ -342,16 +346,38 @@ export async function openSnapshotBlob(
   blob: SnapshotBlob,
   namespace: string,
   signal?: AbortSignal,
+  hashTimeoutMs?: number,
 ): Promise<FileHandle> {
   const handle = await openSnapshotMaterial(blob, namespace, signal);
   try {
-    if ((await sha256Handle(handle, signal)) !== blob.sha256)
+    if ((await sha256Handle(handle, signal, hashTimeoutMs)) !== blob.sha256)
       throw failure("mutation_recovery_material_mismatch");
     return handle;
   } catch (error) {
     await handle.close();
     throw error;
   }
+}
+
+/** Remove only the temporary inode created by the current operation. */
+export async function removeSnapshotTemporary(
+  filePath: string,
+  identity: { dev: number; ino: number },
+): Promise<void> {
+  const current = await lstat(filePath).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    },
+  );
+  if (!current) return;
+  if (
+    current.isSymbolicLink() ||
+    current.dev !== identity.dev ||
+    current.ino !== identity.ino
+  )
+    throw failure("mutation_snapshot_temporary_replaced");
+  await unlink(filePath);
 }
 
 /** Copy from the already verified descriptor, preserving its identity. */
@@ -362,10 +388,12 @@ export async function copySnapshotBlob(
   signal?: AbortSignal,
 ): Promise<{ dev: number; ino: number }> {
   const output = await open(destination, "wx", 0o600);
+  let identity: { dev: number; ino: number } | undefined;
   let succeeded = false;
   let closed = false;
   const errors: unknown[] = [];
   try {
+    identity = await output.stat();
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(CHUNK_SIZE);
     let position = 0;
@@ -387,7 +415,6 @@ export async function copySnapshotBlob(
     if (position !== blob.size || hash.digest("hex") !== blob.sha256)
       throw failure("mutation_recovery_material_mismatch");
     await output.sync();
-    const identity = await output.stat();
     await output.close();
     closed = true;
     succeeded = true;
@@ -401,7 +428,8 @@ export async function copySnapshotBlob(
         if (!closed) await output.close();
       },
       async () => {
-        if (!succeeded) await unlink(destination);
+        if (!succeeded && identity)
+          await removeSnapshotTemporary(destination, identity);
       },
     ]);
   }
@@ -422,17 +450,29 @@ export async function restoreSnapshotBlob(
     snapshot.namespace,
   );
   let created = false;
+  let identity: { dev: number; ino: number } | undefined;
   const errors: unknown[] = [];
   try {
     await fence();
-    await copySnapshotBlob(source, temporary, snapshot.sourceBlob);
+    identity = await copySnapshotBlob(source, temporary, snapshot.sourceBlob);
     created = true;
     const output = await open(
       temporary,
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+      (process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY) |
+        constants.O_NOFOLLOW,
     );
     const metadataErrors: unknown[] = [];
     try {
+      const held = await output.stat();
+      const current = await lstat(temporary);
+      if (
+        current.isSymbolicLink() ||
+        !held.isFile() ||
+        held.dev !== identity.dev ||
+        held.ino !== identity.ino ||
+        !unchanged(held, current)
+      )
+        throw failure("mutation_recovery_material_mismatch");
       await fence();
       if (process.platform !== "win32")
         await output.chown(snapshot.uid, snapshot.gid);
@@ -454,7 +494,12 @@ export async function restoreSnapshotBlob(
     await cleanupSnapshot(errors, [
       () => source.close(),
       async () => {
-        if (created) await unlink(temporary);
+        if (created && identity)
+          await removeSnapshotTemporary(temporary, identity);
+      },
+      async () => {
+        if (created && errors.length)
+          await syncDirectory(path.dirname(destination));
       },
     ]);
   }

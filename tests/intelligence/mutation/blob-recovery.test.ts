@@ -20,6 +20,7 @@ import { patchFiles, writeFilesSafely } from "../../../src/patch/engine.ts";
 import { deleteFilesSafely } from "../../../src/runtime/file-delete.ts";
 import { renameFilesSafely } from "../../../src/runtime/file-rename.ts";
 import { sha256, sha256File } from "../../../src/runtime/hash.ts";
+import * as hashing from "../../../src/runtime/hash.ts";
 import {
   ensurePrivateLockDirectory,
   systemAccount,
@@ -115,6 +116,93 @@ test("guarded binary deletion journals compact durable snapshots", async () => {
   expect(JSON.stringify(record).length).toBeLessThan(4096);
   expect(await fs.readdir(snapshotRoot)).toEqual([]);
 });
+
+test.each([
+  "default",
+  "number",
+  "date",
+  "expired",
+  "elapsed",
+  "invalid",
+] as const)(
+  "recovery hashes share the absolute caller deadline: %s",
+  async (kind) => {
+    const { root, workspace, store, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "deadline.bin");
+    await fs.writeFile(target, "original");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(target),
+    );
+    const operationId = `job:v1:${sha256("deadline " + kind)}`;
+    await lifecycle.journal.begin({
+      operationId,
+      workspace,
+      tool: "file_write",
+      files: [sourcePlan(target, snapshot, sha256("candidate"))],
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await fs.writeFile(target, "candidate");
+    let now = Date.now();
+    const absolute = now + 120_000;
+    const deadline =
+      kind === "default"
+        ? undefined
+        : kind === "date"
+          ? new Date(absolute)
+          : kind === "invalid"
+            ? new Date(NaN)
+            : kind === "elapsed"
+              ? now - 1
+              : absolute;
+    const recovery = new LanceMutationLifecycle(store, workspace, undefined, {
+      deadline,
+      signal: kind === "date" ? new AbortController().signal : undefined,
+    });
+    const actualHash = hashing.sha256Handle;
+    const budgets: Array<number | undefined> = [];
+    const clock = spyOn(Date, "now").mockImplementation(() => now);
+    const hash = spyOn(hashing, "sha256Handle").mockImplementation(
+      async (...args) => {
+        budgets.push(args[2]);
+        const digest = await actualHash(...args);
+        now = kind === "expired" ? absolute + 1 : now + 100;
+        return digest;
+      },
+    );
+    const failed = ["expired", "elapsed", "invalid"].includes(kind);
+    try {
+      if (failed)
+        await expect(recovery.recover()).rejects.toThrow(
+          "mutation_recovery_required",
+        );
+      else await recovery.recover();
+    } finally {
+      hash.mockRestore();
+      clock.mockRestore();
+    }
+    if (kind === "default")
+      expect(budgets.every((budget) => budget === undefined)).toBeTrue();
+    else if (kind === "elapsed" || kind === "invalid")
+      expect(budgets).toEqual([]);
+    else {
+      expect(budgets.length).toBeGreaterThan(0);
+      expect(
+        budgets.every((budget) => budget! > 30_000 && budget! <= 120_000),
+      ).toBeTrue();
+      for (let index = 1; index < budgets.length; index++)
+        expect(budgets[index]!).toBeLessThan(budgets[index - 1]!);
+    }
+    expect(await fs.readFile(target, "utf8")).toBe(
+      failed ? "candidate" : "original",
+    );
+    expect((await lifecycle.journal.get(operationId))?.state).toBe(
+      failed ? "recovery-required" : "recovered",
+    );
+    if (failed)
+      expect(await fs.readdir(snapshotRoot)).toContain(snapshot.sourceBlob.id);
+    else expect(await fs.readdir(snapshotRoot)).toEqual([]);
+  },
+);
 
 test("failed journal creation preserves targets and reclaims unreferenced captures", async () => {
   const { root, workspace, lifecycle, snapshotRoot } = await fixture();
@@ -236,6 +324,79 @@ test("streaming recovery preserves a target changed during copying", async () =>
   }
 });
 
+test.each(["replacement", "unlink", "directory"] as const)(
+  "recovery retains its blob when temporary cleanup fails: %s",
+  async (phase) => {
+    if (phase === "directory" && process.platform === "win32") return;
+    const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "cleanup.bin");
+    await fs.writeFile(target, "original");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(target),
+    );
+    const operationId = `job:v1:${sha256("cleanup " + phase)}`;
+    await lifecycle.journal.begin({
+      operationId,
+      workspace,
+      tool: "file_write",
+      files: [sourcePlan(target, snapshot, sha256("candidate"))],
+    });
+    await lifecycle.journal.transition(operationId, "recovery-required");
+    await fs.writeFile(target, "candidate");
+    const actualOpen = fs.open,
+      actualUnlink = fs.unlink;
+    let temporary = "";
+    let output: Awaited<ReturnType<typeof fs.open>> | undefined;
+    let cleanupAttempted = false;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      const name = String(args[0]);
+      if (name.includes(".recovery-") && args[1] !== "wx") {
+        temporary = name;
+        output = handle;
+        spyOn(handle, "sync").mockImplementation(async () => {
+          if (phase === "replacement") {
+            await fs.rename(name, name + ".owned");
+            await fs.writeFile(name, "replacement");
+          }
+          throw new Error("recovery metadata failed");
+        });
+      } else if (name === root && phase === "directory")
+        spyOn(handle, "sync").mockImplementation(async () => {
+          cleanupAttempted = true;
+          throw new Error("cleanup directory sync failed");
+        });
+      return handle;
+    }) as typeof fs.open);
+    const unlink = spyOn(fs, "unlink").mockImplementation(async (file) => {
+      if (String(file).includes(".recovery-") && phase === "unlink") {
+        cleanupAttempted = true;
+        throw new Error("cleanup unlink failed");
+      }
+      return actualUnlink(file);
+    });
+    try {
+      await expect(lifecycle.recover()).rejects.toThrow(
+        "mutation_recovery_required",
+      );
+      expect(await fs.readFile(target, "utf8")).toBe("candidate");
+      expect((await lifecycle.journal.get(operationId))?.state).toBe(
+        "recovery-required",
+      );
+      expect(await fs.readdir(snapshotRoot)).toContain(snapshot.sourceBlob.id);
+      if (phase === "replacement")
+        expect(await fs.readFile(temporary, "utf8")).toBe("replacement");
+      else expect(cleanupAttempted).toBeTrue();
+      await expect(output!.stat()).rejects.toMatchObject({ code: "EBADF" });
+    } finally {
+      open.mockRestore();
+      unlink.mockRestore();
+    }
+  },
+);
+
 test("successful blob recovery restores bytes and metadata then releases material", async () => {
   const { root, workspace, lifecycle, snapshotRoot } = await fixture();
   const target = path.join(root, "checkpoint.bin");
@@ -256,7 +417,7 @@ test("successful blob recovery restores bytes and metadata then releases materia
   await lifecycle.journal.transition(operationId, "recovery-required");
   await lifecycle.recover();
   expect(await sha256File(target)).toBe(snapshot.sha256);
-  expect((await fs.stat(target)).mode & 0o777).toBe(0o640);
+  expect((await fs.stat(target)).mode & 0o777).toBe(snapshot.mode & 0o777);
   expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
   expect(await fs.readdir(snapshotRoot)).toEqual([]);
 });
@@ -385,7 +546,9 @@ test.each([
         spyOn(handle, "sync").mockImplementation(async () => {
           const metadata = await handle.stat();
           const temporaryMetadata =
-            opened.includes(".recovery-") && (metadata.mode & 0o777) === 0o640;
+            opened.includes(".recovery-") &&
+            args[1] !== "wx" &&
+            (metadata.mode & 0o777) === (snapshot.mode & 0o777);
           if (temporaryMetadata) events.push("metadata-sync");
           if (opened === root) events.push("directory-sync");
           if (
@@ -446,7 +609,7 @@ test.each([
       await lifecycle.recover();
     }
     expect(await fs.readFile(target, "utf8")).toBe("durable original");
-    expect((await fs.stat(target)).mode & 0o777).toBe(0o640);
+    expect((await fs.stat(target)).mode & 0o777).toBe(snapshot.mode & 0o777);
     expect(await Bun.file(created).exists()).toBeFalse();
     expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
     expect(await fs.readdir(snapshotRoot)).toEqual([]);
@@ -513,6 +676,67 @@ function chattrHandler(root: string) {
   );
   return (input: Record<string, unknown>) => handler(input);
 }
+
+test.each([
+  [0o444, false],
+  [0o444, true],
+  [0o644, false],
+  [0o644, true],
+] as const)(
+  "durable chattr preserves readonly transitions and batch rollback: mode=%s failure=%s",
+  async (initial, fails) => {
+    const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+    const target = path.join(root, "readonly.bin");
+    await fs.writeFile(target, "original");
+    await fs.chmod(target, initial);
+    const original = (await fs.stat(target)).mode & 0o777;
+    const desired = initial === 0o444 ? 0o644 : 0o444;
+    const second = path.join(root, "inverse.bin");
+    await fs.writeFile(second, "inverse");
+    await fs.chmod(second, desired);
+    const secondOriginal = (await fs.stat(second)).mode & 0o777;
+    const complete = fails
+      ? spyOn(lifecycle, "complete").mockRejectedValue(
+          new Error("refresh failed"),
+        )
+      : null;
+    try {
+      const result = await withWorkspaceContext(workspace, () =>
+        withMutationLifecycle(lifecycle, () =>
+          chattrHandler(root)({
+            files: {
+              [target]: {
+                expectedSha256: sha256("original"),
+                chattr: { chmod: desired },
+              },
+              [second]: {
+                expectedSha256: sha256("inverse"),
+                chattr: { chmod: initial },
+              },
+            },
+          }),
+        ),
+      );
+      expect(Boolean(result.isError)).toBe(fails);
+      expect(((await fs.stat(target)).mode & 0o200) !== 0).toBe(
+        ((fails ? original : desired) & 0o200) !== 0,
+      );
+      expect(((await fs.stat(second)).mode & 0o200) !== 0).toBe(
+        ((fails ? secondOriginal : initial) & 0o200) !== 0,
+      );
+      expect(await fs.readFile(second, "utf8")).toBe("inverse");
+      expect(await fs.readFile(target, "utf8")).toBe("original");
+      expect(await lifecycle.journal.unfinished(workspace.workspaceId)).toEqual(
+        [],
+      );
+      expect(await fs.readdir(snapshotRoot)).toEqual([]);
+    } finally {
+      complete?.mockRestore();
+      await fs.chmod(target, 0o644);
+      await fs.chmod(second, 0o644);
+    }
+  },
+);
 
 test.each([false, true])(
   "binary chattr keeps compact material and mode-zero descriptors, refresh failure=%s",

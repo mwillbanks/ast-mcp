@@ -98,7 +98,7 @@ test("staged binary snapshots stream verified bytes and preserve metadata", asyn
   const restored = path.join(root, "restored.bin");
   await restoreSnapshotBlob(snapshot, restored, async () => {});
   expect(await sha256File(restored)).toBe(snapshot.sha256);
-  expect((await fs.stat(restored)).mode & 0o777).toBe(0o640);
+  expect((await fs.stat(restored)).mode & 0o777).toBe(snapshot.mode & 0o777);
 });
 
 test("snapshot capture rejects cancellation and symlink sources", async () => {
@@ -135,9 +135,32 @@ test("blob verification rejects tampering and symlinks", async () => {
   ).rejects.toThrow("mutation_recovery_material_mismatch");
   await fs.unlink(stored);
   await fs.symlink(source, stored);
-  await expect(
-    openSnapshotBlob(snapshot.sourceBlob, snapshot.namespace),
-  ).rejects.toThrow();
+  const actualOpen = fs.open;
+  let followed: Awaited<ReturnType<typeof fs.open>> | undefined;
+  const open = spyOn(fs, "open").mockImplementation((async (
+    ...args: Parameters<typeof fs.open>
+  ) => {
+    if (String(args[0]) === stored) {
+      // Emulate platforms where O_NOFOLLOW does not reject the link.
+      followed = await actualOpen(stored, "r");
+      return followed;
+    }
+    return actualOpen(...args);
+  }) as typeof fs.open);
+  try {
+    await expect(
+      openSnapshotBlob(snapshot.sourceBlob, snapshot.namespace).then(
+        async (handle) => {
+          await handle.close();
+        },
+      ),
+    ).rejects.toThrow("mutation_snapshot_material_unsafe");
+    expect(followed).toBeDefined();
+    await expect(followed!.stat()).rejects.toMatchObject({ code: "EBADF" });
+  } finally {
+    open.mockRestore();
+    await followed?.close().catch(() => undefined);
+  }
   expect(await fs.readFile(source, "utf8")).toBe("original");
 });
 
@@ -253,7 +276,7 @@ test("snapshot fsync failure leaves source bytes and no staged material", async 
     ...args: Parameters<typeof fs.open>
   ) => {
     const handle = await actualOpen(...args);
-    if (String(args[0]).endsWith("/pending"))
+    if (path.basename(String(args[0])) === "pending")
       spyOn(handle, "sync").mockRejectedValue(
         new Error("snapshot sync failed"),
       );
@@ -296,7 +319,7 @@ for (const [failingHandle, failWrite] of [
       const kind =
         String(args[0]) === source
           ? "source"
-          : String(args[0]).endsWith("/pending")
+          : path.basename(String(args[0])) === "pending"
             ? "destination"
             : null;
       if (kind) {
@@ -331,6 +354,68 @@ for (const [failingHandle, failWrite] of [
     }
   });
 }
+
+test.each(["file", "symlink"] as const)(
+  "failed copy preserves a %s replacing its temporary inode",
+  async (replacement) => {
+    const { root, workspace } = await fixture();
+    const source = path.join(root, "source.bin");
+    const destination = path.join(root, "copy.bin");
+    await fs.writeFile(source, "preserved");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(source),
+    );
+    snapshots.push(snapshot);
+    const input = await openSnapshotBlob(
+      snapshot.sourceBlob,
+      snapshot.namespace,
+    );
+    const actualOpen = fs.open;
+    const primary = new Error("copy write failed");
+    let output: Awaited<ReturnType<typeof fs.open>> | undefined;
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      if (String(args[0]) === destination) {
+        output = handle;
+        spyOn(handle, "write").mockImplementation(async () => {
+          await fs.rename(destination, destination + ".owned");
+          if (replacement === "file")
+            await fs.writeFile(destination, "replacement");
+          else await fs.symlink(source, destination);
+          throw primary;
+        });
+      }
+      return handle;
+    }) as typeof fs.open);
+    try {
+      const error = await copySnapshotBlob(
+        input,
+        destination,
+        snapshot.sourceBlob,
+      ).catch((error) => error);
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error.errors).toContain(primary);
+      expect(
+        error.errors.some(
+          (error: { code?: string }) =>
+            error.code === "mutation_snapshot_temporary_replaced",
+        ),
+      ).toBeTrue();
+      expect(await fs.readFile(destination, "utf8")).toBe(
+        replacement === "file" ? "replacement" : "preserved",
+      );
+      expect((await fs.lstat(destination)).isSymbolicLink()).toBe(
+        replacement === "symlink",
+      );
+      await expect(output!.stat()).rejects.toMatchObject({ code: "EBADF" });
+    } finally {
+      open.mockRestore();
+      await input.close();
+    }
+  },
+);
 
 for (const failWrite of [false, true]) {
   test(`copy close failure removes owned output, write failure=${failWrite}`, async () => {
@@ -383,6 +468,68 @@ for (const failWrite of [false, true]) {
     }
   });
 }
+
+test.each([false, true])(
+  "failed restore syncs temporary removal, sync failure=%s",
+  async (fails) => {
+    if (process.platform === "win32") return; // Directory fsync is unavailable on Windows.
+    const { root, workspace } = await fixture();
+    const source = path.join(root, "sync-source.bin");
+    await fs.writeFile(source, "preserved");
+    const snapshot = await withWorkspaceContext(workspace, () =>
+      stageFileSnapshot(source),
+    );
+    snapshots.push(snapshot);
+    const actualOpen = fs.open,
+      actualUnlink = fs.unlink;
+    const events: string[] = [];
+    const primary = new Error("restore fence failed");
+    const open = spyOn(fs, "open").mockImplementation((async (
+      ...args: Parameters<typeof fs.open>
+    ) => {
+      const handle = await actualOpen(...args);
+      if (String(args[0]) === root) {
+        const sync = handle.sync.bind(handle);
+        spyOn(handle, "sync").mockImplementation(async () => {
+          events.push("sync");
+          if (fails) throw new Error("cleanup sync failed");
+          await sync();
+        });
+      }
+      return handle;
+    }) as typeof fs.open);
+    const unlink = spyOn(fs, "unlink").mockImplementation(async (file) => {
+      if (String(file).includes(".rollback-")) events.push("unlink");
+      return actualUnlink(file);
+    });
+    let fences = 0;
+    try {
+      const error = await restoreSnapshotBlob(
+        snapshot,
+        path.join(root, "restore.bin"),
+        async () => {
+          if (++fences === 2) throw primary;
+        },
+      ).catch((error) => error);
+      if (fails) {
+        expect(error).toBeInstanceOf(AggregateError);
+        expect(error.errors).toContain(primary);
+      } else expect(error).toBe(primary);
+      expect(events).toEqual(["unlink", "sync"]);
+      expect(
+        (await fs.readdir(root)).some((name) => name.includes(".rollback-")),
+      ).toBeFalse();
+      const input = await openSnapshotBlob(
+        snapshot.sourceBlob,
+        snapshot.namespace,
+      );
+      await input.close();
+    } finally {
+      open.mockRestore();
+      unlink.mockRestore();
+    }
+  },
+);
 
 for (const [failingHandle, failFence] of [
   ["source", false],

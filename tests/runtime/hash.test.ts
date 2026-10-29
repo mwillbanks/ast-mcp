@@ -32,7 +32,7 @@ test("descriptor hashing preserves position and leaves the handle open", async (
   const handle = await open(filePath, "r");
   try {
     await handle.read(Buffer.alloc(7), 0, 7, null);
-    expect(await sha256Handle(handle)).toBe(
+    expect(await sha256Handle(handle, undefined, 10_000)).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
     const next = Buffer.alloc(11);
@@ -97,6 +97,108 @@ test("descriptor hashing rejects cancellation before I/O", async () => {
     await handle.close();
   }
 });
+
+test.each([-1, NaN, Infinity, -Infinity])(
+  "descriptor hashing rejects invalid timeout %s before I/O",
+  async (timeoutMs) => {
+    const { filePath } = await fixture();
+    const handle = await open(filePath, "r");
+    const metadata = spyOn(handle, "stat");
+    const read = spyOn(handle, "read");
+    try {
+      await expect(
+        sha256Handle(handle, undefined, timeoutMs),
+      ).rejects.toBeInstanceOf(Error);
+      expect(metadata).not.toHaveBeenCalled();
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      metadata.mockRestore();
+      read.mockRestore();
+      await handle.close();
+    }
+  },
+);
+
+test.each(["deadline", "cancellation"])(
+  "descriptor hashing waits for pending reads after %s",
+  async (mode) => {
+    const { bytes, filePath } = await fixture();
+    const handle = await open(filePath, "r");
+    await handle.read(Buffer.alloc(7), 0, 7, null);
+    const originalRead = handle.read.bind(handle);
+    const controller = new AbortController();
+    const reason = new Error("cancelled pending descriptor read");
+    let releaseRead!: () => void;
+    let readStarted!: () => void;
+    const pendingRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    const read = spyOn(handle, "read").mockImplementation((async (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => {
+      readStarted();
+      await pendingRead;
+      return originalRead(buffer, offset, length, position);
+    }) as typeof handle.read);
+    const close = spyOn(handle, "close");
+    let settled = false;
+    const hashing = sha256Handle(
+      handle,
+      controller.signal,
+      mode === "deadline" ? 100 : 10_000,
+    ).then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        settled = true;
+        return error;
+      },
+    );
+    // Bound the mock independently so assertion failures cannot strand cleanup.
+    const fallback = setTimeout(releaseRead, 2_000);
+    try {
+      await Promise.race([
+        started,
+        hashing.then((error) => {
+          throw (
+            error ?? new Error("Hashing settled before the mocked read started")
+          );
+        }),
+      ]);
+      if (mode === "cancellation") controller.abort(reason);
+      await Bun.sleep(150);
+      expect(settled).toBe(false);
+      expect(close).not.toHaveBeenCalled();
+      releaseRead();
+      const error = await hashing;
+      if (mode === "deadline")
+        expect(error).toMatchObject({ name: "TimeoutError" });
+      else expect(error).toBe(reason);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(close).not.toHaveBeenCalled();
+      read.mockRestore();
+      const next = Buffer.alloc(11);
+      await handle.read(next, 0, next.length, null);
+      expect(next).toEqual(bytes.subarray(7, 18));
+      expect((await handle.stat()).isFile()).toBe(true);
+    } finally {
+      clearTimeout(fallback);
+      releaseRead();
+      await hashing;
+      read.mockRestore();
+      close.mockRestore();
+      await handle.close();
+    }
+  },
+);
 
 test("descriptor hashing checks cancellation between bounded reads", async () => {
   const { filePath } = await fixture();

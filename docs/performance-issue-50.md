@@ -58,7 +58,10 @@ Measured latency was 1,786.501 ms, throughput was 1,239.35 MiB/s, and peak RSS w
 This single sample does not reproduce `ERR_STRING_TOO_LONG` in `file_hash`.
 It supports the source finding that the live hash helper and result wrapper stream file content.
 
-## Optimization measurements
+## Initial-phase optimization measurements
+
+The five passes in this section describe the initial implementation phase.
+Later source-phase measurements follow below; final-review results appear in the final frozen-source section.
 
 The initial baseline used unchanged source at revision `834671b6e511687cf00fd4a8808f1f888919621b`.
 Subsequent comparisons use the supported legacy and blob representations in the same frozen post-core source.
@@ -220,7 +223,7 @@ Earlier durable measurements supplied a 120-second benchmark deadline.
 The current harness omits that override and uses production defaults.
 Final large-file validation used the current harness.
 
-### Pass 5 final: indexed references and one authoritative verification
+### Pass 5 initial implementation: indexed references and one authoritative verification
 
 The reference index replaces target-by-base scans with alias lookups and per-importer deduplication.
 It preserves full paths, extensionless paths, and index-directory aliases.
@@ -246,7 +249,7 @@ All runs returned the same 1,600 importer-target pairs.
 | 1000    | nested    |   165.668 |         171.324 | 167.118125, 163.367875, 168.328834, 164.887667, 164.079166, 171.324000, 165.667917 |
 | 1000    | indexed   |     0.281 |           0.996 | 0.996209, 0.653250, 0.765416, 0.267667, 0.281292, 0.264083, 0.272250               |
 
-At 50 targets, median matching time fell 98.92% against the documented nested control, from 7.886 ms to 0.085 ms.
+In the initial phase, median matching time at 50 targets fell 98.92% against the documented nested control, from 7.886 ms to 0.085 ms.
 Retain the indexed algorithm.
 The 1,000-target result is synthetic scaling evidence beyond the public tool batch limit.
 Neither experiment measures parsing, filesystem traversal, database work, or complete deletion latency.
@@ -267,12 +270,12 @@ Change length:50 to length:1000 to reproduce the synthetic case.
 
 #### End-to-end mutation variability
 
-Final-source measurements use production deadlines and the same timed SHA-256 verifier as the earlier mutation baseline.
+Initial-phase final-source measurements use production deadlines and the same timed SHA-256 verifier as the earlier mutation baseline.
 Independent destination or restored-file hashing runs after timing.
 Terminal journal and snapshot-directory checks also run after timing.
 Those additional checks contribute to lifetime peak RSS, so memory comparisons are not identical observers.
 
-All 24 final-source mutation samples succeeded.
+All 24 initial-phase final-source mutation samples succeeded.
 The second set followed a 60-second idle interval.
 The source and benchmark code did not change between sets.
 Load averages were 3.68/4.45/4.60 before the first set and 2.41/3.62/4.20 before the repeat.
@@ -305,7 +308,7 @@ The after-idle mutation run uses the same command shown in the pass-5 baseline.
 A discarded preliminary run used a different timed verification chunk size.
 It is excluded from these comparisons.
 
-## Final large-file validation
+## Initial-phase large-file validation
 
 Each single-file fixture contains exactly 2,321,660,787 bytes.
 The batch contains three files of that size, totalling 6,964,982,361 logical bytes.
@@ -313,7 +316,7 @@ Dense fixtures write deterministic data across every byte.
 Sparse fixtures initially contain holes; snapshot copying can allocate their zero-filled contents.
 Sparse results do not represent equivalent physical-device I/O.
 
-All nine final large-file samples succeeded with production deadlines.
+All nine initial-phase large-file samples succeeded with production deadlines.
 Each delete verifies source absence.
 Each rename verifies source absence and an independently computed destination digest.
 Recovery verifies the independently computed restored digest.
@@ -338,7 +341,7 @@ bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iter
 | sparse recovery             |          3385.847 |        653.93 |                124.70 | recovered      |
 | sparse durable-batch-delete |          8129.536 |        817.06 |                204.49 | succeeded      |
 
-Raw final large-file observations:
+Raw initial-phase large-file observations:
 
 ```json
 [
@@ -435,9 +438,9 @@ Single samples establish successful execution on this host; they do not establis
 Configured hash exercises the registered handler and actual configured execution, without an MCP transport round trip.
 No final configured hash case reproduced ERR_STRING_TOO_LONG.
 
-## Sustained retention
+## Initial-phase sustained retention
 
-The final soak performs 100 requests in one process: 34 deletes, 33 renames, and 33 recoveries.
+The pre-portability soak performs 100 requests in one process: 34 deletes, 33 renames, and 33 recoveries.
 Each request uses a 16 MiB dense fixture and forces GC before recording memory counters.
 Every request verifies its result and records zero staged snapshot directories.
 The timed duration includes repeated fixture generation, operation verification, and per-request GC.
@@ -584,18 +587,244 @@ Raw retention observations use columns request, RSS bytes, heap-used bytes, exte
 ]
 ```
 
-## Source phase and validation
+## Historical post-portability measurements: before final review
 
-Final measurements ran after descriptor-close cleanup remediation.
-The following SHA-256 values identify the current frozen source.
-After measurements, a setup-only harness fix moved configuration writing inside its cleanup guard.
-Injected configuration-write failures now restore environment values and remove the temporary directory.
-The measured harness hash was 8eaae930fadbaa56835fe36319edea412d9101e1bc4e16bfb10bf7351c2b48c2.
-The harness fix does not change timed operation paths or the listed binary-runtime source hashes.
-A later text-write cleanup refinement in src/patch/engine.ts independently closes descriptors, removes temporary files, and cleans created parents.
-That refinement does not change the timed binary operation paths or recorded measurements.
-The measured engine hash was fc43686cb6b3a771ae8aa254e581d14af57ce182bf4e78b783f59fe0e21770d8.
-The JSON below includes the current engine hash after that refinement.
+Windows CI exposed portability defects after the initial measurement phase.
+The blob path now adds common lstat and descriptor-identity guards.
+Recovery synchronization also handles Windows descriptors correctly.
+The reference index now uses two lookups and a native path join per base.
+These changes affect measured binary and alias paths.
+The initial five-pass timings therefore remain historical evidence, not current-source timing claims.
+
+Fresh measurements below use Bun 1.4.4 on the same macOS arm64 host.
+Cache, fixture generation, independent SHA-256 verification, and lifetime-RSS rules remain as described above.
+The bounded blob and alias measurements ran after those portability changes.
+The subsequent attribute compatibility refinement does not participate in these benchmark operations.
+The post-portability large-file validation ran after that phase was frozen, before subsequent review refinements.
+
+### Historical post-portability bounded blob paths
+
+```sh
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=134217728 --iterations=3 --dataset=dense --operations=snapshot,journal,recovery --representation=blob
+```
+
+All nine dense 128 MiB samples succeeded with production defaults.
+All recovery journals reached recovered, with zero staged snapshot directories.
+
+| Operation |  Median ms | Observed p95 ms |   MiB/s | Lifetime peak RSS MiB |
+| --------- | ---------: | --------------: | ------: | --------------------: |
+| snapshot  |  71.201708 |       71.506500 | 1797.71 |                 90.66 |
+| journal   |   0.077083 |        0.111250 |       — |                 91.20 |
+| recovery  | 225.389333 |      226.270417 |  567.91 |                139.59 |
+
+| Operation | Raw latency samples ms             | Raw peak RSS samples bytes      |
+| --------- | ---------------------------------- | ------------------------------- |
+| snapshot  | 70.600083, 71.201708, 71.506500    | 92537856, 95060992, 93996032    |
+| journal   | 0.065584, 0.111250, 0.077083       | 95323136, 95634432, 94209024    |
+| recovery  | 226.270417, 225.389333, 223.930792 | 119800832, 146375680, 135447552 |
+
+Journal serialization still has no file-throughput result.
+These are historical post-portability observations, without attributing differences from earlier phases solely to code.
+
+### Current reference-index measurement
+
+The same documented reproduction command uses 50 targets, 200 importers, and 12 bases per importer.
+It includes index construction, duplicate bases, and sorted JSON-equivalence checks against the documented nested control.
+All 14 runs returned identical sets containing 1,600 importer-target pairs.
+
+| Algorithm | Median ms | Observed p95 ms | Seven raw latency samples ms                                         |
+| --------- | --------: | --------------: | -------------------------------------------------------------------- |
+| nested    |  8.184750 |        8.638709 | 8.507500, 8.086708, 8.092000, 8.014666, 8.557708, 8.638709, 8.184750 |
+| indexed   |  0.390167 |        1.808458 | 1.808458, 0.493084, 0.847708, 0.390167, 0.370167, 0.379750, 0.370583 |
+
+Current median matching latency is 95.23% lower than the documented control: 8.184750 ms versus 0.390167 ms.
+The earlier 98.92% result describes the initial index implementation and is not the current-source claim.
+This remains an in-memory matching experiment within the public 50-target batch limit.
+It does not measure parsing, traversal, complete deletion, Windows performance, or an MCP transport.
+
+### Historical post-portability large-file validation
+
+All nine cases below ran against the pre-review portability-corrected source with production deadlines.
+Each fixture contains 2,321,660,787 bytes.
+The sparse batch contains three independently hashed and guarded files, totalling 6,964,982,361 logical bytes.
+Delete verifies every source is absent.
+Rename and recovery verify independent destination or restored-file digests.
+Each durable operation requires terminal journal records and zero staged snapshot directories before harness cleanup.
+All checks passed.
+Sparse allocation and single-sample limitations from the initial-phase validation also apply here.
+
+```sh
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=dense --operations=hash-configured,durable-delete,durable-rename,recovery --representation=blob --allow-large=true
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=sparse --operations=hash-configured,durable-delete,durable-rename,recovery,durable-batch-delete --representation=blob --allow-large=true
+```
+
+| Fixture | Operation            | Raw latency ms | Raw lifetime peak RSS bytes | Journal state  | Snapshot directories |
+| ------- | -------------------- | -------------: | --------------------------: | -------------- | -------------------: |
+| dense   | hash-configured      |     786.162417 |                   125977600 | digest matched |                    — |
+| dense   | durable-delete       |    2910.644625 |                   203293696 | succeeded      |                    0 |
+| dense   | durable-rename       |    5099.062875 |                   212403200 | succeeded      |                    0 |
+| dense   | recovery             |    3493.039250 |                   193889280 | recovered      |                    0 |
+| sparse  | hash-configured      |     778.861250 |                   128746496 | digest matched |                    — |
+| sparse  | durable-delete       |    2863.454750 |                   188040192 | succeeded      |                    0 |
+| sparse  | durable-rename       |    5044.450333 |                   185533440 | succeeded      |                    0 |
+| sparse  | recovery             |    3320.820375 |                   158663680 | recovered      |                    0 |
+| sparse  | durable-batch-delete |    7970.978667 |                   180175872 | succeeded      |                    0 |
+
+Raw historical post-portability large-file observations:
+
+```json
+[
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "hash-configured",
+    "representation": "blob",
+    "durationMs": 786.162417,
+    "rssBeforeBytes": 58688832,
+    "peakRssBytes": 125977600,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "durable-delete",
+    "representation": "blob",
+    "durationMs": 2910.644625,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 70387032,
+    "peakRssBytes": 203293696,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "durable-rename",
+    "representation": "blob",
+    "durationMs": 5099.062875,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 65242408,
+    "peakRssBytes": 212403200,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 3493.0392500000003,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 79758752,
+    "peakRssBytes": 193889280,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "hash-configured",
+    "representation": "blob",
+    "durationMs": 778.86125,
+    "rssBeforeBytes": 60179824,
+    "peakRssBytes": 128746496,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-delete",
+    "representation": "blob",
+    "durationMs": 2863.45475,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 67306768,
+    "peakRssBytes": 188040192,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-rename",
+    "representation": "blob",
+    "durationMs": 5044.450333,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 65865000,
+    "peakRssBytes": 185533440,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 3320.820375,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 79791544,
+    "peakRssBytes": 158663680,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-batch-delete",
+    "representation": "blob",
+    "durationMs": 7970.978666999999,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "fileCount": 3,
+    "processedBytes": 6964982361,
+    "rssBeforeBytes": 65799512,
+    "peakRssBytes": 180175872,
+    "success": true,
+    "phase": "operation"
+  }
+]
+```
+
+The current configured hash cases use the registered handler and actual configured execution.
+They validate digest, size, path, and result serialization without an MCP transport round trip.
+Neither configured hash case reproduced ERR_STRING_TOO_LONG.
+The 100-request retention experiment remains a pre-portability run; it was not repeated for this source phase.
+Its raw observations and limitations remain historical evidence, without a new leak-free or permanent-plateau claim.
+
+## Source phases and validation
+
+### Historical pre-portability manifest
+
+Initial-phase final measurements ran after descriptor-close cleanup remediation.
+After those measurements, a setup-only harness fix guarded configuration writing and restored environment values on failure.
+A text-write cleanup refinement independently closes descriptors, removes temporary files, and cleans created parents.
+Those two refinements did not change the initial timed binary operation paths.
+Later common blob and index portability changes did change measured paths, as described above.
+
+The measured initial harness hash was 8eaae930fadbaa56835fe36319edea412d9101e1bc4e16bfb10bf7351c2b48c2.
+The measured initial engine hash was fc43686cb6b3a771ae8aa254e581d14af57ce182bf4e78b783f59fe0e21770d8.
+The following historical manifest includes the subsequent setup and text-cleanup refinements, before portability remediation:
 
 ```json
 [
@@ -638,15 +867,425 @@ The JSON below includes the current engine hash after that refinement.
 ]
 ```
 
-The final complete coverage gate exited zero: 1,811 tests passed, four skipped, zero failed, with 15,181 assertions.
-It covered 215 test files in 246.68 seconds.
+### Historical post-portability manifest
+
+The preceding post-portability blob, recovery, index, and large-file measurements correspond to these hashes.
+The attribute hash identifies the final compatibility refinement; attributes are outside these benchmark paths.
+
+```json
+[
+  {
+    "path": "src/runtime/hash.ts",
+    "sha256": "8bc5488848f426f5af9e7dca5106a32dab5d6e6c43fe818d82326232b87ee30a"
+  },
+  {
+    "path": "src/runtime/file-read.ts",
+    "sha256": "1a26c69ad409f201f4e40742bfc47f8b2d6650fed76fc8fee33762c5ea3b9949"
+  },
+  {
+    "path": "src/runtime/file-delete.ts",
+    "sha256": "d6d8a225825489f1bd6661cbc1f8ca876a27fa51bb234ebd9bf1aa134e4da7df"
+  },
+  {
+    "path": "src/runtime/file-rename.ts",
+    "sha256": "986e2a9a1d26dfd85a3c1614f8f1751d144972e4494e0525f9cbbe21ca54be6e"
+  },
+  {
+    "path": "src/runtime/reference-target-index.ts",
+    "sha256": "61bb0fcbe807cf7e47b248e8c8157e9c0657f1fa83327510ad6d75435d43a282"
+  },
+  {
+    "path": "src/intelligence/mutation/service.ts",
+    "sha256": "152adfd233951f6504d36699b469a48a385653a036dde883bcaa5b4ee84a6acc"
+  },
+  {
+    "path": "src/runtime/snapshot-blob.ts",
+    "sha256": "0750b428582e92256bd5912432cb4dd6ce43fc175e65c225d58f948fb654f7d9"
+  },
+  {
+    "path": "src/runtime/attributes.ts",
+    "sha256": "aa50a7e3708a3e05f6475806c3aa00f0243a6ef163588cbc2bf3f7764612f8d7"
+  },
+  {
+    "path": "src/patch/engine.ts",
+    "sha256": "18fed5adfae3aaee9dcbfdfd2bf5340efaf3de5dc490580c7c3f554e7e39b0cc"
+  },
+  {
+    "path": "scripts/benchmark/benchmark-file-operations.ts",
+    "sha256": "d4ecc4302a52d850b29fe1aa1a103805cf56366c4d4240f534e76005648d40c8"
+  }
+]
+```
+
+The final local complete coverage gate exited zero: 1,847 tests passed, four skipped, zero failed, with 17,180 assertions.
+It covered 215 test files in 266.37 seconds.
 Aggregate coverage was 99.66% functions and 98.96% lines.
 Every measured source file met the unchanged 95% per-file coverage thresholds.
-Build validation passed, and 143 skill-evaluation cases passed.
+Build validation passed.
+Skill evaluation passed 143 cases across 41 surfaces.
+Windows CI remains pending; these local measurements do not establish a Windows CI pass.
 
-The five retained passes provide measured benefits in bounded snapshot memory, compact serialization, streamed recovery, hash/read work, and indexed matching.
-Durable snapshots remain slower than memory-only capture because they provide additional durability.
-End-to-end mutation latency remains sensitive to host conditions and database overhead.
-These results support the measured subpath gains and large-file correctness, without promising universal latency or leak-free execution.
+The five initial passes retain historical evidence for bounded snapshot memory, compact serialization, streamed recovery, hash/read work, and indexed matching.
+The final frozen-source checks below validate the subsequent review-corrected source.
+Durable snapshots perform additional synchronization compared with memory-only capture.
+End-to-end latency remains sensitive to host conditions and database overhead.
+These measurements do not promise universal latency or leak-free execution.
 Recovery after a crash can still fail closed for an inaccessible mode-000 target.
 It retains recovery material and can require permission repair before retrying; authorization checks remain enforced.
+
+## Final frozen-source measurements after review
+
+This phase follows the historical post-portability measurements above.
+Hashing now checks cooperative deadlines, and snapshot copying adds descriptor-identity guards.
+The harness independently attempts every disposer and temporary-root removal, preserves cleanup diagnostics, and fails unsuccessful cleanup.
+Dense read validation also checks the deterministic prefix; no read timing was repeated in this final phase.
+These changes prevent treating the earlier runtime and harness manifests as final-source measurements.
+The reference index hash is unchanged; its documented 95.23% matching result remains applicable.
+The initial five passes and 100-request soak remain historical, with their stated limitations.
+No new retention or leak-free claim follows from this phase.
+
+The following commands ran serially on the same Bun 1.4.4 macOS arm64 host.
+An inadvertently overlapping preliminary large run was discarded and rerun serially.
+Only the serial rerun observations appear below.
+Warm-cache, lifetime-RSS, fixture, and independent validation rules remain unchanged.
+All operations used production deadlines, with no deadline override.
+
+```sh
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=134217728 --iterations=3 --dataset=dense --operations=snapshot,journal,recovery --representation=blob
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=dense --operations=hash-configured,durable-delete,durable-rename,recovery --representation=blob --allow-large=true
+bun run scripts/benchmark/benchmark-file-operations.ts --bytes=2321660787 --iterations=1 --dataset=sparse --operations=hash-configured,durable-delete,durable-rename,recovery,durable-batch-delete --representation=blob --allow-large=true
+```
+
+### Final bounded results
+
+| Operation |  Median ms | Observed p95 ms |   MiB/s | Lifetime peak RSS bytes |
+| --------- | ---------: | --------------: | ------: | ----------------------: |
+| snapshot  |  69.962791 |       70.059209 | 1829.54 |                95421440 |
+| journal   |   0.093917 |        0.098125 |       — |                98862080 |
+| recovery  | 226.866417 |      233.519917 |  564.21 |               140362752 |
+
+All nine samples succeeded. Each recovery journal reached recovered, with zero staged snapshot directories.
+Journal serialization has no file-throughput result.
+Raw observations preserve the three-sample distributions:
+
+```json
+[
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "snapshot",
+    "representation": "blob",
+    "durationMs": 69.96279099999998,
+    "rssBeforeBytes": 64832832,
+    "peakRssBytes": 93979648,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "snapshot",
+    "representation": "blob",
+    "durationMs": 69.873875,
+    "rssBeforeBytes": 64980264,
+    "peakRssBytes": 95421440,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "snapshot",
+    "representation": "blob",
+    "durationMs": 70.05920900000001,
+    "rssBeforeBytes": 63751488,
+    "peakRssBytes": 93783040,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "journal",
+    "representation": "blob",
+    "durationMs": 0.07474999999999454,
+    "rssBeforeBytes": 67454296,
+    "peakRssBytes": 98862080,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "journal",
+    "representation": "blob",
+    "durationMs": 0.09812499999998181,
+    "rssBeforeBytes": 67224896,
+    "peakRssBytes": 94258176,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "journal",
+    "representation": "blob",
+    "durationMs": 0.09391700000000469,
+    "rssBeforeBytes": 67011928,
+    "peakRssBytes": 94946304,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 225.35895899999997,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 87557488,
+    "peakRssBytes": 140362752,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 233.51991699999996,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 86558136,
+    "peakRssBytes": 131957760,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 134217728,
+    "dataset": "dense",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 226.866417,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 87623048,
+    "peakRssBytes": 127370240,
+    "success": true,
+    "phase": "operation"
+  }
+]
+```
+
+### Final large-file results
+
+Every fixture contains 2,321,660,787 bytes.
+The sparse batch contains three files and processes 6,964,982,361 logical bytes.
+All nine cases succeeded, including configured handler digest, size, path, and serialization checks.
+Delete verified every source absent; rename and recovery verified independent output digests.
+Every durable operation had terminal journal state and zero staged snapshot directories before harness cleanup.
+These are single samples, not stable production tail estimates or Windows performance measurements.
+
+| Fixture | Operation            | Raw latency ms | Lifetime peak RSS bytes | Journal state  | Snapshot directories |
+| ------- | -------------------- | -------------: | ----------------------: | -------------- | -------------------: |
+| dense   | hash-configured      |     776.695000 |               133202944 | digest matched |                    — |
+| dense   | durable-delete       |    2892.514209 |               175539200 | succeeded      |                    0 |
+| dense   | durable-rename       |    5104.393000 |               217023488 | succeeded      |                    0 |
+| dense   | recovery             |    3357.615208 |               179487744 | recovered      |                    0 |
+| sparse  | hash-configured      |     781.912791 |               132957184 | digest matched |                    — |
+| sparse  | durable-delete       |    2878.769459 |               209748992 | succeeded      |                    0 |
+| sparse  | durable-rename       |    5077.693625 |               197149696 | succeeded      |                    0 |
+| sparse  | recovery             |    3350.233125 |               132760576 | recovered      |                    0 |
+| sparse  | durable-batch-delete |    7856.826375 |               149439488 | succeeded      |                    0 |
+
+```json
+[
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "hash-configured",
+    "representation": "blob",
+    "durationMs": 776.6950000000002,
+    "rssBeforeBytes": 60491048,
+    "peakRssBytes": 133202944,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "durable-delete",
+    "representation": "blob",
+    "durationMs": 2892.514209,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 63931688,
+    "peakRssBytes": 175539200,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "durable-rename",
+    "representation": "blob",
+    "durationMs": 5104.393,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 65520960,
+    "peakRssBytes": 217023488,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "dense",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 3357.6152079999997,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 83084704,
+    "peakRssBytes": 179487744,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "hash-configured",
+    "representation": "blob",
+    "durationMs": 781.912791,
+    "rssBeforeBytes": 60982544,
+    "peakRssBytes": 132957184,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-delete",
+    "representation": "blob",
+    "durationMs": 2878.769459,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 68846960,
+    "peakRssBytes": 209748992,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-rename",
+    "representation": "blob",
+    "durationMs": 5077.693625,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 64865624,
+    "peakRssBytes": 197149696,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "recovery",
+    "representation": "blob",
+    "durationMs": 3350.233125,
+    "durableValidation": {
+      "journalStates": ["recovered"],
+      "snapshotDirectories": 0
+    },
+    "rssBeforeBytes": 78333344,
+    "peakRssBytes": 132760576,
+    "success": true,
+    "phase": "operation"
+  },
+  {
+    "bytes": 2321660787,
+    "dataset": "sparse",
+    "operation": "durable-batch-delete",
+    "representation": "blob",
+    "durationMs": 7856.826375,
+    "durableValidation": {
+      "journalStates": ["succeeded"],
+      "snapshotDirectories": 0
+    },
+    "fileCount": 3,
+    "processedBytes": 6964982361,
+    "rssBeforeBytes": 62227776,
+    "peakRssBytes": 149439488,
+    "success": true,
+    "phase": "operation"
+  }
+]
+```
+
+### Final measured-source manifest
+
+This manifest identifies the final bounded and large-file runs above.
+The unchanged index also identifies the applicable 95.23% experiment.
+Attributes remain outside these measured operation paths.
+
+```json
+[
+  {
+    "path": "src/runtime/hash.ts",
+    "sha256": "8ef8219ddf1fcacdc9f5f5a85bf2318ea436200718345254f392c335e272409c"
+  },
+  {
+    "path": "src/runtime/file-read.ts",
+    "sha256": "1a26c69ad409f201f4e40742bfc47f8b2d6650fed76fc8fee33762c5ea3b9949"
+  },
+  {
+    "path": "src/runtime/file-delete.ts",
+    "sha256": "d6d8a225825489f1bd6661cbc1f8ca876a27fa51bb234ebd9bf1aa134e4da7df"
+  },
+  {
+    "path": "src/runtime/file-rename.ts",
+    "sha256": "986e2a9a1d26dfd85a3c1614f8f1751d144972e4494e0525f9cbbe21ca54be6e"
+  },
+  {
+    "path": "src/runtime/reference-target-index.ts",
+    "sha256": "61bb0fcbe807cf7e47b248e8c8157e9c0657f1fa83327510ad6d75435d43a282"
+  },
+  {
+    "path": "src/intelligence/mutation/service.ts",
+    "sha256": "8c655cfab67569fffdf457d25b8adb30f6069e030a7594b6eaca029a0bbe003b"
+  },
+  {
+    "path": "src/runtime/snapshot-blob.ts",
+    "sha256": "7f0b2b7a74f1c3f015fadfd22ee43b7257e28205d42a5d1a22adcdb18750570e"
+  },
+  {
+    "path": "src/runtime/attributes.ts",
+    "sha256": "aa50a7e3708a3e05f6475806c3aa00f0243a6ef163588cbc2bf3f7764612f8d7"
+  },
+  {
+    "path": "src/patch/engine.ts",
+    "sha256": "18fed5adfae3aaee9dcbfdfd2bf5340efaf3de5dc490580c7c3f554e7e39b0cc"
+  },
+  {
+    "path": "scripts/benchmark/benchmark-file-operations.ts",
+    "sha256": "bbeeec407269656f8829991b4ca4bd5e1bc4696bb7972d22f4727d94194a0a7a"
+  }
+]
+```
