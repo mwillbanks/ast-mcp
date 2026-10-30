@@ -1,3 +1,12 @@
+import { isDeepStrictEqual } from "node:util";
+
+import {
+  launchFields,
+  launchReceipt,
+  parseLaunchReceipt,
+  removeManagedEntry,
+} from "./ownership";
+
 type TomlDocument = Record<string, unknown>;
 
 export { parseConfig as parseCodexConfig };
@@ -142,6 +151,16 @@ function assignmentValue(statement: string, replacement: string) {
   throw new Error("Cannot locate Codex approval assignment");
 }
 
+function codexLaunchReceipt(content: string) {
+  const encoded = content.match(/^# ast-mcp:launch (.*)$/m)?.[1];
+  if (!encoded) return undefined;
+  try {
+    return parseLaunchReceipt(JSON.parse(encoded));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Replace owned launch fields while retaining user tool and server settings. */
 export function refreshCodexMcp(
   content: string,
@@ -150,12 +169,17 @@ export function refreshCodexMcp(
   const document = parseConfig(content);
   const servers = record(document.mcp_servers) ? document.mcp_servers : {};
   const existing = record(servers["ast-mcp"]) ? { ...servers["ast-mcp"] } : {};
+  const receipt = launchReceipt(existing, launch, codexLaunchReceipt(content));
   for (const key of ["command", "args", "cwd", "url", "type"])
     delete existing[key];
   let section: string[] = [];
   const clean = statements(content)
     .filter((statement) => {
-      if (/^# ast-mcp:(?:begin|end)\s*$/.test(statement.trim())) return false;
+      if (
+        /^# ast-mcp:(?:begin|end)\s*$/.test(statement.trim()) ||
+        statement.startsWith("# ast-mcp:launch ")
+      )
+        return false;
       if (statement.trimStart().startsWith("[")) {
         section =
           headerPath(parseConfig(`${statement}\n__ast_mcp_probe = true\n`)) ??
@@ -196,7 +220,7 @@ export function refreshCodexMcp(
     });
     lines.push(retained.replace(/^\[mcp_servers\.ast-mcp\]\n/, "").trimEnd());
   }
-  const block = `# ast-mcp:begin\n${lines.join("\n")}\n# ast-mcp:end\n`;
+  const block = `# ast-mcp:launch ${JSON.stringify(receipt)}\n# ast-mcp:begin\n${lines.join("\n")}\n# ast-mcp:end\n`;
   const result = `${clean ? `${clean}\n\n` : ""}${block}`;
   parseConfig(result);
   return result;
@@ -355,5 +379,156 @@ export function enableCodexElicitation(content: string, inheritedContent = "") {
         "Cannot safely enable Codex MCP elicitation in this TOML layout",
       );
   }
+  const overlays = changed
+    .map(
+      (target) =>
+        "# ast-mcp:approval-overlay " +
+        JSON.stringify({
+          keys: target.keys,
+          enabled: target.enabled,
+          ...(get(document, target.keys) !== undefined
+            ? { previous: get(document, target.keys) }
+            : {}),
+        }) +
+        "\n",
+    )
+    .join("");
+  result = result.replace(
+    /^# ast-mcp:approval-overlay (.*)\r?\n/gm,
+    (line, encoded: string) => {
+      try {
+        const metadata = JSON.parse(encoded);
+        return changed.some((target) =>
+          isDeepStrictEqual(metadata?.keys, target.keys),
+        )
+          ? ""
+          : line;
+      } catch {
+        return line;
+      }
+    },
+  );
+  return overlays + result;
+}
+
+/** Remove only generated overlays that the user has not subsequently changed. */
+function removeApprovalOverlays(content: string): string {
+  const document = parseConfig(content);
+  const removable: Array<{ keys: string[]; previous?: unknown }> = [];
+  const withoutMetadata = content.replace(
+    /^# ast-mcp:approval-overlay (.*)\r?\n/gm,
+    (_line, encoded: string) => {
+      try {
+        const overlay: unknown = JSON.parse(encoded);
+        if (!record(overlay) || !Array.isArray(overlay.keys)) return "";
+        const keys = overlay.keys;
+        if (
+          !(
+            (keys.length === 1 && keys[0] === "approval_policy") ||
+            (keys.length === 3 &&
+              keys[0] === "profiles" &&
+              typeof keys[1] === "string" &&
+              keys[2] === "approval_policy")
+          )
+        )
+          return "";
+        if (isDeepStrictEqual(get(document, keys), overlay.enabled))
+          removable.push({
+            keys,
+            ...(Object.hasOwn(overlay, "previous")
+              ? { previous: overlay.previous }
+              : {}),
+          });
+      } catch {
+        // Unrecognized metadata never authorizes configuration removal.
+      }
+      return "";
+    },
+  );
+  let section: string[] = [];
+  const retained = statements(withoutMetadata)
+    .filter((statement) => {
+      if (statement.trimStart().startsWith("[")) {
+        section =
+          headerPath(parseConfig(statement + "\n__ast_mcp_probe = true\n")) ??
+          [];
+        return !removable.some(({ keys }) =>
+          keys.every((key, index) => section[index] === key),
+        );
+      }
+      if (Object.keys(parseConfig(statement)).length === 0) return true;
+      const relative =
+        headerPath(
+          parseConfig(assignmentValue(statement, "{ __ast_mcp_probe = true }")),
+        ) ?? [];
+      const absolute = [...section, ...relative];
+      return !removable.some(({ keys }) =>
+        keys.every((key, index) => absolute[index] === key),
+      );
+    })
+    .join("");
+  const restored = removable.filter((entry) =>
+    Object.hasOwn(entry, "previous"),
+  );
+  const chunks = statements(retained);
+  const insertions = new Map<number, string[]>();
+  for (const { keys, previous } of restored) {
+    let position = -1;
+    let prefix: string[] = [];
+    for (let index = 0; index < chunks.length; index++) {
+      const chunk = chunks[index]!;
+      if (!chunk.trimStart().startsWith("[")) continue;
+      const candidate =
+        headerPath(parseConfig(chunk + "\n__ast_mcp_probe = true\n")) ?? [];
+      if (
+        candidate.length < keys.length &&
+        candidate.length > prefix.length &&
+        candidate.every((key, part) => keys[part] === key)
+      ) {
+        position = index;
+        prefix = candidate;
+      }
+    }
+    const assignment =
+      keys
+        .slice(prefix.length)
+        .map((key) => JSON.stringify(key))
+        .join(".") +
+      " = " +
+      (record(previous) ? inlineTable(previous) : JSON.stringify(previous)) +
+      "\n";
+    insertions.set(position, [...(insertions.get(position) ?? []), assignment]);
+  }
+  const result =
+    (insertions.get(-1) ?? []).join("") +
+    chunks
+      .map((chunk, index) => chunk + (insertions.get(index) ?? []).join(""))
+      .join("");
+  parseConfig(result);
   return result;
+}
+
+/** Uninstall launch fields without deleting retained user server configuration. */
+export function removeCodexMcpConfiguration(content: string): string {
+  const cleaned = removeApprovalOverlays(content);
+  if (!/^# ast-mcp:begin\s*$/m.test(cleaned)) return cleaned;
+  const document = parseConfig(cleaned);
+  const servers = record(document.mcp_servers) ? document.mcp_servers : {};
+  const existing = record(servers["ast-mcp"]) ? servers["ast-mcp"] : {};
+  const legacyLaunchOnly =
+    !/^# ast-mcp:launch /m.test(cleaned) &&
+    Object.keys(existing).every((key) =>
+      (launchFields as readonly string[]).includes(key),
+    );
+  const remaining = legacyLaunchOnly
+    ? undefined
+    : removeManagedEntry(existing, codexLaunchReceipt(cleaned));
+  const refreshed = refreshCodexMcp(cleaned, {});
+  return refreshed
+    .replace(/^# ast-mcp:launch .*\r?\n/gm, "")
+    .replace(/# ast-mcp:begin\n[\s\S]*?# ast-mcp:end\n?/g, () =>
+      remaining
+        ? Bun.TOML.stringify({ mcp_servers: { "ast-mcp": remaining } })
+        : "",
+    );
 }

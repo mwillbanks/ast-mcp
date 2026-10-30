@@ -468,12 +468,12 @@ describe("installer", () => {
         "utf8",
       ),
     ).toBe("obsolete");
-    await expect(
-      access(path.join(root, ".codex/hooks/ast-mcp.ts")),
-    ).rejects.toThrow();
+    expect(
+      await readFile(path.join(root, ".codex/hooks/ast-mcp.ts"), "utf8"),
+    ).toBe("stale");
   });
 
-  test("update removes duplicate Bun-wrapped handlers and preserves unrelated hooks", async () => {
+  test("update preserves customized legacy matchers and unrelated hooks", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-hook-upgrade-"));
     created.push(root);
     await mkdir(path.join(root, ".codex"), { recursive: true });
@@ -522,7 +522,14 @@ describe("installer", () => {
     await update({ root, scope: "local", targets: ["codex"] });
     const first = await readFile(hookFile, "utf8");
     const hooks = JSON.parse(first).hooks.PreToolUse;
-    expect(hooks).toHaveLength(2);
+    expect(hooks).toHaveLength(5);
+    expect(hooks.map((item: { matcher: string }) => item.matcher)).toEqual([
+      "legacy-one",
+      "legacy-two",
+      "legacy-windows",
+      "custom",
+      ".*",
+    ]);
     expect(
       hooks.some((item: { matcher?: string }) => item.matcher === "custom"),
     ).toBeTrue();

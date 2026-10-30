@@ -48,6 +48,10 @@ If references are unavailable, inspect installed `ast-mcp --help` and host diagn
 
 <!-- ast-mcp:end -->
 
+## Local validation and failure analysis
+
+Follow the local-first workflow in `CONTRIBUTING.md`. Run affected checks and independent review. Freeze source, then run `bun run check:coverage` before pushing. Source changes invalidate downstream validation. Use CI for independent confirmation. When a defect appears, audit related paths for the same failure class and add executable boundary contracts before another push.
+
 ## Test layout
 
 Mirror executable unit tests under `tests/` using the same domain directories as `src/`. Put cross-domain behavior in `tests/integration/`, repository tooling tests in `tests/tooling/`, and shared fixtures and test helpers in `tests/fixtures/` and `tests/support/`.

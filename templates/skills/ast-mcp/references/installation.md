@@ -42,7 +42,8 @@ Add `--service` only for a managed HTTP service.
 
 The checker inspects managed guidance, host definitions, hooks, services, startup, and selected intelligence tools.
 It launches the configured MCP server and calls `diagnostics` when the server advertises that tool.
-Otherwise, it attempts a standalone fresh release check and labels the connected server version unknown or unavailable.
+Otherwise, it attempts a standalone fresh release check using a valid server version from initialization when available.
+It labels the connected server version unknown when neither response supplies a valid version.
 It reports unavailable diagnostics explicitly.
 It reports repair commands and stale executable paths.
 It does not prove complete tool coverage or MCP skill activation.
@@ -104,6 +105,15 @@ Use `--service` to manage a supported macOS or Linux user service.
 It preserves surrounding user guidance.
 It does not upgrade the package or refresh manual skills.
 Uninstall also preserves manual skill directories.
+Host refresh preserves environment values, timeouts, tool settings, and unrelated configuration.
+Launch ownership receipts let uninstall restore imported launch settings without overwriting later user edits.
+Codex stores receipts in managed comments; JSON hosts use a sibling `<configuration-file>.ast-mcp.json` receipt.
+Keep these receipts through installation and update; do not edit them to force removal.
+Unrecognized or malformed JSON receipts stop refresh before host configuration changes.
+Uninstall preserves unrecognized receipts and their server entries for inspection.
+Historical or customized entries without sufficient ownership evidence remain complete, so retained entries still satisfy host configuration requirements.
+Legacy hook scripts and registrations remain when their ownership cannot be established.
+Inspect retained entries before any separately authorized manual removal.
 For malformed runtime configuration, explicit output permits removal without loading output defaults:
 
 `ast-mcp uninstall --scope global --target codex --output json`

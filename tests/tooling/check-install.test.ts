@@ -206,12 +206,21 @@ async function mcpFixture(
   directory: string,
   name: string,
   responses: FixtureResponses,
+  diagnostics?: {
+    response?: unknown;
+    delayMs?: number;
+    error?: unknown;
+    hang?: boolean;
+    pidFile?: string;
+  },
 ) {
   await mkdir(directory, { recursive: true });
   const script = path.join(directory, `${name}-fixture.ts`);
   await writeFile(
     script,
     `const responses = ${JSON.stringify(responses)} as Record<string, unknown> | null;
+const diagnostics = ${JSON.stringify(diagnostics)};
+if (diagnostics?.hang) process.on("SIGTERM", () => {});
 const decoder = new TextDecoder();
 let buffered = "";
 for await (const chunk of Bun.stdin.stream()) {
@@ -221,9 +230,18 @@ for await (const chunk of Bun.stdin.stream()) {
     const line = buffered.slice(0, newline).trim();
     buffered = buffered.slice(newline + 1);
     if (line && responses) {
-      const request = JSON.parse(line) as { id: unknown; method: string };
-      const result = responses[request.method];
-      if (result !== undefined)
+      const request = JSON.parse(line) as { id: unknown; method: string; params?: { name?: string } };
+      const optional = request.params?.name === "diagnostics" && diagnostics;
+      if (optional?.hang) {
+        await Bun.write(optional.pidFile, String(process.pid));
+        setInterval(() => {}, 1000);
+        await new Promise(() => {});
+      }
+      if (optional?.delayMs) await Bun.sleep(optional.delayMs);
+      const result = optional ? optional.response : responses[request.method];
+      if (optional?.error)
+        console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: optional.error }));
+      else if (result !== undefined)
         console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
     }
     newline = buffered.indexOf("\\n");
@@ -301,6 +319,345 @@ async function folders() {
   );
   return { home, root };
 }
+
+test("checker retains initialize version for servers without diagnostics", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  const responses = workingResponses(root)!;
+  (
+    responses.initialize as { serverInfo: { version: string } }
+  ).serverInfo.version = "1.2.3";
+  await mcpFixture(path.join(root, "node_modules/.bin"), "ast-mcp", responses);
+  const fetchLatest = spyOn(
+    { fetch: async () => Response.json({ version: "1.2.4" }) },
+    "fetch",
+  );
+  const result = await checkInstall(["--root", root], home, {
+    fetch: fetchLatest as unknown as typeof fetch,
+  });
+  expect(result.smokeError).toBeNull();
+  expect(result.diagnostics.connectedServerVersion).toBe("1.2.3");
+  expect(result.diagnostics.versionCheck).toMatchObject({
+    runningVersion: "1.2.3",
+    latestVersion: "1.2.4",
+    status: "outdated",
+  });
+  expect(fetchLatest).toHaveBeenCalledTimes(1);
+  (
+    responses.initialize as { serverInfo: { version: string } }
+  ).serverInfo.version = "/private/token";
+  await mcpFixture(path.join(root, "node_modules/.bin"), "ast-mcp", responses);
+  const invalid = await checkInstall(["--root", root], home, {
+    fetch: fetchLatest as unknown as typeof fetch,
+  });
+  expect(invalid.diagnostics.connectedServerVersion).toBe("unknown");
+  expect(invalid.diagnostics.versionCheck.runningVersion).toBe("unknown");
+  expect(JSON.stringify(invalid)).not.toContain("/private/token");
+});
+
+test("checker rejects incomplete diagnostic version checks and makes a fresh fallback check", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  const responses = workingResponses(root)!;
+  (
+    responses.initialize as { serverInfo: { version: string } }
+  ).serverInfo.version = "1.2.3";
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  const complete = {
+    checkedAt: new Date().toISOString(),
+    runningVersion: "1.2.3",
+    latestVersion: "1.2.4",
+    status: "outdated",
+    comparison: "older",
+  } as const;
+  const malformed = [
+    null,
+    "invalid",
+    {},
+    { status: "current" },
+    { ...complete, checkedAt: "not-a-date" },
+    { ...complete, runningVersion: 3 },
+    { ...complete, latestVersion: null },
+    { ...complete, status: "invented" },
+    { ...complete, comparison: "invented" },
+    { ...complete, runningVersion: "invalid" },
+    { ...complete, latestVersion: "invalid" },
+    { ...complete, latestVersion: "1.2.4-beta" },
+    { ...complete, reason: "invented" },
+    { ...complete, status: "current" },
+    { ...complete, status: "unavailable", reason: undefined },
+    { ...complete, checkedAt: undefined },
+  ];
+  for (const versionCheck of malformed) {
+    await mcpFixture(
+      path.join(root, "node_modules/.bin"),
+      "ast-mcp",
+      responses,
+      {
+        response: {
+          structuredContent: {
+            ok: true,
+            data: { server: { version: "1.2.3" }, versionCheck },
+          },
+        },
+      },
+    );
+    let requests = 0;
+    const result = await checkInstall(["--root", root], home, {
+      fetch: (async () => {
+        requests++;
+        return Response.json({ version: "1.2.5" });
+      }) as unknown as typeof fetch,
+    });
+    expect(result.smokeError).toBeNull();
+    expect(result.smoke?.selectedWorkspace).toBeTrue();
+    expect(result.diagnostics.connectedServerVersion).toBe("1.2.3");
+    expect(result.diagnostics.versionCheck.latestVersion).toBe("1.2.5");
+    expect(requests).toBe(1);
+  }
+  const validData = { server: { version: "1.2.3" }, versionCheck: complete };
+  for (const optional of [
+    {
+      response: {
+        isError: true,
+        structuredContent: { ok: true, data: validData },
+      },
+    },
+    { response: { structuredContent: { data: validData } } },
+    {
+      response: {
+        structuredContent: {
+          ok: true,
+          data: {
+            server: { version: "9.0.0" },
+            versionCheck: {
+              ...complete,
+              runningVersion: "9.0.0",
+              status: "newer",
+              comparison: "newer",
+            },
+          },
+        },
+      },
+    },
+    { response: { structuredContent: { ok: false, data: validData } } },
+    { error: { code: -32603, message: "optional diagnostics failed" } },
+    {
+      response: {
+        structuredContent: {
+          ok: true,
+          data: { ...validData, server: { version: "9.0.0" } },
+        },
+      },
+    },
+  ]) {
+    await mcpFixture(
+      path.join(root, "node_modules/.bin"),
+      "ast-mcp",
+      responses,
+      optional,
+    );
+    let requests = 0;
+    const result = await checkInstall(["--root", root], home, {
+      fetch: (async () => {
+        requests++;
+        return Response.json({ version: "1.2.5" });
+      }) as unknown as typeof fetch,
+    });
+    expect(result.smokeError).toBeNull();
+    expect(result.diagnostics.connectedServerVersion).toBe("1.2.3");
+    expect(result.diagnostics.versionCheck.latestVersion).toBe("1.2.5");
+    expect(requests).toBe(1);
+  }
+  for (const versionCheck of [
+    complete,
+    {
+      ...complete,
+      latestVersion: "1.2.3",
+      status: "current",
+      comparison: "equal",
+    },
+    {
+      ...complete,
+      latestVersion: "1.2.2",
+      status: "newer",
+      comparison: "newer",
+    },
+    { ...complete, runningVersion: "1.2.4-beta", status: "prerelease" },
+    {
+      ...complete,
+      status: "unavailable",
+      latestVersion: null,
+      comparison: undefined,
+      reason: "registry_unavailable",
+    },
+  ] as const) {
+    (
+      responses.initialize as { serverInfo: { version: string } }
+    ).serverInfo.version = versionCheck.runningVersion;
+    await mcpFixture(
+      path.join(root, "node_modules/.bin"),
+      "ast-mcp",
+      responses,
+      {
+        response: {
+          structuredContent: {
+            ok: true,
+            data: {
+              server: { version: versionCheck.runningVersion },
+              versionCheck,
+            },
+          },
+        },
+      },
+    );
+    let requests = 0;
+    const result = await checkInstall(["--root", root], home, {
+      fetch: (async () => {
+        requests++;
+        throw new Error("must reuse server check");
+      }) as unknown as typeof fetch,
+    });
+    expect(result.diagnostics.versionCheck).toEqual(versionCheck);
+    expect(requests).toBe(0);
+  }
+  (
+    responses.initialize as { serverInfo: { version: string } }
+  ).serverInfo.version = "unknown";
+  await mcpFixture(path.join(root, "node_modules/.bin"), "ast-mcp", responses, {
+    response: { structuredContent: { ok: true, data: validData } },
+  });
+  const recovered = await checkInstall(["--root", root], home, {
+    fetch: (async () => {
+      throw new Error("valid diagnostics must supply unknown init version");
+    }) as unknown as typeof fetch,
+  });
+  expect(recovered.diagnostics.connectedServerVersion).toBe("1.2.3");
+  expect(recovered.diagnostics.versionCheck).toEqual(complete);
+});
+
+test("late or failed optional diagnostics preserve successful protocol smoke", async () => {
+  const { root } = await folders();
+  const responses = workingResponses(root)!;
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  (
+    responses.initialize as { serverInfo: { version: string } }
+  ).serverInfo.version = "1.0.0";
+  const late = await mcpFixture(root, "late-diagnostics", responses, {
+    delayMs: 1_500,
+  });
+  const started = performance.now();
+  const result = await smokeMcpStdio(late, root, 1_000);
+  expect(result).toMatchObject({
+    initialized: true,
+    selectedWorkspace: true,
+    serverVersion: "1.0.0",
+  });
+  expect(result.diagnostics).toBeUndefined();
+  expect(performance.now() - started).toBeLessThan(3_000);
+  const failed = await mcpFixture(root, "failed-diagnostics", responses, {
+    response: { isError: true },
+  });
+  expect(await smokeMcpStdio(failed, root, 2_000)).toMatchObject({
+    initialized: true,
+    selectedWorkspace: true,
+    serverVersion: "1.0.0",
+  });
+});
+
+test.skipIf(process.platform === "win32")(
+  "optional diagnostic hang must terminate before successful smoke returns",
+  async () => {
+    const { root } = await folders();
+    const responses = workingResponses(root)!;
+    (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+      name: "diagnostics",
+    });
+    const pidFile = path.join(root, "diagnostic-hang.pid");
+    const binary = await mcpFixture(root, "diagnostic-hang", responses, {
+      hang: true,
+      pidFile,
+    });
+    let pid: number | undefined;
+    try {
+      const result = await smokeMcpStdio(binary, root, 1_000);
+      expect(result.initialized).toBeTrue();
+      expect(result.selectedWorkspace).toBeTrue();
+      pid = Number(await readFile(pidFile, "utf8"));
+      expect(pid).toBeGreaterThan(0);
+      expect(() => process.kill(pid!, 0)).toThrow();
+    } finally {
+      if (pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
+    }
+  },
+  10_000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "optional diagnostics cannot hide an unconfirmed process termination",
+  async () => {
+    const root = os.tmpdir();
+    const responses = workingResponses(root)!;
+    (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+      name: "diagnostics",
+    });
+    const encoder = new TextEncoder();
+    const child = {
+      exitCode: null,
+      pid: 99,
+      exited: new Promise<number>(() => {}),
+      stdin: { write() {}, flush: async () => {}, end() {} },
+      stdout: new ReadableStream({
+        start(controller) {
+          for (const [id, method] of [
+            [1, "initialize"],
+            [2, "tools/list"],
+            [3, "tools/call"],
+          ] as const)
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id,
+                  result: responses[method],
+                }) + "\n",
+              ),
+            );
+        },
+      }),
+      stderr: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+      kill: spyOn({ kill(_signal?: string) {} }, "kill"),
+    };
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => child as never);
+    const kill = spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("No process group"), { code: "ESRCH" });
+    });
+    try {
+      await expect(smokeMcpStdio("fixture", root, 100)).rejects.toThrow(
+        "did not terminate",
+      );
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    } finally {
+      spawn.mockRestore();
+      kill.mockRestore();
+      child.kill.mockRestore();
+    }
+  },
+  10_000,
+);
 
 test("resolves native Windows aliases before POSIX shims", async () => {
   const root = await mkdtemp(

@@ -12,7 +12,12 @@ import {
   isExecutable,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
-import { checkLatestVersion, type LatestVersionCheck } from "./release";
+import {
+  checkLatestVersion,
+  compareVersions,
+  isLatestVersionCheck,
+  type LatestVersionCheck,
+} from "./release";
 
 type Scope = "local" | "global";
 type Target = "codex" | "claude" | "copilot";
@@ -122,6 +127,7 @@ export interface McpSmokeResult {
   exposedTools: string[];
   initialized: boolean;
   selectedWorkspace: boolean;
+  serverVersion?: string;
 }
 
 export function mcpStdioCommand(
@@ -159,7 +165,7 @@ async function mcpDeadline<T>(
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
 ) {
-  if (processHandle.exitCode !== null) return;
+  if (processHandle.exitCode !== null) return true;
   if (process.platform === "win32") {
     try {
       const taskkill = Bun.spawn(
@@ -196,10 +202,10 @@ async function terminateMcpProcess(
       }
     } else processHandle.kill("SIGKILL");
   }
-  await mcpDeadline<number | undefined>(
-    processHandle.exited,
+  return await mcpDeadline(
+    processHandle.exited.then(() => true),
     500,
-    () => undefined,
+    () => false,
   );
 }
 
@@ -268,6 +274,7 @@ export async function smokeMcpStdio(
     }
     return responses.get(id) as Record<string, unknown>;
   };
+  let optionalDiagnosticsFailed = false;
   let protocolFailed = false;
   let protocolError: unknown;
   let smokeResult!: McpSmokeResult;
@@ -338,32 +345,61 @@ export async function smokeMcpStdio(
       sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
     if (!selectedWorkspace)
       throw new Error("MCP smoke did not select the requested workspace");
-    smokeResult = { exposedTools, initialized: true, selectedWorkspace };
+    const serverVersion = (
+      initialize.result as { serverInfo?: { version?: unknown } }
+    ).serverInfo?.version;
+    smokeResult = {
+      exposedTools,
+      initialized: true,
+      selectedWorkspace,
+      serverVersion:
+        typeof serverVersion === "string" &&
+        compareVersions(serverVersion, serverVersion) !== undefined
+          ? serverVersion
+          : undefined,
+    };
     if (exposedTools.includes("diagnostics")) {
-      await send({
-        id: 4,
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { name: "diagnostics", arguments: {} },
-      });
-      const diagnostic = await readUntil(4);
-      const content = (
-        diagnostic.result as
+      try {
+        await send({
+          id: 4,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "diagnostics", arguments: {} },
+        });
+        const diagnostic = await readUntil(4);
+        const content = diagnostic.result as
           | {
+              isError?: boolean;
               structuredContent?: {
+                ok?: boolean;
                 data?: {
-                  server?: { version?: string };
-                  versionCheck?: LatestVersionCheck;
+                  server?: { version?: unknown };
+                  versionCheck?: unknown;
                 };
               };
             }
-          | undefined
-      )?.structuredContent?.data;
-      if (content?.versionCheck && typeof content.server?.version === "string")
-        smokeResult.diagnostics = {
-          serverVersion: content.server.version,
-          versionCheck: content.versionCheck,
-        };
+          | undefined;
+        const data = content?.structuredContent?.data;
+        if (
+          !diagnostic.error &&
+          !content?.isError &&
+          content?.structuredContent?.ok === true &&
+          isLatestVersionCheck(data?.versionCheck) &&
+          typeof data?.server?.version === "string" &&
+          compareVersions(data.server.version, data.server.version) !==
+            undefined &&
+          (smokeResult.serverVersion === undefined ||
+            smokeResult.serverVersion === data.server.version) &&
+          data.versionCheck.runningVersion === data.server.version
+        )
+          smokeResult.diagnostics = {
+            serverVersion: data.server.version,
+            versionCheck: data.versionCheck,
+          };
+      } catch {
+        // Diagnostics are optional after initialization, tools, and workspace succeed.
+        optionalDiagnosticsFailed = true;
+      }
     }
   } catch (error) {
     protocolFailed = true;
@@ -377,9 +413,12 @@ export async function smokeMcpStdio(
         () => null,
       );
       if (exitCode === null) {
-        shutdownError = new Error("MCP smoke shutdown exceeded five seconds");
-        await terminateMcpProcess(process);
-      } else if (exitCode !== 0) {
+        const terminated = await terminateMcpProcess(process);
+        if (!terminated)
+          shutdownError = new Error("MCP smoke process did not terminate");
+        else if (!optionalDiagnosticsFailed)
+          shutdownError = new Error("MCP smoke shutdown exceeded five seconds");
+      } else if (exitCode !== 0 && !optionalDiagnosticsFailed) {
         const diagnostic = (await mcpDeadline(stderrDrain, 500, () => ""))
           .slice(-8_192)
           .trim();
@@ -1113,12 +1152,15 @@ export async function checkInstall(
   const commands = installCommands(options, global);
   const versionCheck =
     smoke?.diagnostics?.versionCheck ??
-    (await checkLatestVersion("unknown", { fetch: context.fetch }));
+    (await checkLatestVersion(smoke?.serverVersion ?? "unknown", {
+      fetch: context.fetch,
+    }));
   return {
     checks,
     diagnostics: {
       versionCheck,
-      connectedServerVersion: smoke?.diagnostics?.serverVersion ?? "unknown",
+      connectedServerVersion:
+        smoke?.diagnostics?.serverVersion ?? smoke?.serverVersion ?? "unknown",
       activeHostPolicy: "unknown",
       guidance:
         options.target === "codex"

@@ -35,7 +35,8 @@ They do not authorize arbitrary file reads.
 Reports omit credentials, source contents, unrelated paths, and replayable approval identifiers.
 Keep diagnostic evidence sanitized before sharing it.
 
-Use `doctor --scope local` for project configuration or `--scope global` for user configuration.
+Use `doctor --scope local` for project host inspection or `--scope global` for user host inspection.
+Scope affects host inspection only; runtime diagnostics still describe the effective merged configuration for the selected project.
 Use `--target auto` for automatic host selection, or select `codex`, `claude`, or `copilot`.
 Host selection changes inspection, not runtime authorization.
 The default target is `auto`.
@@ -53,6 +54,14 @@ Doctor returns exit 0 after reporting unavailable facts; invalid arguments retur
 | `approval_cancelled`        | Inspect cancellation and retry only when appropriate. The next attempt needs a fresh challenge. |
 | `approval_response_invalid` | Preserve access restrictions. Inspect the host response and protocol compatibility.             |
 | Timeout                     | Preserve access restrictions. Check host responsiveness before a bounded retry.                 |
+
+A `transport_error` observation means the approval exchange failed without a valid client response.
+The original RPC error is preserved; this observation is not a new tool error code or a malformed-response claim.
+
+`approval_challenge_limit` reports pending-challenge capacity, including for probes; it does not imply unsupported elicitation.
+Clean up the owning session or let pending challenges expire before a bounded retry.
+`approval_persistence_conflict` can mean a custom same-path rule prevents safe persistent approval.
+Keep that rule unchanged. Use one-time or session approval, or review an explicitly authorized user-global configuration change.
 
 A client response does not establish that a human saw or rejected a prompt.
 Keep actor attribution unknown unless the host provides evidence.

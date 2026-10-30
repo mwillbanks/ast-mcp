@@ -305,3 +305,173 @@ test("slow registry checks cannot consume a resumed probe challenge", async () =
     for (const resolve of releases) resolve();
   }
 });
+
+test("probe challenge limits remain retryable errors and cleanup restores a fresh no-grant probe", async () => {
+  const instance = server();
+  for (let index = 0; index < 64; index++) {
+    await challenge(instance, context(), {
+      ...decision,
+      canonicalPath: decision.canonicalPath + index,
+    });
+  }
+  const invoke = (ctx = context()) =>
+    withApprovalContext(
+      { server: instance, context: ctx, tool: "approval_probe" },
+      async () => runApprovalProbe(),
+    );
+  await expect(invoke()).rejects.toMatchObject({
+    code: "approval_challenge_limit",
+    retryable: true,
+  });
+  expect(approvalDiagnostics(instance, context())).toMatchObject({
+    pendingCount: 64,
+    sessionGrantPresent: false,
+    lastOutcome: null,
+  });
+  clearSessionApprovals("same", instance);
+  let key = "";
+  try {
+    await invoke();
+  } catch (error) {
+    expect(error).toBeInstanceOf(InputRequiredSignal);
+    key = Object.keys((error as InputRequiredSignal).result.inputRequests!)[0]!;
+  }
+  expect(key).not.toBe("");
+  expect(
+    await invoke(
+      context("same", {
+        [key]: { action: "accept", content: { decision: "allow_once" } },
+      }),
+    ),
+  ).toEqual({ outcome: "accepted" });
+  expect(approvalDiagnostics(instance, context())).toMatchObject({
+    pendingCount: 0,
+    sessionGrantPresent: false,
+    lastOutcome: { outcome: "accepted" },
+  });
+  const unsupported = server("grok", { url: {} });
+  expect(
+    await withApprovalContext(
+      { server: unsupported, context: context(), tool: "approval_probe" },
+      async () => runApprovalProbe(),
+    ),
+  ).toEqual({ outcome: "unsupported" });
+});
+
+test("custom rule IDs retain ordinary path approval semantics and generation revocation", async () => {
+  for (const ruleId of ["filesystem:custom-policy", "diagnostic-probe"]) {
+    const instance = server("codex-cli");
+    const selected = { ...decision, ruleId };
+    const pending = await challenge(instance, context(), selected);
+    const request = pending.result.inputRequests![pending.key] as unknown as {
+      params: { _meta: Record<string, unknown> };
+    };
+    expect(request.params._meta).toMatchObject({
+      persist: ["session", "always"],
+      "io.ast-mcp/probe": false,
+    });
+    const now = Date.now;
+    Date.now = () => now() + 6000;
+    try {
+      expect(
+        await withApprovalContext(
+          {
+            server: instance,
+            context: context("same", {
+              [pending.key]: {
+                action: "accept",
+                content: { decision: "allow_once" },
+              },
+            }),
+            tool: "file_write",
+          },
+          async () => [
+            authorizeRequestedDecision(selected, 1),
+            authorizeRequestedDecision(selected, 1),
+          ],
+        ),
+      ).toEqual([true, true]);
+    } finally {
+      Date.now = now;
+    }
+    expect(approvalDiagnostics(instance, context())).toMatchObject({
+      pendingCount: 0,
+      sessionGrantPresent: false,
+      lastOutcome: { outcome: "accepted", rule: "path" },
+    });
+    const sessionChallenge = await challenge(instance, context(), selected);
+    expect(
+      await authorize(
+        instance,
+        context("same", {
+          [sessionChallenge.key]: {
+            action: "accept",
+            content: { decision: "allow_session" },
+          },
+        }),
+        selected,
+      ),
+    ).toBeTrue();
+    expect(await authorize(instance, context(), selected)).toBeTrue();
+    await expect(
+      authorize(instance, context(), selected, 2),
+    ).rejects.toBeInstanceOf(InputRequiredSignal);
+    await expect(
+      withApprovalContext(
+        {
+          server: instance,
+          context: context(),
+          tool: "file_read",
+        },
+        async () => authorizeRequestedDecision(selected, 1),
+      ),
+    ).rejects.toBeInstanceOf(InputRequiredSignal);
+    clearSessionApprovals("same", instance);
+  }
+});
+
+test("transport rejection records its observed failure without attributing a malformed response", async () => {
+  for (const [error, outcome] of [
+    [
+      Object.assign(new Error("socket closed /private/token=secret"), {
+        code: "ECONNRESET",
+      }),
+      "transport_error",
+    ],
+    [
+      Object.assign(new Error("caller aborted /private/token=secret"), {
+        name: "AbortError",
+      }),
+      "cancelled",
+    ],
+    [
+      Object.assign(new Error("deadline exceeded /private/token=secret"), {
+        name: "TimeoutError",
+      }),
+      "timeout",
+    ],
+  ] as const) {
+    const instance = server();
+    const pending = await challenge(instance);
+    const other = await challenge(instance, context("other"));
+    recordApprovalTransportFailure(instance, pending.key, error);
+    const diagnostics = approvalDiagnostics(instance, context());
+    expect(diagnostics).toMatchObject({
+      pendingCount: 0,
+      sessionGrantPresent: false,
+      lastOutcome: { outcome, actor: "unknown" },
+    });
+    expect(JSON.stringify(diagnostics)).not.toContain("private");
+    expect(JSON.stringify(diagnostics)).not.toContain("secret");
+    expect(approvalDiagnostics(instance, context("other"))).toMatchObject({
+      pendingCount: 1,
+      sessionGrantPresent: false,
+      lastOutcome: null,
+    });
+    const fresh = await challenge(instance);
+    expect(fresh.key).not.toBe(pending.key);
+    expect(fresh.key).not.toBe(other.key);
+    clearSessionApprovals(undefined, instance);
+    expect(approvalDiagnostics(instance, context()).pendingCount).toBe(0);
+  }
+});

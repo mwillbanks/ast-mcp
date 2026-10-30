@@ -59,7 +59,8 @@ export type ApprovalOutcome =
   | "cancelled"
   | "malformed"
   | "unsupported"
-  | "timeout";
+  | "timeout"
+  | "transport_error";
 
 export interface ApprovalObservation {
   at: string;
@@ -103,9 +104,9 @@ function observe(
     operation: decision.operation,
     source: decision.source,
     rule:
-      decision.ruleId === "diagnostic-probe"
+      decision.approvalKind === "probe"
         ? "probe"
-        : decision.ruleId?.startsWith("filesystem:")
+        : decision.approvalKind === "filesystem"
           ? "filesystem"
           : "path",
   });
@@ -219,9 +220,55 @@ function persistentConfig(globalPath: string): string {
 interface StoredPersistentRule {
   id?: string;
   path?: string;
+  follow_symlinks?: boolean;
+  includes?: string[];
+  excludes?: string[];
   policies?: Partial<
     Record<PolicyDecision["operation"], "allow" | "deny" | "request">
   >;
+}
+
+function persistenceConflict(): Error {
+  return Object.assign(
+    new Error(
+      "Persistent approval conflicts with customized path rules; use allow once or session approval, or explicitly update the user-global rule",
+    ),
+    {
+      code: "approval_persistence_conflict",
+      retryable: true,
+      suggestedNextCall: "config_status",
+    },
+  );
+}
+
+function ownedPersistentRule(
+  rule: StoredPersistentRule,
+  canonicalPath: string,
+): boolean {
+  const operations = ["read", "write", "delete"] as const;
+  return (
+    rule.path === canonicalPath &&
+    Object.keys(rule).sort().join(",") ===
+      "excludes,follow_symlinks,id,includes,path,policies" &&
+    rule.follow_symlinks === false &&
+    Array.isArray(rule.includes) &&
+    rule.includes.length === 1 &&
+    rule.includes[0] === "**/*" &&
+    Array.isArray(rule.excludes) &&
+    rule.excludes.length === 0 &&
+    rule.policies !== undefined &&
+    Object.keys(rule.policies).sort().join(",") === "delete,read,write" &&
+    operations.every(
+      (operation) =>
+        rule.policies?.[operation] === "allow" ||
+        rule.policies?.[operation] === "deny",
+    ) &&
+    operations.some(
+      (operation) =>
+        rule.id === persistentId({ canonicalPath, operation }) &&
+        rule.policies?.[operation] === "allow",
+    )
+  );
 }
 
 function storedPersistentApprovals(
@@ -229,12 +276,13 @@ function storedPersistentApprovals(
   canonicalPath: string,
 ): StoredPersistentRule[] {
   if (!existing) return [];
-  const parsed = Bun.TOML.parse(existing) as {
-    paths?: StoredPersistentRule[];
-  };
-  return (parsed.paths ?? []).filter(
-    (rule) => rule.id?.startsWith("approval-") && rule.path === canonicalPath,
+  const parsed = Bun.TOML.parse(existing) as { paths?: StoredPersistentRule[] };
+  const matching = (parsed.paths ?? []).filter(
+    (rule) => rule.path === canonicalPath,
   );
+  if (matching.some((rule) => !ownedPersistentRule(rule, canonicalPath)))
+    throw persistenceConflict();
+  return matching;
 }
 
 function persistentPolicy(
@@ -265,17 +313,37 @@ function mergePersistentPolicies(
 ): string {
   const ids = new Set(rules.flatMap((rule) => (rule.id ? [rule.id] : [])));
   const policyLine = persistentPolicyLine(policy);
-  return source
+  let merged = 0;
+  const result = source
     .split(/(?=^\[\[paths\]\]\s*$)/m)
-    .map((block) =>
-      [...ids].some((id) => block.includes(`id = ${JSON.stringify(id)}`))
-        ? block.replace(/^policies = \{.*\}$/m, policyLine)
-        : block,
-    )
+    .map((block) => {
+      if (!block.startsWith("[[paths]]")) return block;
+      let rule: StoredPersistentRule | undefined;
+      try {
+        rule = (Bun.TOML.parse(block) as { paths?: StoredPersistentRule[] })
+          .paths?.[0];
+      } catch {
+        throw persistenceConflict();
+      }
+      if (
+        !rule?.id ||
+        !ids.has(rule.id) ||
+        !rule.path ||
+        !ownedPersistentRule(rule, rule.path)
+      )
+        return block;
+      if (!/^policies = \{.*\}$/m.test(block)) throw persistenceConflict();
+      merged++;
+      return block.replace(/^policies = \{.*\}$/m, policyLine);
+    })
     .join("");
+  if (merged !== rules.length) throw persistenceConflict();
+  return result;
 }
 
-function persistentId(decision: PolicyDecision): string {
+function persistentId(
+  decision: Pick<PolicyDecision, "operation" | "canonicalPath">,
+): string {
   return `approval-${createHash("sha256")
     .update(`${decision.operation}\u0000${decision.canonicalPath}`)
     .digest("hex")
@@ -376,7 +444,7 @@ function key(
   generation: number,
 ): string {
   const serverIdentity = serverId(scope.server);
-  const filesystem = decision.ruleId?.startsWith("filesystem:");
+  const filesystem = decision.approvalKind === "filesystem";
   return [
     scope.context?.sessionId ?? "connection",
     serverIdentity,
@@ -424,9 +492,9 @@ function acceptResponse(
   invocationGrants: Set<string>,
 ): boolean | undefined {
   if (response?.action !== "accept") return undefined;
-  if (decision.ruleId === "diagnostic-probe")
+  if (decision.approvalKind === "probe")
     return response.content?.decision === "allow_once" ? true : undefined;
-  if (decision.ruleId?.startsWith("filesystem:")) {
+  if (decision.approvalKind === "filesystem") {
     if (response.content?.decision !== "allow_session") return undefined;
     sessionGrants.add(grantKey);
     return true;
@@ -469,9 +537,7 @@ function approvalRequired(decision: PolicyDecision): Error {
         source: decision.source,
         policy: decision.policy,
         reason: "A stable host form approval is required",
-        rule: decision.ruleId?.startsWith("filesystem:")
-          ? "filesystem"
-          : "path",
+        rule: decision.approvalKind === "filesystem" ? "filesystem" : "path",
         outcome: "unsupported",
         actor: "unknown",
       },
@@ -503,14 +569,16 @@ function approvalResponseError(
         operation: decision.operation,
         source: decision.source,
         policy: decision.policy,
-        reason: decision.ruleId?.startsWith("filesystem:")
-          ? "Project unrestricted filesystem access requires session approval"
-          : "The selected path policy requires approval",
-        rule: decision.ruleId?.startsWith("filesystem:")
-          ? "filesystem"
-          : decision.ruleId === "diagnostic-probe"
-            ? "probe"
-            : "path",
+        reason:
+          decision.approvalKind === "filesystem"
+            ? "Project unrestricted filesystem access requires session approval"
+            : "The selected path policy requires approval",
+        rule:
+          decision.approvalKind === "filesystem"
+            ? "filesystem"
+            : decision.approvalKind === "probe"
+              ? "probe"
+              : "path",
       },
       retryable: outcome === "cancelled" || outcome === "malformed",
       suggestedNextCall: "diagnostics",
@@ -541,7 +609,7 @@ export function recordApprovalTransportFailure(
       ? "timeout"
       : value?.name === "AbortError"
         ? "cancelled"
-        : "malformed";
+        : "transport_error";
   for (const [grantKey, challenge] of issuedChallenges) {
     if (challenge.server !== server || challenge.responseKey !== responseKey)
       continue;
@@ -570,18 +638,18 @@ function requestApproval(
           _meta: {
             ...codexApprovalMetadata(
               approvalClient(scope.server, scope.context).client,
-              decision.ruleId?.startsWith("filesystem:"),
-              decision.ruleId === "diagnostic-probe",
+              decision.approvalKind === "filesystem",
+              decision.approvalKind === "probe",
             ),
             "io.ast-mcp/approvalChallenge": responseKey,
-            "io.ast-mcp/probe": decision.ruleId === "diagnostic-probe",
+            "io.ast-mcp/probe": decision.approvalKind === "probe",
           },
           message: approvalMessage(scope.tool, decision),
           requestedSchema: z.object({
             decision:
-              decision.ruleId === "diagnostic-probe"
+              decision.approvalKind === "probe"
                 ? z.enum(["deny", "allow_once"])
-                : decision.ruleId?.startsWith("filesystem:")
+                : decision.approvalKind === "filesystem"
                   ? z.enum(["deny", "allow_session"])
                   : z.enum([
                       "deny",
@@ -639,9 +707,7 @@ function storeApprovalChallenge(
     createdAt: Date.now(),
     expiresAt:
       Date.now() +
-      (decision.ruleId === "diagnostic-probe"
-        ? 5000
-        : APPROVAL_CHALLENGE_TTL_MS),
+      (decision.approvalKind === "probe" ? 5000 : APPROVAL_CHALLENGE_TTL_MS),
     responseKey,
     sessionId,
     serverId: serverId(scope.server),
@@ -718,6 +784,7 @@ function filesystemDecision(config: ResolvedConfig): PolicyDecision {
     policy: "request",
     reason:
       "Project configuration requests unrestricted access to the entire filesystem for this session",
+    approvalKind: "filesystem",
     ruleId: `filesystem:${fingerprint}`,
     source: "project",
     specificity: Number.MAX_SAFE_INTEGER,
@@ -798,6 +865,7 @@ export function runApprovalProbe(): { outcome: ApprovalOutcome } {
     operation: "read",
     policy: "request",
     reason: "Diagnostic confirmation only. Acceptance grants no file access.",
+    approvalKind: "probe",
     ruleId: "diagnostic-probe",
     source: "baseline",
     specificity: 0,
@@ -811,6 +879,7 @@ export function runApprovalProbe(): { outcome: ApprovalOutcome } {
     if (error instanceof InputRequiredSignal) throw error;
     const details = (error as { details?: { outcome?: ApprovalOutcome } })
       .details;
-    return { outcome: details?.outcome ?? "unsupported" };
+    if (details?.outcome) return { outcome: details.outcome };
+    throw error;
   }
 }

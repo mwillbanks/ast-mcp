@@ -23,6 +23,107 @@ for (const [name, implementation] of [
 ] as const) {
   describe(name, () => {
     const { checkLatestVersion, compareVersions } = implementation;
+
+    test("report validation enforces complete discriminated release outcomes", async () => {
+      const base = {
+        checkedAt: new Date().toISOString(),
+        runningVersion: "1.2.3",
+        latestVersion: "1.2.4",
+        status: "outdated",
+        comparison: "older",
+      };
+      for (const running of [
+        "1.2.3",
+        "1.2.4",
+        "1.2.5",
+        "1.2.4-rc.1",
+        "unknown",
+      ])
+        expect(
+          implementation.isLatestVersionCheck(
+            await checkLatestVersion(running, { fetch: registry("1.2.4") }),
+          ),
+        ).toBeTrue();
+      for (const reason of [
+        "timeout",
+        "registry_unavailable",
+        "invalid_registry_response",
+      ])
+        expect(
+          implementation.isLatestVersionCheck({
+            ...base,
+            status: "unavailable",
+            latestVersion: null,
+            comparison: undefined,
+            reason,
+          }),
+        ).toBeTrue();
+      for (const value of [
+        null,
+        [],
+        "",
+        {},
+        { ...base, checkedAt: 1 },
+        { ...base, checkedAt: "invalid" },
+        { ...base, runningVersion: 1 },
+        { ...base, runningVersion: "invalid" },
+        { ...base, latestVersion: undefined },
+        { ...base, latestVersion: "invalid" },
+        { ...base, latestVersion: "1.2.4-beta" },
+        { ...base, reason: "timeout" },
+        { ...base, status: "current" },
+        { ...base, comparison: "newer" },
+        {
+          ...base,
+          status: "unavailable",
+          latestVersion: null,
+          reason: "timeout",
+        },
+        {
+          ...base,
+          status: "unavailable",
+          comparison: undefined,
+          reason: "timeout",
+        },
+        {
+          ...base,
+          status: "unavailable",
+          latestVersion: null,
+          comparison: undefined,
+        },
+        {
+          ...base,
+          status: "unavailable",
+          latestVersion: null,
+          comparison: undefined,
+          reason: "invented",
+        },
+        {
+          ...base,
+          status: "unavailable",
+          comparison: undefined,
+          reason: "invalid_running_version",
+        },
+        {
+          ...base,
+          status: "unavailable",
+          runningVersion: "invalid",
+          latestVersion: null,
+          comparison: undefined,
+          reason: "invalid_running_version",
+        },
+        {
+          ...base,
+          status: "unavailable",
+          runningVersion: "invalid",
+          latestVersion: "1.2.4-beta",
+          comparison: undefined,
+          reason: "invalid_running_version",
+        },
+      ])
+        expect(implementation.isLatestVersionCheck(value)).toBeFalse();
+    });
+
     test("release checks compare semantic versions and always fetch fresh public metadata", async () => {
       let calls = 0;
       const fetch = registry("0.6.6", (url, init) => {

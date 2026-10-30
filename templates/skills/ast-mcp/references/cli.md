@@ -88,6 +88,8 @@ Use MCP `diagnostics` to inspect the connected server.
 These can identify different versions.
 Doctor accepts `--scope local|global`, `--target auto|codex|claude|copilot`, `--root <path>`, and `--profile <name>`.
 The defaults are local scope, automatic host selection, and the current directory.
+Doctor's `--scope` selects host configuration inspection only.
+Runtime configuration diagnostics still describe the effective merged configuration for the selected project.
 `--profile` selects a Codex disk profile; it does not select or prove an active session policy.
 Doctor exits 0 after rendering a report, including unavailable registry or host facts.
 Invalid arguments return exit 1.

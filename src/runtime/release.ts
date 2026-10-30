@@ -58,6 +58,52 @@ export interface LatestVersionCheck {
     | "invalid_running_version";
 }
 
+/** Validates a complete release report, including status-specific invariants. */
+export function isLatestVersionCheck(
+  value: unknown,
+): value is LatestVersionCheck {
+  if (!value || typeof value !== "object") return false;
+  const check = value as Record<string, unknown>;
+  if (
+    typeof check.checkedAt !== "string" ||
+    !Number.isFinite(Date.parse(check.checkedAt)) ||
+    typeof check.runningVersion !== "string"
+  )
+    return false;
+  const running = parsedVersion(check.runningVersion);
+  const latest =
+    typeof check.latestVersion === "string"
+      ? parsedVersion(check.latestVersion)
+      : undefined;
+  if (check.status === "unavailable") {
+    if (check.comparison !== undefined) return false;
+    if (check.reason === "invalid_running_version")
+      return !running && latest !== undefined && !latest.pre;
+    return (
+      typeof check.reason === "string" &&
+      ["timeout", "registry_unavailable", "invalid_registry_response"].includes(
+        check.reason,
+      ) &&
+      check.latestVersion === null
+    );
+  }
+  if (!running || !latest || latest.pre || check.reason !== undefined)
+    return false;
+  const compared = compareVersions(
+    check.runningVersion,
+    check.latestVersion as string,
+  )!;
+  const comparison = compared < 0 ? "older" : compared > 0 ? "newer" : "equal";
+  const status = running.pre
+    ? "prerelease"
+    : compared < 0
+      ? "outdated"
+      : compared > 0
+        ? "newer"
+        : "current";
+  return check.comparison === comparison && check.status === status;
+}
+
 async function boundedRegistryVersion(
   response: Response,
   signal: AbortSignal,

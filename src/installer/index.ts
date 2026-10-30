@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   parseOutputArguments,
@@ -33,8 +34,16 @@ import {
   enableCodexElicitation,
   parseCodexConfig,
   refreshCodexMcp,
+  removeCodexMcpConfiguration,
 } from "./codex";
 import { type InstallerLaunch, verifyMcpLaunch } from "./health";
+import {
+  launchFields,
+  launchReceipt,
+  managedToolSelection,
+  parseLaunchReceipt,
+  removeManagedEntry,
+} from "./ownership";
 import {
   createServicePlan,
   installService,
@@ -201,6 +210,35 @@ async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
   await Bun.write(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+async function readLaunchReceipt(file: string, strict = false) {
+  const info = await lstat(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!info) return undefined;
+  const receipt = info.isFile()
+    ? await json(file)
+        .then(parseLaunchReceipt)
+        .catch(() => undefined)
+    : undefined;
+  if (!receipt && strict)
+    throw new Error(
+      "Existing launch receipt is not owned by ast-mcp; preserve or relocate it before refresh",
+    );
+  return receipt;
+}
+async function saveLaunchReceipt(file: string, value: unknown) {
+  await readLaunchReceipt(file, true);
+  await mkdir(path.dirname(file), { recursive: true });
+  const previous = await lstat(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (previous && !previous.isFile())
+    throw new Error("Launch receipt must be a regular file");
+  if (previous) await chmod(file, previous.mode & 0o600);
+  await writeFile(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+}
 function definition(
   root: string | undefined,
   home: string,
@@ -215,6 +253,38 @@ function definition(
     ...(root ? { cwd: root } : {}),
   };
 }
+function retainedMcpSettings(
+  value: unknown,
+  ownsDefaultTools = false,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const retained = { ...value } as Record<string, unknown>;
+  for (const key of launchFields) delete retained[key];
+  // Copilot's installer default is launch metadata, rather than customization.
+  if (
+    ownsDefaultTools &&
+    Array.isArray(retained.tools) &&
+    retained.tools.length === 1 &&
+    retained.tools[0] === "*"
+  )
+    delete retained.tools;
+  return retained;
+}
+
+async function codexProfileFiles(home: string): Promise<string[]> {
+  const base = codexHome(home);
+  const content = (await optionalText(path.join(base, "config.toml"))) ?? "";
+  const selected = parseCodexConfig(content).profile;
+  const names = [
+    ...content.matchAll(/^# ast-mcp:profile-file ([\w.-]{1,100})$/gm),
+  ].map((match) => match[1]!);
+  if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected))
+    names.push(selected);
+  return [...new Set(names)].map((name) =>
+    path.join(base, name + ".config.toml"),
+  );
+}
+
 async function codexMcp(
   file: string,
   root: string | undefined,
@@ -267,7 +337,22 @@ async function codexMcp(
           args: stdio.args,
           ...(root ? { cwd: root } : {}),
         };
-  const next = refreshCodexMcp(enableCodexElicitation(old, inherited), launch);
+  let next = refreshCodexMcp(enableCodexElicitation(old, inherited), launch);
+  if (!root) {
+    const selected = parseCodexConfig(old).profile;
+    if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected)) {
+      const profileFile = path.join(codexHome(home), selected + ".config.toml");
+      const source = await optionalText(profileFile);
+      if (source !== undefined) {
+        const enabled = enableCodexElicitation(source);
+        if (enabled !== source) {
+          await writeText(profileFile, enabled);
+          const marker = "# ast-mcp:profile-file " + selected;
+          if (!next.split("\n").includes(marker)) next = marker + "\n" + next;
+        }
+      }
+    }
+  }
   await mkdir(path.dirname(file), { recursive: true });
   await Bun.write(file, next);
 }
@@ -280,15 +365,29 @@ async function jsonMcp(
   endpoint?: HttpEndpoint,
 ) {
   const value = await json(file);
+  const previous = await readLaunchReceipt(file + ".ast-mcp.json", true);
+  const original = value.mcpServers?.["ast-mcp"] ?? {};
+  const tools = copilot ? managedToolSelection(original, previous) : {};
   const entry = definition(root, home, transport, endpoint);
   value.mcpServers = {
     ...(value.mcpServers ?? {}),
-    "ast-mcp": copilot
-      ? transport === "stdio"
-        ? { type: "local", ...entry, tools: ["*"] }
-        : { ...entry, tools: ["*"] }
-      : entry,
+    "ast-mcp": {
+      ...retainedMcpSettings(value.mcpServers?.["ast-mcp"], copilot),
+      ...(copilot
+        ? transport === "stdio"
+          ? {
+              type: "local",
+              ...entry,
+              ...tools,
+            }
+          : { ...entry, ...tools }
+        : entry),
+    },
   };
+  await saveLaunchReceipt(
+    file + ".ast-mcp.json",
+    launchReceipt(original, value.mcpServers["ast-mcp"], previous, copilot),
+  );
   await save(file, value);
 }
 async function vscodeMcp(
@@ -302,48 +401,144 @@ async function vscodeMcp(
   const entry = definition(root, home, transport, endpoint);
   value.servers = {
     ...(value.servers ?? {}),
-    "ast-mcp": transport === "stdio" ? { type: "stdio", ...entry } : entry,
+    "ast-mcp": {
+      ...retainedMcpSettings(value.servers?.["ast-mcp"]),
+      ...(transport === "stdio" ? { type: "stdio", ...entry } : entry),
+    },
   };
+  await saveLaunchReceipt(
+    file + ".ast-mcp.json",
+    launchReceipt(
+      (await json(file)).servers?.["ast-mcp"] ?? {},
+      value.servers["ast-mcp"],
+      await readLaunchReceipt(file + ".ast-mcp.json", true),
+    ),
+  );
   await save(file, value);
 }
 
+function factoryHook(
+  event: "PreToolUse" | "preToolUse",
+  command: string,
+): Record<string, any> {
+  return event === "preToolUse"
+    ? {
+        command,
+        matcher: "bash|powershell|edit|create",
+        timeoutSec: 10,
+        type: "command",
+      }
+    : {
+        hooks: [
+          {
+            command,
+            statusMessage: "Enforcing ast-mcp writes",
+            timeout: 10,
+            type: "command",
+          },
+        ],
+        matcher: ".*",
+      };
+}
+function retainUnmanagedHooks(
+  prior: unknown[],
+  event: "PreToolUse" | "preToolUse",
+  commands: string[],
+): unknown[] {
+  const factory = factoryHook(event, commands[0]!);
+  return prior.flatMap((item) => {
+    if (!commands.some((command) => isManagedHook(item, event, command)))
+      return [item];
+    const group = item as Record<string, any>;
+    if (event === "preToolUse")
+      return commands.includes(group.command) &&
+        isDeepStrictEqual({ ...group, command: commands[0] }, factory)
+        ? []
+        : [item];
+    const { hooks, ...metadata } = group;
+    const { hooks: _factoryChildren, ...factoryMetadata } = factory;
+    if (!isDeepStrictEqual(metadata, factoryMetadata)) return [item];
+    const retained = (hooks as unknown[]).filter(
+      (child) =>
+        !commands.includes(
+          (child as Record<string, unknown>)?.command as string,
+        ) ||
+        !isDeepStrictEqual(
+          { ...(child as Record<string, unknown>), command: commands[0] },
+          factory.hooks[0],
+        ),
+    );
+    return retained.length ? [{ ...group, hooks: retained }] : [];
+  });
+}
+function refreshManagedHooks(
+  prior: unknown[],
+  event: "PreToolUse" | "preToolUse",
+  command: string,
+): unknown[] {
+  const factory = factoryHook(event, command);
+  let found = false;
+  const refreshed = prior.map((item) => {
+    if (!isManagedHook(item, event, command)) return item;
+    const group = item as Record<string, any>;
+    if (event === "preToolUse") {
+      if (group.command === command) {
+        found = true;
+        return item;
+      }
+      if (isDeepStrictEqual({ ...group, command }, factory)) {
+        found = true;
+        return { ...group, command };
+      }
+      return item;
+    }
+    const current = group.hooks.some(
+      (child: Record<string, unknown>) => child?.command === command,
+    );
+    if (current) {
+      found = true;
+      return item;
+    }
+    if (
+      group.hooks.length === 1 &&
+      isDeepStrictEqual(
+        {
+          ...group,
+          hooks: [{ ...group.hooks[0], command }],
+        },
+        factory,
+      )
+    ) {
+      found = true;
+      return { ...group, hooks: [{ ...group.hooks[0], command }] };
+    }
+    return item;
+  });
+  let keptFactory = false;
+  const unique = refreshed.filter((item) => {
+    if (!isDeepStrictEqual(item, factory)) return true;
+    if (keptFactory) return false;
+    keptFactory = true;
+    return true;
+  });
+  return found ? unique : [...unique, factory];
+}
+function hookCommand(commandPath: string): string {
+  return /\.[cm]?[jt]s$/u.test(commandPath)
+    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(commandPath)} hook`
+    : `${JSON.stringify(commandPath)} hook`;
+}
 async function hook(
   file: string,
   event: "PreToolUse" | "preToolUse",
-  scriptFile: string,
   commandPath: string,
 ) {
-  await rm(scriptFile, { force: true });
   const value = await json(file);
   if (event === "preToolUse") value.version ??= 1;
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
-  const command = /\.[cm]?[jt]s$/u.test(commandPath)
-    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(commandPath)} hook`
-    : `${JSON.stringify(commandPath)} hook`;
-  const kept = prior.filter(
-    (item: unknown) => !isManagedHook(item, event, command),
-  );
-  const item =
-    event === "preToolUse"
-      ? {
-          command,
-          matcher: "bash|powershell|edit|create",
-          timeoutSec: 10,
-          type: "command",
-        }
-      : {
-          hooks: [
-            {
-              command,
-              statusMessage: "Enforcing ast-mcp writes",
-              timeout: 10,
-              type: "command",
-            },
-          ],
-          matcher: ".*",
-        };
-  value.hooks[event] = [...kept, item];
+  const command = hookCommand(commandPath);
+  value.hooks[event] = refreshManagedHooks(prior, event, command);
   await save(file, value);
 }
 const instructionsBegin = "<!-- ast-mcp:begin -->";
@@ -395,38 +590,36 @@ async function removeJsonMcp(file: string, section = "mcpServers") {
   const entries = value[section];
   if (!entries || typeof entries !== "object" || !("ast-mcp" in entries))
     return;
-  delete entries["ast-mcp"];
+  const receipt = await readLaunchReceipt(file + ".ast-mcp.json");
+  if (!receipt) return;
+  const retained = removeManagedEntry(entries["ast-mcp"], receipt);
+  if (retained) entries["ast-mcp"] = retained;
+  else delete entries["ast-mcp"];
   if (Object.keys(entries).length === 0) delete value[section];
   await saveRemainingJson(file, value);
+  await rm(file + ".ast-mcp.json", { force: true });
 }
 
 async function removeCodexMcp(file: string) {
   const old = await optionalText(file);
   if (old === undefined) return;
-  await writeText(
-    file,
-    old.replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, ""),
-  );
+  await writeText(file, removeCodexMcpConfiguration(old));
 }
 
 async function removeHook(
   file: string,
   event: "PreToolUse" | "preToolUse",
-  commandPath: string,
   cliAlias: string,
 ) {
   const value = await json(file);
   const hooks = value.hooks;
   if (!hooks || !Array.isArray(hooks[event])) return;
   const commands = [
-    `bun ${JSON.stringify(commandPath)}`,
+    hookCommand(cliAlias),
     `bun ${JSON.stringify(cliEntry)} hook`,
     `${JSON.stringify(cliAlias)} hook`,
   ];
-  hooks[event] = hooks[event].filter(
-    (item: unknown) =>
-      !commands.some((command) => isManagedHook(item, event, command)),
-  );
+  hooks[event] = retainUnmanagedHooks(hooks[event], event, commands);
   if (hooks[event].length === 0) delete hooks[event];
   if (Object.keys(hooks).length === 0) delete value.hooks;
   await saveRemainingJson(file, value);
@@ -545,7 +738,17 @@ function targetPaths(
   root: string,
   home: string,
 ) {
-  return installerTargetPaths(target, global, root, home);
+  const paths = installerTargetPaths(target, global, root, home);
+  const configs =
+    target === "codex"
+      ? []
+      : [
+          jsonTargetConfig(target, global, root, home),
+          ...(target === "copilot" && !global
+            ? [path.join(root, ".vscode/mcp.json")]
+            : []),
+        ];
+  return [...paths, ...configs.map((file) => file + ".ast-mcp.json")];
 }
 
 async function snapshot(paths: string[]) {
@@ -596,7 +799,6 @@ async function installCodexTarget(
   await hook(
     path.join(base, "hooks.json"),
     "PreToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -624,7 +826,6 @@ async function installClaudeTarget(
   await hook(
     path.join(base, "settings.json"),
     "PreToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -672,7 +873,6 @@ async function installCopilotTarget(
   await hook(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -922,7 +1122,7 @@ async function recordSourceLaunch(
   });
 }
 
-function reconcilePaths(
+async function reconcilePaths(
   options: InstallOptions,
   global: boolean,
   root: string,
@@ -933,6 +1133,8 @@ function reconcilePaths(
   const paths = options.targets.flatMap((target) =>
     targetPaths(target, global, root, home),
   );
+  if (global && options.targets.includes("codex"))
+    paths.push(...(await codexProfileFiles(home)));
   paths.push(installerConfigPath(options, root, home));
   if (usesSourceLaunch(options))
     paths.push(sourceLaunchReceiptPath(root, home));
@@ -1002,7 +1204,7 @@ async function reconcile(
         ...(!global ? { cwd: root } : {}),
       };
       await (options.verifyLaunch ?? verifyMcpLaunch)(launch);
-      const paths = reconcilePaths(
+      const paths = await reconcilePaths(
         options,
         global,
         root,
@@ -1010,6 +1212,10 @@ async function reconcile(
         transport,
         undefined,
       );
+      for (const file of paths.filter((candidate) =>
+        candidate.endsWith(".ast-mcp.json"),
+      ))
+        await readLaunchReceipt(file, true);
       const before = await snapshot(paths);
       if (transport === "http" && options.service === true) {
         const endpoint = await resolveInstallerEndpoint({
@@ -1042,8 +1248,7 @@ export async function update(options: InstallOptions) {
   return withInstallerLocks(options, () => reconcile(options, "update"));
 }
 
-async function removeTargetAssets(base: string, instructionsPath?: string) {
-  await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
+async function removeTargetAssets(instructionsPath?: string) {
   if (instructionsPath) await removeInstructions(instructionsPath);
 }
 
@@ -1053,17 +1258,24 @@ async function uninstallCodexTarget(
   home: string,
 ) {
   const base = global ? codexHome(home) : path.join(root, ".codex");
+  if (global) {
+    for (const profileFile of await codexProfileFiles(home))
+      await removeCodexMcp(profileFile);
+    const config = path.join(base, "config.toml");
+    const old = await optionalText(config);
+    if (old !== undefined)
+      await writeText(
+        config,
+        old.replace(/^# ast-mcp:profile-file [\w.-]{1,100}\r?\n/gm, ""),
+      );
+  }
   await removeCodexMcp(path.join(base, "config.toml"));
   await removeHook(
     path.join(base, "hooks.json"),
     "PreToolUse",
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
     cliEntryFor(global ? undefined : root, home),
   );
-  await removeTargetAssets(
-    base,
-    global ? path.join(base, "AGENTS.md") : undefined,
-  );
+  await removeTargetAssets(global ? path.join(base, "AGENTS.md") : undefined);
 }
 
 async function uninstallClaudeTarget(
@@ -1078,15 +1290,9 @@ async function uninstallClaudeTarget(
   await removeHook(
     path.join(base, "settings.json"),
     "PreToolUse",
-    global
-      ? path.join(base, "hooks/ast-mcp.ts")
-      : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
     cliEntryFor(global ? undefined : root, home),
   );
-  await removeTargetAssets(
-    base,
-    global ? path.join(base, "CLAUDE.md") : undefined,
-  );
+  await removeTargetAssets(global ? path.join(base, "CLAUDE.md") : undefined);
 }
 
 async function uninstallCopilotTarget(
@@ -1097,19 +1303,18 @@ async function uninstallCopilotTarget(
   const base = global
     ? path.join(home, ".copilot")
     : path.join(root, ".github");
-  if (global) await removeJsonMcp(path.join(base, "mcp-config.json"));
+  if (global)
+    await removeJsonMcp(path.join(base, "mcp-config.json"), "mcpServers");
   else {
-    await removeJsonMcp(path.join(root, ".github/mcp.json"));
+    await removeJsonMcp(path.join(root, ".github/mcp.json"), "mcpServers");
     await removeJsonMcp(path.join(root, ".vscode/mcp.json"), "servers");
   }
   await removeHook(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
     cliEntryFor(global ? undefined : root, home),
   );
   await removeTargetAssets(
-    base,
     global ? path.join(base, "copilot-instructions.md") : undefined,
   );
 }
@@ -1157,6 +1362,8 @@ async function uninstallLocked(options: InstallOptions) {
       const paths = options.targets.flatMap((target) =>
         targetPaths(target, global, root, home),
       );
+      if (global && options.targets.includes("codex"))
+        paths.push(...(await codexProfileFiles(home)));
       const before = await snapshot(paths);
       for (const target of options.targets)
         await uninstallTarget(target, global, root, home);
