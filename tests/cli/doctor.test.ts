@@ -131,3 +131,42 @@ test("doctor explicit root uses its policy instead of the Claude launch project"
     else process.env.CLAUDE_PROJECT_DIR = previous;
   }
 });
+
+test("doctor validates target values and selects configured or fallback output defaults", async () => {
+  expect(() => parseDoctorArguments(["--target", "unsupported"])).toThrow(
+    "Expected --target",
+  );
+  const fetcher = (async () => {
+    throw new Error("offline");
+  }) as unknown as typeof fetch;
+  for (const valid of [true, false]) {
+    const root = await mkdtemp(
+      path.join(os.tmpdir(), "ast-mcp-doctor-defaults-"),
+    );
+    created.push(root);
+    await mkdir(path.join(root, ".git"));
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      valid
+        ? 'version = 2\n[cli.output]\ninteractive = "human"\nnon_interactive = "yaml"\n'
+        : "invalid [",
+    );
+    for (const isTTY of [true, false]) {
+      let output = "";
+      expect(
+        await runDoctorCli(["--root", root, "--target", "claude"], {
+          home: root,
+          env: {},
+          isTTY,
+          fetch: fetcher,
+          write: (value) => {
+            output += value;
+          },
+        }),
+      ).toBe(0);
+      if (isTTY) expect(output).toContain("AST-MCP diagnostics");
+      else if (valid) expect(output).toContain("schemaVersion:");
+      else expect(JSON.parse(output).configuration.healthy).toBeFalse();
+    }
+  }
+});

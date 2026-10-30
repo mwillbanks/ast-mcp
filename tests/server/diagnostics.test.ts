@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import {
   createMcpHandler,
   InMemoryTransport,
+  type ServerContext,
 } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
@@ -17,6 +18,7 @@ import {
   approvalDiagnostics,
   clearSessionApprovals,
 } from "../../src/runtime/approval";
+import { collectDiagnostics } from "../../src/runtime/diagnostics";
 import { createServer } from "../../src/server";
 
 async function fixture(timeoutMs = 1000) {
@@ -399,6 +401,91 @@ test("modern request-scoped HTTP refuses filesystem approval but permits diagnos
   } finally {
     await handler.close();
     await Promise.all(servers.map((server) => server.close()));
+    await instance.close();
+  }
+});
+
+test("diagnostics sanitize malformed and URL-only negotiated capabilities", async () => {
+  const instance = await fixture();
+  try {
+    const config = await configRegistry.get({ cwd: instance.root });
+    for (const [capabilities, expected] of [
+      [
+        { elicitation: { url: {} }, roots: [], sampling: {} },
+        {
+          formElicitation: false,
+          urlElicitation: true,
+          roots: false,
+          sampling: true,
+        },
+      ],
+      [
+        { elicitation: { url: null }, roots: "private", sampling: [] },
+        {
+          formElicitation: false,
+          urlElicitation: false,
+          roots: false,
+          sampling: false,
+        },
+      ],
+      [
+        { elicitation: { url: [] }, roots: {}, sampling: "private" },
+        {
+          formElicitation: false,
+          urlElicitation: false,
+          roots: true,
+          sampling: false,
+        },
+      ],
+      [
+        { elicitation: { url: "private" } },
+        {
+          formElicitation: false,
+          urlElicitation: false,
+          roots: false,
+          sampling: false,
+        },
+      ],
+      [
+        { elicitation: [] },
+        {
+          formElicitation: false,
+          urlElicitation: false,
+          roots: false,
+          sampling: false,
+        },
+      ],
+    ] as const) {
+      const result = await collectDiagnostics({
+        config,
+        context: {
+          http: {},
+          mcpReq: {
+            envelope: {
+              "io.modelcontextprotocol/clientCapabilities": capabilities,
+              "io.modelcontextprotocol/clientInfo": {
+                name: "/private/agent",
+                version: "/private/version",
+              },
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            },
+          },
+        } as unknown as ServerContext,
+        fetch: (async () =>
+          Response.json({
+            version: packageJson.version,
+          })) as unknown as typeof fetch,
+      });
+      expect(result.client).toMatchObject({
+        name: "unknown",
+        version: "unknown",
+        capabilities: expected,
+      });
+      expect(result.server.transport).toBe("http");
+      expect(result.versionCheck.status).toBe("current");
+      expect(JSON.stringify(result)).not.toContain("/private");
+    }
+  } finally {
     await instance.close();
   }
 });
