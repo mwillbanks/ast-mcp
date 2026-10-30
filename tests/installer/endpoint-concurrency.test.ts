@@ -31,11 +31,7 @@ test("endpoint updates preserve concurrent configuration changes", async () => {
   const staging = spyOn(fs, "writeFile").mockImplementation(
     async (...args: Parameters<typeof fs.writeFile>) => {
       await writeFile(...args);
-      if (
-        path
-          .basename(String(args[0]))
-          .startsWith(path.basename(target) + ".endpoint-")
-      )
+      if (path.basename(String(args[0])).startsWith(".ast-mcp-"))
         await writeFile(target, concurrent);
     },
   );
@@ -50,7 +46,7 @@ test("endpoint updates preserve concurrent configuration changes", async () => {
     ).rejects.toMatchObject({ code: "configuration_conflict" });
     expect(await fs.readFile(target, "utf8")).toBe(concurrent);
     expect(
-      (await fs.readdir(root)).filter((name) => name.includes(".endpoint-")),
+      (await fs.readdir(root)).filter((name) => name.startsWith(".ast-mcp-")),
     ).toEqual([]);
   } finally {
     staging.mockRestore();
@@ -89,7 +85,7 @@ test.skipIf(process.platform === "win32")(
       ).rejects.toMatchObject({ code: "ENOENT" });
       expect((await fs.lstat(file)).isSymbolicLink()).toBe(true);
       expect(
-        (await fs.readdir(root)).filter((name) => name.includes(".endpoint-")),
+        (await fs.readdir(root)).filter((name) => name.startsWith(".ast-mcp-")),
       ).toEqual([]);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
@@ -182,7 +178,7 @@ test("installer preserves retryable migration conflicts", async () => {
   const writer = spyOn(fs, "writeFile").mockImplementation(
     async (...args: Parameters<typeof fs.writeFile>) => {
       await actual(...args);
-      if (String(args[0]).includes(".config-"))
+      if (path.basename(String(args[0])).startsWith(".ast-mcp-"))
         await actual(config, "version = 1\n# concurrent approval\n");
     },
   );
@@ -272,3 +268,30 @@ test("concurrent installers serialize shared checkout and home state", async () 
     await rm(root, { recursive: true, force: true });
   }
 }, 15000);
+
+test("standalone endpoint preparation rolls back persisted settings when final configuration validation fails", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-endpoint-invalid-"),
+  );
+  const file = path.join(root, "ast-mcp.toml");
+  const original = 'version = 2\n[files.read]\nmodes = ["invalid"]\n';
+  try {
+    await fs.writeFile(file, original, { mode: 0o640 });
+    const mode = (await fs.stat(file)).mode & 0o777;
+    await expect(
+      resolveInstallerEndpoint({
+        root,
+        home: root,
+        scope: "local",
+        port: 4567,
+      }),
+    ).rejects.toThrow();
+    expect(await fs.readFile(file, "utf8")).toBe(original);
+    expect((await fs.stat(file)).mode & 0o777).toBe(mode);
+    expect(
+      (await fs.readdir(root)).filter((name) => name.startsWith(".ast-mcp-")),
+    ).toEqual([]);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});

@@ -32,7 +32,7 @@ Validate locally before committing or pushing for CI. Treat CI as independent co
 
 When a check exposes a defect, inspect the related domain for the same failure class. Add a reproducer, review sibling paths, and request an independent review before pushing again. After affected checks and review pass, freeze source and run `bun run check:coverage`; a passing test suite alone does not satisfy the per-file coverage gate. Do not mutate source during validation. Restart affected and downstream gates after an edit.
 
-Keep boundary contracts executable. Test Windows and POSIX path spellings on every host, preserve user-owned configuration through install-update-uninstall cycles, and validate remote diagnostic payloads before reusing them. Keep optional diagnostics separate from required protocol success. Preserve observed approval outcomes and propagate unrelated failures. Prefer shared parsers and ownership helpers over duplicated conditionals; add regression matrices when a source-pattern lint cannot establish behavior safely.
+Keep boundary contracts executable. Freeze configuration identity inputs for cached reloads and test ambient environment and caller mutation. Test Windows and POSIX path spellings on every host, preserve user-owned configuration through install-update-uninstall cycles, and validate remote diagnostic payloads before reusing them. Keep optional diagnostics separate from required protocol success. Preserve observed approval outcomes and propagate unrelated failures. Prefer shared parsers and ownership helpers over duplicated conditionals; add regression matrices when a source-pattern lint cannot establish behavior safely.
 
 Before opening a pull request, run:
 

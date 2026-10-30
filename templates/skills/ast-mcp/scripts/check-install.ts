@@ -138,6 +138,63 @@ export function mcpStdioCommand(
   return [invocation.command, ...invocation.args];
 }
 
+type McpSmokeFailureKind = "timeout" | "transport";
+
+class McpSmokeFailure extends Error {
+  constructor(
+    readonly kind: McpSmokeFailureKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "McpSmokeFailure";
+  }
+}
+
+function mcpResponse(line: string): Record<string, unknown> | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    throw new McpSmokeFailure("transport", "MCP smoke received malformed JSON");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new McpSmokeFailure(
+      "transport",
+      "MCP smoke received an invalid protocol message",
+    );
+  const message = value as Record<string, unknown>;
+  if (message.jsonrpc !== "2.0")
+    throw new McpSmokeFailure(
+      "transport",
+      "MCP smoke received an invalid protocol version",
+    );
+  if (
+    typeof message.method === "string" &&
+    message.id === undefined &&
+    !("result" in message) &&
+    !("error" in message)
+  )
+    return undefined;
+  const error = message.error;
+  const validError =
+    error &&
+    typeof error === "object" &&
+    Number.isInteger((error as Record<string, unknown>).code) &&
+    typeof (error as Record<string, unknown>).message === "string";
+  if (
+    typeof message.id !== "number" ||
+    !Number.isInteger(message.id) ||
+    "method" in message ||
+    "result" in message === "error" in message ||
+    ("error" in message && !validError)
+  )
+    throw new McpSmokeFailure(
+      "transport",
+      "MCP smoke received an invalid protocol response",
+    );
+  return message;
+}
+
 async function mcpDeadline<T>(
   pending: Promise<T>,
   timeoutMs: number,
@@ -165,21 +222,26 @@ async function mcpDeadline<T>(
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
 ) {
-  if (processHandle.exitCode !== null) return true;
+  if (processHandle.exitCode !== null) return { exited: true, forced: false };
+  let forcedOnWindows = false;
   if (process.platform === "win32") {
     try {
       const taskkill = Bun.spawn(
         ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
         { stderr: "ignore", stdin: "ignore", stdout: "ignore" },
       );
-      await mcpDeadline<number | undefined>(
-        taskkill.exited,
-        500,
-        () => undefined,
-      );
+      forcedOnWindows =
+        (await mcpDeadline<number | undefined>(
+          taskkill.exited,
+          500,
+          () => undefined,
+        )) === 0;
       if (taskkill.exitCode === null) taskkill.kill();
     } catch {
-      processHandle.kill();
+      if (processHandle.exitCode === null) {
+        processHandle.kill();
+        forcedOnWindows = true;
+      }
     }
   } else {
     try {
@@ -202,11 +264,18 @@ async function terminateMcpProcess(
       }
     } else processHandle.kill("SIGKILL");
   }
-  return await mcpDeadline(
+  const exited = await mcpDeadline(
     processHandle.exited.then(() => true),
     500,
     () => false,
   );
+  return {
+    exited,
+    forced:
+      forcedOnWindows ||
+      processHandle.signalCode === "SIGTERM" ||
+      processHandle.signalCode === "SIGKILL",
+  };
 }
 
 export async function smokeMcpStdio(
@@ -247,34 +316,66 @@ export async function smokeMcpStdio(
   })().catch(() => "");
   const deadline = Date.now() + timeoutMs;
   const responses = new Map<number, Record<string, unknown>>();
+  const requestIds = new Set<number>();
   const reader = process.stdout.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
   const send = async (message: Record<string, unknown>) => {
-    process.stdin.write(`${JSON.stringify(message)}\n`);
-    await process.stdin.flush();
+    try {
+      if (typeof message.id === "number") requestIds.add(message.id);
+      process.stdin.write(`${JSON.stringify(message)}\n`);
+      await mcpDeadline(
+        Promise.resolve(process.stdin.flush()),
+        Math.max(1, deadline - Date.now()),
+        () => {
+          throw new McpSmokeFailure("timeout", "MCP smoke timed out");
+        },
+      );
+    } catch (error) {
+      if (error instanceof McpSmokeFailure) throw error;
+      throw new McpSmokeFailure("transport", "MCP smoke write failed");
+    }
   };
 
   const readUntil = async (id: number): Promise<Record<string, unknown>> => {
     while (!responses.has(id)) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error("MCP smoke timed out");
-      const chunk = await mcpDeadline(reader.read(), remaining, () => {
-        throw new Error("MCP smoke timed out");
-      });
-      if (chunk.done) throw new Error("MCP smoke ended before responding");
+      if (remaining <= 0)
+        throw new McpSmokeFailure("timeout", "MCP smoke timed out");
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await mcpDeadline(reader.read(), remaining, () => {
+          throw new McpSmokeFailure("timeout", "MCP smoke timed out");
+        });
+      } catch (error) {
+        if (error instanceof McpSmokeFailure) throw error;
+        throw new McpSmokeFailure("transport", "MCP smoke read failed");
+      }
+      if (chunk.done)
+        throw new McpSmokeFailure(
+          "transport",
+          "MCP smoke ended before responding",
+        );
       buffered += decoder.decode(chunk.value, { stream: true });
       const lines = buffered.split("\n");
       buffered = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        const value = JSON.parse(line) as Record<string, unknown>;
-        if (typeof value.id === "number") responses.set(value.id, value);
+        const value = mcpResponse(line);
+        if (value) {
+          const responseId = value.id as number;
+          if (!requestIds.has(responseId) || responses.has(responseId))
+            throw new McpSmokeFailure(
+              "transport",
+              "MCP smoke received an uncorrelated protocol response",
+            );
+          responses.set(responseId, value);
+        }
       }
     }
     return responses.get(id) as Record<string, unknown>;
   };
-  let optionalDiagnosticsFailed = false;
+  let optionalDiagnosticsTimedOut = false;
   let protocolFailed = false;
   let protocolError: unknown;
   let smokeResult!: McpSmokeResult;
@@ -396,9 +497,11 @@ export async function smokeMcpStdio(
             serverVersion: data.server.version,
             versionCheck: data.versionCheck,
           };
-      } catch {
-        // Diagnostics are optional after initialization, tools, and workspace succeed.
-        optionalDiagnosticsFailed = true;
+      } catch (error) {
+        if (!(error instanceof McpSmokeFailure) || error.kind !== "timeout")
+          throw error;
+        // A bounded optional timeout does not invalidate the completed core smoke.
+        optionalDiagnosticsTimedOut = true;
       }
     }
   } catch (error) {
@@ -413,12 +516,18 @@ export async function smokeMcpStdio(
         () => null,
       );
       if (exitCode === null) {
-        const terminated = await terminateMcpProcess(process);
-        if (!terminated)
+        const termination = await terminateMcpProcess(process);
+        if (!termination.exited)
           shutdownError = new Error("MCP smoke process did not terminate");
-        else if (!optionalDiagnosticsFailed)
-          shutdownError = new Error("MCP smoke shutdown exceeded five seconds");
-      } else if (exitCode !== 0 && !optionalDiagnosticsFailed) {
+        else if (!(optionalDiagnosticsTimedOut && termination.forced)) {
+          const stoppedCode = await process.exited;
+          shutdownError = new Error(
+            termination.forced || stoppedCode === 0
+              ? "MCP smoke shutdown exceeded five seconds"
+              : `MCP smoke exited with code ${stoppedCode}`,
+          );
+        }
+      } else if (exitCode !== 0) {
         const diagnostic = (await mcpDeadline(stderrDrain, 500, () => ""))
           .slice(-8_192)
           .trim();

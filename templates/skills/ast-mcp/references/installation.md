@@ -45,6 +45,8 @@ It launches the configured MCP server and calls `diagnostics` when the server ad
 Otherwise, it attempts a standalone fresh release check using a valid server version from initialization when available.
 It labels the connected server version unknown when neither response supplies a valid version.
 It reports unavailable diagnostics explicitly.
+A bounded optional timeout or tool-level error does not invalidate successful required protocol checks.
+Malformed transport, premature EOF, and natural process failures still fail the smoke check.
 It reports repair commands and stale executable paths.
 It does not prove complete tool coverage or MCP skill activation.
 Verify those separately.

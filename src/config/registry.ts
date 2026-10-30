@@ -1,5 +1,6 @@
 import { type FSWatcher, watch } from "node:fs";
 import { stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { setApprovalConfigInvalidator } from "../runtime/approval";
@@ -30,10 +31,31 @@ interface RegistryEntry {
   watchers: FSWatcher[];
 }
 
-function normalizedClientRoot(value: string): string {
-  return path.resolve(
-    value.startsWith("file:") ? Bun.fileURLToPath(new URL(value)) : value,
-  );
+function capturedOptions(options: ResolveConfigOptions): ResolveConfigOptions {
+  const launchCwd = path.resolve(options.launchCwd ?? process.cwd());
+  const cwd =
+    options.cwd === undefined
+      ? undefined
+      : path.resolve(launchCwd, options.cwd);
+  const env = environmentFingerprint(options.env ?? process.env);
+  for (const name of ["APPDATA", "XDG_CONFIG_HOME"] as const) {
+    if (env[name] !== undefined) env[name] = path.resolve(launchCwd, env[name]);
+  }
+  return {
+    ...options,
+    cwd,
+    launchCwd,
+    env,
+    home: path.resolve(launchCwd, options.home ?? os.homedir()),
+    platform: options.platform ?? process.platform,
+    clientRoots: options.clientRoots?.map((value) =>
+      path.resolve(
+        launchCwd,
+        value.startsWith("file:") ? Bun.fileURLToPath(new URL(value)) : value,
+      ),
+    ),
+    requestPaths: options.requestPaths ? [...options.requestPaths] : undefined,
+  };
 }
 
 function environmentFingerprint(environment: NodeJS.ProcessEnv) {
@@ -87,9 +109,9 @@ function configuredSelectionRoots(
 }
 
 function keyFor(options: ResolveConfigOptions): string {
-  const cwd = path.resolve(options.cwd ?? process.cwd());
-  const env = options.env ?? process.env;
-  const clientRoots = (options.clientRoots ?? []).map(normalizedClientRoot);
+  const cwd = options.cwd ?? options.launchCwd!;
+  const env = options.env!;
+  const clientRoots = options.clientRoots ?? [];
   const selectionRoots = configuredSelectionRoots(clientRoots, cwd, env);
   const requestPaths = (options.requestPaths ?? [])
     .filter((item) => path.isAbsolute(item))
@@ -133,7 +155,7 @@ async function fingerprints(
   config: ResolvedConfig | undefined,
   options: ResolveConfigOptions,
 ): Promise<Record<string, string>> {
-  const projectRoot = config?.projectRoot ?? options.cwd ?? process.cwd();
+  const projectRoot = config?.projectRoot ?? options.cwd ?? options.launchCwd!;
   const sources = [
     globalConfigPath(options),
     ...(await projectConfigCandidates(projectRoot)),
@@ -198,13 +220,14 @@ export class ConfigRegistry {
   async snapshot(
     options: ResolveConfigOptions = {},
   ): Promise<Readonly<ConfigSnapshot>> {
-    const key = keyFor(options);
-    const entry = this.#entry(key, options);
+    const captured = capturedOptions(options);
+    const key = keyFor(captured);
+    const entry = this.#entry(key, captured);
     if (!entry.promise) entry.promise = this.#reload(key, entry);
     return entry.promise;
   }
   invalidate(options: ResolveConfigOptions = {}): void {
-    const key = keyFor(options);
+    const key = keyFor(capturedOptions(options));
     const entry = this.#entries.get(key);
     if (Object.keys(options).length === 0) {
       for (const [entryKey, entryValue] of this.#entries)

@@ -179,6 +179,8 @@ export interface ResolvedConfig {
 export interface ResolveConfigOptions {
   clientRoots?: string[];
   cwd?: string;
+  /** Internal captured ambient cwd; preserves implicit host-root precedence. */
+  launchCwd?: string;
   env?: NodeJS.ProcessEnv;
   home?: string;
   platform?: NodeJS.Platform;
@@ -845,7 +847,7 @@ function merge(...layers: InternalConfig[]): InternalConfig {
 
 async function projectRoots(options: ResolveConfigOptions) {
   const env = options.env ?? process.env;
-  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const cwd = path.resolve(options.cwd ?? options.launchCwd ?? process.cwd());
   const withCanonical = async (roots: string[]) => [
     ...new Set([
       ...roots,
@@ -1235,7 +1237,7 @@ function resolvedConfiguration(args: {
 
 function resolutionRuntime(options: ResolveConfigOptions) {
   return {
-    cwd: path.resolve(options.cwd ?? process.cwd()),
+    cwd: path.resolve(options.cwd ?? options.launchCwd ?? process.cwd()),
     env: options.env ?? process.env,
   };
 }

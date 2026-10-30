@@ -212,6 +212,8 @@ async function mcpFixture(
     error?: unknown;
     hang?: boolean;
     pidFile?: string;
+    raw?: string;
+    exitCode?: number;
   },
 ) {
   await mkdir(directory, { recursive: true });
@@ -239,10 +241,12 @@ for await (const chunk of Bun.stdin.stream()) {
       }
       if (optional?.delayMs) await Bun.sleep(optional.delayMs);
       const result = optional ? optional.response : responses[request.method];
-      if (optional?.error)
+      if (optional?.raw !== undefined) process.stdout.write(optional.raw);
+      else if (optional?.error)
         console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: optional.error }));
       else if (result !== undefined)
         console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+      if (optional?.exitCode !== undefined) process.exit(optional.exitCode);
     }
     newline = buffered.indexOf("\\n");
   }
@@ -262,6 +266,25 @@ for await (const chunk of Bun.stdin.stream()) {
   await chmod(posixAlias, 0o755);
   await chmod(windowsAlias, 0o755);
   return process.platform === "win32" ? windowsAlias : posixAlias;
+}
+
+function replyCore(
+  stream: ReadableStreamDefaultController<Uint8Array>,
+  line: string,
+  responses: Record<string, unknown>,
+) {
+  const request = JSON.parse(line) as { id?: number; method: string };
+  if (request.id !== undefined && request.id >= 1 && request.id <= 3)
+    stream.enqueue(
+      new TextEncoder().encode(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: responses[request.method],
+        }) + "\n",
+      ),
+    );
+  return request.id === 4;
 }
 
 function workingResponses(root: string): FixtureResponses {
@@ -609,28 +632,21 @@ test.skipIf(process.platform === "win32")(
     (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
       name: "diagnostics",
     });
-    const encoder = new TextEncoder();
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
     const child = {
       exitCode: null,
       pid: 99,
       exited: new Promise<number>(() => {}),
-      stdin: { write() {}, flush: async () => {}, end() {} },
-      stdout: new ReadableStream({
+      stdin: {
+        write(line: string) {
+          replyCore(stream, line, responses);
+        },
+        flush: async () => {},
+        end() {},
+      },
+      stdout: new ReadableStream<Uint8Array>({
         start(controller) {
-          for (const [id, method] of [
-            [1, "initialize"],
-            [2, "tools/list"],
-            [3, "tools/call"],
-          ] as const)
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  jsonrpc: "2.0",
-                  id,
-                  result: responses[method],
-                }) + "\n",
-              ),
-            );
+          stream = controller;
         },
       }),
       stderr: new ReadableStream({
@@ -658,6 +674,190 @@ test.skipIf(process.platform === "win32")(
   },
   10_000,
 );
+
+test("optional diagnostics cannot hide malformed framing, EOF, or natural process crashes", async () => {
+  const { home, root } = await folders();
+  await install({ home, root, scope: "local", targets: ["codex"] });
+  const responses = workingResponses(root)!;
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  for (const optional of [
+    { raw: "malformed\n", exitCode: 0 },
+    { raw: "null\n", exitCode: 0 },
+    {
+      raw: JSON.stringify({ jsonrpc: "2.0", id: 99, result: {} }) + "\n",
+      exitCode: 0,
+    },
+    {
+      raw: JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }) + "\n",
+      exitCode: 0,
+    },
+    {
+      raw:
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "invalid",
+          result: {},
+        }) + "\n",
+      exitCode: 0,
+    },
+    {
+      raw: JSON.stringify({ jsonrpc: "1.0", id: 4, result: {} }) + "\n",
+      exitCode: 0,
+    },
+    {
+      raw:
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 4,
+          result: {},
+          error: { code: -1, message: "bad" },
+        }) + "\n",
+      exitCode: 0,
+    },
+    {
+      raw: JSON.stringify({ jsonrpc: "2.0", id: 4, error: "invalid" }) + "\n",
+      exitCode: 0,
+    },
+    { exitCode: 0 },
+    { response: { isError: true }, exitCode: 7 },
+  ]) {
+    await mcpFixture(
+      path.join(root, "node_modules/.bin"),
+      "ast-mcp",
+      responses,
+      optional,
+    );
+    let checks = 0;
+    const result = await checkInstall(["--root", root], home, {
+      fetch: (async () => {
+        checks++;
+        return Response.json({ version: "1.2.4" });
+      }) as unknown as typeof fetch,
+    });
+    expect(result.checks.mcp).toBeFalse();
+    expect(result.installed).toBeFalse();
+    expect(result.smoke).toBeNull();
+    expect(result.smokeError).not.toBeNull();
+    expect(checks).toBe(1);
+    expect(result.diagnostics.versionCheck.latestVersion).toBe("1.2.4");
+  }
+});
+
+test("optional timeout does not excuse a later natural nonzero exit", async () => {
+  const { root } = await folders();
+  const responses = workingResponses(root)!;
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  const binary = await mcpFixture(root, "late-crash", responses, {
+    delayMs: 1_500,
+    exitCode: 7,
+  });
+  await expect(smokeMcpStdio(binary, root, 1_000)).rejects.toThrow(
+    "exited with code 7",
+  );
+});
+
+test("valid notifications and optional JSON-RPC tool errors preserve healthy framing", async () => {
+  const { root } = await folders();
+  const responses = workingResponses(root)!;
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  const raw =
+    [
+      {
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "info", data: "ready" },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        error: { code: -32601, message: "optional tool not available" },
+      },
+    ]
+      .map((message) => JSON.stringify(message))
+      .join("\n") + "\n";
+  const binary = await mcpFixture(root, "optional-notification", responses, {
+    raw,
+  });
+  expect(await smokeMcpStdio(binary, root, 2_000)).toMatchObject({
+    initialized: true,
+    selectedWorkspace: true,
+  });
+});
+
+test("optional diagnostic read and write failures propagate through the shared transport boundary", async () => {
+  const root = os.tmpdir();
+  const responses = workingResponses(root)!;
+  (responses["tools/list"] as { tools: { name: string }[] }).tools.push({
+    name: "diagnostics",
+  });
+  for (const mode of [
+    "write",
+    "flush",
+    "read",
+    "eof",
+    "flush-timeout",
+  ] as const) {
+    let stream!: ReadableStreamDefaultController<Uint8Array>;
+    let optional = false;
+    const child = {
+      exitCode: 0,
+      exited: Promise.resolve(0),
+      stdin: {
+        write(line: string) {
+          if (!replyCore(stream, line, responses)) return;
+          optional = true;
+          if (mode === "write") throw new Error("private write details");
+          if (mode === "read") stream.error(new Error("private read details"));
+          if (mode === "eof") stream.close();
+        },
+        async flush() {
+          if (optional && mode === "flush-timeout") await new Promise(() => {});
+          if (optional && mode === "flush")
+            throw new Error("private flush details");
+        },
+        end() {},
+      },
+      stdout: new ReadableStream<Uint8Array>({
+        start(controller) {
+          stream = controller;
+        },
+      }),
+      stderr: new ReadableStream({
+        start(controller) {
+          controller.close();
+        },
+      }),
+    };
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => child as never);
+    try {
+      if (mode === "flush-timeout") {
+        expect(await smokeMcpStdio("fixture", root, 50)).toMatchObject({
+          initialized: true,
+          selectedWorkspace: true,
+        });
+        continue;
+      }
+      const expected =
+        mode === "eof"
+          ? "ended before responding"
+          : mode === "read"
+            ? "read failed"
+            : "write failed";
+      await expect(smokeMcpStdio("fixture", root, 500)).rejects.toThrow(
+        expected,
+      );
+    } finally {
+      spawn.mockRestore();
+    }
+  }
+});
 
 test("resolves native Windows aliases before POSIX shims", async () => {
   const root = await mkdtemp(

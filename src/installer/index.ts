@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -12,7 +12,8 @@ import {
   type CliOutputContext,
 } from "../cli/output";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
-import { migrateConfigSource, writeMigratedConfig } from "../config/migrate";
+import { migrateConfigSource } from "../config/migrate";
+import { configWriteTarget } from "../config/transaction";
 import {
   codexHome,
   codexTransport,
@@ -51,6 +52,13 @@ import {
   removeService,
   type ServiceCommandRunner,
 } from "./service";
+import {
+  mkdirInstallerDirectory as mkdir,
+  readInstallerText,
+  removeInstallerFile,
+  withInstallerFileTransaction,
+  writeInstallerFile,
+} from "./transaction";
 import {
   type HttpEndpoint,
   httpEndpoint,
@@ -199,7 +207,7 @@ type Target = (typeof targets)[number];
 
 async function json(file: string): Promise<Record<string, any>> {
   try {
-    const value = Bun.JSONC.parse(await Bun.file(file).text());
+    const value = Bun.JSONC.parse(await readInstallerText(file));
     return value as Record<string, any>;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
@@ -208,7 +216,7 @@ async function json(file: string): Promise<Record<string, any>> {
 }
 async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, `${JSON.stringify(value, null, 2)}\n`);
+  await writeInstallerFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 async function readLaunchReceipt(file: string, strict = false) {
   const info = await lstat(file).catch((error) => {
@@ -236,8 +244,9 @@ async function saveLaunchReceipt(file: string, value: unknown) {
   });
   if (previous && !previous.isFile())
     throw new Error("Launch receipt must be a regular file");
-  if (previous) await chmod(file, previous.mode & 0o600);
-  await writeFile(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+  await writeInstallerFile(file, JSON.stringify(value, null, 2) + "\n", {
+    mode: previous ? previous.mode & 0o600 : 0o600,
+  });
 }
 function definition(
   root: string | undefined,
@@ -292,12 +301,10 @@ async function codexMcp(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const old = await Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
-      throw error;
-    });
+  const old = await readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
   let inherited = root
     ? await Bun.file(path.join(codexHome(home), "config.toml"))
         .text()
@@ -354,7 +361,7 @@ async function codexMcp(
     }
   }
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, next);
+  await writeInstallerFile(file, next, { expected: old });
 }
 async function jsonMcp(
   file: string,
@@ -549,16 +556,17 @@ const instructionsPattern =
 async function writeText(file: string, content: string) {
   const normalized = content.trimEnd();
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, normalized ? `${normalized}\n` : "");
+  await writeInstallerFile(file, normalized ? `${normalized}\n` : "");
 }
 
 async function instructions(file: string) {
   const block = (
     await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
   ).trim();
-  const old = await Bun.file(file)
-    .text()
-    .catch(() => "");
+  const old = await readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
   const clean = old.replace(instructionsPattern, "").trimEnd();
   await writeText(
     file,
@@ -567,12 +575,10 @@ async function instructions(file: string) {
 }
 
 async function optionalText(file: string) {
-  return Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    });
+  return readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
 }
 
 async function removeInstructions(file: string) {
@@ -597,7 +603,7 @@ async function removeJsonMcp(file: string, section = "mcpServers") {
   else delete entries["ast-mcp"];
   if (Object.keys(entries).length === 0) delete value[section];
   await saveRemainingJson(file, value);
-  await rm(file + ".ast-mcp.json", { force: true });
+  await removeInstallerFile(file + ".ast-mcp.json");
 }
 
 async function removeCodexMcp(file: string) {
@@ -1024,12 +1030,12 @@ async function ensureInstallerConfig(
   home: string,
 ) {
   const file = installerConfigPath(options, root, home);
-  const existing = await Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    });
+  await mkdir(path.dirname(file), { recursive: true });
+  const { target, mode } = await configWriteTarget(file, true);
+  const existing = await readInstallerText(target).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
   clearConfigCache();
   await resolveConfig({
     cwd: options.scope === "local" ? root : home,
@@ -1038,9 +1044,15 @@ async function ensureInstallerConfig(
   });
   if (existing === undefined) {
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, installerConfigSeed(options.scope === "local"), {
-      flag: "wx",
-    });
+    await writeInstallerFile(
+      target,
+      installerConfigSeed(options.scope === "local"),
+      {
+        exclusive: true,
+        mode,
+        configuration: file,
+      },
+    );
   } else {
     let migration: ReturnType<typeof migrateConfigSource>;
     try {
@@ -1050,8 +1062,22 @@ async function ensureInstallerConfig(
         `invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (migration.changed)
-      await writeMigratedConfig(file, migration.source, true, existing);
+    if (migration.changed) {
+      const backup = file + ".v1.bak";
+      const backupInfo = await lstat(backup).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          return undefined;
+        throw error;
+      });
+      await writeInstallerFile(backup, existing, {
+        mode: (backupInfo?.mode ?? mode) & 0o777,
+      });
+      await writeInstallerFile(target, migration.source, {
+        expected: existing,
+        mode: mode & 0o777,
+        configuration: file,
+      });
+    }
   }
   clearConfigCache();
   await resolveConfig({
@@ -1178,7 +1204,7 @@ async function withInstallerLocks<T>(
       path.join(root, ".ast-mcp-installation"),
       path.join(home, ".ast-mcp-installation"),
     ],
-    operation,
+    () => withInstallerFileTransaction(operation).finally(clearConfigCache),
     { deadline: Date.now() + 10_000 },
   );
 }
