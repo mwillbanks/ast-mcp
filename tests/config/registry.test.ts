@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -166,7 +173,8 @@ test("relative identity paths retain launch cwd semantics when explicit cwd diff
     };
     const baseline = await registry.get(options);
     expect(baseline.projectRoot).toBe(launch);
-    expect(baseline.sources.global).toBe(global);
+    const canonicalGlobal = await realpath(global);
+    expect(baseline.sources.global).toBe(canonicalGlobal);
     expect(baseline.telemetry.enabled).toBeFalse();
     const homeOnly = await registry.get({ ...options, env: {} });
     const expectedHome = globalConfigPath({
@@ -181,11 +189,54 @@ test("relative identity paths retain launch cwd semantics when explicit cwd diff
     process.chdir(second);
     const snapshots = await registry.reload();
     expect(snapshots[0]!.config!.projectRoot).toBe(baseline.projectRoot);
-    expect(snapshots[0]!.config!.sources.global).toBe(global);
+    expect(snapshots[0]!.config!.sources.global).toBe(canonicalGlobal);
     expect(snapshots[1]!.config!.projectRoot).toBe(homeOnly.projectRoot);
     expect(Object.keys(snapshots[1]!.fingerprints)).toContain(expectedHome);
   } finally {
     process.chdir(previousCwd);
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry retains aliased launch identity while reporting canonical configuration sources", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry();
+  const alias = path.join(root, "launch-alias");
+  try {
+    await symlink(
+      first,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const global = path.join(
+      alias,
+      "relative-config",
+      "ast-mcp",
+      "ast-mcp.toml",
+    );
+    await mkdir(path.dirname(global), { recursive: true });
+    await writeFile(global, "version = 2\n[telemetry]\nenabled = false\n");
+    const options = {
+      launchCwd: alias,
+      cwd: second,
+      home: "relative-home",
+      clientRoots: ["."],
+      env: { APPDATA: "relative-config", XDG_CONFIG_HOME: "relative-config" },
+    };
+    const baseline = await registry.get(options);
+    const canonicalGlobal = await realpath(global);
+    expect(canonicalGlobal).not.toBe(global);
+    expect(baseline.sources.global).toBe(canonicalGlobal);
+    expect(baseline.projectRoot).toBe(alias);
+    const reloaded = await registry.reload();
+    expect(reloaded[0]!.healthy).toBeTrue();
+    expect(reloaded[0]!.config!.sources.global).toBe(canonicalGlobal);
+    expect(reloaded[0]!.config!.projectRoot).toBe(alias);
+    expect(await registry.get(options)).toBe(reloaded[0]!.config!);
+    expect(Object.keys(reloaded[0]!.fingerprints)).toContain(global);
+    expect(Object.keys(reloaded[0]!.fingerprints)).toContain(canonicalGlobal);
+  } finally {
     registry.close();
     await rm(root, { recursive: true, force: true });
   }

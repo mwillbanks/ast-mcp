@@ -16,10 +16,14 @@ import {
   canonicalConfigPath,
   withConfigTransaction,
 } from "../config/transaction";
+import {
+  createdDirectoryAncestors,
+  type DirectoryIdentity,
+} from "./directory-ancestry";
 
 type FileState = { bytes: Buffer; mode: number } | undefined;
 type Entry = { before: FileState; after: FileState; configuration?: string };
-type ParentState = { real: string; ino: number; dev: number };
+type ParentState = DirectoryIdentity;
 type TransactionOptions = {
   rename?: typeof renameSync;
   remove?: typeof rmSync;
@@ -96,15 +100,9 @@ class FileTransaction {
     this.guard(path.join(directory, ".installer-directory"));
     const first = await mkdir(directory, { recursive: true });
     if (first) {
-      for (let current = directory; ; current = path.dirname(current)) {
-        const info = lstatSync(current);
-        this.directories.set(current, {
-          real: realpathSync(current),
-          ino: info.ino,
-          dev: info.dev,
-        });
-        if (current === path.resolve(first)) break;
-      }
+      const created = createdDirectoryAncestors(directory, first);
+      for (const [createdPath, identity] of created)
+        this.directories.set(createdPath, identity);
     }
     return first;
   }
