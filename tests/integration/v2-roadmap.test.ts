@@ -207,16 +207,22 @@ test("approval flow fails closed and supports once, session, and persistent gran
     specificity: 1,
     symlinks: false,
   };
+  let activeCapabilities: Record<string, unknown> = { elicitation: {} };
+  const server = {
+    server: { getClientCapabilities: () => activeCapabilities },
+  };
   const approvalScope = (
     inputResponses?: unknown,
     capabilities: Record<string, unknown> = { elicitation: {} },
     sessionId = "session-1",
-  ) =>
-    ({
+  ) => {
+    activeCapabilities = capabilities;
+    return {
       context: { mcpReq: { inputResponses }, sessionId },
-      server: { server: { getClientCapabilities: () => capabilities } },
+      server,
       tool: "file_write",
-    }) as never;
+    } as never;
+  };
   const challengeKey = async (
     requestedDecision: typeof decision,
     generation: number,
@@ -235,12 +241,15 @@ test("approval flow fails closed and supports once, session, and persistent gran
         method: "elicitation/create",
         params: {
           _meta: {
-            codex_approval_kind: "mcp_tool_call",
-            persist: ["session", "always"],
+            "io.ast-mcp/approvalChallenge": responseKey,
+            "io.ast-mcp/probe": false,
           },
           mode: "form",
         },
       });
+      expect(requests[responseKey]).not.toHaveProperty(
+        "params._meta.codex_approval_kind",
+      );
       return responseKey;
     }
     throw new Error("Expected an approval challenge");

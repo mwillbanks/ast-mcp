@@ -178,8 +178,17 @@ export function parseInstallerArguments(
   return { operation, options };
 }
 
+export function codexHome(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env.CODEX_HOME
+    ? path.resolve(env.CODEX_HOME)
+    : path.join(home, ".codex");
+}
+
 function codexPaths(global: boolean, root: string, home: string): string[] {
-  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  const base = global ? codexHome(home) : path.join(root, ".codex");
   return [
     path.join(base, "config.toml"),
     path.join(base, "hooks.json"),

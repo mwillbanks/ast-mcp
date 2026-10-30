@@ -509,6 +509,7 @@ test("exported checker requires its canonical guidance resource", async () => {
     "check-install.ts",
     "binary-resolution.ts",
     "managed-hook.ts",
+    "release.ts",
   ])
     await writeFile(
       path.join(scripts, file),

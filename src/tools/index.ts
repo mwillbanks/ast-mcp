@@ -5,6 +5,7 @@ import type { Telemetry } from "../runtime/telemetry";
 import registerNativeCodeIntelligenceTools from "./code-intelligence";
 import registerConfigurationTools from "./configuration";
 import { configuredExecution, type ExecutionOptions } from "./configured";
+import registerDiagnosticTools from "./diagnostics";
 import registerFileTools from "./files";
 import registerIntelligenceTools, {
   type IntelligenceToolService,
@@ -17,6 +18,10 @@ export default function (
     intelligence?: IntelligenceToolService;
     telemetry?: Telemetry;
     execution?: ExecutionOptions;
+    diagnostics?: {
+      fetch?: typeof fetch;
+      transport?: "stdio" | "http" | "unknown";
+    };
   } = {},
 ) {
   const execute = configuredExecution(
@@ -32,6 +37,10 @@ export default function (
   registerWorkspaceTools(server, execute);
   registerNativeCodeIntelligenceTools(server, execute);
   registerConfigurationTools(server, execute);
+  registerDiagnosticTools(server, {
+    ...services.diagnostics,
+    requestScoped: services.execution?.requestScoped,
+  });
   registerFileTools(server, execute);
   registerLifecycleTools(server, execute);
   registerIntelligenceTools(server, execute, services.intelligence);

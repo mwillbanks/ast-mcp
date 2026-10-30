@@ -1,6 +1,6 @@
 ---
 name: ast-mcp
-description: Use for local repository exploration, code intelligence, guarded file operations, and AST-MCP installation or recovery. Use when tools disconnect, configuration needs migration, or selected manual skills need updates. Do not use for remote-only research, supplied text, or general AST explanations.
+description: Use for local repository exploration, code intelligence, guarded file operations, AST-MCP installation, diagnostics, recovery, and unexpected-behavior reports. Use when tools disconnect, approvals fail, configuration needs migration, or selected manual skills need updates. Do not use for unrelated remote-only research, supplied text, or general AST explanations.
 ---
 
 # AST MCP
@@ -19,9 +19,22 @@ Do not invent a `$ast-mcp/references/...` filesystem path.
 Reading a resource does not activate a skill.
 
 - Load [tool-catalog.md](references/tool-catalog.md) for tool inputs, workspace selection, indexing, retrieval, and graph operations.
+- Load [cli.md](references/cli.md) for supported CLI commands, subcommands, options, and output.
+- Load [diagnostics.md](references/diagnostics.md) for failures, approval probes, host policy conflicts, and release checks.
+- Load [host-context.md](references/host-context.md) for host permission limits and exact checkout selection.
+- Load [issue-reporting.md](references/issue-reporting.md) before drafting or submitting an unexpected-behavior report.
 - Load [patch-state-machine.md](references/patch-state-machine.md) before file mutations or recovery from rejected patches.
 - Load [installation.md](references/installation.md) for missing tools, disconnections, upgrades, stale instructions, or configuration migration.
 - Load [configuration.md](references/configuration.md) for path rules, approvals, formatting, telemetry, and CLI output.
+
+## Diagnose unexpected behavior
+
+Use MCP `diagnostics` for the connected server or CLI `doctor` when MCP is unavailable.
+Every diagnostic and issue workflow must attempt a fresh latest stable version check.
+Report unavailable checks explicitly. Never infer the connected version from an installed executable.
+Search open and closed upstream issues before proposing a new report.
+Read likely matches and preserve reporting authorization boundaries.
+Keep Codex-specific recovery separate from Claude, Claude Desktop, Grok, Copilot, and other MCP hosts.
 
 ## Check availability
 

@@ -12,6 +12,7 @@ import {
   isExecutable,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
+import { checkLatestVersion, type LatestVersionCheck } from "./release";
 
 type Scope = "local" | "global";
 type Target = "codex" | "claude" | "copilot";
@@ -117,6 +118,7 @@ const expectedIntelligenceTools = [
 ] as const;
 
 export interface McpSmokeResult {
+  diagnostics?: { serverVersion: string; versionCheck: LatestVersionCheck };
   exposedTools: string[];
   initialized: boolean;
   selectedWorkspace: boolean;
@@ -337,6 +339,32 @@ export async function smokeMcpStdio(
     if (!selectedWorkspace)
       throw new Error("MCP smoke did not select the requested workspace");
     smokeResult = { exposedTools, initialized: true, selectedWorkspace };
+    if (exposedTools.includes("diagnostics")) {
+      await send({
+        id: 4,
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "diagnostics", arguments: {} },
+      });
+      const diagnostic = await readUntil(4);
+      const content = (
+        diagnostic.result as
+          | {
+              structuredContent?: {
+                data?: {
+                  server?: { version?: string };
+                  versionCheck?: LatestVersionCheck;
+                };
+              };
+            }
+          | undefined
+      )?.structuredContent?.data;
+      if (content?.versionCheck && typeof content.server?.version === "string")
+        smokeResult.diagnostics = {
+          serverVersion: content.server.version,
+          versionCheck: content.versionCheck,
+        };
+    }
   } catch (error) {
     protocolFailed = true;
     protocolError = error;
@@ -770,7 +798,7 @@ async function codexChecks(
   global: boolean,
 ): Promise<InstallChecks> {
   const base = global
-    ? path.join(home, ".codex")
+    ? path.resolve(process.env.CODEX_HOME || path.join(home, ".codex"))
     : path.join(options.root, ".codex");
   const [mcp, hook, instructions] = await Promise.all([
     codexMcpCurrent(
@@ -887,7 +915,7 @@ async function configuredStdioCommand(
   let entry: McpEntry | undefined;
   if (options.target === "codex") {
     const base = global
-      ? path.join(home, ".codex")
+      ? path.resolve(process.env.CODEX_HOME || path.join(home, ".codex"))
       : path.join(options.root, ".codex");
     const content = await readFile(
       path.join(base, "config.toml"),
@@ -1049,6 +1077,7 @@ function installCommands(options: CheckOptions, global: boolean) {
 export async function checkInstall(
   args = process.argv.slice(2),
   home = os.homedir(),
+  context: { fetch?: typeof fetch } = {},
 ) {
   const options = parse(args);
   const global = options.scope === "global";
@@ -1082,8 +1111,27 @@ export async function checkInstall(
   const installed = Object.values(checks).every(Boolean);
   const operation = installOperation(checks);
   const commands = installCommands(options, global);
+  const versionCheck =
+    smoke?.diagnostics?.versionCheck ??
+    (await checkLatestVersion("unknown", { fetch: context.fetch }));
   return {
     checks,
+    diagnostics: {
+      versionCheck,
+      connectedServerVersion: smoke?.diagnostics?.serverVersion ?? "unknown",
+      activeHostPolicy: "unknown",
+      guidance:
+        options.target === "codex"
+          ? [
+              "Disk MCP settings do not establish the live session approval policy.",
+              "Codex Desktop Full access can override granular disk settings with approval_policy=never.",
+              "Per-tool approval does not authorize the separate AST-MCP filesystem challenge.",
+              "Run ast-mcp doctor --target codex and select an elicitation-capable session policy.",
+            ]
+          : [
+              "Run live MCP diagnostics to inspect the connected client and approval capabilities.",
+            ],
+    },
     intelligence: {
       engine: "lancedb",
       federationDefault: false,

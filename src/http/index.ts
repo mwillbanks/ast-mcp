@@ -52,7 +52,7 @@ function sessionRuntime(config: ResolvedConfig) {
     const session = sessions.get(sessionId);
     if (!session) return;
     sessions.delete(sessionId);
-    clearSessionApprovals(sessionId);
+    clearSessionApprovals(sessionId, session.server);
     void closeServer(session.server).catch(() => undefined);
   }
 
@@ -60,7 +60,7 @@ function sessionRuntime(config: ResolvedConfig) {
     const session = sessions.get(sessionId);
     if (!session) return;
     sessions.delete(sessionId);
-    clearSessionApprovals(sessionId);
+    clearSessionApprovals(sessionId, session.server);
     await closeServer(session.server);
   }
 
@@ -106,7 +106,7 @@ function sessionRuntime(config: ResolvedConfig) {
   }
 
   async function createSession(request: Request) {
-    const server = createServer();
+    const server = createServer({}, {}, {}, { transport: "http" });
     servers.add(server);
     const transport = sessionTransport(server);
     const signal = AbortSignal.any([request.signal, setupAbort.signal]);
@@ -169,7 +169,13 @@ function sessionRuntime(config: ResolvedConfig) {
   function modernHttpHandler() {
     const workspaceRegistry = new WorkspaceRegistry();
     return createMcpHandler(
-      () => createServer({}, {}, { workspaceRegistry, requestScoped: true }),
+      () =>
+        createServer(
+          {},
+          {},
+          { workspaceRegistry, requestScoped: true },
+          { transport: "http" },
+        ),
       { legacy: "reject", responseMode: "sse" },
     );
   }
@@ -198,7 +204,8 @@ function sessionRuntime(config: ResolvedConfig) {
     httpServer.stop(false);
     if (sessionSweep) clearInterval(sessionSweep);
     const activeSessions = [...sessions.entries()];
-    for (const [sessionId] of activeSessions) clearSessionApprovals(sessionId);
+    for (const [sessionId, session] of activeSessions)
+      clearSessionApprovals(sessionId, session.server);
     const results = await Promise.allSettled([
       ...[...servers].map(closeServer),
       ...cleanup,

@@ -43,6 +43,7 @@ function environmentFingerprint(environment: NodeJS.ProcessEnv) {
     "XDG_CONFIG_HOME",
     "AST_MCP_PROJECT_ROOT",
     "AST_MCP_ROOTS",
+    "CLAUDE_PROJECT_DIR",
     "AST_MCP_ALLOW_ANY_PATH",
     "AST_MCP_ALLOW_EXTERNAL_ROOTS",
     "AST_MCP_ALLOW_TEMP_DIRECTORY",
@@ -96,6 +97,7 @@ function keyFor(options: ResolveConfigOptions): string {
   return JSON.stringify({
     clientRoots,
     cwd,
+    explicitCwd: options.cwd !== undefined,
     env: environmentFingerprint(env),
     home: options.home,
     platform: options.platform,

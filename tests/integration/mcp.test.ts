@@ -38,9 +38,11 @@ const NATIVE_CODE_TOOLS = [
 function expectedToolNames() {
   return [
     ...NATIVE_CODE_TOOLS,
+    "approval_probe",
     "config_core",
     "config_paths",
     "config_status",
+    "diagnostics",
     "document_query",
     "file_capabilities",
     "file_chattr",

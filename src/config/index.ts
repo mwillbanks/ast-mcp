@@ -880,6 +880,18 @@ async function projectRoots(options: ResolveConfigOptions) {
     };
   }
 
+  // Claude Code supplies this launch context; it selects configuration, not approval.
+  const hostRoot = env.CLAUDE_PROJECT_DIR;
+  if (options.cwd === undefined && hostRoot && path.isAbsolute(hostRoot)) {
+    const selected = path.resolve(hostRoot);
+    const metadata = await stat(selected).catch(() => undefined);
+    if (metadata?.isDirectory())
+      return {
+        candidates: [selected],
+        trustedRoots: await withCanonical([selected]),
+      };
+  }
+
   return {
     candidates: [cwd],
     trustedRoots: await withCanonical([cwd]),

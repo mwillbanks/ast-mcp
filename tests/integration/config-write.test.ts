@@ -57,18 +57,23 @@ ${extra}`;
 function approvalScope(
   inputResponses?: unknown,
   capabilities: Record<string, unknown> = { elicitation: {} },
+  server = { server: { getClientCapabilities: () => capabilities } },
 ) {
   return {
     context: { mcpReq: { inputResponses }, sessionId: "config-write" },
-    server: { server: { getClientCapabilities: () => capabilities } },
+    server,
     tool: "config_core",
   } as never;
 }
 
 async function approveNext(operation: () => Promise<unknown>) {
+  const capabilities = { elicitation: {} };
+  const server = { server: { getClientCapabilities: () => capabilities } };
+  const scope = (responses?: unknown) =>
+    approvalScope(responses, capabilities, server);
   let responseKey: string | undefined;
   try {
-    await withApprovalContext(approvalScope(), operation);
+    await withApprovalContext(scope(), operation);
   } catch (error) {
     if (!(error instanceof InputRequiredSignal)) throw error;
     responseKey = Object.keys(
@@ -78,7 +83,7 @@ async function approveNext(operation: () => Promise<unknown>) {
   }
   if (!responseKey) throw new Error("Expected configuration approval");
   return withApprovalContext(
-    approvalScope({
+    scope({
       [responseKey]: {
         action: "accept",
         content: { decision: "allow_once" },

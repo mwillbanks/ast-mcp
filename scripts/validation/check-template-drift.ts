@@ -35,6 +35,7 @@ mappings.push(
 );
 
 const shared = [
+  ["src/runtime/release.ts", "templates/skills/ast-mcp/scripts/release.ts"],
   [
     "src/runtime/binary-resolution.ts",
     "templates/skills/ast-mcp/scripts/binary-resolution.ts",

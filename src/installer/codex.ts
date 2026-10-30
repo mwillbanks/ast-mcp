@@ -1,5 +1,7 @@
 type TomlDocument = Record<string, unknown>;
 
+export { parseConfig as parseCodexConfig };
+
 function parseConfig(content: string): TomlDocument {
   try {
     return Bun.TOML.parse(content) as TomlDocument;
@@ -138,6 +140,66 @@ function assignmentValue(statement: string, replacement: string) {
       return statement.slice(0, index + 1) + " " + replacement + "\n";
   }
   throw new Error("Cannot locate Codex approval assignment");
+}
+
+/** Replace owned launch fields while retaining user tool and server settings. */
+export function refreshCodexMcp(
+  content: string,
+  launch: Record<string, unknown>,
+): string {
+  const document = parseConfig(content);
+  const servers = record(document.mcp_servers) ? document.mcp_servers : {};
+  const existing = record(servers["ast-mcp"]) ? { ...servers["ast-mcp"] } : {};
+  for (const key of ["command", "args", "cwd", "url", "type"])
+    delete existing[key];
+  let section: string[] = [];
+  const clean = statements(content)
+    .filter((statement) => {
+      if (/^# ast-mcp:(?:begin|end)\s*$/.test(statement.trim())) return false;
+      if (statement.trimStart().startsWith("[")) {
+        section =
+          headerPath(parseConfig(`${statement}\n__ast_mcp_probe = true\n`)) ??
+          [];
+        return !(section[0] === "mcp_servers" && section[1] === "ast-mcp");
+      }
+      if (section[0] === "mcp_servers" && section[1] === "ast-mcp")
+        return false;
+      const value = parseConfig(statement);
+      if (Object.keys(value).length === 0) return true;
+      const relative =
+        headerPath(
+          parseConfig(assignmentValue(statement, "{ __ast_mcp_probe = true }")),
+        ) ?? [];
+      const absolute = [...section, ...relative];
+      if (absolute[0] === "mcp_servers" && absolute[1] === "ast-mcp")
+        return false;
+      if (
+        record(value.mcp_servers) &&
+        value.mcp_servers["ast-mcp"] !== undefined
+      )
+        throw new Error(
+          "Expand inline Codex MCP server configuration before updating",
+        );
+      return true;
+    })
+    .join("")
+    .trimEnd();
+  const lines = [
+    "[mcp_servers.ast-mcp]",
+    ...Object.entries(launch).map(
+      ([key, value]) => `${key} = ${JSON.stringify(value)}`,
+    ),
+  ];
+  if (Object.keys(existing).length) {
+    const retained = Bun.TOML.stringify({
+      mcp_servers: { "ast-mcp": existing },
+    });
+    lines.push(retained.replace(/^\[mcp_servers\.ast-mcp\]\n/, "").trimEnd());
+  }
+  const block = `# ast-mcp:begin\n${lines.join("\n")}\n# ast-mcp:end\n`;
+  const result = `${clean ? `${clean}\n\n` : ""}${block}`;
+  parseConfig(result);
+  return result;
 }
 
 /** Enable elicitation while preserving unrelated TOML and approval categories. */

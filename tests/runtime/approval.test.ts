@@ -15,12 +15,20 @@ import {
 } from "../../src/runtime/approval";
 import { hermeticConfig } from "../support/hermetic-config";
 
-afterEach(() => clearSessionApprovals());
+const servers = new Map<string, object>();
+afterEach(() => {
+  clearSessionApprovals();
+  servers.clear();
+});
 
 function scope(sessionId: string, inputResponses?: unknown) {
+  if (!servers.has(sessionId))
+    servers.set(sessionId, {
+      server: { getClientCapabilities: () => ({ elicitation: {} }) },
+    });
   return {
     context: { sessionId, mcpReq: { inputResponses } },
-    server: { server: { getClientCapabilities: () => ({ elicitation: {} }) } },
+    server: servers.get(sessionId),
     tool: "file_write",
   } as never;
 }
@@ -82,7 +90,10 @@ test("persistent approval refuses legacy global configuration and removes its lo
         }),
         async () => authorizeRequestedDecision(decision, 1),
       ),
-    ).rejects.toBeInstanceOf(InputRequiredSignal);
+    ).rejects.toMatchObject({
+      code: "approval_response_invalid",
+      retryable: true,
+    });
     clearSessionApprovals("legacy");
     await expect(
       withApprovalContext(

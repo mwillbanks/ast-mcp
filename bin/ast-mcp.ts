@@ -3,6 +3,10 @@ const { runCli } = await import("../src/cli");
 
 try {
   const exitCode = await runCli(process.argv.slice(2), {
+    doctor: async (args) => {
+      const { runDoctorCli } = await import("../src/cli/doctor");
+      return runDoctorCli(args);
+    },
     config: async (args) => {
       const { runConfigCli } = await import("../src/cli/config");
       return await runConfigCli(args);

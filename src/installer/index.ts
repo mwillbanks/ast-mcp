@@ -13,6 +13,7 @@ import {
 import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
 import { migrateConfigSource, writeMigratedConfig } from "../config/migrate";
 import {
+  codexHome,
   codexTransport,
   installerTargetPaths,
   jsonTargetConfig,
@@ -28,7 +29,11 @@ import {
 import { withFencedFileLocks } from "../runtime/locks";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
-import { enableCodexElicitation } from "./codex";
+import {
+  enableCodexElicitation,
+  parseCodexConfig,
+  refreshCodexMcp,
+} from "./codex";
 import { type InstallerLaunch, verifyMcpLaunch } from "./health";
 import {
   createServicePlan,
@@ -223,24 +228,48 @@ async function codexMcp(
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
       throw error;
     });
-  const inherited = root
-    ? await Bun.file(path.join(home, ".codex/config.toml"))
+  let inherited = root
+    ? await Bun.file(path.join(codexHome(home), "config.toml"))
         .text()
         .catch((error) => {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
           throw error;
         })
     : "";
-  const clean = enableCodexElicitation(old, inherited)
-    .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
-    .trimEnd();
+  if (root && inherited) {
+    const inheritedDocument = parseCodexConfig(inherited);
+    const selected = inheritedDocument.profile;
+    if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected)) {
+      const profileSource = await Bun.file(
+        path.join(codexHome(home), `${selected}.config.toml`),
+      )
+        .text()
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+          throw error;
+        });
+      if (profileSource) {
+        const profile = parseCodexConfig(profileSource);
+        if (profile.approval_policy !== undefined)
+          inherited = Bun.TOML.stringify({
+            ...inheritedDocument,
+            approval_policy: profile.approval_policy,
+          });
+      }
+    }
+  }
   const stdio = definition(root, home, "stdio") as InstallerLaunch;
-  const block =
+  const launch =
     transport === "http"
-      ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}${root ? `\ncwd = ${JSON.stringify(root)}` : ""}\n# ast-mcp:end`;
+      ? { url: endpoint?.url }
+      : {
+          command: stdio.command,
+          args: stdio.args,
+          ...(root ? { cwd: root } : {}),
+        };
+  const next = refreshCodexMcp(enableCodexElicitation(old, inherited), launch);
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
+  await Bun.write(file, next);
 }
 async function jsonMcp(
   file: string,
@@ -444,7 +473,7 @@ async function targetTransport(
   home: string,
 ): Promise<McpTransport | undefined> {
   if (target === "codex") {
-    const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+    const base = global ? codexHome(home) : path.join(root, ".codex");
     const content = await Bun.file(path.join(base, "config.toml"))
       .text()
       .catch(() => "");
@@ -556,7 +585,7 @@ async function installCodexTarget(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  const base = global ? codexHome(home) : path.join(root, ".codex");
   await codexMcp(
     path.join(base, "config.toml"),
     global ? undefined : root,
@@ -1023,7 +1052,7 @@ async function uninstallCodexTarget(
   root: string,
   home: string,
 ) {
-  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  const base = global ? codexHome(home) : path.join(root, ".codex");
   await removeCodexMcp(path.join(base, "config.toml"));
   await removeHook(
     path.join(base, "hooks.json"),

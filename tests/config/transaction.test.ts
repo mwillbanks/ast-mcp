@@ -267,12 +267,13 @@ test("persistent approval cannot be overwritten by an in-flight configuration ed
     specificity: 1,
     symlinks: false,
   };
+  const server = {
+    server: { getClientCapabilities: () => ({ elicitation: {} }) },
+  };
   const scope = (inputResponses?: unknown) =>
     ({
       context: { sessionId: "config-race", mcpReq: { inputResponses } },
-      server: {
-        server: { getClientCapabilities: () => ({ elicitation: {} }) },
-      },
+      server,
       tool: "file_write",
     }) as never;
   let responseKey = "";
@@ -459,15 +460,16 @@ test.skipIf(process.platform === "win32")(
         specificity: 1,
         symlinks: false,
       };
+      const server = {
+        server: { getClientCapabilities: () => ({ elicitation: {} }) },
+      };
       const scope = (inputResponses?: unknown) =>
         ({
           context: {
             sessionId: "approval-symlink-" + root,
             mcpReq: { inputResponses },
           },
-          server: {
-            server: { getClientCapabilities: () => ({ elicitation: {} }) },
-          },
+          server,
           tool: "file_write",
         }) as never;
       let responseKey = "";
