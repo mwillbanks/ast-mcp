@@ -1,14 +1,17 @@
 import { expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import {
   mkdir,
   mkdtemp,
   realpath,
+  rename,
   rm,
   symlink,
   stat,
   utimes,
   writeFile,
 } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -556,6 +559,239 @@ test("registry evicts inactive identities and safely reloads an evicted configur
     expect(await registry.reload()).toHaveLength(1);
   } finally {
     registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ordinary child mutations and Git directory activity preserve configuration generations", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const home = path.join(root, "home");
+  const options = [
+    { cwd: first, env: {}, home },
+    { launchCwd: first, env: { CLAUDE_PROJECT_DIR: first }, home },
+    { launchCwd: first, clientRoots: [first], env: {}, home },
+  ];
+  try {
+    const initial = await Promise.all(
+      options.map((option) => registry.snapshot(option)),
+    );
+    const child = path.join(first, "ordinary.txt");
+    const renamed = path.join(first, "renamed.txt");
+    const boundary = path.join(first, ".git");
+    const verify = async () => {
+      await registry.reconcile();
+      // Drain watcher-triggered reconciliation and its debounce window.
+      await Bun.sleep(20);
+      for (const [index, option] of options.entries()) {
+        const current = await registry.snapshot(option);
+        expect(current.generation).toBe(initial[index]!.generation);
+        expect(current.fingerprints).toEqual(initial[index]!.fingerprints);
+      }
+    };
+    await writeFile(child, "ordinary");
+    await utimes(first, new Date(1000), new Date(1000));
+    await verify();
+    await rename(child, renamed);
+    await utimes(first, new Date(2000), new Date(2000));
+    await verify();
+    await rm(renamed);
+    await utimes(first, new Date(3000), new Date(3000));
+    await verify();
+    const gitActivity = path.join(boundary, "ordinary-cache");
+    await writeFile(gitActivity, "cache");
+    await utimes(boundary, new Date(4000), new Date(4000));
+    await verify();
+    await rm(gitActivity);
+    await utimes(boundary, new Date(5000), new Date(5000));
+    await verify();
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    for (const [index, option] of options.entries()) {
+      const changed = await reconciledSnapshot(
+        registry,
+        option,
+        initial[index]!.generation,
+        (config) => config.telemetry.enabled === false,
+      );
+      expect(changed.generation).toBeGreaterThan(initial[index]!.generation);
+    }
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Git boundary files retain content metadata in their fingerprints", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const boundary = path.join(first, ".git");
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    await rm(boundary, { recursive: true });
+    await writeFile(boundary, "gitdir: ./first-git\n");
+    const initial = await registry.snapshot(options);
+    await writeFile(boundary, "gitdir: ./second-longer-git\n");
+    const changed = await reconciledSnapshot(
+      registry,
+      options,
+      initial.generation,
+    );
+    expect(changed.fingerprints[boundary]).not.toBe(
+      initial.fingerprints[boundary],
+    );
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("transient realpath failures retain stat identity and reconcile after lookup recovery", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const boundary = path.join(first, ".git");
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  const originalRealpath = fsPromises.realpath;
+  const lookup = spyOn(fsPromises, "realpath");
+  lookup.mockImplementation(((
+    filePath: Parameters<typeof fsPromises.realpath>[0],
+    options?: unknown,
+  ) => {
+    if (String(filePath) === boundary)
+      return Promise.reject(
+        Object.assign(new Error("transient lookup failure"), {
+          code: "ENOENT",
+        }),
+      );
+    return Reflect.apply(originalRealpath, fsPromises, [filePath, options]);
+  }) as typeof fsPromises.realpath);
+  try {
+    const initial = await registry.snapshot(options);
+    expect(initial.healthy).toBeTrue();
+    expect(initial.fingerprints[boundary]).not.toBe("missing");
+    lookup.mockRestore();
+    const recovered = await reconciledSnapshot(
+      registry,
+      options,
+      initial.generation,
+    );
+    expect(recovered.healthy).toBeTrue();
+    expect(recovered.fingerprints[boundary]).not.toBe(
+      initial.fingerprints[boundary],
+    );
+    expect(recovered.config!.projectRoot).toBe(first);
+  } finally {
+    lookup.mockRestore();
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("nonselected root identity changes refresh trust while child activity preserves generations", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const third = path.join(root, "third");
+  const alias = path.join(root, "nonselected");
+  await mkdir(third);
+  await symlink(
+    second,
+    alias,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const base = { launchCwd: first, home: path.join(root, "home") };
+  const selections: ResolveConfigOptions[] = [
+    { ...base, env: {}, clientRoots: [first, alias] },
+    { ...base, env: { AST_MCP_ROOTS: [first, alias].join(path.delimiter) } },
+  ];
+  try {
+    const initial = await Promise.all(
+      selections.map((options) => registry.snapshot(options)),
+    );
+    const child = path.join(alias, "ordinary.txt");
+    await writeFile(child, "ordinary");
+    await utimes(second, new Date(1000), new Date(1000));
+    await registry.reconcile();
+    await Bun.sleep(20);
+    for (const [index, options] of selections.entries())
+      expect((await registry.snapshot(options)).generation).toBe(
+        initial[index]!.generation,
+      );
+    await rm(alias);
+    await symlink(
+      third,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const canonicalThird = await realpath(third);
+    for (const [index, options] of selections.entries()) {
+      const retargeted = await reconciledSnapshot(
+        registry,
+        options,
+        initial[index]!.generation,
+      );
+      expect(retargeted.config!.projectRoot).toBe(first);
+      expect(retargeted.fingerprints[alias]).not.toBe(
+        initial[index]!.fingerprints[alias],
+      );
+      if (options.clientRoots) {
+        expect(retargeted.config!.trustedRoots).toContain(canonicalThird);
+        expect(retargeted.config!.trustedRoots).not.toContain(
+          await realpath(second),
+        );
+      }
+    }
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("watch events verify fingerprint changes before invalidating a configuration", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const callbacks = new Map<
+    string,
+    (event: string, filename: string) => void
+  >();
+  const watcher = spyOn(fs, "watch");
+  watcher.mockImplementation(((
+    directory: string,
+    callback: (event: string, filename: string) => void,
+  ) => {
+    callbacks.set(String(directory), callback);
+    return { close() {}, unref() {} };
+  }) as unknown as typeof fs.watch);
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    const notify = callbacks.get(first)!;
+    expect(notify).toBeFunction();
+    await writeFile(path.join(first, ".git", "ordinary-cache"), "cache");
+    notify("change", ".git");
+    await Bun.sleep(20);
+    expect((await registry.snapshot(options)).generation).toBe(
+      initial.generation,
+    );
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    notify("change", "ast-mcp.toml");
+    const deadline = Date.now() + 2000;
+    let current = initial;
+    while (Date.now() < deadline) {
+      current = await registry.snapshot(options);
+      if (current.generation > initial.generation) break;
+      await Bun.sleep(5);
+    }
+    expect(current.healthy).toBeTrue();
+    expect(current.generation).toBeGreaterThan(initial.generation);
+    expect(current.config!.telemetry.enabled).toBeFalse();
+  } finally {
+    registry.close();
+    watcher.mockRestore();
     await rm(root, { recursive: true, force: true });
   }
 });

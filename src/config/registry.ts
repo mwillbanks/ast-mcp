@@ -26,6 +26,7 @@ export interface ConfigSnapshot {
 
 interface RegistryEntry {
   options: ResolveConfigOptions;
+  fingerprintRoles?: Record<string, FingerprintRole>;
   promise?: Promise<Readonly<ConfigSnapshot>>;
   reloadTimer?: ReturnType<typeof setTimeout>;
   snapshot?: Readonly<ConfigSnapshot>;
@@ -131,27 +132,35 @@ function keyFor(options: ResolveConfigOptions): string {
   });
 }
 
-async function fingerprint(filePath: string): Promise<string> {
+type FingerprintRole = "configuration" | "identity" | "boundary";
+
+async function fingerprint(
+  filePath: string,
+  role: FingerprintRole,
+): Promise<string> {
   const metadata = await stat(filePath).catch(() => undefined);
   if (!metadata) return "missing";
   const physicalPath = await realpath(filePath).catch(() => undefined);
   return JSON.stringify([
     metadata.isDirectory() ? "directory" : "file",
-    metadata.mtimeMs,
-    metadata.size,
     metadata.dev,
     metadata.ino,
     physicalPath,
+    ...(role === "configuration" || (role === "boundary" && metadata.isFile())
+      ? [metadata.mtimeMs, metadata.size]
+      : []),
   ]);
 }
 
-async function projectConfigCandidates(projectRoot: string): Promise<string[]> {
-  const candidates: string[] = [];
+async function projectConfigCandidates(
+  projectRoot: string,
+): Promise<Array<[string, FingerprintRole]>> {
+  const candidates: Array<[string, FingerprintRole]> = [];
   let current = path.resolve(projectRoot);
   while (true) {
     candidates.push(
-      path.join(current, "ast-mcp.toml"),
-      path.join(current, ".git"),
+      [path.join(current, "ast-mcp.toml"), "configuration"],
+      [path.join(current, ".git"), "boundary"],
     );
     const boundary = await stat(path.join(current, ".git")).then(
       () => true,
@@ -167,26 +176,51 @@ async function projectConfigCandidates(projectRoot: string): Promise<string[]> {
 async function fingerprints(
   config: ResolvedConfig | undefined,
   options: ResolveConfigOptions,
-): Promise<Record<string, string>> {
+) {
   const projectRoot = config?.projectRoot ?? options.cwd ?? options.launchCwd!;
   const hostRoot = hostProjectRootCandidate(options);
-  const sources = [
+  const selectionRoots = configuredSelectionRoots(
+    options.clientRoots ?? [],
+    options.cwd ?? options.launchCwd!,
+    options.env!,
+  );
+  const identityRoots = new Set([
+    projectRoot,
+    ...selectionRoots,
+    ...(config?.trustedRoots ?? []),
+    ...(config?.workspace.roots ?? []),
+  ]);
+  const sources = new Map<string, FingerprintRole>([
+    ...[...identityRoots].map((root): [string, FingerprintRole] => [
+      root,
+      "identity",
+    ]),
     ...(hostRoot
-      ? [hostRoot, ...(await projectConfigCandidates(hostRoot))]
+      ? [
+          [hostRoot, "identity"] as [string, FingerprintRole],
+          ...(await projectConfigCandidates(hostRoot)),
+        ]
       : []),
-    globalConfigPath(options),
+    [globalConfigPath(options), "configuration"],
     ...(await projectConfigCandidates(projectRoot)),
-    config?.sources.global,
-    config?.sources.project,
-  ].filter(
-    (item, index, all): item is string =>
-      Boolean(item) && all.indexOf(item) === index,
-  );
-  return Object.fromEntries(
-    await Promise.all(
-      sources.map(async (source) => [source, await fingerprint(source)]),
+    ...(config?.sources.global
+      ? [[config.sources.global, "configuration"] as [string, FingerprintRole]]
+      : []),
+    ...(config?.sources.project
+      ? [[config.sources.project, "configuration"] as [string, FingerprintRole]]
+      : []),
+  ]);
+  return {
+    roles: Object.fromEntries(sources),
+    values: Object.fromEntries(
+      await Promise.all(
+        [...sources].map(async ([source, role]) => [
+          source,
+          await fingerprint(source, role),
+        ]),
+      ),
     ),
-  );
+  };
 }
 
 export class ConfigRegistry {
@@ -263,12 +297,14 @@ export class ConfigRegistry {
     await Promise.all(
       [...this.#entries.entries()].map(async ([key, entry]) => {
         const snapshot = entry.snapshot;
-        if (!snapshot) return;
+        const roles = entry.fingerprintRoles;
+        if (!snapshot || !roles) return;
         for (const [source, previous] of Object.entries(
           snapshot.fingerprints,
         )) {
-          if ((await fingerprint(source)) !== previous) {
-            this.#schedule(key, entry);
+          if ((await fingerprint(source, roles[source]!)) !== previous) {
+            if (entry.snapshot === snapshot && this.#entries.get(key) === entry)
+              this.#schedule(key, entry);
             break;
           }
         }
@@ -310,19 +346,26 @@ export class ConfigRegistry {
     try {
       const resolved = await resolveConfig(entry.options);
       const config = Object.freeze({ ...resolved, generation });
+      const collected = await fingerprints(resolved, entry.options);
+      entry.fingerprintRoles = collected.roles;
       snapshot = Object.freeze({
         config,
-        fingerprints: await fingerprints(resolved, entry.options),
+        fingerprints: collected.values,
         generation,
         healthy: true,
         key,
         loadedAt: new Date().toISOString(),
       });
     } catch (error) {
+      const collected = await fingerprints(
+        entry.snapshot?.config,
+        entry.options,
+      );
+      entry.fingerprintRoles = collected.roles;
       snapshot = Object.freeze({
         config: entry.snapshot?.config,
         error: error instanceof Error ? error.message : String(error),
-        fingerprints: await fingerprints(entry.snapshot?.config, entry.options),
+        fingerprints: collected.values,
         generation,
         healthy: false,
         key,
@@ -358,7 +401,7 @@ export class ConfigRegistry {
               path.join(directory, filename.toString()),
             )
           )
-            this.#schedule(key, entry);
+            void this.reconcile();
         });
         watcher.unref?.();
         entry.watchers.push(watcher);
