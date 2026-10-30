@@ -319,6 +319,33 @@ test("PATH diagnostics distinguish installed versions and global upgrade manager
   }
 });
 
+test("global upgrade managers recognize Windows and POSIX executable paths", async () => {
+  const f = await fixture();
+  const which = spyOn(Bun, "which");
+  try {
+    for (const [binary, manager] of [
+      ["C:\\Users\\agent\\.bun\\bin\\ast-mcp.exe", "bun"],
+      ["C:\\Users\\agent\\pnpm\\ast-mcp.cmd", "pnpm"],
+      ["C:\\Users\\agent\\npm\\ast-mcp.cmd", "npm"],
+      ["/home/agent/.bun/bin/ast-mcp", "bun"],
+      ["/home/agent/pnpm/ast-mcp", "pnpm"],
+      ["/home/agent/npm/ast-mcp", "npm"],
+    ] as const) {
+      which.mockReturnValue(binary);
+      const report = await inspectHostConfiguration({
+        ...f,
+        scope: "global",
+        target: "claude",
+      });
+      expect(report.upgrade.manager).toBe(manager);
+      expect(report.upgrade.command).toContain(manager + " ");
+      expect(report.upgrade.automatic).toBeFalse();
+    }
+  } finally {
+    which.mockRestore();
+  }
+});
+
 test("nearest trusted project entry wins and unreadable paths remain sanitized", async () => {
   const f = await fixture();
   await writeFile(

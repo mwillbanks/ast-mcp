@@ -290,7 +290,7 @@ async function upgradeGuidance(root: string, scope: Scope, target: HostTarget) {
       ? /^(bun|npm|pnpm|yarn)@/.exec(project.value.packageManager)?.[1]
       : undefined;
   if (scope === "global") {
-    const binary = Bun.which("ast-mcp") ?? "";
+    const binary = (Bun.which("ast-mcp") ?? "").replaceAll("\\", "/");
     manager = binary.includes("/.bun/")
       ? "bun"
       : binary.includes("/pnpm/")
