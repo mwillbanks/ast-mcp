@@ -845,6 +845,24 @@ function merge(...layers: InternalConfig[]): InternalConfig {
   return result;
 }
 
+/** Prospective host selection must be tracked even before its directory exists. */
+export function hostProjectRootCandidate(
+  options: ResolveConfigOptions,
+): string | undefined {
+  const env = options.env ?? process.env;
+  if (
+    options.cwd !== undefined ||
+    options.clientRoots?.length ||
+    env.AST_MCP_PROJECT_ROOT ||
+    env.AST_MCP_ROOTS?.split(path.delimiter).filter(Boolean).length
+  )
+    return undefined;
+  const hostRoot = env.CLAUDE_PROJECT_DIR;
+  return hostRoot && path.isAbsolute(hostRoot)
+    ? path.resolve(hostRoot)
+    : undefined;
+}
+
 async function projectRoots(options: ResolveConfigOptions) {
   const env = options.env ?? process.env;
   const cwd = path.resolve(options.cwd ?? options.launchCwd ?? process.cwd());
@@ -883,9 +901,9 @@ async function projectRoots(options: ResolveConfigOptions) {
   }
 
   // Claude Code supplies this launch context; it selects configuration, not approval.
-  const hostRoot = env.CLAUDE_PROJECT_DIR;
-  if (options.cwd === undefined && hostRoot && path.isAbsolute(hostRoot)) {
-    const selected = path.resolve(hostRoot);
+  const hostRoot = hostProjectRootCandidate(options);
+  if (hostRoot) {
+    const selected = hostRoot;
     const metadata = await stat(selected).catch(() => undefined);
     if (metadata?.isDirectory())
       return {

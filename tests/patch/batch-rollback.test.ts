@@ -46,6 +46,7 @@ test("cancelled patch and write batches roll back completed commits and remain u
     await writeFile(first, "before\n");
     await writeFile(second, "before\n");
     const controller = new AbortController();
+    const cancellation = new Error("cancelled by client");
     let rolledBack = false;
     try {
       await expect(
@@ -54,7 +55,7 @@ test("cancelled patch and write batches roll back completed commits and remain u
             {
               begin: async () => {},
               committed: async () => {
-                controller.abort(new Error("cancelled by client"));
+                controller.abort(cancellation);
               },
               complete: async () => null,
               failed: async () => {},
@@ -91,7 +92,7 @@ test("cancelled patch and write batches roll back completed commits and remain u
                   ),
           ),
         ),
-      ).rejects.toThrow("cancelled by client");
+      ).rejects.toBe(cancellation);
       expect(rolledBack).toBeTrue();
       expect(await readFile(first, "utf8")).toBe("before\n");
       expect(await readFile(second, "utf8")).toBe("before\n");
@@ -111,43 +112,101 @@ test("file batch lock waits honor deadlines and cancellation", async () => {
   const root = await configuredRoot("ast-mcp-batch-lock-wait-");
   const target = path.join(root, "target.txt");
   await writeFile(target, "before\n");
+  let began = 0;
+  let queuedRetry: Promise<void> | undefined;
+  let retried = false;
   try {
-    await withFileLock(target, async () => {
-      await expect(
-        withConfig(hermeticConfig(root), () =>
-          writeFilesSafely(
+    await withMutationLifecycle(
+      {
+        begin: async () => {
+          began++;
+        },
+        committed: async () => {},
+        complete: async () => null,
+        failed: async () => {},
+        rolledBack: async () => {},
+      },
+      () =>
+        withFileLock(target, async (owner) => {
+          // Advance only after the held acquisition queue checks its clock.
+          let deadlineChecks = 0;
+          await expect(
+            withConfig(hermeticConfig(root), () =>
+              writeFilesSafely(
+                {
+                  [target]: {
+                    expectedSha256: sha256("before\n"),
+                    content: "after\n",
+                  },
+                },
+                { deadline: 2, now: () => ++deadlineChecks },
+              ),
+            ),
+          ).rejects.toMatchObject({ code: "lock_deadline" });
+          expect(deadlineChecks).toBe(2);
+          const controller = new AbortController();
+          let cancellationChecks = 0;
+          await expect(
+            withConfig(hermeticConfig(root), () =>
+              patchFiles(
+                {
+                  [target]: {
+                    expectedSha256: sha256("before\n"),
+                    patchStrategy: "aider_block",
+                    aiderBlocks: [{ search: "before", replace: "after" }],
+                  },
+                },
+                {
+                  signal: controller.signal,
+                  now: () => {
+                    if (++cancellationChecks === 2) controller.abort();
+                    return Date.now();
+                  },
+                },
+              ),
+            ),
+          ).rejects.toMatchObject({ code: "lock_aborted" });
+          expect(cancellationChecks).toBe(2);
+          expect(began).toBe(0);
+          await owner.fence();
+          let observeWait!: () => void;
+          const observedWait = new Promise<void>((resolve) => {
+            observeWait = resolve;
+          });
+          let retryChecks = 0;
+          queuedRetry = withFileLock(
+            target,
+            async (lease) => {
+              retried = true;
+              await lease.fence();
+            },
             {
-              [target]: {
-                expectedSha256: sha256("before\n"),
-                content: "after\n",
+              deadline: Date.now() + 2000,
+              now: () => {
+                if (++retryChecks === 3) observeWait();
+                return Date.now();
               },
             },
-            { deadline: Date.now() + 10 },
-          ),
-        ),
-      ).rejects.toMatchObject({ code: "lock_deadline" });
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 10);
-      try {
-        await expect(
-          withConfig(hermeticConfig(root), () =>
-            patchFiles(
-              {
-                [target]: {
-                  expectedSha256: sha256("before\n"),
-                  patchStrategy: "aider_block",
-                  aiderBlocks: [{ search: "before", replace: "after" }],
-                },
-              },
-              { signal: controller.signal },
-            ),
-          ),
-        ).rejects.toMatchObject({ code: "lock_aborted" });
-      } finally {
-        clearTimeout(timer);
-      }
-    });
+          );
+          await Promise.race([
+            observedWait,
+            queuedRetry.then(() => {
+              throw new Error("Contender bypassed the held queue");
+            }),
+          ]);
+          expect(retried).toBeFalse();
+          await owner.fence();
+        }),
+    );
+    await queuedRetry;
+    expect(retried).toBeTrue();
     expect(await readFile(target, "utf8")).toBe("before\n");
+    await withConfig(hermeticConfig(root), () =>
+      writeFilesSafely({
+        [target]: { expectedSha256: sha256("before\n"), content: "retry\n" },
+      }),
+    );
+    expect(await readFile(target, "utf8")).toBe("retry\n");
   } finally {
     await rm(root, { force: true, recursive: true });
   }
@@ -281,6 +340,45 @@ test("write results are finalized before restrictive metadata is committed", asy
     }
   } finally {
     await chmod(target, 0o600).catch(() => undefined);
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("file batches preserve cancellation reasons before lock acquisition", async () => {
+  const root = await configuredRoot("ast-mcp-batch-before-lock-");
+  const target = path.join(root, "target.txt");
+  await writeFile(target, "before\n");
+  try {
+    for (const kind of ["patch", "write"] as const) {
+      const reason = new Error("cancelled before acquisition");
+      const signal = AbortSignal.abort(reason);
+      await expect(
+        withConfig(hermeticConfig(root), () =>
+          kind === "patch"
+            ? patchFiles(
+                {
+                  [target]: {
+                    expectedSha256: sha256("before\n"),
+                    patchStrategy: "aider_block",
+                    aiderBlocks: [{ search: "before", replace: "after" }],
+                  },
+                },
+                { signal },
+              )
+            : writeFilesSafely(
+                {
+                  [target]: {
+                    expectedSha256: sha256("before\n"),
+                    content: "after\n",
+                  },
+                },
+                { signal },
+              ),
+        ),
+      ).rejects.toBe(reason);
+      expect(await readFile(target, "utf8")).toBe("before\n");
+    }
+  } finally {
     await rm(root, { force: true, recursive: true });
   }
 });

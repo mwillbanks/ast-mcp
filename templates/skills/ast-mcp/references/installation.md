@@ -103,6 +103,16 @@ The default transport is stdio.
 Use `--transport http --host <address> --port <port>` for HTTP.
 Use `--service` to manage a supported macOS or Linux user service.
 
+Managed service operations read the service manager state before changing service files or runtime state.
+Linux supports known missing units and loaded units with enabled or disabled, active or inactive states.
+macOS supports unloaded jobs and loaded running jobs while retaining existing disabled overrides.
+Unknown manager output, unavailable managers, transitional states, and unsupported states stop the operation before service changes.
+Unsupported states include masked or static Linux units and loaded stopped macOS jobs.
+Inspect the manager state and resolve it through a separately authorized host operation before retrying.
+Failed installer operations restore known prior enablement and runtime state after verifying restored service files.
+Unrelated file conflicts do not suppress independent service cleanup.
+Service-file conflicts prevent unsafe recovery commands and report incomplete rollback.
+
 `update` refreshes managed host entries, hooks, and guidance blocks.
 It preserves surrounding user guidance.
 It does not upgrade the package or refresh manual skills.

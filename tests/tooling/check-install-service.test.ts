@@ -15,6 +15,7 @@ import {
   checkInstall,
   smokeMcpStdio,
 } from "../../templates/skills/ast-mcp/scripts/check-install";
+import { absentServiceStateQuery } from "../support/service-state";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -51,6 +52,7 @@ test("diagnoses the platform-native managed HTTP service", async () => {
     scope: "local",
     service: true,
     serviceRunner: async () => {},
+    serviceStateQuery: absentServiceStateQuery,
     targets: ["codex"],
     transport: "http",
   });
@@ -127,6 +129,7 @@ test("diagnoses the platform-native managed HTTP service", async () => {
     scope: "local",
     service: true,
     serviceRunner: async () => {},
+    serviceStateQuery: absentServiceStateQuery,
     targets: ["codex"],
     transport: "http",
   });

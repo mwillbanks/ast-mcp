@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { install } from "../../src/installer";
 import { checkInstall } from "../../templates/skills/ast-mcp/scripts/check-install";
+import { absentServiceStateQuery } from "../support/service-state";
 
 test.skipIf(process.platform === "win32")(
   "checker validates macOS service XML on every POSIX runner",
@@ -28,6 +29,7 @@ test.skipIf(process.platform === "win32")(
         port: 4935,
         service: true,
         serviceRunner: async () => {},
+        serviceStateQuery: absentServiceStateQuery,
       });
       const args = [
         "--root",

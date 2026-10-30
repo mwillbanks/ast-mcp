@@ -1,5 +1,5 @@
 import { type FSWatcher, watch } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +8,7 @@ import { canonicalPathWithin } from "../runtime/path-utils";
 import {
   clearConfigCache,
   globalConfigPath,
+  hostProjectRootCandidate,
   type ResolveConfigOptions,
   type ResolvedConfig,
   resolveConfig,
@@ -132,14 +133,26 @@ function keyFor(options: ResolveConfigOptions): string {
 
 async function fingerprint(filePath: string): Promise<string> {
   const metadata = await stat(filePath).catch(() => undefined);
-  return metadata ? `${metadata.mtimeMs}:${metadata.size}` : "missing";
+  if (!metadata) return "missing";
+  const physicalPath = await realpath(filePath).catch(() => undefined);
+  return JSON.stringify([
+    metadata.isDirectory() ? "directory" : "file",
+    metadata.mtimeMs,
+    metadata.size,
+    metadata.dev,
+    metadata.ino,
+    physicalPath,
+  ]);
 }
 
 async function projectConfigCandidates(projectRoot: string): Promise<string[]> {
   const candidates: string[] = [];
   let current = path.resolve(projectRoot);
   while (true) {
-    candidates.push(path.join(current, "ast-mcp.toml"));
+    candidates.push(
+      path.join(current, "ast-mcp.toml"),
+      path.join(current, ".git"),
+    );
     const boundary = await stat(path.join(current, ".git")).then(
       () => true,
       () => false,
@@ -156,7 +169,11 @@ async function fingerprints(
   options: ResolveConfigOptions,
 ): Promise<Record<string, string>> {
   const projectRoot = config?.projectRoot ?? options.cwd ?? options.launchCwd!;
+  const hostRoot = hostProjectRootCandidate(options);
   const sources = [
+    ...(hostRoot
+      ? [hostRoot, ...(await projectConfigCandidates(hostRoot))]
+      : []),
     globalConfigPath(options),
     ...(await projectConfigCandidates(projectRoot)),
     config?.sources.global,
@@ -332,7 +349,15 @@ export class ConfigRegistry {
       try {
         const watcher = watch(directory, (_event, filename) => {
           if (this.#entries.get(key) !== entry) return;
-          if (!filename || filename.toString() === "ast-mcp.toml")
+          if (
+            !filename ||
+            filename.toString() === "ast-mcp.toml" ||
+            filename.toString() === ".git" ||
+            Object.hasOwn(
+              snapshot.fingerprints,
+              path.join(directory, filename.toString()),
+            )
+          )
             this.#schedule(key, entry);
         });
         watcher.unref?.();

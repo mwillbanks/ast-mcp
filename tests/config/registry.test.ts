@@ -1,16 +1,22 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   mkdir,
   mkdtemp,
   realpath,
   rm,
   symlink,
+  stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { globalConfigPath, type ResolveConfigOptions } from "../../src/config";
+import {
+  globalConfigPath,
+  type ResolveConfigOptions,
+  type ResolvedConfig,
+} from "../../src/config";
 import { ConfigRegistry } from "../../src/config/registry";
 
 async function fixture() {
@@ -236,6 +242,318 @@ test("registry retains aliased launch identity while reporting canonical configu
     expect(await registry.get(options)).toBe(reloaded[0]!.config!);
     expect(Object.keys(reloaded[0]!.fingerprints)).toContain(global);
     expect(Object.keys(reloaded[0]!.fingerprints)).toContain(canonicalGlobal);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function reconciledSnapshot(
+  registry: ConfigRegistry,
+  options: ResolveConfigOptions,
+  generation: number,
+  accept: (config: Readonly<ResolvedConfig>) => boolean = () => true,
+) {
+  await registry.reconcile();
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const snapshot = await registry.snapshot(options);
+    if (
+      snapshot.generation > generation &&
+      snapshot.healthy &&
+      snapshot.config &&
+      accept(snapshot.config)
+    )
+      return snapshot;
+    await registry.reconcile();
+    await Bun.sleep(5);
+  }
+  throw new Error("Registry did not reconcile a changed selection input");
+}
+
+test("registry observes prospective Claude directory selection and later configuration creation", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const host = path.join(root, "prospective-host");
+  const options = {
+    launchCwd: first,
+    env: { CLAUDE_PROJECT_DIR: host },
+    home: path.join(root, "home"),
+  };
+  try {
+    const initial = await registry.snapshot(options);
+    expect(initial.config!.projectRoot).toBe(first);
+    expect(initial.fingerprints[host]).toBe("missing");
+    await mkdir(host);
+    const directory = await reconciledSnapshot(
+      registry,
+      options,
+      initial.generation,
+      (config) => config.projectRoot === host,
+    );
+    expect(directory.healthy).toBeTrue();
+    expect(directory.config!.projectRoot).toBe(host);
+    expect(directory.config!.sources.project).toBeUndefined();
+    const configPath = path.join(host, "ast-mcp.toml");
+    await writeFile(configPath, "version = 2\n[telemetry]\nenabled = false\n");
+    const configured = await reconciledSnapshot(
+      registry,
+      options,
+      directory.generation,
+      (config) => config.telemetry.enabled === false,
+    );
+    expect(configured.config!.sources.project).toBe(await realpath(configPath));
+    expect(configured.config!.telemetry.enabled).toBeFalse();
+    await rm(host, { recursive: true });
+    const removed = await reconciledSnapshot(
+      registry,
+      options,
+      configured.generation,
+      (config) => config.projectRoot === first,
+    );
+    expect(removed.config!.projectRoot).toBe(first);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("higher priority selectors exclude prospective Claude roots from reconciliation", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const host = path.join(root, "ignored-host");
+  const base = {
+    launchCwd: first,
+    home: path.join(root, "home"),
+    env: { CLAUDE_PROJECT_DIR: host },
+  };
+  const overrides: ResolveConfigOptions[] = [
+    { ...base, cwd: second },
+    { ...base, clientRoots: [second] },
+    { ...base, env: { ...base.env, AST_MCP_PROJECT_ROOT: second } },
+    { ...base, env: { ...base.env, AST_MCP_ROOTS: second } },
+    { ...base, env: { CLAUDE_PROJECT_DIR: "relative-host" } },
+  ];
+  try {
+    for (const options of overrides) {
+      const snapshot = await registry.snapshot(options);
+      expect(snapshot.healthy).toBeTrue();
+      expect(snapshot.fingerprints).not.toHaveProperty(host);
+      expect(snapshot.config!.projectRoot).toBe(
+        options.env!.CLAUDE_PROJECT_DIR === "relative-host" ? first : second,
+      );
+    }
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry reconciles newly created and removed project discovery boundaries", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const child = path.join(first, "child");
+  await mkdir(child);
+  const options = { cwd: child, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    expect(initial.config!.sources.project).toBe(
+      await realpath(path.join(first, "ast-mcp.toml")),
+    );
+    const boundary = path.join(child, ".git");
+    expect(initial.fingerprints[boundary]).toBe("missing");
+    await mkdir(boundary);
+    const bounded = await reconciledSnapshot(
+      registry,
+      options,
+      initial.generation,
+      (config) => config.sources.project === undefined,
+    );
+    expect(bounded.config!.sources.project).toBeUndefined();
+    await rm(boundary, { recursive: true });
+    const reopened = await reconciledSnapshot(
+      registry,
+      options,
+      bounded.generation,
+      (config) => config.sources.project === initial.config!.sources.project,
+    );
+    expect(reopened.config!.sources.project).toBe(
+      initial.config!.sources.project,
+    );
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry refreshes physical host identity when equal-metadata symlinks retarget", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const host = path.join(root, "host-link");
+  const options = {
+    launchCwd: first,
+    env: { CLAUDE_PROJECT_DIR: host },
+    home: path.join(root, "home"),
+  };
+  try {
+    const fixed = new Date("2020-01-01T00:00:00Z");
+    await utimes(first, fixed, fixed);
+    await utimes(second, fixed, fixed);
+    const firstMetadata = await stat(first);
+    const secondMetadata = await stat(second);
+    expect(firstMetadata.mtimeMs).toBe(secondMetadata.mtimeMs);
+    expect(firstMetadata.size).toBe(secondMetadata.size);
+    await symlink(
+      first,
+      host,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const initial = await registry.snapshot(options);
+    expect(initial.config!.trustedRoots).toContain(await realpath(first));
+    await rm(host);
+    await symlink(
+      second,
+      host,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const canonicalSecond = await realpath(second);
+    const retargeted = await reconciledSnapshot(
+      registry,
+      options,
+      initial.generation,
+      (config) => config.trustedRoots.includes(canonicalSecond),
+    );
+    expect(retargeted.config!.projectRoot).toBe(host);
+    expect(retargeted.config!.sources.project).toBe(
+      await realpath(path.join(second, "ast-mcp.toml")),
+    );
+    expect(retargeted.config!.trustedRoots).not.toContain(
+      await realpath(first),
+    );
+    expect(retargeted.fingerprints[host]).not.toBe(initial.fingerprints[host]);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry follows host directory type transitions with captured environment", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(1);
+  const host = path.join(root, "host-type");
+  const env = { CLAUDE_PROJECT_DIR: host };
+  const options = { launchCwd: first, env, home: path.join(root, "home") };
+  const original = { ...options, env: { ...env } };
+  try {
+    await writeFile(host, "");
+    const initial = await registry.snapshot(options);
+    expect(initial.config!.projectRoot).toBe(first);
+    env.CLAUDE_PROJECT_DIR = second;
+    await rm(host);
+    await mkdir(host);
+    const selected = await reconciledSnapshot(
+      registry,
+      original,
+      initial.generation,
+      (config) => config.projectRoot === host,
+    );
+    expect(selected.fingerprints[host]).not.toBe(initial.fingerprints[host]);
+    expect(selected.fingerprints).not.toHaveProperty(second);
+    await rm(host, { recursive: true });
+    await writeFile(host, "");
+    const fallback = await reconciledSnapshot(
+      registry,
+      original,
+      selected.generation,
+      (config) => config.projectRoot === first,
+    );
+    expect(fallback.fingerprints[host]).not.toBe(selected.fingerprints[host]);
+    expect(fallback.config!.projectRoot).toBe(first);
+    expect((await registry.snapshot(options)).config!.projectRoot).toBe(second);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("periodic reconciliation refreshes captured configuration without an explicit reconcile call", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(1, 5);
+  const reconcile = spyOn(registry, "reconcile");
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    const deadline = Date.now() + 2000;
+    let current = initial;
+    while (Date.now() < deadline) {
+      current = await registry.snapshot(options);
+      if (
+        current.generation > initial.generation &&
+        current.config?.telemetry.enabled === false &&
+        reconcile.mock.calls.length > 0
+      )
+        break;
+      await Bun.sleep(5);
+    }
+    expect(reconcile).toHaveBeenCalled();
+    expect(current.healthy).toBeTrue();
+    expect(current.generation).toBeGreaterThan(initial.generation);
+    expect(current.config!.telemetry.enabled).toBeFalse();
+  } finally {
+    registry.close();
+    reconcile.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry rejects invalid reloads and recovers while retaining captured identity", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry();
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    const configPath = path.join(first, "ast-mcp.toml");
+    await writeFile(configPath, "version = [");
+    await registry.reload();
+    const invalid = await registry.snapshot(options);
+    expect(invalid.healthy).toBeFalse();
+    expect(invalid.error).toContain("invalid TOML");
+    expect(invalid.config).toBe(initial.config);
+    await expect(registry.get(options)).rejects.toThrow("invalid TOML");
+    await writeFile(configPath, "version = 2\n[telemetry]\nenabled = false\n");
+    await registry.reload();
+    const recovered = await registry.snapshot(options);
+    expect(recovered.healthy).toBeTrue();
+    expect(recovered.error).toBeUndefined();
+    expect(recovered.key).toBe(initial.key);
+    expect(recovered.config!.telemetry.enabled).toBeFalse();
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("registry evicts inactive identities and safely reloads an evicted configuration", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(1, 30000, 1);
+  const base = { env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot({ ...base, cwd: first });
+    await registry.snapshot({ ...base, cwd: second });
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    const replacement = await registry.snapshot({ ...base, cwd: first });
+    expect(replacement.config).not.toBe(initial.config);
+    expect(replacement.generation).toBe(1);
+    expect(replacement.key).toBe(initial.key);
+    expect(replacement.config!.telemetry.enabled).toBeFalse();
+    expect(await registry.reload()).toHaveLength(1);
   } finally {
     registry.close();
     await rm(root, { recursive: true, force: true });

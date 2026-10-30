@@ -309,6 +309,21 @@ test("service install and removal compensate manager actions after restoring ori
       platform: "linux" as const,
       cliEntry: process.execPath,
       endpoint: httpEndpoint("127.0.0.1", 4567),
+      stateQuery: async (command: string[]) => ({
+        exitCode:
+          command[0] === "launchctl" && command[1] === "print" && !existed
+            ? 113
+            : 0,
+        stdout:
+          command[0] === "systemctl"
+            ? existed
+              ? "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"
+              : "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n"
+            : command[1] === "print-disabled"
+              ? "disabled services = {}"
+              : "state = running",
+        stderr: "Could not find service",
+      }),
       runner: async (command: string[]) => {
         commands.push(command);
         if (fail && command.includes("enable")) {
@@ -325,7 +340,7 @@ test("service install and removal compensate manager actions after restoring ori
     const before = await contents(options.root);
     await expect(installService(service)).rejects.toThrow("manager failed");
     expect(await contents(options.root)).toEqual(before);
-    expect(commands.some((command) => command.includes("disable"))).toBe(true);
+    expect(commands.some((command) => command.includes("stop"))).toBe(true);
     if (existed)
       expect(
         commands.filter((command) => command.includes("enable")),
@@ -403,6 +418,11 @@ test("service removal validates original destinations before issuing any command
     platform: "linux" as const,
     cliEntry: process.execPath,
     endpoint: httpEndpoint("127.0.0.1", 4567),
+    stateQuery: async () => ({
+      exitCode: 0,
+      stdout: "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n",
+      stderr: "",
+    }),
     runner: async (command: string[]) => {
       commands.push(command);
     },
@@ -511,6 +531,11 @@ test("service compensation never launches a concurrently replaced plan", async (
     platform: "linux" as const,
     cliEntry: process.execPath,
     endpoint: httpEndpoint("127.0.0.1", 4567),
+    stateQuery: async () => ({
+      exitCode: 0,
+      stdout: "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n",
+      stderr: "",
+    }),
     runner: async (command: string[]) => {
       commands.push(command);
       await writeFile(plan.file, "user replacement");
@@ -566,6 +591,21 @@ test("Darwin compensation stops partially started jobs by identifier after resto
       platform: "darwin" as const,
       cliEntry: process.execPath,
       endpoint: httpEndpoint("127.0.0.1", 4567),
+      stateQuery: async (command: string[]) => ({
+        exitCode:
+          command[0] === "launchctl" && command[1] === "print" && !existed
+            ? 113
+            : 0,
+        stdout:
+          command[0] === "systemctl"
+            ? existed
+              ? "LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"
+              : "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n"
+            : command[1] === "print-disabled"
+              ? "disabled services = {}"
+              : "state = running",
+        stderr: "Could not find service",
+      }),
       runner: async (command: string[]) => {
         commands.push(command);
         if (failed && command[1] === "bootout" && command.length === 3) {

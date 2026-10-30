@@ -8,7 +8,14 @@ import {
   terminateProcessTree,
 } from "../runtime/subprocess";
 import {
+  captureServiceState,
+  queryServiceCommand,
+  type ServiceState,
+  type ServiceStateQuery,
+} from "./service-state";
+import {
   mkdirInstallerDirectory as mkdir,
+  assertInstallerRestored,
   readInstallerText,
   onInstallerRollback,
   removeInstallerFile,
@@ -23,16 +30,26 @@ export type ServiceCommandRunner = (
   ignoreFailure?: boolean,
 ) => Promise<void>;
 
-export interface ServiceOptions {
+export type ServiceExecutionOptions<
+  RunnerKey extends string,
+  QueryKey extends string,
+> =
+  | ({ [Key in RunnerKey]?: undefined } & {
+      [Key in QueryKey]?: ServiceStateQuery;
+    })
+  | ({ [Key in RunnerKey]: ServiceCommandRunner } & {
+      [Key in QueryKey]: ServiceStateQuery;
+    });
+
+export type ServiceOptions = ServiceExecutionOptions<"runner", "stateQuery"> & {
   cliEntry: string;
   cliArgs?: string[];
   endpoint: HttpEndpoint;
   home: string;
   platform?: NodeJS.Platform;
   root: string;
-  runner?: ServiceCommandRunner;
   scope: ServiceScope;
-}
+};
 
 export interface ServicePlan {
   content: string;
@@ -250,24 +267,76 @@ export async function installService(options: ServiceOptions) {
 async function compensateService(
   options: ServiceOptions,
   plan: ServicePlan,
+  prior: ServiceState,
   existed: boolean,
 ) {
-  // The journal validates restored or untouched bytes before any compensating command.
-  await readInstallerText(plan.file).catch((error) => {
-    if (!existed && (error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  });
-  const runner = options.runner ?? defaultRunner;
-  for (const command of plan.removeCommands) await runner(command, true);
-  if (existed) {
-    for (let index = 0; index < plan.installCommands.length; index += 1)
-      await runner(
-        plan.installCommands[index],
-        index === 0 && plan.installCommands[index][0] === "launchctl",
-      );
-  } else if ((options.platform ?? process.platform) === "linux") {
+  // Each compensation validates its own restored dependency, even if another file conflicted.
+  assertInstallerRestored(plan.file);
+  const runner: ServiceCommandRunner = async (command, ignoreFailure) => {
+    assertInstallerRestored(plan.file);
+    await (options.runner ?? defaultRunner)(command, ignoreFailure);
+  };
+  if (prior.platform === "linux") {
+    const unit = plan.id + ".service";
+    const restore = async (command: string[]) => {
+      try {
+        await runner(command);
+      } catch (error) {
+        // A removed fresh unit may already be absent. Verify absence instead of ignoring manager errors.
+        assertInstallerRestored(plan.file);
+        const current = await priorServiceState(options, plan);
+        assertInstallerRestored(plan.file);
+        if (existed || current.platform !== "linux" || current.loaded)
+          throw error;
+      }
+    };
+    await restore(["systemctl", "--user", "stop", unit]);
     await runner(["systemctl", "--user", "daemon-reload"]);
+    await restore([
+      "systemctl",
+      "--user",
+      prior.enabled ? "enable" : "disable",
+      unit,
+    ]);
+    if (prior.active) await runner(["systemctl", "--user", "start", unit]);
+    return;
   }
+  for (const command of plan.removeCommands) {
+    try {
+      await runner(command);
+    } catch (error) {
+      assertInstallerRestored(plan.file);
+      const current = await priorServiceState(options, plan);
+      assertInstallerRestored(plan.file);
+      if (current.loaded) throw error;
+    }
+  }
+  // bootout/bootstrap do not change disabled overrides; never invent an enable override.
+  if (prior.loaded) {
+    await runner(plan.installCommands[1]);
+    await runner(plan.installCommands[2]);
+  }
+}
+
+async function priorServiceState(
+  options: ServiceOptions,
+  plan: ServicePlan,
+  existed = true,
+) {
+  if (options.runner && !options.stateQuery)
+    throw new Error(
+      "A custom service runner requires a read-only service state query",
+    );
+  const prior = await captureServiceState(
+    options.platform ?? process.platform,
+    plan.id,
+    options.stateQuery ?? queryServiceCommand,
+  );
+  if (!existed && prior.loaded)
+    throw new Error(
+      "Cannot restore a loaded service without its original managed service file",
+    );
+  return prior;
 }
 
 async function installServiceFiles(options: ServiceOptions) {
@@ -278,6 +347,7 @@ async function installServiceFiles(options: ServiceOptions) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error;
     });
+  const prior = await priorServiceState(options, plan, existed);
   const runner = options.runner ?? defaultRunner;
   await mkdir(path.dirname(plan.file), { recursive: true });
   if ((options.platform ?? process.platform) === "darwin")
@@ -285,7 +355,7 @@ async function installServiceFiles(options: ServiceOptions) {
       recursive: true,
     });
   await writeInstallerFile(plan.file, plan.content);
-  onInstallerRollback(() => compensateService(options, plan, existed));
+  onInstallerRollback(() => compensateService(options, plan, prior, existed));
   for (let index = 0; index < plan.installCommands.length; index += 1)
     await runner(
       plan.installCommands[index],
@@ -307,7 +377,8 @@ async function removeServiceFiles(options: ServiceOptions) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
       throw error;
     });
-  onInstallerRollback(() => compensateService(options, plan, existed));
+  const prior = await priorServiceState(options, plan, existed);
+  onInstallerRollback(() => compensateService(options, plan, prior, existed));
   const runner = options.runner ?? defaultRunner;
   for (const command of plan.removeCommands) await runner(command, true);
   await removeInstallerFile(plan.file);

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { install } from "../../src/installer";
+import { absentServiceStateQuery } from "../support/service-state";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -41,6 +42,7 @@ test("service preflight rejects occupied ports before configuration mutation", a
         scope: "local",
         service: true,
         serviceRunner: async () => {},
+        serviceStateQuery: absentServiceStateQuery,
         targets: ["codex"],
         transport: "http",
       }),

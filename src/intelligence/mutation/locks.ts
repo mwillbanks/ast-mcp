@@ -815,7 +815,10 @@ async function withQueue<Result>(
     return await operation();
   } finally {
     releaseQueue();
-    if (queues.get(filePath) === queued) queues.delete(filePath);
+    // A cancelled waiter must retain the preceding owner's queue lifetime.
+    void queued.then(() => {
+      if (queues.get(filePath) === queued) queues.delete(filePath);
+    });
   }
 }
 

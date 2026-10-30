@@ -50,7 +50,7 @@ import {
   installService,
   preflightService,
   removeService,
-  type ServiceCommandRunner,
+  type ServiceExecutionOptions,
 } from "./service";
 import {
   mkdirInstallerDirectory as mkdir,
@@ -644,7 +644,10 @@ async function hasLocalInstallation(root: string) {
   );
 }
 
-export interface InstallOptions {
+export type InstallOptions = ServiceExecutionOptions<
+  "serviceRunner",
+  "serviceStateQuery"
+> & {
   cliEntry?: string;
   verifyLaunch?: (launch: InstallerLaunch) => Promise<void>;
   deprecatedRoot?: boolean;
@@ -656,10 +659,9 @@ export interface InstallOptions {
   root: string;
   scope: "local" | "global";
   service?: boolean;
-  serviceRunner?: ServiceCommandRunner;
   targets: Target[];
   transport?: McpTransport;
-}
+};
 
 class InstallerUsageError extends Error {
   override name = "InstallerUsageError";
@@ -715,6 +717,9 @@ function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
   const home = options.home ?? os.homedir();
   const entry = cliEntryFor(options.scope === "local" ? root : undefined, home);
   const invocation = cliInvocation(path.resolve(root, entry), []);
+  const execution = options.serviceRunner
+    ? { runner: options.serviceRunner, stateQuery: options.serviceStateQuery }
+    : { stateQuery: options.serviceStateQuery };
   return {
     cliEntry: invocation.command,
     cliArgs: invocation.args,
@@ -722,7 +727,7 @@ function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
     home,
     platform: options.platform,
     root,
-    runner: options.serviceRunner,
+    ...execution,
     scope: options.scope,
   };
 }

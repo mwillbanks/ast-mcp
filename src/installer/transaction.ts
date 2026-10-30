@@ -185,6 +185,14 @@ class FileTransaction {
     }
   }
 
+  assertRestored(file: string) {
+    file = path.resolve(file);
+    this.guard(file);
+    const entry = this.entries.get(file);
+    if (!entry || !equal(state(file), entry.before))
+      throw conflict("Installer compensation requires its original file state");
+  }
+
   async rollback() {
     const failures: unknown[] = [];
     for (const [file, entry] of [...this.entries].reverse()) {
@@ -207,14 +215,12 @@ class FileTransaction {
         failures.push(error);
       }
     }
-    // Never restart a service from a file replaced by another actor.
-    if (!failures.length) {
-      for (const compensate of this.compensations.reverse()) {
-        try {
-          await compensate();
-        } catch (error) {
-          failures.push(error);
-        }
+    // Compensations validate their own dependencies; unrelated conflicts must not suppress recovery.
+    for (const compensate of this.compensations.reverse()) {
+      try {
+        await compensate();
+      } catch (error) {
+        failures.push(error);
       }
     }
     for (const [directory, before] of [...this.directories].sort(
@@ -262,6 +268,13 @@ export async function withInstallerFileTransaction<T>(
       throw error;
     }
   });
+}
+
+export function assertInstallerRestored(file: string) {
+  const transaction = active.getStore();
+  if (!transaction)
+    throw new Error("Installer compensation requires an active transaction");
+  transaction.assertRestored(file);
 }
 
 export function onInstallerRollback(compensate: () => Promise<void>) {
