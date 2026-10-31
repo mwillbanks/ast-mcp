@@ -27,6 +27,7 @@ import {
 import { validateInfraWorkerRequest } from "../../../../src/intelligence/languages/infra/wasm-worker.ts";
 import { validateInfraWorkerResponse } from "../../../../src/intelligence/languages/infra/worker-client.ts";
 import { resolveWasmGrammarAsset } from "../../../../src/intelligence/languages/shared/wasm-assets.ts";
+import { observeWorkerDispatch } from "../../../support/worker-dispatch";
 
 const root = join(
   import.meta.dir,
@@ -509,13 +510,6 @@ describe("infrastructure language adapters", () => {
     ).rejects.toMatchObject({ code: "aborted" });
     await expect(
       analyzeInfraLanguage({
-        languageId: "bash",
-        source: "echo timeout\n".repeat(20_000),
-        timeoutMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: "timeout" });
-    await expect(
-      analyzeInfraLanguage({
         languageId: "sql",
         source: "x".repeat(INFRA_WORKER_LIMITS.maxOutstandingBytes + 1),
       }),
@@ -524,43 +518,46 @@ describe("infrastructure language adapters", () => {
     const capacityRequests = Array.from(
       { length: INFRA_WORKER_LIMITS.maxPendingRequests },
       () =>
-        analyzeInfraLanguage({
-          languageId: "bash",
-          source: "echo capacity\n".repeat(100),
-        }),
+        analyzeInfraLanguage({ languageId: "bash", source: "echo capacity\n" }),
     );
     await expect(
-      analyzeInfraLanguage({ languageId: "bash", source: "echo overflow" }),
+      analyzeInfraLanguage({
+        languageId: "bash",
+        source: "echo overflow",
+      }),
     ).rejects.toMatchObject({ code: "queue-full" });
     await Promise.all(capacityRequests);
-    const activeController = new AbortController();
-    const active = analyzeInfraLanguage({
-      languageId: "bash",
-      signal: activeController.signal,
-      source: "echo pending\n".repeat(20_000),
-    });
-    const observed = active.catch((error: unknown) => error);
-    activeController.abort();
-    expect(await observed).toMatchObject({ code: "aborted" });
-    await drainInfraLanguageWorker();
-    expect(infraWorkerStats()).toEqual({
-      outstandingBytes: 0,
-      pendingRequests: 0,
-    });
-    const closing = analyzeInfraLanguage({
-      languageId: "bash",
-      source: "echo closing\n".repeat(20_000),
-    });
-    const closingObserved = closing.catch((error: unknown) => error);
-    await closeInfraLanguageWorker();
-    expect(await closingObserved).toMatchObject({ code: "closed" });
-    const crashing = analyzeInfraLanguage({
-      languageId: "bash",
-      source: "echo crash\n".repeat(20_000),
-    });
-    const crashObserved = crashing.catch((error: unknown) => error);
-    await interruptInfraLanguageWorker();
-    expect(await crashObserved).toMatchObject({ code: "worker-exit" });
+
+    for (const [operation, code] of [
+      ["abort", "aborted"],
+      ["timeout", "timeout"],
+      ["close", "closed"],
+      ["interrupt", "worker-exit"],
+    ] as const) {
+      const dispatch = observeWorkerDispatch({ holdStart: true });
+      const controller = new AbortController();
+      try {
+        const pending = analyzeInfraLanguage({
+          languageId: "bash",
+          source: "echo pending\n",
+          signal: controller.signal,
+          ...(operation === "timeout" ? { timeoutMs: 0 } : {}),
+        }).catch((failure: unknown) => failure);
+        await dispatch.dispatched;
+        if (operation === "abort") controller.abort();
+        if (operation === "close") await closeInfraLanguageWorker();
+        if (operation === "interrupt") await interruptInfraLanguageWorker();
+        expect(await pending).toMatchObject({ code });
+        await drainInfraLanguageWorker();
+        expect(infraWorkerStats()).toEqual({
+          outstandingBytes: 0,
+          pendingRequests: 0,
+        });
+      } finally {
+        dispatch.restore();
+        await closeInfraLanguageWorker();
+      }
+    }
     handleInfraWorkerError(null as never, new Error("stale"));
     rejectPendingInfraRequests("no pending requests");
     await restartInfraLanguageWorker();

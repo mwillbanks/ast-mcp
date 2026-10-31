@@ -27,6 +27,7 @@ import {
 } from "../../../../src/intelligence/languages/systems/index.ts";
 import { validateSystemsWorkerRequest } from "../../../../src/intelligence/languages/systems/wasm-worker.ts";
 import { sha256 } from "../../../../src/intelligence/parser/index.ts";
+import { observeWorkerDispatch } from "../../../support/worker-dispatch";
 
 const root = join(
   import.meta.dir,
@@ -510,20 +511,47 @@ describe("systems language WASM adapters", () => {
         source: "int x(){}",
       }),
     ).rejects.toMatchObject({ code: "aborted" });
-    const activeController = new AbortController();
-    const active = systemsLanguageAdapter("cpp").analyze({
-      languageId: "cpp",
-      signal: activeController.signal,
-      source: "int active(){}".repeat(10_000),
-    });
-    activeController.abort();
-    await expect(active).rejects.toMatchObject({ code: "aborted" });
-    await drainSystemsLanguageWorker();
+
+    for (const [operation, code] of [
+      ["abort", "aborted"],
+      ["timeout", "timeout"],
+      ["close", "closed"],
+      ["interrupt", "worker-exit"],
+    ] as const) {
+      const dispatch = observeWorkerDispatch({ holdStart: true });
+      const controller = new AbortController();
+      try {
+        const pending = systemsLanguageAdapter(
+          operation === "interrupt" ? "rust" : "c",
+        )
+          .analyze({
+            languageId: operation === "interrupt" ? "rust" : "c",
+            source:
+              operation === "interrupt" ? "fn pending(){}" : "int pending(){}",
+            signal: controller.signal,
+            ...(operation === "timeout" ? { timeoutMs: 0 } : {}),
+          })
+          .catch((failure: unknown) => failure);
+        await dispatch.dispatched;
+        if (operation === "abort") controller.abort();
+        if (operation === "close") await closeSystemsLanguageWorker();
+        if (operation === "interrupt") await interruptSystemsLanguageWorker();
+        expect(await pending).toMatchObject({ code });
+        await drainSystemsLanguageWorker();
+        expect(systemsWorkerStats()).toEqual({
+          outstandingBytes: 0,
+          pendingRequests: 0,
+        });
+      } finally {
+        dispatch.restore();
+        await closeSystemsLanguageWorker();
+      }
+    }
+
     const queuedRecovery = systemsLanguageAdapter("c").analyze({
       languageId: "c",
       source: "int recovered(){}",
     });
-    await expect(active).rejects.toMatchObject({ code: "aborted" });
     expect((await queuedRecovery).symbols.map((value) => value.name)).toContain(
       "recovered",
     );
@@ -531,32 +559,10 @@ describe("systems language WASM adapters", () => {
     await expect(
       systemsLanguageAdapter("c").analyze({
         languageId: "c",
-        source: "int timeout(){}".repeat(100_000),
-        timeoutMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: "timeout" });
-    await expect(
-      systemsLanguageAdapter("c").analyze({
-        languageId: "c",
         source: "x".repeat(SYSTEMS_WORKER_LIMITS.maxOutstandingBytes + 1),
       }),
     ).rejects.toBeInstanceOf(SystemsWorkerError);
     await drainSystemsLanguageWorker();
-    const closing = systemsLanguageAdapter("c").analyze({
-      languageId: "c",
-      source: "int closing(){}".repeat(10_000),
-    });
-    const closed = closing.catch((error: unknown) => error);
-    await closeSystemsLanguageWorker();
-    expect(await closed).toMatchObject({ code: "closed" });
-    const crashing = systemsLanguageAdapter("rust").analyze({
-      languageId: "rust",
-      source: "fn crash(){}".repeat(10_000),
-    });
-    const crashed = crashing.catch((error: unknown) => error);
-    await Bun.sleep(0);
-    await interruptSystemsLanguageWorker();
-    expect(await crashed).toMatchObject({ code: "worker-exit" });
     const restarted = systemsLanguageAdapter("go").analyze({
       languageId: "go",
       source: "package p\nfunc Restarted(){}",
@@ -572,7 +578,7 @@ describe("systems language WASM adapters", () => {
     await interruptSystemsLanguageWorker();
     const manuallyRejected = systemsLanguageAdapter("c").analyze({
       languageId: "c",
-      source: "int manual_reject(){}".repeat(10_000),
+      source: "int manual_reject(){}",
     });
     rejectPendingSystemsRequests("manual rejection");
     await expect(manuallyRejected).rejects.toThrow("manual rejection");
