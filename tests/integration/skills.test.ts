@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,7 @@ import {
   exerciseModernWorkspaceHttp,
   skillsMeta,
 } from "../support/skills-protocol";
+import { removeTempDirectory } from "../support/temp-directory";
 
 test("modern stdio preserves fragmented batches and recovers malformed and oversized frames", async () => {
   const live = spawnLiveProcess(process.execPath, [
@@ -102,6 +103,6 @@ test("real HTTP serves modern Skills and retains explicit workspace handles", as
     );
   } finally {
     await live.stop();
-    await rm(owned, { recursive: true, force: true });
+    await removeTempDirectory(owned);
   }
 }, 30000);

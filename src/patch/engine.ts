@@ -55,6 +55,13 @@ import {
   stageFileSnapshot,
 } from "../runtime/snapshot-blob";
 import {
+  evaluateSqlCandidate,
+  resolveSqlAssistanceOptions,
+  type ResolvedSqlAssistanceOptions,
+  type SqlAssistanceOptions,
+  type SqlPatchDecision,
+} from "../runtime/sql-assistance";
+import {
   type AiderBlock,
   type AstRule,
   type PatchStrategyContext,
@@ -85,6 +92,7 @@ export interface PatchRequest {
   filePath: string;
   patchStrategy: "ast" | "aider_block";
   preview?: boolean;
+  sql?: SqlAssistanceOptions;
 }
 
 export interface PatchBatchRequest {
@@ -95,6 +103,7 @@ export interface PatchBatchRequest {
   patchStrategy?: "ast" | "aider_block";
   preview?: boolean;
   previewReceipt?: string;
+  sql?: SqlAssistanceOptions;
 }
 
 export type PatchBatch = Record<string, PatchBatchRequest>;
@@ -252,10 +261,17 @@ function previewDiff(filePath: string, before: string, after: string): string {
     : lines.join("\n");
 }
 
+interface PatchSqlBinding {
+  options?: Readonly<SqlAssistanceOptions>;
+  defaults: Readonly<SqlAssistanceOptions>;
+  resolved: Readonly<ResolvedSqlAssistanceOptions>;
+}
+
 interface PatchContext extends PatchStrategyContext {
   actual: string;
   capabilities: FileCapabilities;
   request: PatchBatchRequest;
+  sqlBinding?: PatchSqlBinding;
 }
 
 type PreviewMetadata = PatchStrategyMetadata;
@@ -272,8 +288,10 @@ interface PreviewReceipt {
   metadata: PreviewMetadata;
   normalizedOperations: Pick<
     PatchBatchRequest,
-    "aiderBlocks" | "astRules" | "chattr" | "patchStrategy"
+    "aiderBlocks" | "astRules" | "chattr" | "patchStrategy" | "sql"
   >;
+  sqlBinding?: PatchSqlBinding;
+  sqlDecision?: SqlPatchDecision;
   payloadBytes: number;
   sessionId: string;
   sourceSha256: string;
@@ -294,6 +312,7 @@ const previewConfigurationIdentity = (
     JSON.stringify({
       dependencies: config.dependencies,
       formatting: config.formatting,
+      patch: config.files.patch,
       projectRoot: config.projectRoot,
       safety: config.safety,
       sources: config.sources,
@@ -483,17 +502,92 @@ async function validatePreviewReceipt(filePath: string, token: string) {
   return receipt;
 }
 
+function createSqlBinding(
+  capabilities: FileCapabilities,
+  options: Readonly<SqlAssistanceOptions> | undefined,
+  defaults: SqlAssistanceOptions,
+): PatchSqlBinding | undefined {
+  if (capabilities.language !== "sql") {
+    if (options !== undefined)
+      throw Object.assign(
+        new Error("SQL assistance applies only to SQL files"),
+        {
+          code: "sql_assistance_not_applicable",
+          retryable: true,
+        },
+      );
+    return undefined;
+  }
+  const snapshot = Object.freeze({ ...defaults });
+  return {
+    options,
+    defaults: snapshot,
+    resolved: resolveSqlAssistanceOptions(options, snapshot),
+  };
+}
+
+async function evaluatePatchSql(
+  source: string,
+  binding?: PatchSqlBinding,
+): Promise<SqlPatchDecision | undefined> {
+  if (!binding) return undefined;
+  const decision = await evaluateSqlCandidate({
+    source,
+    options: binding.options,
+    defaults: binding.defaults,
+    signal: patchSignals.getStore(),
+  });
+  if (!decision.allowed)
+    throw Object.assign(
+      new Error(
+        "SQL validation rejected this candidate under the required policy",
+      ),
+      {
+        code: "sql_validation_rejected",
+        details: { sql: decision },
+        retryable: true,
+        suggestedNextCall:
+          "Review SQL diagnostics or preview a guarded patch with sql.policy='skip'",
+      },
+    );
+  return decision;
+}
+
+function verifyReceiptSql(receipt: PreviewReceipt, request: PatchBatchRequest) {
+  if (request.sql === undefined) return;
+  const supplied = resolveSqlAssistanceOptions(
+    request.sql,
+    receipt.sqlBinding?.defaults,
+  );
+  if (
+    !receipt.sqlBinding ||
+    JSON.stringify(supplied) !== JSON.stringify(receipt.sqlBinding.resolved)
+  )
+    throw receiptError(
+      "preview_receipt_sql_changed",
+      "SQL assistance policy or variant changed; preview the patch again",
+    );
+}
+
 async function createPatchContext(
   filePath: string,
   request: PatchBatchRequest,
 ): Promise<PatchContext> {
+  const sqlOptions =
+    request.sql === undefined ? undefined : Object.freeze({ ...request.sql });
   const original = await readText(filePath);
   const actual = sha256(original);
   await requireExpectedHash(request.expectedSha256, "file_patch");
   verifyExpectedHash(request.expectedSha256, actual);
   const capabilities = await inspectFileCapabilities(filePath);
+  const sqlBinding = createSqlBinding(
+    capabilities,
+    sqlOptions,
+    (await currentConfig()).files.patch.sql ?? {},
+  );
   return {
     actual,
+    sqlBinding,
     aiderBlocks: request.aiderBlocks ?? [],
     astRules: request.astRules ?? [],
     capabilities,
@@ -510,17 +604,19 @@ async function patchPreview(
   context: PatchContext,
   candidate: string,
   metadata: PreviewMetadata,
+  sqlDecision?: SqlPatchDecision,
 ) {
   const config = await currentConfig();
   const receipt = randomUUID();
   const expiresAt = Date.now() + PREVIEW_RECEIPT_TTL_MS;
   const sessionId = approvalSessionId();
-  const normalizedOperations = {
+  const normalizedOperations = structuredClone({
     aiderBlocks: context.request.aiderBlocks,
     astRules: context.request.astRules,
     chattr: context.request.chattr,
     patchStrategy: context.request.patchStrategy,
-  };
+    sql: context.sqlBinding?.options,
+  });
   const payloadBytes = previewPayloadBytes(
     sessionId,
     candidate,
@@ -534,8 +630,10 @@ async function patchPreview(
   previewReceipts.set(receipt, {
     candidate,
     candidateSha256: sha256(candidate),
-    chattr: context.request.chattr,
+    chattr: normalizedOperations.chattr,
     configurationIdentity: previewConfigurationIdentity(config),
+    sqlBinding: context.sqlBinding,
+    sqlDecision: sqlDecision ? structuredClone(sqlDecision) : undefined,
     expiresAt,
     expiryTimer,
     filePath: context.filePath,
@@ -567,6 +665,7 @@ async function patchPreview(
     receiptExpiresAt: new Date(expiresAt).toISOString(),
     sha256: sha256(candidate),
     strategy: metadata.strategy,
+    ...(sqlDecision ? { sql: structuredClone(sqlDecision) } : {}),
   };
 }
 
@@ -575,17 +674,27 @@ async function prepareStrategyPatch(context: PatchContext) {
     context.request.patchStrategy,
   ).prepare(context);
   await validateStructuredCandidate(context.capabilities, prepared.candidate);
-  return { candidate: prepared.candidate, metadata: prepared.metadata };
+  return {
+    candidate: prepared.candidate,
+    metadata: prepared.metadata,
+    sql: await evaluatePatchSql(prepared.candidate, context.sqlBinding),
+  };
 }
 
 async function formatCandidate(
   filePath: string,
   candidate: string,
   capabilities: FileCapabilities,
+  binding?: PatchSqlBinding,
+  previousSql?: SqlPatchDecision,
 ) {
   const formatted = await formatContent(filePath, candidate);
   await validateStructuredCandidate(capabilities, formatted);
-  return formatted;
+  const sql =
+    formatted === candidate && previousSql
+      ? previousSql
+      : await evaluatePatchSql(formatted, binding);
+  return { candidate: formatted, sql };
 }
 
 async function applyLockedPatch(
@@ -602,12 +711,20 @@ async function applyLockedPatch(
   const context = await createPatchContext(filePath, request);
   const prepared = await prepareStrategyPatch(context);
   if (request.preview)
-    return patchPreview(context, prepared.candidate, prepared.metadata);
-  const candidate = await formatCandidate(
+    return patchPreview(
+      context,
+      prepared.candidate,
+      prepared.metadata,
+      prepared.sql,
+    );
+  const formatted = await formatCandidate(
     filePath,
     prepared.candidate,
     context.capabilities,
+    context.sqlBinding,
+    prepared.sql,
   );
+  const candidate = formatted.candidate;
   await commit(
     filePath,
     candidate,
@@ -622,6 +739,7 @@ async function applyLockedPatch(
     filePath,
     preview: false,
     sha256: sha256(candidate),
+    ...(formatted.sql ? { sql: formatted.sql } : {}),
   };
 }
 
@@ -637,12 +755,14 @@ async function applyPatchBatch(
 export async function patchFile(
   request: PatchRequest,
 ): Promise<Record<string, unknown>> {
+  request = structuredClone(request);
   return applyPatchBatch(await resolveWritablePath(request.filePath), {
     aiderBlocks: request.aiderBlock ? [request.aiderBlock] : undefined,
     astRules: request.astRule ? [request.astRule] : undefined,
     expectedSha256: request.expectedSha256,
     patchStrategy: request.patchStrategy,
     preview: request.preview,
+    sql: request.sql,
   });
 }
 
@@ -654,6 +774,8 @@ interface PreparedPatch {
   receiptToken?: string;
   result?: Record<string, unknown>;
   sourceSha256?: string;
+  sqlBinding?: PatchSqlBinding;
+  sqlDecision?: SqlPatchDecision;
 }
 
 async function preflightPatchBatch(
@@ -667,6 +789,7 @@ async function preflightPatchBatch(
       filePath,
       request.previewReceipt,
     );
+    verifyReceiptSql(receipt, request);
     await requireExpectedHash(request.expectedSha256, "file_patch");
     verifyExpectedHash(request.expectedSha256, receipt.sourceSha256);
     return {
@@ -674,6 +797,10 @@ async function preflightPatchBatch(
       chattr: receipt.chattr,
       mode: (await lstat(filePath)).mode,
       receiptToken: request.previewReceipt,
+      sqlBinding: receipt.sqlBinding,
+      sqlDecision: receipt.sqlDecision
+        ? structuredClone(receipt.sqlDecision)
+        : undefined,
       result: {
         filePath,
         matches: receipt.metadata.matches,
@@ -694,6 +821,8 @@ async function preflightPatchBatch(
     candidate: prepared.candidate,
     chattr: request.chattr,
     mode: context.mode,
+    sqlBinding: context.sqlBinding,
+    sqlDecision: prepared.sql,
     result: {
       ...prepared.metadata,
       filePath,
@@ -718,11 +847,24 @@ async function applyPreparedPatch(
     prepared.sourceSha256 === undefined
   )
     throw new Error("Patch batch preflight did not produce a commit candidate");
-  const candidate = await formatCandidate(
+  const formatted = await formatCandidate(
     filePath,
     prepared.candidate,
     await inspectFileCapabilities(filePath),
+    prepared.sqlBinding,
+    // A receipt crosses operations and must recheck the current validator.
+    prepared.receiptToken ? undefined : prepared.sqlDecision,
   );
+  const candidate = formatted.candidate;
+  if (
+    prepared.receiptToken &&
+    JSON.stringify(formatted.sql?.validation.validator) !==
+      JSON.stringify(prepared.sqlDecision?.validation.validator)
+  )
+    throw receiptError(
+      "preview_receipt_sql_changed",
+      "SQL validator identity changed; preview the patch again",
+    );
   if (prepared.receiptToken)
     await validatePreviewReceipt(filePath, prepared.receiptToken);
   await commit(
@@ -734,7 +876,11 @@ async function applyPreparedPatch(
     true,
     beforeReplace,
   );
-  return { ...prepared.result, sha256: sha256(candidate) };
+  return {
+    ...prepared.result,
+    sha256: sha256(candidate),
+    ...(formatted.sql ? { sql: structuredClone(formatted.sql) } : {}),
+  };
 }
 
 interface PreparedWrite {
@@ -1082,7 +1228,7 @@ async function processFileBatch<T, Prepared>(
   options: FileLockOptions = {},
 ): Promise<Record<string, unknown>> {
   options.signal?.throwIfAborted();
-  const entries = Object.entries(requests);
+  const entries = Object.entries(structuredClone(requests));
   if (entries.length < 1 || entries.length > FILE_READ_MAX_BATCH)
     throw new Error(
       `${tool} requires between 1 and ${FILE_READ_MAX_BATCH} files`,

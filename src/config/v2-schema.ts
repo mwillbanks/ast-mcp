@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { sqlAssistanceOptionsSchema } from "../runtime/sql-options-schema";
 import {
   cliSchema,
   createFormatterSchema,
@@ -135,6 +136,7 @@ export const fileV2Schema = z
               .array(z.enum(["ast", "aider_block"]))
               .max(2)
               .optional(),
+            sql: sqlAssistanceOptionsSchema.optional(),
           })
           .strict()
           .optional(),

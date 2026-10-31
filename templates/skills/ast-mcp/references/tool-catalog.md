@@ -70,13 +70,13 @@ Text defaults to 100 lines, with limits of 1,000 lines and 1 MiB.
 Use up to 100 source `symbols` or structured-document RFC 6901 `selectors`, never both.
 Structured documents include JSON, JSONC, TOML, and YAML.
 
-| Tool          | Each keyed file entry                                                                                |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `file_write`  | Required `content`; optional `expectedSha256`, `chattr`.                                             |
-| `file_patch`  | `expectedSha256`, `patchStrategy`, `astRules`, `aiderBlocks`, `chattr`, `preview`, `previewReceipt`. |
-| `file_rename` | Required `destination`; optional `expectedSha256`.                                                   |
-| `file_chattr` | Required `chattr`; optional `expectedSha256`.                                                        |
-| `file_delete` | Optional `expectedSha256`, `forceReferences`.                                                        |
+| Tool          | Each keyed file entry                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `file_write`  | Required `content`; optional `expectedSha256`, `chattr`.                                                     |
+| `file_patch`  | `expectedSha256`, `patchStrategy`, `astRules`, `aiderBlocks`, `sql?`, `chattr`, `preview`, `previewReceipt`. |
+| `file_rename` | Required `destination`; optional `expectedSha256`.                                                           |
+| `file_chattr` | Required `chattr`; optional `expectedSha256`.                                                                |
+| `file_delete` | Optional `expectedSha256`, `forceReferences`.                                                                |
 
 Existing files require fresh SHA-256 values by default.
 A supplied hash always remains enforced, even when configuration makes hashes optional.
@@ -249,6 +249,38 @@ It checks release currency and never grants filesystem access or persists approv
 Both tools are available before filesystem approval.
 Load [diagnostics.md](diagnostics.md) for version status, deadlines, and host recovery.
 
+## Optional SQL candidate validation
+
+`file_patch` accepts optional `sql` on each path-keyed file entry:
+
+```json
+{
+  "files": {
+    "/repo/migration.sql": {
+      "expectedSha256": "<fresh SHA-256>",
+      "patchStrategy": "aider_block",
+      "aiderBlocks": [{ "search": "old", "replace": "new" }],
+      "sql": {
+        "policy": "advisory",
+        "dialect": "postgresql",
+        "version": "18",
+        "variant": "sql"
+      }
+    }
+  }
+}
+```
+
+The SQL object accepts optional `policy`, `dialect`, `version`, and `variant`. Policies are `advisory`, `required`, and `skip`. The same object is available at `config_core.files.patch.sql` as persistent defaults. `config_core.target` is `project` or `global` (project by default); configuration edits follow normal approval rules.
+
+A dialect setting alone does not invoke validation. Default advisory policy with no per-file SQL selection means `not_requested`. Required policy requests validation even when no dialect is selected; missing or unsupported validation blocks that patch. A per-file `policy: "skip"` overrides required defaults for that operation. `skip` makes no syntax claim.
+
+The current adapter supports PostgreSQL 18 core SQL with variant `sql` only. Omitted version/variant select this adapter default. It does not validate `DO`, `CREATE FUNCTION`, PL/pgSQL bodies, database catalogs, execution, or extensions. Other dialects and PostgreSQL extensions can still be patched with advisory results or an explicit skip.
+
+The adapter accepts at most 512 KiB per SQL source and 2 MiB of outstanding source bytes. Eight requests, including the active request, is the total capacity; one worker runs at a time and up to seven requests wait. A worker stops after five seconds. Outcomes are `not_requested`, `skipped`, `valid`, `invalid`, `unsupported`, or `unavailable`; bounded diagnostics include a sanitized message and optional line, column, or offset. Advisory outcomes do not block. Required policy allows only `valid`.
+
+`run({ lang: "sql" })` performs generic structural SQL matching; it does not select a database dialect or replace this optional validator. New `file_patch` operations require an explicit `patchStrategy`; receipt commits intentionally omit operations and strategy. The tool never falls back from AST to Aider implicitly.
+
 ## MCP protocol methods
 
 These methods are not callable tools.
@@ -278,6 +310,7 @@ Use `resources/read` with exact resource URIs from the returned manifest.
 Honor pagination, `ttlMs`, `cacheScope`, advertised byte sizes, and SHA-256 digests.
 Do not infer resource paths or use directory reads.
 Protocol 2026-07-28 clients supply required protocol-version and client-capabilities request metadata.
+
 Legacy clients retain ordinary tools.
 
 The host activates the returned skill. Resource retrieval alone does not activate it.

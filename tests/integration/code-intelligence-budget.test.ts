@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,6 +11,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import registerCodeIntelligence from "../../src/tools/code-intelligence";
 import { spawnHttpMcpProcess } from "../support/live-process";
+import { removeTempDirectory } from "../support/temp-directory";
 
 const repository = path.resolve(import.meta.dir, "../..");
 const startupTimeoutMs = 15_000;
@@ -299,7 +300,7 @@ for (const transportKind of ["stdio", "http"] as const) {
     } finally {
       await client.close();
       await stop?.();
-      await rm(root, { recursive: true, force: true });
+      await removeTempDirectory(root);
     }
   }, 35_000);
 }

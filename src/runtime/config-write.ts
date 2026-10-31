@@ -16,6 +16,10 @@ import type { CliOutputFormat } from "../config/schema-common";
 import { grantUnrestrictedFilesystem } from "./approval";
 import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
+import {
+  mergeSqlAssistanceDefaults,
+  type SqlAssistanceOptions,
+} from "./sql-assistance";
 
 export type ConfigTarget = "global" | "project";
 
@@ -35,6 +39,7 @@ export interface ConfigCorePatch {
         "diff-match-patch" | "exact" | "relative-indentation" | "whitespace"
       >;
       strategies?: Array<"aider_block" | "ast">;
+      sql?: SqlAssistanceOptions;
     };
     read?: { modes?: Array<"ast" | "text"> };
   };
@@ -217,6 +222,22 @@ function removeFormatterTables(source: string): string {
     .join("\n");
 }
 
+function applySqlDefaults(source: string, patch: SqlAssistanceOptions): string {
+  const parsed = Bun.TOML.parse(source) as {
+    files?: { patch?: { sql?: SqlAssistanceOptions } };
+  };
+  const resolved = mergeSqlAssistanceDefaults(patch, parsed.files?.patch?.sql);
+  let next = removeTomlSectionKey(source, "files.patch", "sql");
+  for (const key of ["dialect", "policy", "variant", "version"] as const) {
+    const value = resolved[key];
+    next =
+      value === undefined
+        ? removeTomlSectionKey(next, "files.patch.sql", key)
+        : setTomlSectionKey(next, "files.patch.sql", key, value);
+  }
+  return next;
+}
+
 function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   let next = source;
   next = applyObjectKeys(next, "cli.output", patch.cli?.output);
@@ -228,7 +249,12 @@ function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   });
   next = applyObjectKeys(next, "safety.hook", patch.safety?.hook);
   next = applyObjectKeys(next, "files.read", patch.files?.read);
-  next = applyObjectKeys(next, "files.patch", patch.files?.patch);
+  next = applyObjectKeys(next, "files.patch", {
+    aider_matchers: patch.files?.patch?.aider_matchers,
+    strategies: patch.files?.patch?.strategies,
+  });
+  if (patch.files?.patch?.sql !== undefined)
+    next = applySqlDefaults(next, patch.files.patch.sql);
   if (patch.formatting?.formatters !== undefined)
     next = removeFormatterTables(next);
   if (patch.formatting?.dprint_config === null)

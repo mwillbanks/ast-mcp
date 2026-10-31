@@ -18,6 +18,10 @@ import {
   canonicalPathWithin,
 } from "../runtime/path-utils";
 import {
+  mergeSqlAssistanceDefaults,
+  type SqlAssistanceOptions,
+} from "../runtime/sql-assistance";
+import {
   cliSchema,
   type CliOutputFormat,
   createFormatterSchema,
@@ -84,6 +88,7 @@ export interface ResolvedConfig {
         "exact" | "whitespace" | "relative-indentation" | "diff-match-patch"
       >;
       strategies: Array<"ast" | "aider_block">;
+      sql?: SqlAssistanceOptions;
     };
     read: { modes: Array<"ast" | "text"> };
   };
@@ -210,6 +215,7 @@ interface InternalConfig {
         "exact" | "whitespace" | "relative-indentation" | "diff-match-patch"
       >;
       strategies?: Array<"ast" | "aider_block">;
+      sql?: SqlAssistanceOptions;
     };
     read?: { modes?: Array<"ast" | "text"> };
   };
@@ -679,6 +685,10 @@ const leaves = [
   "files.read.modes",
   "files.patch.strategies",
   "files.patch.aider_matchers",
+  "files.patch.sql.dialect",
+  "files.patch.sql.policy",
+  "files.patch.sql.variant",
+  "files.patch.sql.version",
   "formatting.dprint_config",
   "formatting.enabled",
   "formatting.fallback",
@@ -751,7 +761,14 @@ function mergeFileMethods(
 ): void {
   if (!incoming) return;
   result.files = {
-    patch: { ...previous?.patch, ...incoming.patch },
+    patch: {
+      ...previous?.patch,
+      ...incoming.patch,
+      sql: mergeSqlAssistanceDefaults(
+        incoming.patch?.sql,
+        previous?.patch?.sql,
+      ),
+    },
     read: { ...previous?.read, ...incoming.read },
   };
 }
@@ -991,10 +1008,15 @@ type ConfigLayer = {
 
 function configProvenance(layers: ConfigLayer[]) {
   const provenance: ResolvedConfig["provenance"] = {};
-  for (const dotted of leaves)
-    for (const layer of layers)
-      if (leaf(layer.value, dotted) !== undefined)
+  let effective: InternalConfig = {};
+  for (const layer of layers) {
+    effective = merge(effective, layer.value);
+    for (const dotted of leaves) {
+      if (leaf(effective, dotted) === undefined) delete provenance[dotted];
+      else if (leaf(layer.value, dotted) !== undefined)
         provenance[dotted] = layer.name;
+    }
+  }
   return provenance;
 }
 
@@ -1031,6 +1053,7 @@ function resolvedFiles(value: InternalConfig): ResolvedConfig["files"] {
         "diff-match-patch",
       ],
       strategies: value.files?.patch?.strategies ?? ["ast", "aider_block"],
+      sql: { ...value.files?.patch?.sql },
     },
     read: { modes: value.files?.read?.modes ?? ["ast", "text"] },
   };

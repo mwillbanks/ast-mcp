@@ -29,6 +29,7 @@ interface RegistryEntry {
   fingerprintRoles?: Record<string, FingerprintRole>;
   promise?: Promise<Readonly<ConfigSnapshot>>;
   reloadTimer?: ReturnType<typeof setTimeout>;
+  reloadForce?: boolean;
   snapshot?: Readonly<ConfigSnapshot>;
   watchers: FSWatcher[];
 }
@@ -223,6 +224,49 @@ async function fingerprints(
   };
 }
 
+function sameFingerprints(
+  left: Record<string, string>,
+  right: Record<string, string>,
+): boolean {
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => left[key] === right[key])
+  );
+}
+
+function configurationIdentity(
+  config: Readonly<ResolvedConfig> | undefined,
+): string {
+  return JSON.stringify(config ? { ...config, generation: 0 } : null);
+}
+
+async function stableResolution(entry: RegistryEntry) {
+  let previous = entry.snapshot?.config;
+  for (let attempt = 0; ; attempt += 1) {
+    const before = await fingerprints(previous, entry.options);
+    clearConfigCache();
+    let resolved: ResolvedConfig | undefined;
+    let error: string | undefined;
+    try {
+      resolved = await resolveConfig(entry.options);
+    } catch (failure) {
+      error = failure instanceof Error ? failure.message : String(failure);
+    }
+    const collected = await fingerprints(resolved ?? previous, entry.options);
+    if (sameFingerprints(before.values, collected.values))
+      return { collected, error, resolved };
+    if (attempt >= 2)
+      return {
+        collected,
+        error:
+          "ast-mcp configuration changed during resolution; run config_status again",
+        resolved: undefined,
+      };
+    previous = resolved ?? previous;
+  }
+}
+
 export class ConfigRegistry {
   readonly #entries = new Map<string, RegistryEntry>();
   readonly #reconcileTimer: ReturnType<typeof setInterval>;
@@ -282,14 +326,13 @@ export class ConfigRegistry {
     const entry = this.#entries.get(key);
     if (Object.keys(options).length === 0) {
       for (const [entryKey, entryValue] of this.#entries)
-        this.#queueReload(entryKey, entryValue);
-    } else if (entry) this.#schedule(key, entry);
+        this.#queueReload(entryKey, entryValue, true);
+    } else if (entry) this.#schedule(key, entry, true);
   }
   async reload(): Promise<Array<Readonly<ConfigSnapshot>>> {
-    this.invalidate();
     return Promise.all(
-      [...this.#entries.values()].flatMap((entry) =>
-        entry.promise ? [entry.promise] : [],
+      [...this.#entries.entries()].map(([key, entry]) =>
+        this.#queueReload(key, entry),
       ),
     );
   }
@@ -320,17 +363,27 @@ export class ConfigRegistry {
     }
     this.#entries.clear();
   }
-  #queueReload(key: string, entry: RegistryEntry): void {
+  #queueReload(
+    key: string,
+    entry: RegistryEntry,
+    force = false,
+  ): Promise<Readonly<ConfigSnapshot>> {
+    if (entry.reloadTimer) clearTimeout(entry.reloadTimer);
+    entry.reloadTimer = undefined;
+    const forced = force || entry.reloadForce === true;
+    entry.reloadForce = false;
     const previous = entry.promise;
     const next = (
       previous ? previous.catch(() => undefined) : Promise.resolve()
-    ).then(() => this.#reload(key, entry));
+    ).then(() => this.#reload(key, entry, forced));
     entry.promise = next;
     void next.catch(() => undefined);
+    return next;
   }
 
-  #schedule(key: string, entry: RegistryEntry): void {
+  #schedule(key: string, entry: RegistryEntry, force = false): void {
     if (entry.reloadTimer) clearTimeout(entry.reloadTimer);
+    entry.reloadForce = force || entry.reloadForce === true;
     entry.reloadTimer = setTimeout(() => {
       this.#queueReload(key, entry);
     }, this.debounceMs);
@@ -339,39 +392,35 @@ export class ConfigRegistry {
   async #reload(
     key: string,
     entry: RegistryEntry,
+    force = false,
   ): Promise<Readonly<ConfigSnapshot>> {
-    clearConfigCache();
-    const generation = (entry.snapshot?.generation ?? 0) + 1;
-    let snapshot: Readonly<ConfigSnapshot>;
-    try {
-      const resolved = await resolveConfig(entry.options);
-      const config = Object.freeze({ ...resolved, generation });
-      const collected = await fingerprints(resolved, entry.options);
-      entry.fingerprintRoles = collected.roles;
-      snapshot = Object.freeze({
-        config,
-        fingerprints: collected.values,
-        generation,
-        healthy: true,
-        key,
-        loadedAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      const collected = await fingerprints(
-        entry.snapshot?.config,
-        entry.options,
-      );
-      entry.fingerprintRoles = collected.roles;
-      snapshot = Object.freeze({
-        config: entry.snapshot?.config,
-        error: error instanceof Error ? error.message : String(error),
-        fingerprints: collected.values,
-        generation,
-        healthy: false,
-        key,
-        loadedAt: new Date().toISOString(),
-      });
-    }
+    const { collected, error, resolved } = await stableResolution(entry);
+    const previous = entry.snapshot;
+    const healthy = resolved !== undefined;
+    entry.fingerprintRoles = collected.roles;
+    if (
+      !force &&
+      previous &&
+      previous.healthy === healthy &&
+      previous.error === error &&
+      sameFingerprints(previous.fingerprints, collected.values) &&
+      (!resolved ||
+        configurationIdentity(previous.config) ===
+          configurationIdentity(resolved))
+    )
+      return previous;
+    const generation = (previous?.generation ?? 0) + 1;
+    const snapshot = Object.freeze({
+      config: resolved
+        ? Object.freeze({ ...resolved, generation })
+        : previous?.config,
+      ...(error === undefined ? {} : { error }),
+      fingerprints: collected.values,
+      generation,
+      healthy,
+      key,
+      loadedAt: new Date().toISOString(),
+    });
     entry.snapshot = snapshot;
     if (!entry.promise) entry.promise = Promise.resolve(snapshot);
     if (this.#entries.get(key) === entry) this.#watch(key, entry, snapshot);

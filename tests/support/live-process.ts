@@ -21,11 +21,27 @@ function capturedOutput(stdout: string[], stderr: string[]) {
   return output || "no process output";
 }
 
-async function drain(stream: ReadableStream<Uint8Array>, chunks: string[]) {
+interface StreamState {
+  closed: boolean;
+  failure?: { reason: unknown };
+}
+
+async function drain(
+  stream: ReadableStream<Uint8Array>,
+  chunks: string[],
+  state: StreamState,
+) {
   const decoder = new TextDecoder();
-  for await (const chunk of stream)
-    chunks.push(decoder.decode(chunk, { stream: true }));
-  chunks.push(decoder.decode());
+  try {
+    for await (const chunk of stream)
+      chunks.push(decoder.decode(chunk, { stream: true }));
+    chunks.push(decoder.decode());
+  } catch (error) {
+    state.failure = { reason: error };
+    throw error;
+  } finally {
+    state.closed = true;
+  }
 }
 
 export interface LiveProcess {
@@ -57,9 +73,17 @@ export function spawnLiveProcess(
   );
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const stdoutDrain = drain(processHandle.stdout, stdout);
-  const stderrDrain = drain(processHandle.stderr, stderr);
-  const outputDrained = Promise.all([stdoutDrain, stderrDrain]);
+  const stdoutState: StreamState = { closed: false };
+  const stderrState: StreamState = { closed: false };
+  const stdoutDrain = drain(processHandle.stdout, stdout, stdoutState);
+  const stderrDrain = drain(processHandle.stderr, stderr, stderrState);
+  const outputSettled = Promise.allSettled([stdoutDrain, stderrDrain]);
+  const outputDrained = outputSettled.then((results) => {
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+  });
+  // Readiness and teardown surface failures; observe early rejection meanwhile.
+  void outputDrained.catch(() => undefined);
   let stdoutOffset = 0;
   let stopPromise: Promise<void> | undefined;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -75,17 +99,20 @@ export function spawnLiveProcess(
     description: string,
     inspect: () => T | undefined,
     waitMs: number,
+    stream?: { name: "stdout" | "stderr"; state: StreamState },
   ) {
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
       const result = inspect();
       if (result !== undefined) return result;
-      if (processHandle.exitCode !== null) {
-        await settleOutput(deadline);
-        const finalResult = inspect();
-        if (finalResult !== undefined) return finalResult;
+      if (stream?.state.failure) throw stream.state.failure.reason;
+      if (stream?.state.closed) {
+        const reason =
+          processHandle.exitCode !== null
+            ? `the process exited with code ${processHandle.exitCode}`
+            : `${stream.name} closed`;
         throw new Error(
-          `${description} failed because the process exited with code ${processHandle.exitCode}: ${capturedOutput(stdout, stderr)}`,
+          `${description} failed because ${reason}: ${capturedOutput(stdout, stderr)}`,
         );
       }
       await Bun.sleep(10);
@@ -110,21 +137,23 @@ export function spawnLiveProcess(
           return line;
         },
         waitMs,
+        { name: "stdout", state: stdoutState },
       );
     },
     async stop() {
       stopPromise ??= (async () => {
         await terminateProcessTree(processHandle, { graceMs: 2_000 });
-        if (
-          !(await Promise.race([
-            outputDrained.then(() => true),
-            Bun.sleep(2_000).then(() => false),
-          ]))
-        ) {
+        const settled = await Promise.race([
+          outputSettled.then(() => true),
+          Bun.sleep(2_000).then(() => false),
+        ]);
+        // Failed readers cannot prove that inherited pipes or descendants closed.
+        if (!settled || stdoutState.failure || stderrState.failure) {
           await terminateProcessTree(processHandle, { force: true });
           if (
+            !settled &&
             !(await Promise.race([
-              outputDrained.then(() => true),
+              outputSettled.then(() => true),
               Bun.sleep(2_000).then(() => false),
             ]))
           )
@@ -132,9 +161,11 @@ export function spawnLiveProcess(
               `Process pipes did not close after teardown: ${capturedOutput(stdout, stderr)}`,
             );
         }
+        await outputDrained;
       })();
       await stopPromise;
     },
+    // Report leader exit with bounded capture grace; descendants may still own pipes.
     async waitForExit(waitMs = timeoutMs) {
       const deadline = Date.now() + waitMs;
       const exitCode = await waitFor(
@@ -150,6 +181,7 @@ export function spawnLiveProcess(
         `Waiting for stderr to match ${pattern}`,
         () => stderr.join("").match(pattern) ?? undefined,
         waitMs,
+        { name: "stderr", state: stderrState },
       );
     },
   };

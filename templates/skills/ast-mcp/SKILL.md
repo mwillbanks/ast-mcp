@@ -98,4 +98,10 @@ Stop on stale hashes, ambiguous matches, stale receipts, capped reads, permissio
 Reinspect the target and rebuild the operation through the supported route.
 Distinguish path policy from OS permissions. Do not broaden access without authorization.
 Change `ast-mcp.toml` through `config_core` and `config_paths`, never whole-file writers.
+
+SQL validation is optional. No SQL request means no validator call. A configured dialect alone does not trigger validation.
+Advisory results never block a safe patch. Required validation is opt-in and can be overridden per operation with `sql: { policy: "skip" }`.
+Generic `run` SQL matching is not dialect validation. Select the patch strategy explicitly; AST failure never triggers Aider automatically.
+Read [tool-catalog.md](references/tool-catalog.md), [configuration.md](references/configuration.md), and [patch-state-machine.md](references/patch-state-machine.md) for schemas, limits, and outcomes.
+
 Host approval is required by default. Model arguments cannot grant approval.
