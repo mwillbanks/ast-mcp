@@ -35,6 +35,232 @@ async function fixture() {
   return { root, first, second };
 }
 
+test("reloading changed selections preserves unrelated and unchanged snapshots", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const base = { env: {}, home: path.join(root, "home") };
+  try {
+    const before = await registry.snapshot({ ...base, cwd: first });
+    const unrelated = await registry.snapshot({ ...base, cwd: second });
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reload();
+    const changed = await registry.snapshot({ ...base, cwd: first });
+    expect(changed.generation).toBeGreaterThan(before.generation);
+    expect(changed.config!.telemetry.enabled).toBeFalse();
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+    await registry.reload();
+    expect(await registry.snapshot({ ...base, cwd: first })).toBe(changed);
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+    registry.invalidate();
+    const revoked = await registry.snapshot({ ...base, cwd: second });
+    expect(revoked.generation).toBeGreaterThan(unrelated.generation);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit reload absorbs pending debounce and delayed duplicate notifications", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  const originalTimeout = globalThis.setTimeout;
+  const scheduled: Array<() => void> = [];
+  const timers = spyOn(globalThis, "setTimeout");
+  timers.mockImplementation(((callback: () => void, delay?: number) => {
+    if (delay === 60_000) scheduled.push(callback);
+    return originalTimeout(callback, delay);
+  }) as typeof setTimeout);
+  try {
+    await registry.snapshot(options);
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reconcile();
+    expect(scheduled.length).toBeGreaterThan(0);
+    await registry.reload();
+    const fresh = await registry.snapshot(options);
+    expect(fresh.config!.telemetry.enabled).toBeFalse();
+    for (const callback of scheduled) callback();
+    expect(await registry.snapshot(options)).toBe(fresh);
+    await registry.reconcile();
+    await registry.reload();
+    expect(await registry.snapshot(options)).toBe(fresh);
+  } finally {
+    registry.close();
+    timers.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("overlapping reloads observe updates made during an earlier resolution", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  const configPath = path.join(first, "ast-mcp.toml");
+  const originalStat = fsPromises.stat;
+  let intercept = false;
+  let resume!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const metadata = spyOn(fsPromises, "stat");
+  metadata.mockImplementation((async (
+    ...args: Parameters<typeof fsPromises.stat>
+  ) => {
+    const result = await Reflect.apply(originalStat, fsPromises, args);
+    if (intercept && String(args[0]) === configPath) {
+      intercept = false;
+      entered();
+      await gate;
+    }
+    return result;
+  }) as typeof fsPromises.stat);
+  try {
+    const initial = await registry.snapshot(options);
+    await writeFile(configPath, "version = 2\n[telemetry]\nenabled = false\n");
+    intercept = true;
+    const earlier = registry.reload();
+    await reached;
+    await writeFile(
+      configPath,
+      'version = 2\n[telemetry]\nenabled = true\n[files.patch]\naider_matchers = ["exact"]\n',
+    );
+    const later = registry.reload();
+    resume();
+    await Promise.all([earlier, later]);
+    const current = await registry.snapshot(options);
+    expect(current.healthy).toBeTrue();
+    expect(current.generation).toBeGreaterThan(initial.generation);
+    expect(current.config!.telemetry.enabled).toBeTrue();
+    expect(current.config!.files.patch.aiderMatchers).toEqual(["exact"]);
+  } finally {
+    resume();
+    registry.close();
+    metadata.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reload cannot certify fingerprints newer than its parsed configuration", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  const configPath = path.join(first, "ast-mcp.toml");
+  const originalFile = Bun.file;
+  let resume!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let intercept = false;
+  let mutateEachRead = false;
+  let mutations = 0;
+  const files = spyOn(Bun, "file");
+  files.mockImplementation(((...args: Parameters<typeof Bun.file>) => {
+    const file = Reflect.apply(originalFile, Bun, args);
+    if ((!intercept && !mutateEachRead) || String(args[0]) !== configPath)
+      return file;
+    intercept = false;
+    return new Proxy(file, {
+      get(target, key) {
+        if (key === "text")
+          return async () => {
+            const parsedSource = await target.text();
+            if (mutateEachRead) {
+              mutations += 1;
+              await writeFile(
+                configPath,
+                `version = 2\n#${"x".repeat(mutations)}\n`,
+              );
+            } else {
+              entered();
+              await gate;
+            }
+            return parsedSource;
+          };
+        return Reflect.get(target, key, target);
+      },
+    });
+  }) as typeof Bun.file);
+  try {
+    await registry.snapshot(options);
+    await writeFile(configPath, "version = 2\n[telemetry]\nenabled = false\n");
+    intercept = true;
+    const pending = registry.reload();
+    await reached;
+    await writeFile(
+      configPath,
+      'version = 2\n[telemetry]\nenabled = true\n[files.patch]\naider_matchers = ["exact"]\n',
+    );
+    resume();
+    await pending;
+    const current = await registry.snapshot(options);
+    expect(current.healthy).toBeTrue();
+    expect(current.config!.telemetry.enabled).toBeTrue();
+    expect(current.config!.files.patch.aiderMatchers).toEqual(["exact"]);
+    await registry.reconcile();
+    await registry.reload();
+    expect((await registry.snapshot(options)).generation).toBe(
+      current.generation,
+    );
+    mutateEachRead = true;
+    await registry.reload();
+    expect((await registry.snapshot(options)).healthy).toBeFalse();
+    expect(mutations).toBe(3);
+    await expect(registry.get(options)).rejects.toThrow(
+      "changed during resolution",
+    );
+    mutateEachRead = false;
+    await registry.reload();
+    expect((await registry.snapshot(options)).healthy).toBeTrue();
+  } finally {
+    resume();
+    registry.close();
+    files.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("manual reload revalidates dependency health with unchanged configuration fingerprints", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  const formatter = path.join(first, "dprint.json");
+  try {
+    await writeFile(formatter, "{}");
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      'version = 2\n[formatting]\nenabled = true\nfallback = "dprint"\n',
+    );
+    const initial = await registry.snapshot(options);
+    expect(initial.healthy).toBeTrue();
+    await writeFile(formatter, "[");
+    await registry.reload();
+    const invalid = await registry.snapshot(options);
+    expect(invalid.fingerprints).toEqual(initial.fingerprints);
+    expect(invalid.healthy).toBeFalse();
+    await expect(registry.get(options)).rejects.toThrow("dprint");
+    await writeFile(formatter, "{}");
+    await registry.reload();
+    expect((await registry.snapshot(options)).healthy).toBeTrue();
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ambient environment changes cannot redirect an existing registry identity during invalidation", async () => {
   const { root, first } = await fixture();
   const registry = new ConfigRegistry();
