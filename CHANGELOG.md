@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.7.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.6...ast-mcp-v0.7.0) (2026-10-31)
+
+### ✨ Features
+
+- **53:** add optional PostgreSQL validation ([64921bb](https://github.com/mwillbanks/ast-mcp/commit/64921bb4fa3879f74bee1ad46631438757fcf7e3))
+- **53:** add optional SQL policy contract ([5604601](https://github.com/mwillbanks/ast-mcp/commit/56046011bb0a8f48d4dda3761d1e245a344baf8d))
+- **53:** configure optional SQL assistance ([176afdb](https://github.com/mwillbanks/ast-mcp/commit/176afdb613b437083cc998254c3cf66ad8a6ea06))
+
+### 🐛 Fixes
+
+- **53:** decouple SQL patch grammar gates ([01f1416](https://github.com/mwillbanks/ast-mcp/commit/01f14162cb416b180a4d9c637da3c1b5e1c7ed69))
+- **53:** make SQL validation optional ([#60](https://github.com/mwillbanks/ast-mcp/issues/60)) ([67ed932](https://github.com/mwillbanks/ast-mcp/commit/67ed932c50f7bfab89764adae53f80ade8ac6762))
+- **53:** stabilize configuration reloads ([fbdffec](https://github.com/mwillbanks/ast-mcp/commit/fbdffecf4deb3d7c441efa5a6f3543522c173f8c))
+- **57:** diagnose host approval failures ([#58](https://github.com/mwillbanks/ast-mcp/issues/58)) ([a272cdd](https://github.com/mwillbanks/ast-mcp/commit/a272cdd8da46777078c14967b25070c21f6e5075))
+
+### 📚 Documentation
+
+- **53:** explain optional SQL assistance ([5fad2d8](https://github.com/mwillbanks/ast-mcp/commit/5fad2d89af39e4129b0ddd4dabcb91a5cf67a13d))
+- **53:** qualify optional SQL assistance ([9aacbe4](https://github.com/mwillbanks/ast-mcp/commit/9aacbe464a1a840e473e514a199c262c9c6927d9))
+
+### 🧪 Tests
+
+- **53:** clarify bounded SQL validation ([8c4253e](https://github.com/mwillbanks/ast-mcp/commit/8c4253e0cc1273a3543ef2e53965837058730f0c))
+- **53:** cover SQL protocol and packages ([f51c44a](https://github.com/mwillbanks/ast-mcp/commit/f51c44ac31fdcfcfde4ed29e4d25f91a1a7c5ccc))
+- **53:** make EOF fixtures portable ([80b84e5](https://github.com/mwillbanks/ast-mcp/commit/80b84e5d380c296e11dafd9c9723cbe4ccf7212b))
+- **53:** preserve process stream lifetimes ([1be5a56](https://github.com/mwillbanks/ast-mcp/commit/1be5a564b9826a359e4784e8cdad223a14074fe6))
+- **53:** share bounded fixture cleanup ([52de060](https://github.com/mwillbanks/ast-mcp/commit/52de0609a24145c224dc52511de91a6758f88396))
+- **53:** stabilize process fixture cleanup ([#61](https://github.com/mwillbanks/ast-mcp/issues/61)) ([c375ea7](https://github.com/mwillbanks/ast-mcp/commit/c375ea703aca4ca36a3c8bc4167f0a66caa9e020))
+- **53:** verify teardown through pipe closure ([5f9f3a3](https://github.com/mwillbanks/ast-mcp/commit/5f9f3a3a8f59697889d3a854f8af0b1a9a54cbe7))
+
 ## [0.6.6](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.5...ast-mcp-v0.6.6) (2026-10-29)
 
 ### 🚦 Automation
