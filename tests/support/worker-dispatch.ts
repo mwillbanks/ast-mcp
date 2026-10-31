@@ -1,7 +1,10 @@
 import { spyOn } from "bun:test";
 import { Worker } from "node:worker_threads";
 
-/** Observe an actual worker start; optionally withhold its payload until lifecycle teardown. */
+/**
+ * Observe an actual worker start; optionally withhold its payload until lifecycle teardown.
+ * Assert drained resource accounting before cleanup close, which could otherwise mask leaks.
+ */
 export function observeWorkerDispatch(options: { holdStart?: boolean } = {}) {
   let started!: (value: { worker: Worker; id: number }) => void;
   const dispatched = new Promise<{ worker: Worker; id: number }>((resolve) => {

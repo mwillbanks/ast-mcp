@@ -548,15 +548,15 @@ describe("infrastructure language adapters", () => {
         if (operation === "close") await closeInfraLanguageWorker();
         if (operation === "interrupt") await interruptInfraLanguageWorker();
         expect(await pending).toMatchObject({ code });
+        await drainInfraLanguageWorker();
+        expect(infraWorkerStats()).toEqual({
+          outstandingBytes: 0,
+          pendingRequests: 0,
+        });
       } finally {
         dispatch.restore();
         await closeInfraLanguageWorker();
       }
-      await drainInfraLanguageWorker();
-      expect(infraWorkerStats()).toEqual({
-        outstandingBytes: 0,
-        pendingRequests: 0,
-      });
     }
     handleInfraWorkerError(null as never, new Error("stale"));
     rejectPendingInfraRequests("no pending requests");

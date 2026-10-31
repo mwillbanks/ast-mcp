@@ -537,11 +537,15 @@ describe("systems language WASM adapters", () => {
         if (operation === "close") await closeSystemsLanguageWorker();
         if (operation === "interrupt") await interruptSystemsLanguageWorker();
         expect(await pending).toMatchObject({ code });
+        await drainSystemsLanguageWorker();
+        expect(systemsWorkerStats()).toEqual({
+          outstandingBytes: 0,
+          pendingRequests: 0,
+        });
       } finally {
         dispatch.restore();
         await closeSystemsLanguageWorker();
       }
-      await drainSystemsLanguageWorker();
     }
 
     const queuedRecovery = systemsLanguageAdapter("c").analyze({
