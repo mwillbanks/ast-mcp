@@ -13,10 +13,7 @@ import {
   type HistoricalJob,
   type SelectionInput,
 } from "../../scripts/testing/ci-selection.ts";
-import {
-  selectedTestFiles,
-  runTestShard,
-} from "../../scripts/testing/test-shard.ts";
+import { selectedTestFiles } from "../../scripts/testing/test-shard.ts";
 
 const oid = (character: string) => character.repeat(40);
 const a = "tests/runtime/a.test.ts",
@@ -694,30 +691,6 @@ describe("conservative CI scope selection", () => {
       '["tests/missing.test.ts"]',
     ])
       expect(() => selectedTestFiles(value, files)).toThrow();
-    const spawn = spyOn(Bun, "spawnSync").mockReturnValue({
-      exitCode: 0,
-    } as ReturnType<typeof Bun.spawnSync>);
-    const previous = process.env.AST_MCP_SELECTED_TESTS;
-    process.env.AST_MCP_SELECTED_TESTS = JSON.stringify([
-      "tests/tooling/ci-selection.test.ts",
-    ]);
-    try {
-      expect(runTestShard(["--selected"], process.cwd(), "ignore")).toBe(0);
-      expect(spawn.mock.calls[0]?.[0]).toMatchObject({
-        cmd: [
-          process.execPath,
-          "test",
-          "--dots",
-          "--max-concurrency=1",
-          "--timeout=30000",
-          "tests/tooling/ci-selection.test.ts",
-        ],
-      });
-    } finally {
-      spawn.mockRestore();
-      if (previous === undefined) delete process.env.AST_MCP_SELECTED_TESTS;
-      else process.env.AST_MCP_SELECTED_TESTS = previous;
-    }
   });
 });
 test("GitHub history requests are bounded, read-only and fail closed on API/provenance ambiguity", async () => {

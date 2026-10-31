@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { $ } from "bun";
 
 import { discoverTestFiles } from "../../scripts/testing/test-shard.ts";
 type Step = {
+  name?: string;
   uses?: string;
   run?: string;
   if?: string;
@@ -57,6 +61,89 @@ function job(source: Workflow, name: string): Job {
   return result;
 }
 describe("executed CI acceptance contracts", () => {
+  test("declared qualifiers use package test policy and select the intended behavior", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ast-mcp-workflow-tests-"));
+    const marker = join(root, "executed");
+    const manifest = (await Bun.file(
+      new URL("../../package.json", import.meta.url),
+    ).json()) as { scripts: { test: string } };
+    const cli = "CLI mcp subcommand remains alive for a stdio handshake";
+    const native = "calls native code intelligence through the server";
+    const fixture = (names: string[]) =>
+      `import { expect, test } from "bun:test";
+import { appendFileSync } from "node:fs";
+${names
+  .map(
+    (name) => `test(${JSON.stringify(name)}, () => {
+expect(process.env.AST_MCP_FIXTURE_TEST_POLICY).toBe("active");
+appendFileSync(process.env.AST_MCP_FIXTURE_TEST_MARKER!, ${JSON.stringify(name)});
+});`,
+  )
+  .join("\n")}`;
+    try {
+      await Promise.all([
+        mkdir(join(root, "tests/integration"), { recursive: true }),
+        mkdir(join(root, "tests/tooling"), { recursive: true }),
+        writeFile(
+          join(root, "package.json"),
+          JSON.stringify({
+            scripts: {
+              test: `AST_MCP_FIXTURE_TEST_POLICY=active ${manifest.scripts.test}`,
+            },
+          }),
+        ),
+      ]);
+      await Promise.all([
+        writeFile(
+          join(root, "tests/integration/mcp.test.ts"),
+          fixture([cli, native]) +
+            '\ntest("unrelated behavior", () => { throw new Error("qualifier filter missing"); });',
+        ),
+        writeFile(
+          join(root, "tests/tooling/package-smoke.test.ts"),
+          fixture(["packed consumer"]),
+        ),
+      ]);
+      for (const [source, jobName, stepName, expected] of [
+        [ci, "package-native", "Verify CLI MCP stdio handshake", cli],
+        [ci, "package-native", "Verify native MCP stdio handshake", native],
+        [release, "validate", "Mandatory CLI MCP stdio handshake", cli],
+        [
+          release,
+          "validate",
+          "Mandatory native MCP stdio initialize, tools, and workspace handshake",
+          native,
+        ],
+        [
+          consumers,
+          "consumers",
+          "Qualify packed production installation",
+          "packed consumer",
+        ],
+      ] as const) {
+        const step = job(source, jobName).steps?.find(
+          (s) => s.name === stepName,
+        );
+        if (!step?.run) throw new Error(`Missing qualifier: ${stepName}`);
+        await writeFile(marker, "");
+        const result = await $`${{ raw: step.run }}`
+          .cwd(root)
+          .env({ ...process.env, AST_MCP_FIXTURE_TEST_MARKER: marker })
+          .quiet()
+          .nothrow();
+        expect(result.exitCode).toBe(0);
+        expect(await readFile(marker, "utf8")).toBe(expected);
+      }
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+    }
+  });
+
   function fullOutputs(): Record<string, string> {
     const inputs = (
       consumers.on.workflow_call as { inputs: { matrix: { default: string } } }
@@ -632,10 +719,10 @@ describe("release workflow contracts", () => {
     expect(configure?.run).toContain("AST_MCP_CONSUMER_BUN=");
     expect(configure?.run).toContain("AST_MCP_PACKAGE_ARCHIVE=");
     expect(configure?.run).toContain("Consumer Bun version mismatch");
-    const smoke = steps.find((s) => s.run?.startsWith("bun test"));
-    expect(smoke?.run).toBe(
-      "bun test tests/tooling/package-smoke.test.ts --bail",
+    const smoke = steps.find(
+      (s) => s.name === "Qualify packed production installation",
     );
+    expect(smoke?.run).toBeDefined();
     expect(smoke?.env?.AST_MCP_SKIP_PACKAGE_SMOKE).toBe("0");
     expect(smoke?.env?.AST_MCP_CONSUMER_INSTALLER).toBe(
       "${{ matrix.installer }}",
@@ -664,12 +751,7 @@ describe("release workflow contracts", () => {
       "macos-15",
       "windows-2025",
     ]);
-    const sourceChecks = job(release, "validate").steps ?? [];
-    expect(
-      sourceChecks.filter((s) =>
-        s.run?.startsWith("bun test tests/integration/mcp.test.ts"),
-      ).length,
-    ).toBe(2);
+
     for (const name of ["validate", "build"])
       expect(
         job(release, name).steps?.find((s) =>

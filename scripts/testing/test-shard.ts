@@ -80,14 +80,7 @@ export function runTestShard(
     );
   const result = Bun.spawnSync({
     cwd: root,
-    cmd: [
-      process.execPath,
-      "test",
-      "--dots",
-      "--max-concurrency=1",
-      "--timeout=30000",
-      ...files,
-    ],
+    cmd: [process.execPath, "run", "test", ...files],
     stderr: output,
     stdin: "inherit",
     stdout: output,

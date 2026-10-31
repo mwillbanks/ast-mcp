@@ -71,4 +71,4 @@ jobs:
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "0"
           AST_MCP_CONSUMER_INSTALLER: ${{ matrix.installer }}
-        run: bun test tests/tooling/package-smoke.test.ts --bail
+        run: bun run test tests/tooling/package-smoke.test.ts --bail
