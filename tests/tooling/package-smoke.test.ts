@@ -149,7 +149,7 @@ async function exercisePackage(
     directory: fixture,
     storage: { kind: "explicit", path: storagePath },
   });
-  const id = workspaceId(opened.structuredContent);
+  let id = workspaceId(opened.structuredContent);
   const mapped = toolData<{
     files: Array<{ symbols: Array<{ name: string }> }>;
     scan: { parsed: number; omitted: number };
@@ -208,6 +208,84 @@ async function exercisePackage(
   );
   expect(astRead.files[0]?.resolvedMode).toBe("ast");
   expect(JSON.stringify(astRead)).toContain("publish");
+
+  const sqlFile = `${writable}.sql`;
+  const sqlHash = toolData<{ files: Array<{ sha256: string }> }>(
+    await callPackageTool(client, "file_hash", {
+      filePaths: [sqlFile],
+      workspaceId: id,
+    }),
+  ).files[0]!.sha256;
+  const sqlPreview = toolData<{
+    files: Record<
+      string,
+      {
+        previewReceipt: string;
+        sql: { validation: { status: string } };
+      }
+    >;
+  }>(
+    await callPackageTool(client, "file_patch", {
+      files: {
+        [sqlFile]: {
+          aiderBlocks: [{ search: "SELECT 1;", replace: "SELECT 2;" }],
+          expectedSha256: sqlHash,
+          patchStrategy: "aider_block",
+          preview: true,
+          sql: { dialect: "postgresql", policy: "required" },
+        },
+      },
+      workspaceId: id,
+    }),
+  );
+  const preparedSql = Object.values(sqlPreview.files)[0]!;
+  expect(preparedSql.sql.validation.status).toBe("valid");
+  expect(await readFile(path.join(fixture, sqlFile), "utf8")).toBe(
+    "SELECT 1;\n",
+  );
+  toolData(
+    await callPackageTool(client, "file_patch", {
+      files: {
+        [sqlFile]: {
+          expectedSha256: sqlHash,
+          previewReceipt: preparedSql.previewReceipt,
+        },
+      },
+      workspaceId: id,
+    }),
+  );
+  expect(await readFile(path.join(fixture, sqlFile), "utf8")).toBe(
+    "SELECT 2;\n",
+  );
+  id = workspaceId(
+    (
+      await callPackageTool(client, "workspace_open", {
+        directory: fixture,
+        storage: { kind: "explicit", path: storagePath },
+      })
+    ).structuredContent,
+  );
+  const changedSqlHash = toolData<{ files: Array<{ sha256: string }> }>(
+    await callPackageTool(client, "file_hash", {
+      filePaths: [sqlFile],
+      workspaceId: id,
+    }),
+  ).files[0]!.sha256;
+  const invalidSql = await callPackageTool(client, "file_patch", {
+    files: {
+      [sqlFile]: {
+        aiderBlocks: [{ search: "SELECT 2;", replace: "SELECT FROM;" }],
+        expectedSha256: changedSqlHash,
+        patchStrategy: "aider_block",
+        sql: { dialect: "postgresql", policy: "required" },
+      },
+    },
+    workspaceId: id,
+  });
+  expect(invalidSql.isError).toBeTrue();
+  expect(await readFile(path.join(fixture, sqlFile), "utf8")).toBe(
+    "SELECT 2;\n",
+  );
 
   const built = toolData<{ generation: string }>(
     await callPackageTool(client, "index", {
@@ -416,6 +494,9 @@ async function exerciseConsumer(installer: string) {
       writeFile(
         path.join(fixture, "bunfig.toml"),
         '[install]\nauto = "disable"\n',
+      ),
+      ...["stdio.txt", "http.txt", "modern.txt"].map((name) =>
+        writeFile(path.join(fixture, `${name}.sql`), "SELECT 1;\n"),
       ),
       writeFile(path.join(fixture, "stdio.txt"), "original\n"),
       writeFile(path.join(fixture, "http.txt"), "original\n"),
