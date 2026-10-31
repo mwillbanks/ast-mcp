@@ -17,13 +17,6 @@ export interface ResolvedSqlAssistanceOptions {
 }
 
 export type SqlValidationScope = "sql" | "sql-and-procedural";
-export type SqlValidationStatus =
-  | "not_requested"
-  | "skipped"
-  | "valid"
-  | "invalid"
-  | "unsupported"
-  | "unavailable";
 
 export interface SqlDiagnostic {
   message: string;
@@ -160,6 +153,21 @@ export function resolveSqlAssistanceOptions(
   });
 }
 
+export function mergeSqlAssistanceDefaults(
+  incoming: SqlAssistanceOptions = {},
+  previous: SqlAssistanceOptions = {},
+): SqlAssistanceOptions {
+  const resolved = resolveSqlAssistanceOptions(incoming, previous);
+  return Object.fromEntries(
+    Object.entries({
+      policy: incoming.policy ?? previous.policy,
+      dialect: resolved.dialect,
+      variant: resolved.variant,
+      version: resolved.version,
+    }).filter(([, value]) => value !== undefined),
+  ) as SqlAssistanceOptions;
+}
+
 /** Stores factories only. Selection and unrequested edits never initialize adapters. */
 export class SqlAdapterRegistry {
   readonly #loaders = new Map<string, SqlAdapterLoader>();
@@ -177,6 +185,9 @@ export class SqlAdapterRegistry {
 }
 
 export const sqlAdapterRegistry = new SqlAdapterRegistry();
+sqlAdapterRegistry.register("postgresql", async () =>
+  (await import("./sql-postgres")).loadPostgresSqlAdapter(),
+);
 
 export function decideSqlPatch(
   options: ResolvedSqlAssistanceOptions,
@@ -369,7 +380,8 @@ export async function evaluateSqlCandidate(request: {
     throw new TypeError("Invalid SQL assistance resource limit");
   if (Buffer.byteLength(request.source) > maxSourceBytes)
     return decide(unavailable(options, "input_limit"));
-  const load = (request.registry ?? sqlAdapterRegistry).loader(options.dialect);
+  const registry = request.registry ?? sqlAdapterRegistry;
+  const load = registry.loader(options.dialect);
   if (!load)
     return decide({
       ...selected(options),
