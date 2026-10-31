@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 
 import { createLanguageLoader } from "../../../../src/intelligence/languages/shared/language-loader.ts";
@@ -18,9 +18,32 @@ const error = (code: string, message: string) =>
 const script = new URL(
   "data:text/javascript," +
     encodeURIComponent(
-      'import { parentPort } from "node:worker_threads"; parentPort.on("message", request => setTimeout(() => parentPort.postMessage({ id: request.id, ok: false, type: "result", error: "expected parse failure" }), 20));',
+      'import { parentPort } from "node:worker_threads"; parentPort.on("message", request => parentPort.postMessage({ id: request.id, ok: false, type: "result", error: "expected parse failure" }));',
     ),
 );
+const pendingScript = new URL(
+  "data:text/javascript," +
+    encodeURIComponent(
+      'import { parentPort } from "node:worker_threads"; parentPort.on("message", request => { if (request.type === "complete" || request.source === "recovery") parentPort.postMessage({ id: request.id, ok: false, type: "result", error: "expected parse failure" }); });',
+    ),
+);
+
+function observeDispatch() {
+  let started!: (value: { worker: Worker; id: number }) => void;
+  const dispatched = new Promise<{ worker: Worker; id: number }>((resolve) => {
+    started = resolve;
+  });
+  const original = Worker.prototype.postMessage;
+  const post = spyOn(Worker.prototype, "postMessage").mockImplementation(
+    function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
+      original.apply(this, args);
+      const message = args[0] as { type?: string; id: number };
+      if (message.type === "start") started({ worker: this, id: message.id });
+    },
+  );
+  return { dispatched, restore: () => post.mockRestore() };
+}
+
 const clients = (workerUrl: URL, timeoutMs = limits.timeoutMs) => [
   createWorkerClient({
     createError: error,
@@ -82,29 +105,33 @@ test("late responses from unrelated workers cannot terminate the active transpor
     limits,
     protocolName: "fixture",
     validateResponse: validateWorkerEnvelope,
-    workerUrl: script,
+    workerUrl: pendingScript,
   });
+  const dispatch = observeDispatch();
   const stale = new Worker(new URL("data:text/javascript,"));
   try {
     const result = parser.analyze({
       languageId: "typescript",
       source: "payload",
     });
-    await Bun.sleep(1);
+    const { worker, id } = await dispatch.dispatched;
     parser.handleResponse(stale, null);
+    worker.postMessage({ type: "complete", id });
     await expect(result).rejects.toThrow("expected parse failure");
     expect(parser.stats()).toMatchObject({
       pendingRequests: 0,
       outstandingBytes: 0,
     });
   } finally {
+    dispatch.restore();
     await stale.terminate();
     await parser.close();
   }
 });
 
 test("failed language termination quarantines capacity and reports close failure", async () => {
-  for (const parser of clients(script)) {
+  for (const parser of clients(pendingScript)) {
+    const dispatch = observeDispatch();
     const original = Worker.prototype.terminate;
     let retired: Worker | undefined;
     Worker.prototype.terminate = function () {
@@ -114,8 +141,8 @@ test("failed language termination quarantines capacity and reports close failure
     const request = parser
       .analyze({ languageId: "typescript", source: "payload" })
       .catch((failure: Error) => failure.message);
-    await Bun.sleep(1);
     try {
+      await dispatch.dispatched;
       await expect(parser.close()).rejects.toThrow("termination refused");
       expect(await request).toContain("closed");
       await expect(
@@ -128,6 +155,7 @@ test("failed language termination quarantines capacity and reports close failure
         outstandingBytes: 7,
       });
     } finally {
+      dispatch.restore();
       Worker.prototype.terminate = original;
       if (retired) await original.call(retired);
     }
@@ -135,7 +163,8 @@ test("failed language termination quarantines capacity and reports close failure
 });
 
 test("language close bounds stalled retirement without releasing reservations", async () => {
-  for (const parser of clients(script, 20)) {
+  for (const parser of clients(pendingScript, 20)) {
+    const dispatch = observeDispatch();
     const original = Worker.prototype.terminate;
     let retired: Worker | undefined;
     let release!: (value: number) => void;
@@ -148,8 +177,8 @@ test("language close bounds stalled retirement without releasing reservations", 
     const request = parser
       .analyze({ languageId: "typescript", source: "payload" })
       .catch((failure: Error) => failure.message);
-    await Bun.sleep(1);
     try {
+      await dispatch.dispatched;
       await expect(parser.close()).rejects.toThrow(
         "worker retirement timed out",
       );
@@ -159,9 +188,12 @@ test("language close bounds stalled retirement without releasing reservations", 
       ).rejects.toMatchObject({ code: "queue-full" });
       expect(parser.stats().pendingRequests).toBe(1);
       release(0);
-      await Bun.sleep(1);
+      // Physical worker retirement gives queued completion handlers an observable boundary.
+      await original.call(retired!);
+      retired = undefined;
       expect(parser.stats().pendingRequests).toBe(0);
     } finally {
+      dispatch.restore();
       Worker.prototype.terminate = original;
       if (retired) await original.call(retired);
     }
@@ -169,15 +201,21 @@ test("language close bounds stalled retirement without releasing reservations", 
 });
 
 test("language admission waits for physical retirement within bounded capacity and supports cancellation", async () => {
-  for (const parser of clients(script, 500)) {
+  for (const parser of clients(pendingScript, 500)) {
+    const dispatch = observeDispatch();
     const original = Worker.prototype.terminate;
     let release!: () => void;
+    let retiring!: () => void;
+    const retirementStarted = new Promise<void>((resolve) => {
+      retiring = resolve;
+    });
     Worker.prototype.terminate = function () {
       const active = this;
       return new Promise<number>((resolve, reject) => {
         release = () => {
           void original.call(active).then(resolve, reject);
         };
+        retiring();
       });
     };
     const controller = new AbortController();
@@ -188,24 +226,29 @@ test("language admission waits for physical retirement within bounded capacity a
         signal: controller.signal,
       })
       .catch((failure: Error) => failure.message);
-    await Bun.sleep(1);
-    controller.abort();
-    expect(await active).toContain("aborted");
-    const recovery = parser
-      .analyze({ languageId: "typescript", source: "payload" })
-      .catch((failure: Error) => failure.message);
-    const queuedAbort = new AbortController();
-    const cancelled = parser
-      .analyze({
-        languageId: "typescript",
-        source: "payload",
-        signal: queuedAbort.signal,
-      })
-      .catch((failure: Error) => failure.message);
-    const timed = parser
-      .analyze({ languageId: "typescript", source: "payload", timeoutMs: 1 })
-      .catch((failure: Error) => failure.message);
     try {
+      await dispatch.dispatched;
+      controller.abort();
+      expect(await active).toContain("aborted");
+      await retirementStarted;
+      const recovery = parser
+        .analyze({ languageId: "typescript", source: "recovery" })
+        .catch((failure: Error) => failure.message);
+      const queuedAbort = new AbortController();
+      const cancelled = parser
+        .analyze({
+          languageId: "typescript",
+          source: "payload",
+          signal: queuedAbort.signal,
+        })
+        .catch((failure: Error) => failure.message);
+      const timed = parser
+        .analyze({
+          languageId: "typescript",
+          source: "payload",
+          timeoutMs: 1,
+        })
+        .catch((failure: Error) => failure.message);
       await expect(
         parser.analyze({ languageId: "typescript", source: "overflow" }),
       ).rejects.toMatchObject({ code: "queue-full" });
@@ -220,39 +263,48 @@ test("language admission waits for physical retirement within bounded capacity a
       await parser.drain();
       expect(parser.stats().pendingRequests).toBe(0);
     } finally {
+      dispatch.restore();
       Worker.prototype.terminate = original;
+      release?.();
       await parser.close();
     }
   }
 });
 
 test("language requests waiting during a failed retirement reject without replacement", async () => {
-  for (const parser of clients(script)) {
+  for (const parser of clients(pendingScript)) {
+    const dispatch = observeDispatch();
     const original = Worker.prototype.terminate;
     let rejectRetirement!: (error: Error) => void;
     let retired: Worker | undefined;
+    let retiring!: () => void;
+    const retirementStarted = new Promise<void>((resolve) => {
+      retiring = resolve;
+    });
     Worker.prototype.terminate = function () {
       retired = this;
       return new Promise<number>((_resolve, reject) => {
         rejectRetirement = reject;
+        retiring();
       });
     };
     const request = parser
       .analyze({ languageId: "typescript", source: "payload" })
       .catch((failure: Error) => failure.message);
-    await Bun.sleep(1);
-    const closing = parser.close().catch((failure: Error) => failure.message);
-    const waiting = parser
-      .analyze({ languageId: "typescript", source: "recovery" })
-      .catch((failure: Error & { code: string }) => failure.code);
-    await Bun.sleep(1);
     try {
+      await dispatch.dispatched;
+      const closing = parser.close().catch((failure: Error) => failure.message);
+      await retirementStarted;
+      const waiting = parser
+        .analyze({ languageId: "typescript", source: "recovery" })
+        .catch((failure: Error & { code: string }) => failure.code);
       rejectRetirement(new Error("retirement refused"));
       expect(await closing).toBe("retirement refused");
       expect(await request).toContain("closed");
       expect(await waiting).toBe("queue-full");
       expect(parser.stats().pendingRequests).toBe(1);
     } finally {
+      dispatch.restore();
       Worker.prototype.terminate = original;
       if (retired) await original.call(retired);
     }
