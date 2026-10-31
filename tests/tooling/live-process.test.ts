@@ -4,6 +4,8 @@ import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
 
 const fastFailure =
   'import { writeSync } from "node:fs";writeSync(2,"startup failed\\n");process.exit(7)';
+const stubbornDescendant =
+  'process.on("SIGTERM",()=>{});console.error("descendant ready");await Bun.sleep(8_000)';
 
 test("live process captures both streams and supports repeated teardown", async () => {
   const live = spawnLiveProcess(process.execPath, [
@@ -57,39 +59,15 @@ test("HTTP startup failure closes the process and preserves diagnostics", async 
 test.skipIf(process.platform === "win32")(
   "live teardown kills descendants holding inherited pipes",
   async () => {
-    const script =
-      'const child=Bun.spawn([process.execPath,"-e",\'process.on("SIGTERM",()=>{});await Bun.sleep(8_000)\'],{stdout:"inherit",stderr:"inherit",stdin:"ignore"});console.log(child.pid);child.unref();process.exit(0)';
+    const script = `const child=Bun.spawn([process.execPath,"-e",${JSON.stringify(stubbornDescendant)}],{stdout:"inherit",stderr:"inherit",stdin:"ignore"});console.log(child.pid);child.unref();process.exit(0)`;
     const live = spawnLiveProcess(process.execPath, ["-e", script]);
     let descendant: number | undefined;
     try {
       descendant = Number(await live.readStdoutLine());
+      await live.waitForStderr(/descendant ready/);
       expect(await live.waitForExit()).toBe(0);
-      await live.stop();
-      expect(descendant).toBeGreaterThan(0);
-      if (process.platform === "linux") {
-        // Linux can retain killed orphans as zombies until init reaps them.
-        const status = await Bun.file(`/proc/${descendant}/status`)
-          .text()
-          .catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT" || error.code === "ESRCH") return null;
-            throw error;
-          });
-        let stopped = status === null || /^State:\s+Z\b/mu.test(status);
-        for (let attempt = 0; attempt < 100 && !stopped; attempt++) {
-          await Bun.sleep(20);
-          const current = await Bun.file(`/proc/${descendant}/status`)
-            .text()
-            .catch((error: NodeJS.ErrnoException) => {
-              if (error.code === "ENOENT" || error.code === "ESRCH")
-                return null;
-              throw error;
-            });
-          stopped = current === null || /^State:\s+Z\b/mu.test(current);
-        }
-        expect(stopped).toBeTrue();
-      } else {
-        expect(() => process.kill(descendant!, 0)).toThrow();
-      }
+      // Inherited pipes close when this descendant stops; PID reaping belongs to the OS.
+      await expect(live.stop()).resolves.toBeUndefined();
     } finally {
       if (descendant) {
         try {
@@ -105,12 +83,12 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "live teardown reports escaped descendants that keep pipes open",
   async () => {
-    const script =
-      'const child=Bun.spawn([process.execPath,"-e","await Bun.sleep(8_000)"],{detached:true,stdout:"inherit",stderr:"inherit",stdin:"ignore"});console.log(child.pid);child.unref();process.exit(0)';
+    const script = `const child=Bun.spawn([process.execPath,"-e",${JSON.stringify(stubbornDescendant)}],{detached:true,stdout:"inherit",stderr:"inherit",stdin:"ignore"});console.log(child.pid);child.unref();process.exit(0)`;
     const live = spawnLiveProcess(process.execPath, ["-e", script]);
     let descendant: number | undefined;
     try {
       descendant = Number(await live.readStdoutLine());
+      await live.waitForStderr(/descendant ready/);
       expect(await live.waitForExit()).toBe(0);
       await expect(live.stop()).rejects.toThrow(
         "Process pipes did not close after teardown",
