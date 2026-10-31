@@ -31,14 +31,14 @@ async function fixture(timeoutMs: number, count = 1) {
   );
   let mutations = 0;
   server.registerTool(
-    "approval_probe",
+    "fixture_approval",
     {
       inputSchema: z.object({}),
     },
     async (_, context) => {
       try {
         return await withApprovalContext(
-          { context, server, tool: "approval_probe" },
+          { context, server, tool: "fixture_approval" },
           async () => {
             for (let index = 0; index < count; index += 1)
               authorizeRequestedDecision(
@@ -109,7 +109,7 @@ test("silent approval expires while reads and ping stay responsive and retries r
   try {
     await instance.connect();
     const pending = instance.client.callTool({
-      name: "approval_probe",
+      name: "fixture_approval",
       arguments: {},
     });
     await started.promise;
@@ -128,7 +128,7 @@ test("silent approval expires while reads and ping stay responsive and retries r
     expect(instance.mutations()).toBe(0);
     mode = "decline";
     const declined = await instance.client.callTool({
-      name: "approval_probe",
+      name: "fixture_approval",
       arguments: {},
     });
     expect(declined.isError).toBe(true);
@@ -138,7 +138,7 @@ test("silent approval expires while reads and ping stay responsive and retries r
     expect(
       (
         await instance.client.callTool({
-          name: "approval_probe",
+          name: "fixture_approval",
           arguments: {},
         })
       ).isError,
@@ -173,7 +173,7 @@ test("progress notifications cannot extend the approval deadline", async () => {
     await instance.connect();
     const start = performance.now();
     const result = await instance.client.callTool({
-      name: "approval_probe",
+      name: "fixture_approval",
       arguments: {},
     });
     expect(result.isError).toBe(true);
@@ -201,7 +201,7 @@ test("cancelled approval cannot resume mutation after a late acceptance", async 
     await instance.connect();
     const controller = new AbortController();
     const pending = instance.client.callTool(
-      { name: "approval_probe", arguments: {} },
+      { name: "fixture_approval", arguments: {} },
       { signal: controller.signal },
     );
     await started.promise;
@@ -229,7 +229,7 @@ test("one batch can complete fifty distinct session approvals", async () => {
   try {
     await instance.connect();
     const result = await instance.client.callTool({
-      name: "approval_probe",
+      name: "fixture_approval",
       arguments: {},
     });
     expect(result.isError).not.toBe(true);

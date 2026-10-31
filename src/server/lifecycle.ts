@@ -11,7 +11,7 @@ export {
 };
 
 export function createProcessServer() {
-  const server = createServer();
+  const server = createServer({}, {}, {}, { transport: "stdio" });
   const close = server.close.bind(server);
   let disposeSignals: (() => void) | undefined;
   let disposeFailures: (() => void) | undefined;

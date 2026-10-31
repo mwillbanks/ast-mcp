@@ -740,6 +740,8 @@ describe("transmission allowlist", () => {
     await telemetry.close();
   });
   test("actual SDK serialized requests contain only permitted anonymous operational fields", async () => {
+    // SDK cold-start time is independent of the bounded best-effort shutdown contract.
+    const { PostHogMCP } = await import("@posthog/mcp");
     const packets: Array<{
       url: string;
       body: {
@@ -752,6 +754,7 @@ describe("transmission allowlist", () => {
     }> = [];
     const telemetry = new Telemetry({
       globalEnabled: async () => true,
+      loadSdk: async () => (token, options) => new PostHogMCP(token, options),
       fetch: async (url, options) => {
         packets.push({
           url: String(url),
@@ -843,6 +846,44 @@ describe("transmission allowlist", () => {
     expect(JSON.stringify(packets)).not.toContain("TOKEN");
     expect(JSON.stringify(packets)).not.toContain("/secret");
     expect(JSON.stringify(packets)).not.toContain("client@example.org");
+  });
+  test("SDK cold-start beyond the close deadline drops pending events and cannot send them later", async () => {
+    const { PostHogMCP } = await import("@posthog/mcp");
+    const loading = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let constructed = 0;
+    let packets = 0;
+    const telemetry = new Telemetry({
+      globalEnabled: async () => true,
+      shutdownMs: 10,
+      loadSdk: async () => {
+        loading.resolve();
+        await release.promise;
+        return (token, options) => {
+          constructed++;
+          return new PostHogMCP(token, options);
+        };
+      },
+      fetch: async () => {
+        packets++;
+        return new Response('{"status":1}');
+      },
+    });
+    telemetry.register("file_read");
+    try {
+      for (let index = 0; index < 3; index++)
+        expect(await invoke(telemetry)).toBe("preserved");
+      await loading.promise;
+      await telemetry.close();
+      expect(constructed).toBe(0);
+      expect(packets).toBe(0);
+    } finally {
+      release.resolve();
+      await telemetry.close();
+    }
+    await tick();
+    expect(constructed).toBe(0);
+    expect(packets).toBe(0);
   });
   test("analytics outages do not fail tools or extend shutdown indefinitely", async () => {
     const telemetry = new Telemetry({

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, rm } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 
@@ -7,6 +7,21 @@ import {
   readSubprocessOutput,
   terminateProcessTree,
 } from "../runtime/subprocess";
+import {
+  captureServiceState,
+  queryServiceCommand,
+  type ServiceState,
+  type ServiceStateQuery,
+} from "./service-state";
+import {
+  mkdirInstallerDirectory as mkdir,
+  assertInstallerRestored,
+  readInstallerText,
+  onInstallerRollback,
+  removeInstallerFile,
+  withInstallerFileTransaction,
+  writeInstallerFile,
+} from "./transaction";
 import type { HttpEndpoint } from "./transport";
 
 export type ServiceScope = "local" | "global";
@@ -15,16 +30,26 @@ export type ServiceCommandRunner = (
   ignoreFailure?: boolean,
 ) => Promise<void>;
 
-export interface ServiceOptions {
+export type ServiceExecutionOptions<
+  RunnerKey extends string,
+  QueryKey extends string,
+> =
+  | ({ [Key in RunnerKey]?: undefined } & {
+      [Key in QueryKey]?: ServiceStateQuery;
+    })
+  | ({ [Key in RunnerKey]: ServiceCommandRunner } & {
+      [Key in QueryKey]: ServiceStateQuery;
+    });
+
+export type ServiceOptions = ServiceExecutionOptions<"runner", "stateQuery"> & {
   cliEntry: string;
   cliArgs?: string[];
   endpoint: HttpEndpoint;
   home: string;
   platform?: NodeJS.Platform;
   root: string;
-  runner?: ServiceCommandRunner;
   scope: ServiceScope;
-}
+};
 
 export interface ServicePlan {
   content: string;
@@ -113,7 +138,7 @@ export function createServicePlan(options: ServiceOptions): ServicePlan {
         ["launchctl", "bootstrap", domain, file],
         ["launchctl", "kickstart", "-k", `${domain}/${label}`],
       ],
-      removeCommands: [["launchctl", "bootout", domain, file]],
+      removeCommands: [["launchctl", "bootout", `${domain}/${label}`]],
     };
   }
   const file = path.join(options.home, ".config/systemd/user", `${id}.service`);
@@ -236,14 +261,101 @@ export async function preflightService(options: ServiceOptions) {
 }
 
 export async function installService(options: ServiceOptions) {
+  return withInstallerFileTransaction(() => installServiceFiles(options));
+}
+
+async function compensateService(
+  options: ServiceOptions,
+  plan: ServicePlan,
+  prior: ServiceState,
+  existed: boolean,
+) {
+  // Each compensation validates its own restored dependency, even if another file conflicted.
+  assertInstallerRestored(plan.file);
+  const runner: ServiceCommandRunner = async (command, ignoreFailure) => {
+    assertInstallerRestored(plan.file);
+    await (options.runner ?? defaultRunner)(command, ignoreFailure);
+  };
+  if (prior.platform === "linux") {
+    const unit = plan.id + ".service";
+    const restore = async (command: string[]) => {
+      try {
+        await runner(command);
+      } catch (error) {
+        // A removed fresh unit may already be absent. Verify absence instead of ignoring manager errors.
+        assertInstallerRestored(plan.file);
+        const current = await priorServiceState(options, plan);
+        assertInstallerRestored(plan.file);
+        if (existed || current.platform !== "linux" || current.loaded)
+          throw error;
+      }
+    };
+    await restore(["systemctl", "--user", "stop", unit]);
+    await runner(["systemctl", "--user", "daemon-reload"]);
+    await restore([
+      "systemctl",
+      "--user",
+      prior.enabled ? "enable" : "disable",
+      unit,
+    ]);
+    if (prior.active) await runner(["systemctl", "--user", "start", unit]);
+    return;
+  }
+  for (const command of plan.removeCommands) {
+    try {
+      await runner(command);
+    } catch (error) {
+      assertInstallerRestored(plan.file);
+      const current = await priorServiceState(options, plan);
+      assertInstallerRestored(plan.file);
+      if (current.loaded) throw error;
+    }
+  }
+  // bootout/bootstrap do not change disabled overrides; never invent an enable override.
+  if (prior.loaded) {
+    await runner(plan.installCommands[1]);
+    await runner(plan.installCommands[2]);
+  }
+}
+
+async function priorServiceState(
+  options: ServiceOptions,
+  plan: ServicePlan,
+  existed = true,
+) {
+  if (options.runner && !options.stateQuery)
+    throw new Error(
+      "A custom service runner requires a read-only service state query",
+    );
+  const prior = await captureServiceState(
+    options.platform ?? process.platform,
+    plan.id,
+    options.stateQuery ?? queryServiceCommand,
+  );
+  if (!existed && prior.loaded)
+    throw new Error(
+      "Cannot restore a loaded service without its original managed service file",
+    );
+  return prior;
+}
+
+async function installServiceFiles(options: ServiceOptions) {
   const plan = await preflightService(options);
+  const existed = await readInstallerText(plan.file)
+    .then(() => true)
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+  const prior = await priorServiceState(options, plan, existed);
   const runner = options.runner ?? defaultRunner;
   await mkdir(path.dirname(plan.file), { recursive: true });
   if ((options.platform ?? process.platform) === "darwin")
     await mkdir(path.join(options.home, ".local/state/ast-mcp"), {
       recursive: true,
     });
-  await Bun.write(plan.file, plan.content);
+  await writeInstallerFile(plan.file, plan.content);
+  onInstallerRollback(() => compensateService(options, plan, prior, existed));
   for (let index = 0; index < plan.installCommands.length; index += 1)
     await runner(
       plan.installCommands[index],
@@ -254,10 +366,22 @@ export async function installService(options: ServiceOptions) {
 }
 
 export async function removeService(options: ServiceOptions) {
+  return withInstallerFileTransaction(() => removeServiceFiles(options));
+}
+
+async function removeServiceFiles(options: ServiceOptions) {
   const plan = createServicePlan(options);
+  const existed = await readInstallerText(plan.file)
+    .then(() => true)
+    .catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    });
+  const prior = await priorServiceState(options, plan, existed);
+  onInstallerRollback(() => compensateService(options, plan, prior, existed));
   const runner = options.runner ?? defaultRunner;
   for (const command of plan.removeCommands) await runner(command, true);
-  await rm(plan.file, { force: true });
+  await removeInstallerFile(plan.file);
   if ((options.platform ?? process.platform) === "linux")
     await runner(["systemctl", "--user", "daemon-reload"], true);
   return plan;

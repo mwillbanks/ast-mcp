@@ -18,6 +18,7 @@ ignorePatterns = [
   # Standalone exported adapters mirror runtime sources; templates:check enforces bytes.
   "templates/skills/ast-mcp/scripts/binary-resolution.ts",
   "templates/skills/ast-mcp/scripts/managed-hook.ts",
+  "templates/skills/ast-mcp/scripts/release.ts",
 ]
 
 # Fumadocs generates collection aliases, and parser fixtures intentionally

@@ -150,6 +150,8 @@ const inputValidators: Record<string, InputValidator> = {
 function meaningfulInput(invocation: Invocation) {
   const input = withoutComments(invocation.input).trim();
   if (!input) return false;
+  if (["diagnostics", "approval_probe"].includes(invocation.tool))
+    return /^\{\s*\}$/.test(input);
   if (input === "{}")
     return [
       "config_status",

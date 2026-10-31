@@ -179,6 +179,8 @@ export interface ResolvedConfig {
 export interface ResolveConfigOptions {
   clientRoots?: string[];
   cwd?: string;
+  /** Internal captured ambient cwd; preserves implicit host-root precedence. */
+  launchCwd?: string;
   env?: NodeJS.ProcessEnv;
   home?: string;
   platform?: NodeJS.Platform;
@@ -843,9 +845,27 @@ function merge(...layers: InternalConfig[]): InternalConfig {
   return result;
 }
 
+/** Prospective host selection must be tracked even before its directory exists. */
+export function hostProjectRootCandidate(
+  options: ResolveConfigOptions,
+): string | undefined {
+  const env = options.env ?? process.env;
+  if (
+    options.cwd !== undefined ||
+    options.clientRoots?.length ||
+    env.AST_MCP_PROJECT_ROOT ||
+    env.AST_MCP_ROOTS?.split(path.delimiter).filter(Boolean).length
+  )
+    return undefined;
+  const hostRoot = env.CLAUDE_PROJECT_DIR;
+  return hostRoot && path.isAbsolute(hostRoot)
+    ? path.resolve(hostRoot)
+    : undefined;
+}
+
 async function projectRoots(options: ResolveConfigOptions) {
   const env = options.env ?? process.env;
-  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const cwd = path.resolve(options.cwd ?? options.launchCwd ?? process.cwd());
   const withCanonical = async (roots: string[]) => [
     ...new Set([
       ...roots,
@@ -878,6 +898,18 @@ async function projectRoots(options: ResolveConfigOptions) {
       candidates,
       trustedRoots: await withCanonical([cwd]),
     };
+  }
+
+  // Claude Code supplies this launch context; it selects configuration, not approval.
+  const hostRoot = hostProjectRootCandidate(options);
+  if (hostRoot) {
+    const selected = hostRoot;
+    const metadata = await stat(selected).catch(() => undefined);
+    if (metadata?.isDirectory())
+      return {
+        candidates: [selected],
+        trustedRoots: await withCanonical([selected]),
+      };
   }
 
   return {
@@ -1223,7 +1255,7 @@ function resolvedConfiguration(args: {
 
 function resolutionRuntime(options: ResolveConfigOptions) {
   return {
-    cwd: path.resolve(options.cwd ?? process.cwd()),
+    cwd: path.resolve(options.cwd ?? options.launchCwd ?? process.cwd()),
     env: options.env ?? process.env,
   };
 }

@@ -23,6 +23,13 @@ A failed response does not prove that no file changed.
 
 ## Diagnose the host
 
+Start with [diagnostics.md](diagnostics.md).
+Call MCP `diagnostics` for the connected server, or run `ast-mcp doctor --output json` when MCP is unavailable.
+Both attempt a fresh latest stable version check.
+Record unavailable registry checks explicitly and continue local diagnosis.
+Distinguish the running server from project and global installations before recommending an upgrade.
+For reproducible unexpected behavior, follow [issue-reporting.md](issue-reporting.md) and search existing issues first.
+
 When this skill exists on disk and Bun is available, run its read-only checker from the active skill directory:
 
 `bun run scripts/check-install.ts --scope local --target codex`
@@ -34,6 +41,12 @@ For HTTP, pass `--transport http --host <address> --port <port>`.
 Add `--service` only for a managed HTTP service.
 
 The checker inspects managed guidance, host definitions, hooks, services, startup, and selected intelligence tools.
+It launches the configured MCP server and calls `diagnostics` when the server advertises that tool.
+Otherwise, it attempts a standalone fresh release check using a valid server version from initialization when available.
+It labels the connected server version unknown when neither response supplies a valid version.
+It reports unavailable diagnostics explicitly.
+A bounded optional timeout or tool-level error does not invalidate successful required protocol checks.
+Malformed transport, premature EOF, and natural process failures still fail the smoke check.
 It reports repair commands and stale executable paths.
 It does not prove complete tool coverage or MCP skill activation.
 Verify those separately.
@@ -84,20 +97,44 @@ For global managed configuration:
 `ast-mcp update --scope global --target codex`
 
 Targets are `codex`, `claude`, `copilot`, and `all`.
+These targets select managed host configuration, not a restriction on standard MCP clients.
+Claude Desktop, Grok, and other clients use their host's normal MCP connection settings.
 The default transport is stdio.
 Use `--transport http --host <address> --port <port>` for HTTP.
 Use `--service` to manage a supported macOS or Linux user service.
+
+Managed service operations read the service manager state before changing service files or runtime state.
+Linux supports known missing units and loaded units with enabled or disabled, active or inactive states.
+macOS supports unloaded jobs and loaded running jobs while retaining existing disabled overrides.
+Unknown manager output, unavailable managers, transitional states, and unsupported states stop the operation before service changes.
+Unsupported states include masked or static Linux units and loaded stopped macOS jobs.
+Inspect the manager state and resolve it through a separately authorized host operation before retrying.
+Failed installer operations restore known prior enablement and runtime state after verifying restored service files.
+Unrelated file conflicts do not suppress independent service cleanup.
+Service-file conflicts prevent unsafe recovery commands and report incomplete rollback.
 
 `update` refreshes managed host entries, hooks, and guidance blocks.
 It preserves surrounding user guidance.
 It does not upgrade the package or refresh manual skills.
 Uninstall also preserves manual skill directories.
+Host refresh preserves environment values, timeouts, tool settings, and unrelated configuration.
+Launch ownership receipts let uninstall restore imported launch settings without overwriting later user edits.
+Codex stores receipts in managed comments; JSON hosts use a sibling `<configuration-file>.ast-mcp.json` receipt.
+Keep these receipts through installation and update; do not edit them to force removal.
+Unrecognized or malformed JSON receipts stop refresh before host configuration changes.
+Uninstall preserves unrecognized receipts and their server entries for inspection.
+Historical or customized entries without sufficient ownership evidence remain complete, so retained entries still satisfy host configuration requirements.
+Legacy hook scripts and registrations remain when their ownership cannot be established.
+Inspect retained entries before any separately authorized manual removal.
 For malformed runtime configuration, explicit output permits removal without loading output defaults:
 
 `ast-mcp uninstall --scope global --target codex --output json`
 
 Use the local CLI and local scope for local removal.
 Do not uninstall merely to refresh instructions.
+For Codex, honor `CODEX_HOME`, project overrides, and the selected disk profile.
+A generated configuration does not prove that an active Desktop profile or CLI session loaded it.
+Load [diagnostics.md](diagnostics.md) for effective-session approval conflicts.
 
 ## Migrate runtime configuration
 

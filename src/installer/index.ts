@@ -1,8 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   parseOutputArguments,
@@ -11,8 +12,10 @@ import {
   type CliOutputContext,
 } from "../cli/output";
 import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
-import { migrateConfigSource, writeMigratedConfig } from "../config/migrate";
+import { migrateConfigSource } from "../config/migrate";
+import { configWriteTarget } from "../config/transaction";
 import {
+  codexHome,
   codexTransport,
   installerTargetPaths,
   jsonTargetConfig,
@@ -28,15 +31,34 @@ import {
 import { withFencedFileLocks } from "../runtime/locks";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
-import { enableCodexElicitation } from "./codex";
+import {
+  enableCodexElicitation,
+  parseCodexConfig,
+  refreshCodexMcp,
+  removeCodexMcpConfiguration,
+} from "./codex";
 import { type InstallerLaunch, verifyMcpLaunch } from "./health";
+import {
+  launchFields,
+  launchReceipt,
+  managedToolSelection,
+  parseLaunchReceipt,
+  removeManagedEntry,
+} from "./ownership";
 import {
   createServicePlan,
   installService,
   preflightService,
   removeService,
-  type ServiceCommandRunner,
+  type ServiceExecutionOptions,
 } from "./service";
+import {
+  mkdirInstallerDirectory as mkdir,
+  readInstallerText,
+  removeInstallerFile,
+  withInstallerFileTransaction,
+  writeInstallerFile,
+} from "./transaction";
 import {
   type HttpEndpoint,
   httpEndpoint,
@@ -185,7 +207,7 @@ type Target = (typeof targets)[number];
 
 async function json(file: string): Promise<Record<string, any>> {
   try {
-    const value = Bun.JSONC.parse(await Bun.file(file).text());
+    const value = Bun.JSONC.parse(await readInstallerText(file));
     return value as Record<string, any>;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
@@ -194,7 +216,37 @@ async function json(file: string): Promise<Record<string, any>> {
 }
 async function save(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, `${JSON.stringify(value, null, 2)}\n`);
+  await writeInstallerFile(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+async function readLaunchReceipt(file: string, strict = false) {
+  const info = await lstat(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!info) return undefined;
+  const receipt = info.isFile()
+    ? await json(file)
+        .then(parseLaunchReceipt)
+        .catch(() => undefined)
+    : undefined;
+  if (!receipt && strict)
+    throw new Error(
+      "Existing launch receipt is not owned by ast-mcp; preserve or relocate it before refresh",
+    );
+  return receipt;
+}
+async function saveLaunchReceipt(file: string, value: unknown) {
+  await readLaunchReceipt(file, true);
+  await mkdir(path.dirname(file), { recursive: true });
+  const previous = await lstat(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (previous && !previous.isFile())
+    throw new Error("Launch receipt must be a regular file");
+  await writeInstallerFile(file, JSON.stringify(value, null, 2) + "\n", {
+    mode: previous ? previous.mode & 0o600 : 0o600,
+  });
 }
 function definition(
   root: string | undefined,
@@ -210,6 +262,38 @@ function definition(
     ...(root ? { cwd: root } : {}),
   };
 }
+function retainedMcpSettings(
+  value: unknown,
+  ownsDefaultTools = false,
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const retained = { ...value } as Record<string, unknown>;
+  for (const key of launchFields) delete retained[key];
+  // Copilot's installer default is launch metadata, rather than customization.
+  if (
+    ownsDefaultTools &&
+    Array.isArray(retained.tools) &&
+    retained.tools.length === 1 &&
+    retained.tools[0] === "*"
+  )
+    delete retained.tools;
+  return retained;
+}
+
+async function codexProfileFiles(home: string): Promise<string[]> {
+  const base = codexHome(home);
+  const content = (await optionalText(path.join(base, "config.toml"))) ?? "";
+  const selected = parseCodexConfig(content).profile;
+  const names = [
+    ...content.matchAll(/^# ast-mcp:profile-file ([\w.-]{1,100})$/gm),
+  ].map((match) => match[1]!);
+  if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected))
+    names.push(selected);
+  return [...new Set(names)].map((name) =>
+    path.join(base, name + ".config.toml"),
+  );
+}
+
 async function codexMcp(
   file: string,
   root: string | undefined,
@@ -217,30 +301,67 @@ async function codexMcp(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const old = await Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
-      throw error;
-    });
-  const inherited = root
-    ? await Bun.file(path.join(home, ".codex/config.toml"))
+  const old = await readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
+  let inherited = root
+    ? await Bun.file(path.join(codexHome(home), "config.toml"))
         .text()
         .catch((error) => {
           if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
           throw error;
         })
     : "";
-  const clean = enableCodexElicitation(old, inherited)
-    .replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, "")
-    .trimEnd();
+  if (root && inherited) {
+    const inheritedDocument = parseCodexConfig(inherited);
+    const selected = inheritedDocument.profile;
+    if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected)) {
+      const profileSource = await Bun.file(
+        path.join(codexHome(home), `${selected}.config.toml`),
+      )
+        .text()
+        .catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+          throw error;
+        });
+      if (profileSource) {
+        const profile = parseCodexConfig(profileSource);
+        if (profile.approval_policy !== undefined)
+          inherited = Bun.TOML.stringify({
+            ...inheritedDocument,
+            approval_policy: profile.approval_policy,
+          });
+      }
+    }
+  }
   const stdio = definition(root, home, "stdio") as InstallerLaunch;
-  const block =
+  const launch =
     transport === "http"
-      ? `# ast-mcp:begin\n[mcp_servers.ast-mcp]\nurl = ${JSON.stringify(endpoint?.url)}\n# ast-mcp:end`
-      : `# ast-mcp:begin\n[mcp_servers.ast-mcp]\ncommand = ${JSON.stringify(stdio.command)}\nargs = ${JSON.stringify(stdio.args)}${root ? `\ncwd = ${JSON.stringify(root)}` : ""}\n# ast-mcp:end`;
+      ? { url: endpoint?.url }
+      : {
+          command: stdio.command,
+          args: stdio.args,
+          ...(root ? { cwd: root } : {}),
+        };
+  let next = refreshCodexMcp(enableCodexElicitation(old, inherited), launch);
+  if (!root) {
+    const selected = parseCodexConfig(old).profile;
+    if (typeof selected === "string" && /^[\w.-]{1,100}$/.test(selected)) {
+      const profileFile = path.join(codexHome(home), selected + ".config.toml");
+      const source = await optionalText(profileFile);
+      if (source !== undefined) {
+        const enabled = enableCodexElicitation(source);
+        if (enabled !== source) {
+          await writeText(profileFile, enabled);
+          const marker = "# ast-mcp:profile-file " + selected;
+          if (!next.split("\n").includes(marker)) next = marker + "\n" + next;
+        }
+      }
+    }
+  }
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, `${clean ? `${clean}\n\n` : ""}${block}\n`);
+  await writeInstallerFile(file, next, { expected: old });
 }
 async function jsonMcp(
   file: string,
@@ -251,15 +372,29 @@ async function jsonMcp(
   endpoint?: HttpEndpoint,
 ) {
   const value = await json(file);
+  const previous = await readLaunchReceipt(file + ".ast-mcp.json", true);
+  const original = value.mcpServers?.["ast-mcp"] ?? {};
+  const tools = copilot ? managedToolSelection(original, previous) : {};
   const entry = definition(root, home, transport, endpoint);
   value.mcpServers = {
     ...(value.mcpServers ?? {}),
-    "ast-mcp": copilot
-      ? transport === "stdio"
-        ? { type: "local", ...entry, tools: ["*"] }
-        : { ...entry, tools: ["*"] }
-      : entry,
+    "ast-mcp": {
+      ...retainedMcpSettings(value.mcpServers?.["ast-mcp"], copilot),
+      ...(copilot
+        ? transport === "stdio"
+          ? {
+              type: "local",
+              ...entry,
+              ...tools,
+            }
+          : { ...entry, ...tools }
+        : entry),
+    },
   };
+  await saveLaunchReceipt(
+    file + ".ast-mcp.json",
+    launchReceipt(original, value.mcpServers["ast-mcp"], previous, copilot),
+  );
   await save(file, value);
 }
 async function vscodeMcp(
@@ -273,48 +408,144 @@ async function vscodeMcp(
   const entry = definition(root, home, transport, endpoint);
   value.servers = {
     ...(value.servers ?? {}),
-    "ast-mcp": transport === "stdio" ? { type: "stdio", ...entry } : entry,
+    "ast-mcp": {
+      ...retainedMcpSettings(value.servers?.["ast-mcp"]),
+      ...(transport === "stdio" ? { type: "stdio", ...entry } : entry),
+    },
   };
+  await saveLaunchReceipt(
+    file + ".ast-mcp.json",
+    launchReceipt(
+      (await json(file)).servers?.["ast-mcp"] ?? {},
+      value.servers["ast-mcp"],
+      await readLaunchReceipt(file + ".ast-mcp.json", true),
+    ),
+  );
   await save(file, value);
 }
 
+function factoryHook(
+  event: "PreToolUse" | "preToolUse",
+  command: string,
+): Record<string, any> {
+  return event === "preToolUse"
+    ? {
+        command,
+        matcher: "bash|powershell|edit|create",
+        timeoutSec: 10,
+        type: "command",
+      }
+    : {
+        hooks: [
+          {
+            command,
+            statusMessage: "Enforcing ast-mcp writes",
+            timeout: 10,
+            type: "command",
+          },
+        ],
+        matcher: ".*",
+      };
+}
+function retainUnmanagedHooks(
+  prior: unknown[],
+  event: "PreToolUse" | "preToolUse",
+  commands: string[],
+): unknown[] {
+  const factory = factoryHook(event, commands[0]!);
+  return prior.flatMap((item) => {
+    if (!commands.some((command) => isManagedHook(item, event, command)))
+      return [item];
+    const group = item as Record<string, any>;
+    if (event === "preToolUse")
+      return commands.includes(group.command) &&
+        isDeepStrictEqual({ ...group, command: commands[0] }, factory)
+        ? []
+        : [item];
+    const { hooks, ...metadata } = group;
+    const { hooks: _factoryChildren, ...factoryMetadata } = factory;
+    if (!isDeepStrictEqual(metadata, factoryMetadata)) return [item];
+    const retained = (hooks as unknown[]).filter(
+      (child) =>
+        !commands.includes(
+          (child as Record<string, unknown>)?.command as string,
+        ) ||
+        !isDeepStrictEqual(
+          { ...(child as Record<string, unknown>), command: commands[0] },
+          factory.hooks[0],
+        ),
+    );
+    return retained.length ? [{ ...group, hooks: retained }] : [];
+  });
+}
+function refreshManagedHooks(
+  prior: unknown[],
+  event: "PreToolUse" | "preToolUse",
+  command: string,
+): unknown[] {
+  const factory = factoryHook(event, command);
+  let found = false;
+  const refreshed = prior.map((item) => {
+    if (!isManagedHook(item, event, command)) return item;
+    const group = item as Record<string, any>;
+    if (event === "preToolUse") {
+      if (group.command === command) {
+        found = true;
+        return item;
+      }
+      if (isDeepStrictEqual({ ...group, command }, factory)) {
+        found = true;
+        return { ...group, command };
+      }
+      return item;
+    }
+    const current = group.hooks.some(
+      (child: Record<string, unknown>) => child?.command === command,
+    );
+    if (current) {
+      found = true;
+      return item;
+    }
+    if (
+      group.hooks.length === 1 &&
+      isDeepStrictEqual(
+        {
+          ...group,
+          hooks: [{ ...group.hooks[0], command }],
+        },
+        factory,
+      )
+    ) {
+      found = true;
+      return { ...group, hooks: [{ ...group.hooks[0], command }] };
+    }
+    return item;
+  });
+  let keptFactory = false;
+  const unique = refreshed.filter((item) => {
+    if (!isDeepStrictEqual(item, factory)) return true;
+    if (keptFactory) return false;
+    keptFactory = true;
+    return true;
+  });
+  return found ? unique : [...unique, factory];
+}
+function hookCommand(commandPath: string): string {
+  return /\.[cm]?[jt]s$/u.test(commandPath)
+    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(commandPath)} hook`
+    : `${JSON.stringify(commandPath)} hook`;
+}
 async function hook(
   file: string,
   event: "PreToolUse" | "preToolUse",
-  scriptFile: string,
   commandPath: string,
 ) {
-  await rm(scriptFile, { force: true });
   const value = await json(file);
   if (event === "preToolUse") value.version ??= 1;
   value.hooks ??= {};
   const prior = Array.isArray(value.hooks[event]) ? value.hooks[event] : [];
-  const command = /\.[cm]?[jt]s$/u.test(commandPath)
-    ? `${JSON.stringify(process.execPath)} ${JSON.stringify(commandPath)} hook`
-    : `${JSON.stringify(commandPath)} hook`;
-  const kept = prior.filter(
-    (item: unknown) => !isManagedHook(item, event, command),
-  );
-  const item =
-    event === "preToolUse"
-      ? {
-          command,
-          matcher: "bash|powershell|edit|create",
-          timeoutSec: 10,
-          type: "command",
-        }
-      : {
-          hooks: [
-            {
-              command,
-              statusMessage: "Enforcing ast-mcp writes",
-              timeout: 10,
-              type: "command",
-            },
-          ],
-          matcher: ".*",
-        };
-  value.hooks[event] = [...kept, item];
+  const command = hookCommand(commandPath);
+  value.hooks[event] = refreshManagedHooks(prior, event, command);
   await save(file, value);
 }
 const instructionsBegin = "<!-- ast-mcp:begin -->";
@@ -325,16 +556,17 @@ const instructionsPattern =
 async function writeText(file: string, content: string) {
   const normalized = content.trimEnd();
   await mkdir(path.dirname(file), { recursive: true });
-  await Bun.write(file, normalized ? `${normalized}\n` : "");
+  await writeInstallerFile(file, normalized ? `${normalized}\n` : "");
 }
 
 async function instructions(file: string) {
   const block = (
     await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
   ).trim();
-  const old = await Bun.file(file)
-    .text()
-    .catch(() => "");
+  const old = await readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
   const clean = old.replace(instructionsPattern, "").trimEnd();
   await writeText(
     file,
@@ -343,12 +575,10 @@ async function instructions(file: string) {
 }
 
 async function optionalText(file: string) {
-  return Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    });
+  return readInstallerText(file).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
 }
 
 async function removeInstructions(file: string) {
@@ -366,38 +596,36 @@ async function removeJsonMcp(file: string, section = "mcpServers") {
   const entries = value[section];
   if (!entries || typeof entries !== "object" || !("ast-mcp" in entries))
     return;
-  delete entries["ast-mcp"];
+  const receipt = await readLaunchReceipt(file + ".ast-mcp.json");
+  if (!receipt) return;
+  const retained = removeManagedEntry(entries["ast-mcp"], receipt);
+  if (retained) entries["ast-mcp"] = retained;
+  else delete entries["ast-mcp"];
   if (Object.keys(entries).length === 0) delete value[section];
   await saveRemainingJson(file, value);
+  await removeInstallerFile(file + ".ast-mcp.json");
 }
 
 async function removeCodexMcp(file: string) {
   const old = await optionalText(file);
   if (old === undefined) return;
-  await writeText(
-    file,
-    old.replace(/# ast-mcp:begin[\s\S]*?# ast-mcp:end\n?/g, ""),
-  );
+  await writeText(file, removeCodexMcpConfiguration(old));
 }
 
 async function removeHook(
   file: string,
   event: "PreToolUse" | "preToolUse",
-  commandPath: string,
   cliAlias: string,
 ) {
   const value = await json(file);
   const hooks = value.hooks;
   if (!hooks || !Array.isArray(hooks[event])) return;
   const commands = [
-    `bun ${JSON.stringify(commandPath)}`,
+    hookCommand(cliAlias),
     `bun ${JSON.stringify(cliEntry)} hook`,
     `${JSON.stringify(cliAlias)} hook`,
   ];
-  hooks[event] = hooks[event].filter(
-    (item: unknown) =>
-      !commands.some((command) => isManagedHook(item, event, command)),
-  );
+  hooks[event] = retainUnmanagedHooks(hooks[event], event, commands);
   if (hooks[event].length === 0) delete hooks[event];
   if (Object.keys(hooks).length === 0) delete value.hooks;
   await saveRemainingJson(file, value);
@@ -416,7 +644,10 @@ async function hasLocalInstallation(root: string) {
   );
 }
 
-export interface InstallOptions {
+export type InstallOptions = ServiceExecutionOptions<
+  "serviceRunner",
+  "serviceStateQuery"
+> & {
   cliEntry?: string;
   verifyLaunch?: (launch: InstallerLaunch) => Promise<void>;
   deprecatedRoot?: boolean;
@@ -428,10 +659,9 @@ export interface InstallOptions {
   root: string;
   scope: "local" | "global";
   service?: boolean;
-  serviceRunner?: ServiceCommandRunner;
   targets: Target[];
   transport?: McpTransport;
-}
+};
 
 class InstallerUsageError extends Error {
   override name = "InstallerUsageError";
@@ -444,7 +674,7 @@ async function targetTransport(
   home: string,
 ): Promise<McpTransport | undefined> {
   if (target === "codex") {
-    const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+    const base = global ? codexHome(home) : path.join(root, ".codex");
     const content = await Bun.file(path.join(base, "config.toml"))
       .text()
       .catch(() => "");
@@ -487,6 +717,9 @@ function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
   const home = options.home ?? os.homedir();
   const entry = cliEntryFor(options.scope === "local" ? root : undefined, home);
   const invocation = cliInvocation(path.resolve(root, entry), []);
+  const execution = options.serviceRunner
+    ? { runner: options.serviceRunner, stateQuery: options.serviceStateQuery }
+    : { stateQuery: options.serviceStateQuery };
   return {
     cliEntry: invocation.command,
     cliArgs: invocation.args,
@@ -494,7 +727,7 @@ function serviceConfiguration(options: InstallOptions, endpoint: HttpEndpoint) {
     home,
     platform: options.platform,
     root,
-    runner: options.serviceRunner,
+    ...execution,
     scope: options.scope,
   };
 }
@@ -516,7 +749,17 @@ function targetPaths(
   root: string,
   home: string,
 ) {
-  return installerTargetPaths(target, global, root, home);
+  const paths = installerTargetPaths(target, global, root, home);
+  const configs =
+    target === "codex"
+      ? []
+      : [
+          jsonTargetConfig(target, global, root, home),
+          ...(target === "copilot" && !global
+            ? [path.join(root, ".vscode/mcp.json")]
+            : []),
+        ];
+  return [...paths, ...configs.map((file) => file + ".ast-mcp.json")];
 }
 
 async function snapshot(paths: string[]) {
@@ -556,7 +799,7 @@ async function installCodexTarget(
   transport: McpTransport,
   endpoint?: HttpEndpoint,
 ) {
-  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  const base = global ? codexHome(home) : path.join(root, ".codex");
   await codexMcp(
     path.join(base, "config.toml"),
     global ? undefined : root,
@@ -567,7 +810,6 @@ async function installCodexTarget(
   await hook(
     path.join(base, "hooks.json"),
     "PreToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -595,7 +837,6 @@ async function installClaudeTarget(
   await hook(
     path.join(base, "settings.json"),
     "PreToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -643,7 +884,6 @@ async function installCopilotTarget(
   await hook(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
-    path.join(base, "hooks/ast-mcp.ts"),
     cliEntryFor(global ? undefined : root, home),
   );
   await installTargetAssets(
@@ -795,12 +1035,12 @@ async function ensureInstallerConfig(
   home: string,
 ) {
   const file = installerConfigPath(options, root, home);
-  const existing = await Bun.file(file)
-    .text()
-    .catch((error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    });
+  await mkdir(path.dirname(file), { recursive: true });
+  const { target, mode } = await configWriteTarget(file, true);
+  const existing = await readInstallerText(target).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  });
   clearConfigCache();
   await resolveConfig({
     cwd: options.scope === "local" ? root : home,
@@ -809,9 +1049,15 @@ async function ensureInstallerConfig(
   });
   if (existing === undefined) {
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, installerConfigSeed(options.scope === "local"), {
-      flag: "wx",
-    });
+    await writeInstallerFile(
+      target,
+      installerConfigSeed(options.scope === "local"),
+      {
+        exclusive: true,
+        mode,
+        configuration: file,
+      },
+    );
   } else {
     let migration: ReturnType<typeof migrateConfigSource>;
     try {
@@ -821,8 +1067,22 @@ async function ensureInstallerConfig(
         `invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (migration.changed)
-      await writeMigratedConfig(file, migration.source, true, existing);
+    if (migration.changed) {
+      const backup = file + ".v1.bak";
+      const backupInfo = await lstat(backup).catch((error) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          return undefined;
+        throw error;
+      });
+      await writeInstallerFile(backup, existing, {
+        mode: (backupInfo?.mode ?? mode) & 0o777,
+      });
+      await writeInstallerFile(target, migration.source, {
+        expected: existing,
+        mode: mode & 0o777,
+        configuration: file,
+      });
+    }
   }
   clearConfigCache();
   await resolveConfig({
@@ -893,7 +1153,7 @@ async function recordSourceLaunch(
   });
 }
 
-function reconcilePaths(
+async function reconcilePaths(
   options: InstallOptions,
   global: boolean,
   root: string,
@@ -904,6 +1164,8 @@ function reconcilePaths(
   const paths = options.targets.flatMap((target) =>
     targetPaths(target, global, root, home),
   );
+  if (global && options.targets.includes("codex"))
+    paths.push(...(await codexProfileFiles(home)));
   paths.push(installerConfigPath(options, root, home));
   if (usesSourceLaunch(options))
     paths.push(sourceLaunchReceiptPath(root, home));
@@ -947,7 +1209,7 @@ async function withInstallerLocks<T>(
       path.join(root, ".ast-mcp-installation"),
       path.join(home, ".ast-mcp-installation"),
     ],
-    operation,
+    () => withInstallerFileTransaction(operation).finally(clearConfigCache),
     { deadline: Date.now() + 10_000 },
   );
 }
@@ -973,7 +1235,7 @@ async function reconcile(
         ...(!global ? { cwd: root } : {}),
       };
       await (options.verifyLaunch ?? verifyMcpLaunch)(launch);
-      const paths = reconcilePaths(
+      const paths = await reconcilePaths(
         options,
         global,
         root,
@@ -981,6 +1243,10 @@ async function reconcile(
         transport,
         undefined,
       );
+      for (const file of paths.filter((candidate) =>
+        candidate.endsWith(".ast-mcp.json"),
+      ))
+        await readLaunchReceipt(file, true);
       const before = await snapshot(paths);
       if (transport === "http" && options.service === true) {
         const endpoint = await resolveInstallerEndpoint({
@@ -1013,8 +1279,7 @@ export async function update(options: InstallOptions) {
   return withInstallerLocks(options, () => reconcile(options, "update"));
 }
 
-async function removeTargetAssets(base: string, instructionsPath?: string) {
-  await rm(path.join(base, "hooks/ast-mcp.ts"), { force: true });
+async function removeTargetAssets(instructionsPath?: string) {
   if (instructionsPath) await removeInstructions(instructionsPath);
 }
 
@@ -1023,18 +1288,25 @@ async function uninstallCodexTarget(
   root: string,
   home: string,
 ) {
-  const base = global ? path.join(home, ".codex") : path.join(root, ".codex");
+  const base = global ? codexHome(home) : path.join(root, ".codex");
+  if (global) {
+    for (const profileFile of await codexProfileFiles(home))
+      await removeCodexMcp(profileFile);
+    const config = path.join(base, "config.toml");
+    const old = await optionalText(config);
+    if (old !== undefined)
+      await writeText(
+        config,
+        old.replace(/^# ast-mcp:profile-file [\w.-]{1,100}\r?\n/gm, ""),
+      );
+  }
   await removeCodexMcp(path.join(base, "config.toml"));
   await removeHook(
     path.join(base, "hooks.json"),
     "PreToolUse",
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".codex/hooks/ast-mcp.ts",
     cliEntryFor(global ? undefined : root, home),
   );
-  await removeTargetAssets(
-    base,
-    global ? path.join(base, "AGENTS.md") : undefined,
-  );
+  await removeTargetAssets(global ? path.join(base, "AGENTS.md") : undefined);
 }
 
 async function uninstallClaudeTarget(
@@ -1049,15 +1321,9 @@ async function uninstallClaudeTarget(
   await removeHook(
     path.join(base, "settings.json"),
     "PreToolUse",
-    global
-      ? path.join(base, "hooks/ast-mcp.ts")
-      : `\${CLAUDE_PROJECT_DIR}/.claude/hooks/ast-mcp.ts`,
     cliEntryFor(global ? undefined : root, home),
   );
-  await removeTargetAssets(
-    base,
-    global ? path.join(base, "CLAUDE.md") : undefined,
-  );
+  await removeTargetAssets(global ? path.join(base, "CLAUDE.md") : undefined);
 }
 
 async function uninstallCopilotTarget(
@@ -1068,19 +1334,18 @@ async function uninstallCopilotTarget(
   const base = global
     ? path.join(home, ".copilot")
     : path.join(root, ".github");
-  if (global) await removeJsonMcp(path.join(base, "mcp-config.json"));
+  if (global)
+    await removeJsonMcp(path.join(base, "mcp-config.json"), "mcpServers");
   else {
-    await removeJsonMcp(path.join(root, ".github/mcp.json"));
+    await removeJsonMcp(path.join(root, ".github/mcp.json"), "mcpServers");
     await removeJsonMcp(path.join(root, ".vscode/mcp.json"), "servers");
   }
   await removeHook(
     path.join(base, "hooks/ast-mcp.json"),
     "preToolUse",
-    global ? path.join(base, "hooks/ast-mcp.ts") : ".github/hooks/ast-mcp.ts",
     cliEntryFor(global ? undefined : root, home),
   );
   await removeTargetAssets(
-    base,
     global ? path.join(base, "copilot-instructions.md") : undefined,
   );
 }
@@ -1128,6 +1393,8 @@ async function uninstallLocked(options: InstallOptions) {
       const paths = options.targets.flatMap((target) =>
         targetPaths(target, global, root, home),
       );
+      if (global && options.targets.includes("codex"))
+        paths.push(...(await codexProfileFiles(home)));
       const before = await snapshot(paths);
       for (const target of options.targets)
         await uninstallTarget(target, global, root, home);

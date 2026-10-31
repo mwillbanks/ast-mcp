@@ -28,6 +28,12 @@ bun run inspect
 
 Tests mirror source domains beneath `tests/`; use `tests/integration/` for cross-domain behavior and `tests/tooling/` for repository tooling. Keep shared fixtures and helpers under `tests/fixtures/` and `tests/support/`. Application modules live under `src/config`, `src/cli`, `src/installer`, `src/http`, `src/server`, `src/hooks`, and `src/skills`, alongside `src/intelligence`, `src/runtime`, `src/patch`, and `src/tools`. Operational scripts are grouped under `scripts/build`, `scripts/release`, `scripts/validation`, `scripts/testing`, and `scripts/benchmark`; host-smoke implementation belongs under `scripts/testing`. Keep stdio output protocol-safe: server diagnostics belong on stderr, never stdout.
 
+Validate locally before committing or pushing for CI. Treat CI as independent confirmation, not the primary debugging loop.
+
+When a check exposes a defect, inspect the related domain for the same failure class. Add a reproducer, review sibling paths, and request an independent review before pushing again. After affected checks and review pass, freeze source and run `bun run check:coverage`; a passing test suite alone does not satisfy the per-file coverage gate. Do not mutate source during validation. Restart affected and downstream gates after an edit.
+
+Keep boundary contracts executable. Use explicit phase handshakes or injected clocks for cancellation and deadline tests. Fixed delays before configuration or preflight cannot prove the lock-wait phase. Freeze configuration identity inputs for cached reloads and test ambient environment and caller mutation. Treat filesystem events as hints and compare fingerprints before invalidation. Track directory selection identity separately from configuration content; ordinary child operations must preserve workspace generations and grants. Test Windows and POSIX path spellings on every host, preserve user-owned configuration through install-update-uninstall cycles, and validate remote diagnostic payloads before reusing them. Capture external service state before mutation and validate original dependencies before every recovery command. Run independent recovery despite unrelated file conflicts. Keep optional diagnostics separate from required protocol success. Preserve observed approval outcomes and propagate unrelated failures. Prefer shared parsers and ownership helpers over duplicated conditionals; add regression matrices when a source-pattern lint cannot establish behavior safely.
+
 Before opening a pull request, run:
 
 ```bash

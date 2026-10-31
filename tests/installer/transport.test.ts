@@ -153,6 +153,11 @@ describe("installer HTTP transport", () => {
       root,
       scope: "local",
       service: true,
+      serviceStateQuery: async () => ({
+        exitCode: 0,
+        stdout: "LoadState=not-found\nActiveState=inactive\nUnitFileState=\n",
+        stderr: "",
+      }),
       serviceRunner: async (command) => {
         commands.push(command);
       },

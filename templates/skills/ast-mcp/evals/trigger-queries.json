@@ -22,6 +22,9 @@
     "Trace how the request handler reaches the database call.",
     "Upgrade the disconnected AST-MCP server and refresh its stale host entry.",
     "Migrate my outdated ast-mcp.toml without losing a backup.",
-    "Update the selected manual AST-MCP skill and preserve my custom reference files."
+    "Update the selected manual AST-MCP skill and preserve my custom reference files.",
+    "Diagnose AST-MCP approval_denied in Codex Desktop and check the latest version.",
+    "Check the AST-MCP CLI doctor report without changing host permissions.",
+    "Prepare an AST-MCP bug report after checking open and closed GitHub issues."
   ]
 }

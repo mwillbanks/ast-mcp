@@ -1,6 +1,3 @@
-import { randomUUID } from "node:crypto";
-import { readFileSync, renameSync } from "node:fs";
-import { chmod, mkdir, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -8,8 +5,12 @@ import { clearConfigCache, globalConfigPath, resolveConfig } from "../config";
 import {
   assertConfigWriteTarget,
   configWriteTarget,
-  withConfigTransaction,
 } from "../config/transaction";
+import {
+  mkdirInstallerDirectory as mkdir,
+  withInstallerFileTransaction,
+  writeInstallerFile,
+} from "./transaction";
 
 export const transports = ["stdio", "http"] as const;
 export type McpTransport = (typeof transports)[number];
@@ -166,6 +167,17 @@ export function updateHttpToml(
 export async function resolveInstallerEndpoint(
   options: InstallerEndpointOptions,
 ): Promise<HttpEndpoint> {
+  try {
+    return await withInstallerFileTransaction(() => resolveEndpoint(options));
+  } catch (error) {
+    clearConfigCache();
+    throw error;
+  }
+}
+
+async function resolveEndpoint(
+  options: InstallerEndpointOptions,
+): Promise<HttpEndpoint> {
   const configFile =
     options.scope === "local"
       ? path.join(path.resolve(options.root), "ast-mcp.toml")
@@ -186,33 +198,12 @@ export async function resolveInstallerEndpoint(
       host: options.host,
       port: options.port,
     });
-    const temporary = `${target}.endpoint-${randomUUID()}`;
-    try {
-      await writeFile(temporary, updated, {
-        flag: "wx",
-        mode,
-      });
-      await chmod(temporary, mode);
-      withConfigTransaction(target, () => {
-        assertConfigWriteTarget(configFile, target);
-        let latest = "";
-        try {
-          latest = readFileSync(target, "utf8");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
-        if (latest !== current)
-          throw Object.assign(
-            new Error(
-              "Configuration changed before endpoint commit; reload and retry",
-            ),
-            { code: "configuration_conflict", retryable: true },
-          );
-        renameSync(temporary, target);
-      });
-    } finally {
-      await unlink(temporary).catch(() => undefined);
-    }
+    assertConfigWriteTarget(configFile, target);
+    await writeInstallerFile(target, updated, {
+      expected: current,
+      mode: mode & 0o777,
+      configuration: configFile,
+    });
     clearConfigCache();
   }
   const config = await resolveConfig({

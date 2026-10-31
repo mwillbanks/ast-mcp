@@ -26,6 +26,7 @@ import {
   canonicalConfigPath,
   withConfigTransaction,
 } from "../config/transaction";
+import { codexApprovalMetadata } from "./hosts/codex";
 import type { PolicyDecision } from "./path-policy";
 import { canonicalizePathSync } from "./path-utils";
 
@@ -41,9 +42,149 @@ const activeApproval = new AsyncLocalStorage<ApprovalScope>();
 const sessionGrants = new Set<string>();
 const serverIdentities = new WeakMap<McpServer, string>();
 interface ApprovalChallenge {
+  createdAt: number;
   expiresAt: number;
   responseKey: string;
   sessionId: string;
+  serverId: string;
+  server: McpServer;
+  decision: PolicyDecision;
+  tool: string;
+}
+
+export type ApprovalOutcome =
+  | "accepted"
+  | "declined"
+  | "denied"
+  | "cancelled"
+  | "malformed"
+  | "unsupported"
+  | "timeout"
+  | "transport_error";
+
+export interface ApprovalObservation {
+  at: string;
+  outcome: ApprovalOutcome;
+  actor: "unknown";
+  operation: PolicyDecision["operation"];
+  source: PolicyDecision["source"];
+  rule: "filesystem" | "path" | "probe";
+}
+
+let observations = new WeakMap<McpServer, Map<string, ApprovalObservation>>();
+const MAX_OBSERVED_SESSIONS = 256;
+
+function serverId(server?: McpServer): string {
+  if (!server) return "local";
+  let identity = serverIdentities.get(server);
+  if (!identity) {
+    identity = randomUUID();
+    serverIdentities.set(server, identity);
+  }
+  return identity;
+}
+
+function observe(
+  scope: ApprovalScope,
+  decision: PolicyDecision,
+  outcome: ApprovalOutcome,
+): void {
+  if (!scope.server) return;
+  let sessions = observations.get(scope.server);
+  if (!sessions) {
+    sessions = new Map();
+    observations.set(scope.server, sessions);
+  }
+  const session = scope.context?.sessionId ?? "connection";
+  sessions.delete(session);
+  sessions.set(session, {
+    at: new Date().toISOString(),
+    outcome,
+    actor: "unknown",
+    operation: decision.operation,
+    source: decision.source,
+    rule:
+      decision.approvalKind === "probe"
+        ? "probe"
+        : decision.approvalKind === "filesystem"
+          ? "filesystem"
+          : "path",
+  });
+  if (sessions.size > MAX_OBSERVED_SESSIONS)
+    sessions.delete(sessions.keys().next().value!);
+}
+
+export function approvalClient(server?: McpServer, context?: ServerContext) {
+  const envelope = context?.mcpReq?.envelope as
+    | Record<string, unknown>
+    | undefined;
+  const capabilities = (envelope?.[
+    "io.modelcontextprotocol/clientCapabilities"
+  ] ?? server?.server.getClientCapabilities()) as
+    | { elicitation?: unknown; roots?: unknown; sampling?: unknown }
+    | undefined;
+  const client = (envelope?.["io.modelcontextprotocol/clientInfo"] ??
+    server?.server.getClientVersion?.()) as
+    | { name?: unknown; version?: unknown }
+    | undefined;
+  const protocol =
+    envelope?.["io.modelcontextprotocol/protocolVersion"] ??
+    server?.server.getNegotiatedProtocolVersion?.();
+  return {
+    capabilities,
+    client,
+    protocol: typeof protocol === "string" ? protocol : "unknown",
+  };
+}
+
+export function supportsApprovalForm(
+  capabilities: { elicitation?: unknown } | undefined,
+): boolean {
+  const elicitation = capabilities?.elicitation;
+  if (
+    !elicitation ||
+    typeof elicitation !== "object" ||
+    Array.isArray(elicitation)
+  )
+    return false;
+  // An empty capability is the legacy declaration of form support.
+  return (
+    Object.keys(elicitation).length === 0 ||
+    (Object.hasOwn(elicitation, "form") &&
+      typeof (elicitation as { form?: unknown }).form === "object" &&
+      (elicitation as { form?: unknown }).form !== null &&
+      !Array.isArray((elicitation as { form?: unknown }).form))
+  );
+}
+
+export function approvalDiagnostics(
+  server?: McpServer,
+  context?: ServerContext,
+) {
+  pruneApprovalChallenges();
+  const session = context?.sessionId ?? "connection";
+  const identity = serverId(server);
+  const pending = [...issuedChallenges.values()].filter(
+    (challenge) =>
+      challenge.sessionId === session && challenge.serverId === identity,
+  );
+  const prefix = `${session}\u0000${identity}\u0000`;
+  return {
+    pendingCount: pending.length,
+    oldestPendingAgeMs: pending.length
+      ? Math.max(
+          0,
+          Date.now() -
+            Math.min(...pending.map((challenge) => challenge.createdAt)),
+        )
+      : null,
+    sessionGrantPresent: [...sessionGrants].some((grant) =>
+      grant.startsWith(prefix),
+    ),
+    lastOutcome: server
+      ? (observations.get(server)?.get(session) ?? null)
+      : null,
+  };
 }
 
 const APPROVAL_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -79,9 +220,55 @@ function persistentConfig(globalPath: string): string {
 interface StoredPersistentRule {
   id?: string;
   path?: string;
+  follow_symlinks?: boolean;
+  includes?: string[];
+  excludes?: string[];
   policies?: Partial<
     Record<PolicyDecision["operation"], "allow" | "deny" | "request">
   >;
+}
+
+function persistenceConflict(): Error {
+  return Object.assign(
+    new Error(
+      "Persistent approval conflicts with customized path rules; use allow once or session approval, or explicitly update the user-global rule",
+    ),
+    {
+      code: "approval_persistence_conflict",
+      retryable: true,
+      suggestedNextCall: "config_status",
+    },
+  );
+}
+
+function ownedPersistentRule(
+  rule: StoredPersistentRule,
+  canonicalPath: string,
+): boolean {
+  const operations = ["read", "write", "delete"] as const;
+  return (
+    rule.path === canonicalPath &&
+    Object.keys(rule).sort().join(",") ===
+      "excludes,follow_symlinks,id,includes,path,policies" &&
+    rule.follow_symlinks === false &&
+    Array.isArray(rule.includes) &&
+    rule.includes.length === 1 &&
+    rule.includes[0] === "**/*" &&
+    Array.isArray(rule.excludes) &&
+    rule.excludes.length === 0 &&
+    rule.policies !== undefined &&
+    Object.keys(rule.policies).sort().join(",") === "delete,read,write" &&
+    operations.every(
+      (operation) =>
+        rule.policies?.[operation] === "allow" ||
+        rule.policies?.[operation] === "deny",
+    ) &&
+    operations.some(
+      (operation) =>
+        rule.id === persistentId({ canonicalPath, operation }) &&
+        rule.policies?.[operation] === "allow",
+    )
+  );
 }
 
 function storedPersistentApprovals(
@@ -89,12 +276,13 @@ function storedPersistentApprovals(
   canonicalPath: string,
 ): StoredPersistentRule[] {
   if (!existing) return [];
-  const parsed = Bun.TOML.parse(existing) as {
-    paths?: StoredPersistentRule[];
-  };
-  return (parsed.paths ?? []).filter(
-    (rule) => rule.id?.startsWith("approval-") && rule.path === canonicalPath,
+  const parsed = Bun.TOML.parse(existing) as { paths?: StoredPersistentRule[] };
+  const matching = (parsed.paths ?? []).filter(
+    (rule) => rule.path === canonicalPath,
   );
+  if (matching.some((rule) => !ownedPersistentRule(rule, canonicalPath)))
+    throw persistenceConflict();
+  return matching;
 }
 
 function persistentPolicy(
@@ -125,17 +313,37 @@ function mergePersistentPolicies(
 ): string {
   const ids = new Set(rules.flatMap((rule) => (rule.id ? [rule.id] : [])));
   const policyLine = persistentPolicyLine(policy);
-  return source
+  let merged = 0;
+  const result = source
     .split(/(?=^\[\[paths\]\]\s*$)/m)
-    .map((block) =>
-      [...ids].some((id) => block.includes(`id = ${JSON.stringify(id)}`))
-        ? block.replace(/^policies = \{.*\}$/m, policyLine)
-        : block,
-    )
+    .map((block) => {
+      if (!block.startsWith("[[paths]]")) return block;
+      let rule: StoredPersistentRule | undefined;
+      try {
+        rule = (Bun.TOML.parse(block) as { paths?: StoredPersistentRule[] })
+          .paths?.[0];
+      } catch {
+        throw persistenceConflict();
+      }
+      if (
+        !rule?.id ||
+        !ids.has(rule.id) ||
+        !rule.path ||
+        !ownedPersistentRule(rule, rule.path)
+      )
+        return block;
+      if (!/^policies = \{.*\}$/m.test(block)) throw persistenceConflict();
+      merged++;
+      return block.replace(/^policies = \{.*\}$/m, policyLine);
+    })
     .join("");
+  if (merged !== rules.length) throw persistenceConflict();
+  return result;
 }
 
-function persistentId(decision: PolicyDecision): string {
+function persistentId(
+  decision: Pick<PolicyDecision, "operation" | "canonicalPath">,
+): string {
   return `approval-${createHash("sha256")
     .update(`${decision.operation}\u0000${decision.canonicalPath}`)
     .digest("hex")
@@ -235,15 +443,11 @@ function key(
   scope: ApprovalScope,
   generation: number,
 ): string {
-  let serverIdentity = scope.server && serverIdentities.get(scope.server);
-  if (scope.server && !serverIdentity) {
-    serverIdentity = randomUUID();
-    serverIdentities.set(scope.server, serverIdentity);
-  }
-  const filesystem = decision.ruleId?.startsWith("filesystem:");
+  const serverIdentity = serverId(scope.server);
+  const filesystem = decision.approvalKind === "filesystem";
   return [
     scope.context?.sessionId ?? "connection",
-    filesystem ? (serverIdentity ?? "local") : "session",
+    serverIdentity,
     filesystem ? 0 : generation,
     filesystem ? "filesystem" : scope.tool,
     decision.ruleId ?? decision.source,
@@ -288,7 +492,9 @@ function acceptResponse(
   invocationGrants: Set<string>,
 ): boolean | undefined {
   if (response?.action !== "accept") return undefined;
-  if (decision.ruleId?.startsWith("filesystem:")) {
+  if (decision.approvalKind === "probe")
+    return response.content?.decision === "allow_once" ? true : undefined;
+  if (decision.approvalKind === "filesystem") {
     if (response.content?.decision !== "allow_session") return undefined;
     sessionGrants.add(grantKey);
     return true;
@@ -309,35 +515,115 @@ function acceptResponse(
   }
 }
 
-function deniedResponse(response: ApprovalResponse | undefined): boolean {
-  return (
-    response?.action === "decline" ||
-    response?.action === "cancel" ||
-    response?.content?.decision === "deny"
-  );
+function responseOutcome(
+  response: ApprovalResponse | undefined,
+): ApprovalOutcome {
+  if (response?.action === "cancel") return "cancelled";
+  if (response?.action === "decline") return "declined";
+  if (response?.action === "accept" && response.content?.decision === "deny")
+    return "denied";
+  return "malformed";
 }
 
 function approvalRequired(decision: PolicyDecision): Error {
   return Object.assign(
     new Error(
-      `Approval required for ${decision.operation} ${decision.canonicalPath}; this client has no elicitation capability. Add a narrow user-global [[paths]] rule or use a capable client.`,
+      `Approval required for ${decision.operation}; this client cannot provide a stable form approval. Use diagnostics to inspect capabilities and policy. Add an authorized narrow user-global rule or use an elicitation-capable session.`,
     ),
     {
       code: "approval_required",
-      details: decision,
+      details: {
+        operation: decision.operation,
+        source: decision.source,
+        policy: decision.policy,
+        reason: "A stable host form approval is required",
+        rule: decision.approvalKind === "filesystem" ? "filesystem" : "path",
+        outcome: "unsupported",
+        actor: "unknown",
+      },
       retryable: true,
-      suggestedNextCall: "policy_check",
+      suggestedNextCall: "diagnostics",
     },
   );
 }
 
-function approvalDenied(decision: PolicyDecision): Error {
+function approvalResponseError(
+  decision: PolicyDecision,
+  outcome: ApprovalOutcome,
+): Error {
+  const code =
+    outcome === "cancelled"
+      ? "approval_cancelled"
+      : outcome === "malformed"
+        ? "approval_response_invalid"
+        : "approval_denied";
   return Object.assign(
     new Error(
-      `User denied ${decision.operation} for ${decision.canonicalPath}`,
+      `Client returned ${outcome} for ${decision.operation} approval; the actor is unknown. Inspect diagnostics before retrying. Host session policy may override disk settings.`,
     ),
-    { code: "approval_denied", retryable: false },
+    {
+      code,
+      details: {
+        outcome,
+        actor: "unknown",
+        operation: decision.operation,
+        source: decision.source,
+        policy: decision.policy,
+        reason:
+          decision.approvalKind === "filesystem"
+            ? "Project unrestricted filesystem access requires session approval"
+            : "The selected path policy requires approval",
+        rule:
+          decision.approvalKind === "filesystem"
+            ? "filesystem"
+            : decision.approvalKind === "probe"
+              ? "probe"
+              : "path",
+      },
+      retryable: outcome === "cancelled" || outcome === "malformed",
+      suggestedNextCall: "diagnostics",
+    },
   );
+}
+
+function approvalMessage(tool: string, decision: PolicyDecision): string {
+  return [
+    `${tool} requests ${decision.operation} access.`,
+    `Path: ${decision.canonicalPath}`,
+    `Policy: ${decision.reason}`,
+    "Choose the narrowest approval that is appropriate.",
+  ].join("\n");
+}
+
+export function recordApprovalTransportFailure(
+  server: McpServer,
+  responseKey: unknown,
+  error: unknown,
+): void {
+  if (typeof responseKey !== "string") return;
+  const value = error as { name?: string; code?: unknown; message?: string };
+  const outcome: ApprovalOutcome =
+    value?.name === "TimeoutError" ||
+    value?.code === -32001 ||
+    /timeout|timed out/i.test(value?.message ?? "")
+      ? "timeout"
+      : value?.name === "AbortError"
+        ? "cancelled"
+        : "transport_error";
+  for (const [grantKey, challenge] of issuedChallenges) {
+    if (challenge.server !== server || challenge.responseKey !== responseKey)
+      continue;
+    observe(
+      {
+        server,
+        tool: challenge.tool,
+        context: { sessionId: challenge.sessionId } as ServerContext,
+      },
+      challenge.decision,
+      outcome,
+    );
+    issuedChallenges.delete(grantKey);
+  }
 }
 
 function requestApproval(
@@ -350,21 +636,27 @@ function requestApproval(
       inputRequests: {
         [responseKey]: inputRequired.elicit({
           _meta: {
-            codex_approval_kind: "mcp_tool_call",
-            persist: decision.ruleId?.startsWith("filesystem:")
-              ? ["session"]
-              : ["session", "always"],
+            ...codexApprovalMetadata(
+              approvalClient(scope.server, scope.context).client,
+              decision.approvalKind === "filesystem",
+              decision.approvalKind === "probe",
+            ),
+            "io.ast-mcp/approvalChallenge": responseKey,
+            "io.ast-mcp/probe": decision.approvalKind === "probe",
           },
-          message: [
-            `${scope.tool} requests ${decision.operation} access.`,
-            `Path: ${decision.canonicalPath}`,
-            `Policy: ${decision.reason}`,
-            "Choose the narrowest approval that is appropriate.",
-          ].join("\n"),
+          message: approvalMessage(scope.tool, decision),
           requestedSchema: z.object({
-            decision: decision.ruleId?.startsWith("filesystem:")
-              ? z.enum(["deny", "allow_session"])
-              : z.enum(["deny", "allow_once", "allow_session", "always_allow"]),
+            decision:
+              decision.approvalKind === "probe"
+                ? z.enum(["deny", "allow_once"])
+                : decision.approvalKind === "filesystem"
+                  ? z.enum(["deny", "allow_session"])
+                  : z.enum([
+                      "deny",
+                      "allow_once",
+                      "allow_session",
+                      "always_allow",
+                    ]),
           }),
         }),
       },
@@ -374,18 +666,32 @@ function requestApproval(
 
 function pruneApprovalChallenges(now = Date.now()): void {
   for (const [grantKey, challenge] of issuedChallenges)
-    if (challenge.expiresAt <= now) issuedChallenges.delete(grantKey);
+    if (challenge.expiresAt <= now) {
+      observe(
+        {
+          server: challenge.server,
+          tool: challenge.tool,
+          context: { sessionId: challenge.sessionId } as ServerContext,
+        },
+        challenge.decision,
+        "timeout",
+      );
+      issuedChallenges.delete(grantKey);
+    }
 }
 
 function storeApprovalChallenge(
   grantKey: string,
   scope: ApprovalScope,
   responseKey: string,
+  decision: PolicyDecision,
 ): void {
   pruneApprovalChallenges();
   const sessionId = scope.context?.sessionId ?? "connection";
   const sessionChallenges = [...issuedChallenges.values()].filter(
-    (challenge) => challenge.sessionId === sessionId,
+    (challenge) =>
+      challenge.sessionId === sessionId &&
+      challenge.serverId === serverId(scope.server),
   ).length;
   if (
     issuedChallenges.size >= MAX_APPROVAL_CHALLENGES ||
@@ -398,9 +704,16 @@ function storeApprovalChallenge(
       { code: "approval_challenge_limit", retryable: true },
     );
   issuedChallenges.set(grantKey, {
-    expiresAt: Date.now() + APPROVAL_CHALLENGE_TTL_MS,
+    createdAt: Date.now(),
+    expiresAt:
+      Date.now() +
+      (decision.approvalKind === "probe" ? 5000 : APPROVAL_CHALLENGE_TTL_MS),
     responseKey,
     sessionId,
+    serverId: serverId(scope.server),
+    server: scope.server!,
+    decision,
+    tool: scope.tool,
   });
 }
 
@@ -410,7 +723,10 @@ export function authorizeRequestedDecision(
 ): boolean {
   const scope = activeApproval.getStore();
   if (!scope?.context || !scope.server) return false;
-  if (scope.requestScoped) throw approvalRequired(decision);
+  if (scope.requestScoped) {
+    observe(scope, decision, "unsupported");
+    throw approvalRequired(decision);
+  }
   pruneApprovalChallenges();
   const grantKey = key(decision, scope, generation);
   const invocationGrants = scope.invocationGrants ?? new Set<string>();
@@ -431,22 +747,23 @@ export function authorizeRequestedDecision(
   );
   if (accepted !== undefined) {
     issuedChallenges.delete(grantKey);
+    observe(scope, decision, "accepted");
     return accepted;
   }
-  if (deniedResponse(response)) {
+  if (response !== undefined) {
+    const outcome = responseOutcome(response);
     issuedChallenges.delete(grantKey);
-    throw approvalDenied(decision);
+    observe(scope, decision, outcome);
+    throw approvalResponseError(decision, outcome);
   }
-  const envelope = scope.context.mcpReq.envelope as
-    | Record<string, unknown>
-    | undefined;
-  const capabilities =
-    (envelope?.["io.modelcontextprotocol/clientCapabilities"] as
-      | { elicitation?: unknown }
-      | undefined) ?? scope.server.server.getClientCapabilities();
-  if (!capabilities?.elicitation) throw approvalRequired(decision);
+  const { capabilities } = approvalClient(scope.server, scope.context);
+  if (!supportsApprovalForm(capabilities)) {
+    observe(scope, decision, "unsupported");
+    throw approvalRequired(decision);
+  }
   const nextResponseKey = responseKey ?? approvalResponseKey();
-  if (!challenge) storeApprovalChallenge(grantKey, scope, nextResponseKey);
+  if (!challenge)
+    storeApprovalChallenge(grantKey, scope, nextResponseKey, decision);
   throw requestApproval(scope, decision, nextResponseKey);
 }
 
@@ -467,6 +784,7 @@ function filesystemDecision(config: ResolvedConfig): PolicyDecision {
     policy: "request",
     reason:
       "Project configuration requests unrestricted access to the entire filesystem for this session",
+    approvalKind: "filesystem",
     ruleId: `filesystem:${fingerprint}`,
     source: "project",
     specificity: Number.MAX_SAFE_INTEGER,
@@ -510,15 +828,58 @@ export function approvalSessionId(): string {
   return activeApproval.getStore()?.context?.sessionId ?? "local";
 }
 
-export function clearSessionApprovals(sessionId?: string): void {
-  if (!sessionId) {
+export function clearSessionApprovals(
+  sessionId?: string,
+  server?: McpServer,
+): void {
+  const identity = server ? serverId(server) : undefined;
+  if (!sessionId && !server) {
     sessionGrants.clear();
     issuedChallenges.clear();
+    observations = new WeakMap();
     return;
   }
-  const prefix = `${sessionId}\u0000`;
-  for (const grantKey of sessionGrants)
-    if (grantKey.startsWith(prefix)) sessionGrants.delete(grantKey);
+  for (const grantKey of sessionGrants) {
+    const [session, instance] = grantKey.split("\u0000");
+    if (
+      (!sessionId || session === sessionId) &&
+      (!identity || instance === identity)
+    )
+      sessionGrants.delete(grantKey);
+  }
   for (const [grantKey, challenge] of issuedChallenges)
-    if (challenge.sessionId === sessionId) issuedChallenges.delete(grantKey);
+    if (
+      (!sessionId || challenge.sessionId === sessionId) &&
+      (!identity || challenge.serverId === identity)
+    )
+      issuedChallenges.delete(grantKey);
+  if (server) {
+    if (sessionId) observations.get(server)?.delete(sessionId);
+    else observations.delete(server);
+  }
+}
+
+export function runApprovalProbe(): { outcome: ApprovalOutcome } {
+  const decision: PolicyDecision = {
+    canonicalPath: "approval probe",
+    operation: "read",
+    policy: "request",
+    reason: "Diagnostic confirmation only. Acceptance grants no file access.",
+    approvalKind: "probe",
+    ruleId: "diagnostic-probe",
+    source: "baseline",
+    specificity: 0,
+    symlinks: false,
+  };
+  try {
+    if (!authorizeRequestedDecision(decision, 0))
+      return { outcome: "unsupported" };
+    return { outcome: "accepted" };
+  } catch (error) {
+    if (error instanceof InputRequiredSignal) throw error;
+    const details = (error as { details?: { outcome?: ApprovalOutcome } })
+      .details;
+    if (details?.outcome) return { outcome: details.outcome };
+    throw error;
+  }
 }

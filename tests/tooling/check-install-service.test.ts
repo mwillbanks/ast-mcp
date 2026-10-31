@@ -15,6 +15,7 @@ import {
   checkInstall,
   smokeMcpStdio,
 } from "../../templates/skills/ast-mcp/scripts/check-install";
+import { absentServiceStateQuery } from "../support/service-state";
 
 const created: string[] = [];
 afterEach(async () => {
@@ -51,6 +52,7 @@ test("diagnoses the platform-native managed HTTP service", async () => {
     scope: "local",
     service: true,
     serviceRunner: async () => {},
+    serviceStateQuery: absentServiceStateQuery,
     targets: ["codex"],
     transport: "http",
   });
@@ -127,6 +129,7 @@ test("diagnoses the platform-native managed HTTP service", async () => {
     scope: "local",
     service: true,
     serviceRunner: async () => {},
+    serviceStateQuery: absentServiceStateQuery,
     targets: ["codex"],
     transport: "http",
   });
@@ -202,6 +205,7 @@ async function smokeFixture(
 import { writeFile } from "node:fs/promises";
 const options = ${JSON.stringify(options)};
 const tools = options.missing ? [] : ${JSON.stringify(toolNames)};
+await writeFile("smoke.pid", String(process.pid));
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
   if (message.id === undefined) continue;
@@ -250,5 +254,10 @@ test("checker terminates cleanup that exceeds five seconds", async () => {
   const fixture = await smokeFixture(root, { delay: 60_000, exit: 0 });
   await expect(
     smokeMcpStdio(process.execPath, root, 5_000, [fixture]),
-  ).rejects.toThrow("shutdown exceeded five seconds");
+  ).rejects.toMatchObject({
+    message: "MCP smoke shutdown exceeded five seconds",
+  });
+  const pid = Number(await readFile(path.join(root, "smoke.pid"), "utf8"));
+  expect(pid).toBeGreaterThan(0);
+  expect(() => process.kill(pid, 0)).toThrow();
 }, 15_000);

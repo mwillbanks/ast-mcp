@@ -22,6 +22,8 @@ import {
 export type PathOperation = "read" | "write" | "delete";
 
 export interface PolicyDecision {
+  /** Internal synthetic approvals only; never derive this from a path rule ID. */
+  approvalKind?: "filesystem" | "probe";
   canonicalPath: string;
   operation: PathOperation;
   policy: PathPolicy;
