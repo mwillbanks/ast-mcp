@@ -280,6 +280,8 @@ export async function validateStructuredCandidate(
     }
   }
   if (!capabilities.language || capabilities.kind !== "source") return;
+  // Generic SQL recovery nodes do not establish dialect syntax validity.
+  if (capabilities.language === "sql") return;
   if (capabilities.parseErrorCount === undefined) return;
   let candidateErrors: number;
   try {

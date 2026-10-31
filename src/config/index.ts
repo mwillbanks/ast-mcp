@@ -18,7 +18,7 @@ import {
   canonicalPathWithin,
 } from "../runtime/path-utils";
 import {
-  resolveSqlAssistanceOptions,
+  mergeSqlAssistanceDefaults,
   type SqlAssistanceOptions,
 } from "../runtime/sql-assistance";
 import {
@@ -754,19 +754,6 @@ function mergeSafetyHook(
   };
 }
 
-function mergeSqlDefaults(
-  incoming: SqlAssistanceOptions = {},
-  previous: SqlAssistanceOptions = {},
-): SqlAssistanceOptions {
-  const resolved = resolveSqlAssistanceOptions(incoming, previous);
-  return definedProperties({
-    policy: incoming.policy ?? previous.policy,
-    dialect: resolved.dialect,
-    variant: resolved.variant,
-    version: resolved.version,
-  }) as SqlAssistanceOptions;
-}
-
 function mergeFileMethods(
   result: InternalConfig,
   incoming: InternalConfig["files"],
@@ -777,7 +764,10 @@ function mergeFileMethods(
     patch: {
       ...previous?.patch,
       ...incoming.patch,
-      sql: mergeSqlDefaults(incoming.patch?.sql, previous?.patch?.sql),
+      sql: mergeSqlAssistanceDefaults(
+        incoming.patch?.sql,
+        previous?.patch?.sql,
+      ),
     },
     read: { ...previous?.read, ...incoming.read },
   };
