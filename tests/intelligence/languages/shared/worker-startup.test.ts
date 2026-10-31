@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 
 import { createLanguageLoader } from "../../../../src/intelligence/languages/shared/language-loader.ts";
@@ -7,6 +7,7 @@ import {
   createWorkerClient,
   validateWorkerEnvelope,
 } from "../../../../src/intelligence/languages/shared/worker-client.ts";
+import { observeWorkerDispatch as observeDispatch } from "../../../support/worker-dispatch";
 
 const limits = {
   maxOutstandingBytes: 1024,
@@ -27,22 +28,6 @@ const pendingScript = new URL(
       'import { parentPort } from "node:worker_threads"; parentPort.on("message", request => { if (request.type === "complete" || request.source === "recovery") parentPort.postMessage({ id: request.id, ok: false, type: "result", error: "expected parse failure" }); });',
     ),
 );
-
-function observeDispatch() {
-  let started!: (value: { worker: Worker; id: number }) => void;
-  const dispatched = new Promise<{ worker: Worker; id: number }>((resolve) => {
-    started = resolve;
-  });
-  const original = Worker.prototype.postMessage;
-  const post = spyOn(Worker.prototype, "postMessage").mockImplementation(
-    function (this: Worker, ...args: Parameters<Worker["postMessage"]>) {
-      original.apply(this, args);
-      const message = args[0] as { type?: string; id: number };
-      if (message.type === "start") started({ worker: this, id: message.id });
-    },
-  );
-  return { dispatched, restore: () => post.mockRestore() };
-}
 
 const clients = (workerUrl: URL, timeoutMs = limits.timeoutMs) => [
   createWorkerClient({
