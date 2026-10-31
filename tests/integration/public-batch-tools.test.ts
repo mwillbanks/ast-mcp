@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { dprintCacheDirectory } from "../../src/runtime/format";
+import { removeTempDirectory } from "../support/temp-directory";
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -98,6 +99,6 @@ test("public file tools execute declared read, hash, write, and patch batches", 
     expect(textRead.isError).not.toBeTrue();
   } finally {
     await client.close();
-    await rm(folder, { force: true, recursive: true });
+    await removeTempDirectory(folder);
   }
 });

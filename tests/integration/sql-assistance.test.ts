@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -16,6 +16,7 @@ import type {
 } from "../../src/runtime/sql-assistance";
 import { hermeticConfig } from "../support/hermetic-config";
 import { spawnHttpMcpProcess } from "../support/live-process";
+import { removeTempDirectory } from "../support/temp-directory";
 
 const executable = path.resolve(import.meta.dir, "../../bin/ast-mcp.ts");
 const source = "SELECT 1;\n";
@@ -154,7 +155,7 @@ policies = { read = "deny", write = "deny" }
   } finally {
     await Promise.all(clients.map((client) => client.close()));
     await server?.stop();
-    await rm(root, { force: true, recursive: true });
+    await removeTempDirectory(root);
   }
 }
 

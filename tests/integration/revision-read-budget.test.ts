@@ -1,5 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -16,6 +16,7 @@ import {
   resolveRevision,
 } from "../../src/intelligence/workspace";
 import { spawnHttpMcpProcess } from "../support/live-process";
+import { removeTempDirectory } from "../support/temp-directory";
 
 const limit = 2 * 1024 * 1024;
 const small = "export function historical() { return 1; }\n";
@@ -56,7 +57,7 @@ async function fixture() {
     const git = await discoverGitWorkspace(root);
     return { root: git.checkoutRoot, git };
   } catch (error) {
-    await rm(root, { recursive: true, force: true });
+    await removeTempDirectory(root);
     throw error;
   }
 }
@@ -148,7 +149,7 @@ test("commit and index reads enforce byte limits without whole-stream materializ
       }
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTempDirectory(root);
   }
 });
 
@@ -209,7 +210,7 @@ test("buffered Git output preserves cancellation ahead of a simultaneous byte li
       }
     }
   } finally {
-    await rm(root, { recursive: true, force: true });
+    await removeTempDirectory(root);
   }
 });
 
@@ -285,7 +286,7 @@ for (const transportKind of ["stdio", "http"] as const) {
     } finally {
       await client.close();
       await stop?.();
-      await rm(root, { recursive: true, force: true });
+      await removeTempDirectory(root);
     }
   }, 30_000);
 }

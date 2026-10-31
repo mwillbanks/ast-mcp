@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { spawnHttpMcpProcess } from "../support/live-process";
+import { removeTempDirectory } from "../support/temp-directory";
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");
@@ -132,6 +133,6 @@ test("live HTTP batch carries file tools and suppresses notifications", async ()
     expect(await readFile(notes, "utf8")).toBe("one\ntwo\n");
   } finally {
     await server.stop();
-    await rm(folder, { force: true, recursive: true });
+    await removeTempDirectory(folder);
   }
 });
