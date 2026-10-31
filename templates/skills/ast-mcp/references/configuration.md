@@ -23,7 +23,7 @@ Changed configuration can invalidate workspace bindings; reopen the workspace wh
 | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `cli`          | `output.interactive`, `output.non_interactive`.                                                                                      |
 | `dependencies` | `dprint_binary` for explicit external compatibility.                                                                                 |
-| `files`        | `read.modes`, `patch.strategies`, `patch.aider_matchers`.                                                                            |
+| `files`        | `read.modes`, `patch.strategies`, `patch.aider_matchers`, `patch.sql`.                                                               |
 | `formatting`   | `enabled`, `fallback`, `dprint_config`, `formatters`.                                                                                |
 | `intelligence` | `federation.enabled`, `generation.enabled`, `generation.provider`, `retrieval.semantic`, `retrieval.embedding`, `storage.placement`. |
 | `http`         | `host`, `port`, `session_sweep_interval_ms`, `session_timeout_ms`.                                                                   |
@@ -35,6 +35,14 @@ Changed configuration can invalidate workspace bindings; reopen the workspace wh
 Use the discovered schema for nested provider, embedding, storage, and formatter fields.
 Do not invent settings or transfer fields from tool requests into configuration.
 Load [installation.md](installation.md) for migration and invalid-configuration recovery.
+
+## Optional SQL defaults
+
+`config_core.files.patch.sql` accepts optional `policy`, `dialect`, `version`, and `variant` fields. Policies are `advisory`, `required`, and `skip`. Set only dialect/version/variant to describe a default selection; that alone does not request a parser. The default advisory policy with no per-file SQL options makes no validator call. Setting `required` opts in and requires a compatible selected dialect for each SQL patch.
+
+A per-file `file_patch.sql` object uses the same fields and overrides defaults for that operation. Use `policy: "skip"` when a particular dialect or extension is unsupported. This override does not change persistent configuration or claim syntax validity. Choose `target: "project"` or `target: "global"` on `config_core`; project is the default and edits require normal configuration approval.
+
+The PostgreSQL adapter currently supports PostgreSQL 18 core SQL (`variant: "sql"`). It does not validate procedural `DO` or function bodies, PL/pgSQL, extensions, catalog semantics, or execution. It accepts up to 512 KiB per source and 2 MiB outstanding. Eight requests including the active request is the total capacity; one worker runs at a time and up to seven requests wait. Each worker has a five-second timeout. Other dialects or variants remain patchable under advisory policy or explicit skip.
 
 ## Filesystem safety
 

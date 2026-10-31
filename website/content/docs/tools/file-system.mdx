@@ -27,11 +27,19 @@ The normal mutation API accepts `file_patch({ files: { ... } })`. The declared `
 - `patchStrategy: "ast"` with `astRules` for structural changes
 - `patchStrategy: "aider_block"` with `aiderBlocks` for exact text changes
 
-The agent selects either strategy when `file_capabilities` reports it as effective; parseable source commonly supports both. Configuration can narrow strategies but does not auto-select one.
+The agent selects either strategy when `file_capabilities` reports it as effective; parseable source commonly supports both. Configuration can narrow strategies but does not auto-select one. New operations require an explicit strategy; receipt commits intentionally omit it. AST failure never triggers an implicit Aider fallback.
 
 Set `preview: true` to execute the strategy dry-run without formatting or committing and receive an opaque one-use `previewReceipt`. Preview diffs show only the AST or Aider change. Commit with that receipt to reuse the reviewed unformatted candidate after policy, approval, generation, and hash checks; if formatting is enabled, it runs only at commit, including `previewReceipt` commit. AST and Aider failures include per-operation evidence and a recovery suggestion. A fresh hash is required by default; `safety.require_hash = false` permits omission while retaining internal compare-and-swap protection and verification of any supplied hash. Formatting is disabled by default. When enabled, the first enabled matching external formatter runs in `stdout` or staged `in_place` mode. Formatter executables must already be available; ast-mcp does not download them. See the [optional formatting guide](/docs/guides/formatting).
 
 Receipts remain reserved during the entire batch, including mutation completion and freshness publication. Confirmed no-change failures and verified rollback release reservations for retry. Success consumes receipts; changed source, expiry, configuration changes, or uncertain recovery require a new preview. Concurrent replay is rejected.
+
+### Optional SQL candidate validation
+
+Each `file_patch` entry may include `sql: { policy?, dialect?, version?, variant? }`. Validation is optional: no per-operation SQL selection and no required default means no parser call. A configured dialect alone does not request validation. Advisory results never block a safe patch; required validation allows only a valid result. Per-operation `policy: "skip"` overrides a required default without changing persistent configuration.
+
+The bundled adapter supports PostgreSQL 18 core SQL only. It does not validate procedural `DO` or function bodies, PL/pgSQL, extensions, catalog state, or execution. Other dialects and unsupported variants remain patchable with advisory policy or an explicit skip. The adapter accepts 512 KiB per source and 2 MiB outstanding; eight total requests include the active request, leaving up to seven waiting. One worker runs at a time with a five-second timeout. Generic SQL AST matching through `run` does not validate a selected database dialect.
+
+A preview receipt binds SQL selection, policy, and validation outcome. Generate a new preview to change them. Read [the configuration reference](/docs/reference/configuration#optional-sql-candidate-validation) for persistent defaults, selectors, and result details.
 
 ## file_rename
 

@@ -100,16 +100,20 @@ The tables list every accepted version 2 field. Defaults apply when all configur
 
 ### Workspace, output, and file methods
 
-| Field                        | Default                       | Accepted values and behavior                                                                 |
-| ---------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------- |
-| `version`                    | v1 compatibility when omitted | Set `2` for this schema.                                                                     |
-| `cli.output.interactive`     | `"human"`                     | `human`, `json`, `yaml`, or `toml`.                                                          |
-| `cli.output.non_interactive` | `"json"`                      | Same output formats for non-TTY stdout.                                                      |
-| `workspace.roots`            | Selected host roots           | Nonempty array of paths; relative paths resolve from the declaring TOML file.                |
-| `workspace.worktrees`        | `"include"`                   | `include`, `request`, or `ignore`; see linked-worktree behavior below.                       |
-| `files.read.modes`           | `["ast", "text"]`             | At most two entries; an empty list disables both explicit read methods.                      |
-| `files.patch.strategies`     | `["ast", "aider_block"]`      | At most two entries; an empty list disables both patch strategies.                           |
-| `files.patch.aider_matchers` | All four matchers             | `exact`, `whitespace`, `relative-indentation`, and `diff-match-patch`; at most four entries. |
+| Field                        | Default                       | Accepted values and behavior                                                                           |
+| ---------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `version`                    | v1 compatibility when omitted | Set `2` for this schema.                                                                               |
+| `cli.output.interactive`     | `"human"`                     | `human`, `json`, `yaml`, or `toml`.                                                                    |
+| `cli.output.non_interactive` | `"json"`                      | Same output formats for non-TTY stdout.                                                                |
+| `workspace.roots`            | Selected host roots           | Nonempty array of paths; relative paths resolve from the declaring TOML file.                          |
+| `workspace.worktrees`        | `"include"`                   | `include`, `request`, or `ignore`; see linked-worktree behavior below.                                 |
+| `files.read.modes`           | `["ast", "text"]`             | At most two entries; an empty list disables both explicit read methods.                                |
+| `files.patch.strategies`     | `["ast", "aider_block"]`      | At most two entries; an empty list disables both patch strategies.                                     |
+| `files.patch.sql.dialect`    | Omitted                       | Optional lowercase selector, 1–128 characters. A configured dialect alone does not request validation. |
+| `files.patch.sql.policy`     | `"advisory"`                  | `advisory`, `required`, or `skip`; required validation can block a patch.                              |
+| `files.patch.sql.variant`    | Omitted                       | Optional lowercase selector, 1–128 characters.                                                         |
+| `files.patch.sql.version`    | Omitted                       | Optional version selector, 1–128 characters.                                                           |
+| `files.patch.aider_matchers` | All four matchers             | `exact`, `whitespace`, `relative-indentation`, and `diff-match-patch`; at most four entries.           |
 
 ### Safety and path rules
 
@@ -236,6 +240,16 @@ Client roots and `AST_MCP_PROJECT_ROOT` provide the host baseline but are not au
 ## File methods
 
 `[files.read].modes` filters the agent-selectable `ast` and `text` modes. `[files.patch].strategies` filters `ast` and `aider_block`; it does not auto-select a strategy. Version 2 enables every supported Aider matcher shown above by default. Repositories may narrow the list when they intentionally require stricter matching; ambiguity still fails closed. `file_capabilities` reports intrinsic and effective methods for each target.
+
+## Optional SQL candidate validation
+
+`[files.patch.sql]` stores optional defaults for `policy`, `dialect`, `version`, and `variant`. Configuration alone does not invoke validation. A dialect/version/variant default only guides an explicit per-file request; `policy = "required"` opts in for each SQL patch. Default policy is advisory, so unsupported dialects or extensions do not grammar-block changes.
+
+`file_patch` accepts the same optional `sql` object on each SQL file entry. This per-operation object can override a required default with `policy: "skip"` without changing configuration. Set SQL options during preview; the receipt binds them to the candidate and validation decision. Create a new preview to change the selection. A receipt commit intentionally carries no patch operations, strategy, or SQL options.
+
+The current adapter checks PostgreSQL 18 core SQL (`variant = "sql"`). It does not parse procedural `DO` or function bodies, PL/pgSQL, extensions, catalog semantics, or execution. Unsupported SQL remains patchable with advisory policy or an explicit skip. The adapter limits each source to 512 KiB, all outstanding source data to 2 MiB, and total requests to eight including the active request. One worker runs at a time, up to seven requests wait, and each worker stops after five seconds.
+
+Generic `run({ lang: "sql" })` searches structural SQL syntax without selecting a database dialect. It is separate from `file_patch` validation. New patch operations must select `ast` or `aider_block` explicitly; AST failure never triggers a text replacement automatically.
 
 ## Telemetry
 

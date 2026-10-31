@@ -2225,6 +2225,70 @@
       "files": [],
       "required_tools": ["diagnostics"],
       "forbidden_tools": ["approval_probe", "config_paths"]
+    },
+    {
+      "id": 234,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "sql-default-unvalidated-extension",
+      "prompt": "An existing PostgreSQL migration needs a one-line patch that uses an extension-specific clause. SQL settings are absent from the project config, and I have already inspected the unique line and its current hash.",
+      "expected_output": "Uses the ordinary guarded aider_block patch with a fresh hash, does not configure or invoke dialect validation, and makes no claim that PostgreSQL syntax was fully validated.",
+      "assertions": [
+        "Patches SQL without requiring a dialect or validator when no SQL request is supplied.",
+        "Uses file_hash before file_patch and selects aider_block explicitly for the uniquely matched text.",
+        "Does not invoke config_core to make the SQL file patchable or claim complete dialect validation."
+      ],
+      "files": [],
+      "required_tools": ["file_hash", "file_patch"],
+      "forbidden_tools": ["config_core", "config_paths"]
+    },
+    {
+      "id": 235,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "sql-advisory-diagnostic",
+      "prompt": "I explicitly want an advisory PostgreSQL 18 syntax check while previewing a guarded migration patch. The optional checker reports a syntax error, but the patch must remain reviewable.",
+      "expected_output": "Selects PostgreSQL 18 SQL assistance in advisory mode, previews the guarded patch, reports the syntax diagnostic, and explains that advisory syntax results do not block the patch.",
+      "assertions": [
+        "Supplies the optional PostgreSQL dialect, version, SQL variant, and advisory policy on file_patch.",
+        "Keeps the advisory candidate previewable when the grammar reports invalid syntax.",
+        "Does not describe parser output as schema, permission, or migration-execution validation."
+      ],
+      "files": [],
+      "required_tools": ["file_hash", "file_patch"],
+      "forbidden_tools": ["config_core", "config_paths"]
+    },
+    {
+      "id": 236,
+      "surface": "skill",
+      "category": "variant",
+      "variant": "sql-required-override",
+      "prompt": "The project config requires PostgreSQL 18 validation. This migration uses a function body with extension syntax outside the validator's supported SQL-only scope. I authorize this specific patch without SQL validation.",
+      "expected_output": "Uses file_patch with sql.policy skip for this operation, preserves the guarded hash and selected patch strategy, reports skipped validation, and leaves persistent configuration unchanged.",
+      "assertions": [
+        "Overrides required SQL validation only for this operation using the file_patch sql policy skip option.",
+        "Does not claim syntax validation after choosing skip.",
+        "Preserves hash, approval, path, matching, and receipt safeguards without editing project configuration."
+      ],
+      "files": [],
+      "required_tools": ["file_hash", "file_patch"],
+      "forbidden_tools": ["config_core", "config_paths"]
+    },
+    {
+      "id": 237,
+      "surface": "skill",
+      "category": "negative",
+      "variant": "sql-ast-query-no-silent-fallback",
+      "prompt": "An AST query using lang sql returns no match for a PostgreSQL extension statement. I still need an exact, unique edit in that file and authorize a guarded text patch.",
+      "expected_output": "Treats lang sql as generic structural querying, inspects a unique text anchor, then explicitly selects aider_block and sql.policy skip with a fresh hash.",
+      "assertions": [
+        "Does not treat generic lang sql AST querying as full PostgreSQL extension validation.",
+        "Does not silently change an AST strategy into an Aider text patch; chooses aider_block explicitly after inspecting a unique anchor.",
+        "Uses file_patch with the per-operation skip option and a fresh hash while preserving other guards."
+      ],
+      "files": [],
+      "required_tools": ["file_read", "file_hash", "file_patch"],
+      "forbidden_tools": ["config_core", "config_paths"]
     }
   ],
   "mcp_tools": [
