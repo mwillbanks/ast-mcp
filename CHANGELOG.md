@@ -2,10 +2,9 @@
 
 ## [0.6.7](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.6...ast-mcp-v0.6.7) (2026-10-31)
 
-
 ### 🐛 Fixes
 
-* **57:** diagnose host approval failures ([#58](https://github.com/mwillbanks/ast-mcp/issues/58)) ([a272cdd](https://github.com/mwillbanks/ast-mcp/commit/a272cdd8da46777078c14967b25070c21f6e5075))
+- **57:** diagnose host approval failures ([#58](https://github.com/mwillbanks/ast-mcp/issues/58)) ([a272cdd](https://github.com/mwillbanks/ast-mcp/commit/a272cdd8da46777078c14967b25070c21f6e5075))
 
 ## [0.6.6](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.5...ast-mcp-v0.6.6) (2026-10-29)
 
