@@ -53,6 +53,8 @@ Isolate synchronous parsing behind a bounded worker.
 A Promise timeout cannot terminate blocked synchronous parsing.
 Bound input bytes, concurrent workers, queue length, execution time, and output diagnostics.
 Lazy initialization must avoid startup cost when assistance is not requested.
+Use one end-to-end deadline for queueing, lazy initialization, parsing, and result handling; do not restart the budget when work reaches the worker.
+After cancellation or deadline, bound the wait for worker retirement separately. Keep its concurrency slot and request capacity reserved until termination is confirmed.
 Terminate workers on cancellation, deadline, and unexpected failure.
 Do not return an unbounded PostgreSQL AST across worker boundaries.
 

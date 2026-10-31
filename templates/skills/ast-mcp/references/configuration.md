@@ -14,8 +14,8 @@ Version 1 configuration requires migration first.
 Host approval is required by default.
 Changing `mcp.configuration` always requires approval, including disabling the surface.
 Disabled configuration tools fail closed.
-Successful changes reload the in-process snapshot.
-Changed configuration can invalidate workspace bindings; reopen the workspace when required.
+Successful changes reload the in-process snapshot. Passive watcher reloads preserve the generation when configuration identity is unchanged; changed identity advances it.
+Explicit invalidation advances the generation even when configuration is unchanged. It revokes generation-bound approvals and workspace bindings. Reopen the workspace when required.
 
 `config_core` accepts these groups and fields:
 
@@ -42,7 +42,7 @@ Load [installation.md](installation.md) for migration and invalid-configuration 
 
 A per-file `file_patch.sql` object uses the same fields and overrides defaults for that operation. Use `policy: "skip"` when a particular dialect or extension is unsupported. This override does not change persistent configuration or claim syntax validity. Choose `target: "project"` or `target: "global"` on `config_core`; project is the default and edits require normal configuration approval.
 
-The PostgreSQL adapter currently supports PostgreSQL 18 core SQL (`variant: "sql"`). It does not validate procedural `DO` or function bodies, PL/pgSQL, extensions, catalog semantics, or execution. It accepts up to 512 KiB per source and 2 MiB outstanding. Eight requests including the active request is the total capacity; one worker runs at a time and up to seven requests wait. Each worker has a five-second timeout. Other dialects or variants remain patchable under advisory policy or explicit skip.
+The PostgreSQL adapter currently supports PostgreSQL 18 core SQL (`variant: "sql"`). It does not validate procedural `DO` or function bodies, PL/pgSQL, extensions, catalog semantics, or execution. It accepts up to 512 KiB per source and 2 MiB outstanding. Eight requests including the active request is the total capacity; one worker runs at a time and up to seven requests wait. One five-second end-to-end deadline covers queueing, lazy initialization, parsing, and result handling. After cancellation or deadline, bound the retirement wait separately and reserve capacity until termination is confirmed. Other dialects or variants remain patchable under advisory policy or explicit skip.
 
 ## Filesystem safety
 

@@ -311,7 +311,7 @@ describe("optional PostgreSQL adapter", () => {
     }
   });
 
-  test("bounds settlement when worker termination never resolves", async () => {
+  test("expires queued work without starting it while live worker retirement is unconfirmed", async () => {
     const worker = new Worker(fixture("while (true) {}"));
     const terminate = worker.terminate.bind(worker);
     let confirm!: (code: number) => void;
@@ -319,24 +319,45 @@ describe("optional PostgreSQL adapter", () => {
       confirm = resolve;
     });
     worker.terminate = () => confirmation;
+    let starts = 0;
     const adapter = new PostgresSqlAdapter({
-      maxPending: 1,
+      maxPending: 2,
       timeoutMs: 20,
-      workerFactory: () => worker,
+      workerFactory: () => {
+        starts++;
+        return worker;
+      },
     });
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
+      const active = adapter.validate(request());
+      const queued = adapter.validate(request("SELECT 2;"));
+      expect(adapter.stats()).toEqual({
+        pending: 2,
+        active: 1,
+        outstandingBytes: Buffer.byteLength("SELECT 1;SELECT 2;"),
+      });
       const result = await Promise.race([
-        adapter.validate(request()),
+        active,
         new Promise<"deadline">((resolve) => {
           deadline = setTimeout(() => resolve("deadline"), 1000);
         }),
       ]);
       expect(result).toMatchObject({ status: "unavailable", complete: false });
-      expect(adapter.stats().active).toBe(1);
+      expect(await queued).toMatchObject({
+        status: "unavailable",
+        complete: false,
+      });
+      expect(starts).toBe(1);
+      expect(adapter.stats()).toEqual({
+        pending: 1,
+        active: 1,
+        outstandingBytes: Buffer.byteLength("SELECT 1;"),
+      });
       expect(await adapter.validate(request())).toMatchObject({
         status: "unavailable",
       });
+      expect(starts).toBe(1);
     } finally {
       clearTimeout(deadline);
       const exitCode = await terminate();
@@ -349,6 +370,7 @@ describe("optional PostgreSQL adapter", () => {
       await confirmation;
       await Promise.resolve();
       expect(adapter.stats().active).toBe(0);
+      expect(starts).toBe(1);
     }
   });
 

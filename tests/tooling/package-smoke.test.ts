@@ -283,6 +283,19 @@ async function exercisePackage(
     workspaceId: id,
   });
   expect(invalidSql.isError).toBeTrue();
+  expect(invalidSql.structuredContent).toMatchObject({
+    ok: false,
+    error: {
+      code: "sql_validation_rejected",
+      details: {
+        sql: {
+          allowed: false,
+          policy: "required",
+          validation: { status: "invalid", complete: true },
+        },
+      },
+    },
+  });
   expect(await readFile(path.join(fixture, sqlFile), "utf8")).toBe(
     "SELECT 2;\n",
   );
