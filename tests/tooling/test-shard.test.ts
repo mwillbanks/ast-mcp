@@ -13,14 +13,17 @@ async function testProject(prefix: string) {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const manifest = JSON.parse(
     await readFile(new URL("../../package.json", import.meta.url), "utf8"),
-  ) as { scripts: { test: string } };
+  ) as { scripts: { test: string; "test:coverage": string } };
   await Promise.all([
     mkdir(join(root, "tests")),
     mkdir(join(root, "templates")),
     writeFile(
       join(root, "package.json"),
       JSON.stringify({
-        scripts: { test: manifest.scripts.test },
+        scripts: {
+          test: manifest.scripts.test,
+          "test:coverage": manifest.scripts["test:coverage"],
+        },
       }),
     ),
   ]);
@@ -114,6 +117,65 @@ describe("package test shards", () => {
       if (previous === undefined) delete process.env.AST_MCP_SELECTED_TESTS;
       else process.env.AST_MCP_SELECTED_TESTS = previous;
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("coverage entrypoint enforces coverage while ordinary tests remain independent", async () => {
+    const root = await testProject("ast-mcp-coverage-entrypoint-");
+    try {
+      const config = Bun.TOML.parse(
+        await readFile(new URL("../../bunfig.toml", import.meta.url), "utf8"),
+      ) as { test: { coverageThreshold: number } };
+      await mkdir(join(root, "src"));
+      await Promise.all([
+        writeFile(
+          join(root, "bunfig.toml"),
+          `[test]\ncoverageThreshold = ${config.test.coverageThreshold}\ncoverageSkipTestFiles = true\n`,
+        ),
+        writeFile(
+          join(root, "src/application.ts"),
+          "export function first() {\n  return 1;\n}\nexport function second() {\n  return 2;\n}\n",
+        ),
+        writeFile(
+          join(root, "tests/application.test.ts"),
+          'import { expect, test } from "bun:test"; import { first, second } from "../src/application"; test("application", () => { expect(first()).toBe(1); expect(second()).toBe(2); });',
+        ),
+      ]);
+      expect(
+        Bun.spawnSync({
+          cmd: [process.execPath, "run", "test:coverage"],
+          cwd: root,
+          stdout: "ignore",
+          stderr: "ignore",
+        }).exitCode,
+      ).toBe(0);
+      await writeFile(
+        join(root, "tests/application.test.ts"),
+        'import { expect, test } from "bun:test"; import { first } from "../src/application"; test("application", () => expect(first()).toBe(1));',
+      );
+      expect(
+        Bun.spawnSync({
+          cmd: [process.execPath, "run", "test:coverage"],
+          cwd: root,
+          stdout: "ignore",
+          stderr: "ignore",
+        }).exitCode,
+      ).not.toBe(0);
+      expect(
+        Bun.spawnSync({
+          cmd: [process.execPath, "run", "test"],
+          cwd: root,
+          stdout: "ignore",
+          stderr: "ignore",
+        }).exitCode,
+      ).toBe(0);
+    } finally {
+      await rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     }
   });
 
