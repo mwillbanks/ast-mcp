@@ -5,7 +5,6 @@ import {
   mkdtemp,
   readFile,
   realpath,
-  rm,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -26,6 +25,7 @@ import {
   exerciseSkillsRequests,
   exerciseModernWorkspaceHttp,
 } from "../support/skills-protocol";
+import { removeTempDirectory } from "../support/temp-directory";
 
 const consumerBun = process.env.AST_MCP_CONSUMER_BUN || process.execPath;
 
@@ -915,7 +915,7 @@ async function exerciseConsumer(installer: string) {
       await httpServer.stop();
     }
   } finally {
-    await rm(owned, { force: true, recursive: true });
+    await removeTempDirectory(owned);
   }
 }
 
