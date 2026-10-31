@@ -7,6 +7,43 @@ const fastFailure =
 const stubbornDescendant =
   'process.on("SIGTERM",()=>{});console.error("descendant ready");await Bun.sleep(30_000)';
 
+function spawnCapturedProcess(
+  script: string,
+  streams: Partial<Record<"stdout" | "stderr", ReadableStream<Uint8Array>>>,
+  ipc?: Bun.Spawn.SpawnOptions<"pipe", "pipe", "pipe">["ipc"],
+) {
+  const displaced: ReadableStream<Uint8Array>[] = [];
+  const originalSpawn = Bun.spawn.bind(Bun);
+  const spawn = spyOn(Bun, "spawn").mockImplementationOnce(((
+    command: string[],
+    options: Bun.Spawn.SpawnOptions<"pipe", "pipe", "pipe">,
+  ) => {
+    const child = originalSpawn<"pipe", "pipe", "pipe">(command, {
+      ...options,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(ipc ? { ipc } : {}),
+    });
+    for (const name of ["stdout", "stderr"] as const) {
+      const stream = streams[name];
+      if (!stream) continue;
+      displaced.push(child[name]);
+      Object.defineProperty(child, name, { value: stream });
+    }
+    return child;
+  }) as typeof Bun.spawn);
+  try {
+    return {
+      live: spawnLiveProcess(process.execPath, ["-e", script]),
+      closeDisplacedStreams: () =>
+        Promise.all(displaced.map((stream) => stream.cancel())),
+    };
+  } finally {
+    spawn.mockRestore();
+  }
+}
+
 test("live process captures both streams and supports repeated teardown", async () => {
   const live = spawnLiveProcess(process.execPath, [
     "-e",
@@ -79,17 +116,30 @@ test.skipIf(process.platform === "win32")(
 
 test("readiness rejects at the relevant stream EOF while the leader remains alive", async () => {
   for (const stream of ["stdout", "stderr"] as const) {
-    const script = `import { closeSync } from "node:fs";closeSync(${stream === "stdout" ? 1 : 2});await Bun.sleep(30_000)`;
-    const live = spawnLiveProcess(process.execPath, ["-e", script]);
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const captured = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+      },
+    });
+    const { live, closeDisplacedStreams } = spawnCapturedProcess(
+      "await Bun.sleep(30_000)",
+      { [stream]: captured },
+    );
     try {
       const readiness =
         stream === "stdout"
           ? live.readStdoutLine(2_000)
           : live.waitForStderr(/never emitted/, 2_000);
+      controller.close();
       await expect(readiness).rejects.toThrow(`${stream} closed`);
       expect(live.process.exitCode).toBeNull();
     } finally {
-      await live.stop();
+      try {
+        await live.stop();
+      } finally {
+        await closeDisplacedStreams();
+      }
     }
   }
 });
@@ -99,7 +149,6 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const failure = new Error("injected pipe read failure");
     const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
-    const actualStreams: ReadableStream<Uint8Array>[] = [];
     const streams = ["stdout", "stderr"].map(
       () =>
         new ReadableStream<Uint8Array>({
@@ -112,37 +161,23 @@ test.skipIf(process.platform === "win32")(
     const endpoint = new Promise<{ pid: number; url: string }>((resolve) => {
       ready = resolve;
     });
-    const originalSpawn = Bun.spawn.bind(Bun);
-    const spawn = spyOn(Bun, "spawn").mockImplementationOnce(((
-      command: string[],
-      options: Bun.Spawn.SpawnOptions<"pipe", "pipe", "pipe">,
-    ) => {
-      const child = originalSpawn<"pipe", "pipe", "pipe">(command, {
-        ...options,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        ipc(message) {
-          ready(message as { pid: number; url: string });
-        },
-      });
-      actualStreams.push(child.stdout, child.stderr);
-      for (const [index, stream] of ["stdout", "stderr"].entries())
-        Object.defineProperty(child, stream, { value: streams[index] });
-      return child;
-    }) as typeof Bun.spawn);
     const childScript =
       'process.on("SIGTERM",()=>{});const server=Bun.serve({hostname:"127.0.0.1",port:0,fetch(){return new Response("alive")}});process.send({pid:process.pid,url:server.url.href})';
     const script = `const child=Bun.spawn([process.execPath,"-e",${JSON.stringify(childScript)}],{stdin:"ignore",stdout:"inherit",stderr:"inherit",ipc(message){process.send(message);child.unref();process.exit(0)}})`;
     let live: ReturnType<typeof spawnLiveProcess> | undefined;
+    let captured: ReturnType<typeof spawnCapturedProcess> | undefined;
     let descendant: number | undefined;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      try {
-        live = spawnLiveProcess(process.execPath, ["-e", script]);
-      } finally {
-        spawn.mockRestore();
-      }
+      captured = spawnCapturedProcess(
+        script,
+        {
+          stdout: streams[0],
+          stderr: streams[1],
+        },
+        (message) => ready(message as { pid: number; url: string }),
+      );
+      live = captured.live;
       const { pid, url } = await Promise.race([
         endpoint,
         new Promise<never>((_, reject) => {
@@ -171,7 +206,6 @@ test.skipIf(process.platform === "win32")(
       }
       expect(stopped).toBeTrue();
     } finally {
-      spawn.mockRestore();
       clearTimeout(deadline);
       if (descendant) {
         try {
@@ -185,7 +219,7 @@ test.skipIf(process.platform === "win32")(
             if (error !== failure) throw error;
           });
       } finally {
-        await Promise.all(actualStreams.map((stream) => stream.cancel()));
+        await captured?.closeDisplacedStreams();
       }
     }
   },
