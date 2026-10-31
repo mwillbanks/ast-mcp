@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,6 +8,24 @@ import {
   runTestShard,
   selectTestShard,
 } from "../../scripts/testing/test-shard";
+
+async function testProject(prefix: string) {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  const manifest = JSON.parse(
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as { scripts: { test: string } };
+  await Promise.all([
+    mkdir(join(root, "tests")),
+    mkdir(join(root, "templates")),
+    writeFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        scripts: { test: manifest.scripts.test },
+      }),
+    ),
+  ]);
+  return root;
+}
 
 describe("package test shards", () => {
   test("cover every package and template test exactly once", () => {
@@ -28,7 +46,7 @@ describe("package test shards", () => {
   });
 
   test("discovers nested domains and allocates each file exactly once", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ast-mcp-nested-shards-"));
+    const root = await testProject("ast-mcp-nested-shards-");
     const expected = [
       "tests/config/index.test.ts",
       "tests/intelligence/languages/web/index.test.ts",
@@ -61,12 +79,9 @@ describe("package test shards", () => {
   });
 
   test("runs selected fixture tests and propagates runner failures", async () => {
-    const root = await mkdtemp(join(tmpdir(), "ast-mcp-shard-runner-"));
+    const root = await testProject("ast-mcp-shard-runner-");
+    const previous = process.env.AST_MCP_SELECTED_TESTS;
     try {
-      await Promise.all([
-        mkdir(join(root, "tests")),
-        mkdir(join(root, "templates")),
-      ]);
       const fixture = join(root, "tests", "fixture.test.ts");
       await writeFile(
         fixture,
@@ -76,17 +91,28 @@ describe("package test shards", () => {
         runTestShard(["--shard", "0", "--shards", "1"], root, "ignore"),
       ).toBe(0);
       await writeFile(
+        join(root, "tests", "unselected.test.ts"),
+        'import { test } from "bun:test"; test("unselected", () => { throw new Error("must remain unselected"); });',
+      );
+      process.env.AST_MCP_SELECTED_TESTS = JSON.stringify([
+        "tests/fixture.test.ts",
+      ]);
+      expect(runTestShard(["--selected"], root, "ignore")).toBe(0);
+      await writeFile(
         fixture,
         'import { test } from "bun:test"; test("fixture", () => { throw new Error("intentional shard failure"); });',
       );
       expect(
         runTestShard(["--shard", "0", "--shards", "1"], root, "ignore"),
       ).not.toBe(0);
+      expect(runTestShard(["--selected"], root, "ignore")).not.toBe(0);
       expect(() =>
-        runTestShard(["--shard", "1", "--shards", "2"], root),
-      ).toThrow("Test shard 1 is empty");
+        runTestShard(["--shard", "2", "--shards", "3"], root),
+      ).toThrow("Test shard 2 is empty");
       expect(() => runTestShard([], root)).toThrow("Usage:");
     } finally {
+      if (previous === undefined) delete process.env.AST_MCP_SELECTED_TESTS;
+      else process.env.AST_MCP_SELECTED_TESTS = previous;
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -99,10 +125,8 @@ describe("package test shards", () => {
 });
 
 test("reports an empty inventory and announces inherited-output execution", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ast-mcp-empty-shard-"));
+  const root = await testProject("ast-mcp-empty-shard-");
   try {
-    await mkdir(join(root, "tests"));
-    await mkdir(join(root, "templates"));
     expect(() => discoverTestFiles(root)).toThrow("No package test files");
     await writeFile(
       join(root, "tests/fixture.test.ts"),
