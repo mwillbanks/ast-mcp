@@ -98,3 +98,13 @@ Default cancellation returns the string error code `aborted`. Incomplete rollbac
 
 Formatting defaults to disabled. File operations never download formatters.
 Load [configuration.md](configuration.md) for formatter selection, path rules, approvals, and immutable revisions.
+
+## Optional SQL candidate validation
+
+SQL validation is requested only when the operation supplies a policy, dialect, version, or variant, or when effective policy is `required`. Configuring a dialect alone does not invoke a validator. With no request, the result is `not_requested`. The default policy is `advisory`; its `valid`, `invalid`, `unsupported`, or `unavailable` result never blocks an otherwise safe patch. `skip` explicitly records that validation was skipped and makes no grammar claim.
+
+Set SQL options on the preview request. A preview receipt binds the selection, policy, and validation decision to the candidate and configuration. Commit the receipt without new operations or SQL options. Generate a new preview to change SQL options. When required validation lacks support or fails, retry with per-file `sql: { policy: "skip" }` to proceed with the already-authorized patch. Do not edit persistent defaults for one file.
+
+Only PostgreSQL 18 core SQL is currently supported, using `variant: "sql"` by default. `DO`, `CREATE FUNCTION`, PL/pgSQL, extensions, catalog state, and execution are outside this grammar check. The adapter accepts 512 KiB per source and 2 MiB outstanding. Eight requests including the active request is the total capacity; one worker runs at a time and up to seven requests wait. The five-second deadline covers queueing, lazy initialization, parsing, and result handling. Bounded worker retirement keeps its capacity reserved until termination is confirmed. Generic `run` SQL AST matching is separate from dialect validation.
+
+New operations require an explicit `patchStrategy`. Receipt commits omit patch operations and strategy. A failed or empty AST match does not select Aider automatically. Inspect exact text, then choose Aider when its match is safe and unique.

@@ -22,6 +22,7 @@ import {
   inspectWorkspaceFileCapabilitiesSafely,
   readFilesSafely,
 } from "../runtime/file-read";
+import { sqlAssistanceOptionsSchema } from "../runtime/sql-options-schema";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
 const failure = toolFailure;
@@ -253,6 +254,7 @@ export default function registerFileTools(
             patchStrategy: z.enum(["ast", "aider_block"]).optional(),
             preview: z.boolean().optional(),
             previewReceipt: z.string().uuid().optional(),
+            sql: sqlAssistanceOptionsSchema.optional(),
           })
           .strict()
           .superRefine((value, context) => {

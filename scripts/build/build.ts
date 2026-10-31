@@ -28,6 +28,7 @@ const providerMetadata = {
         "dist/ast-mcp.js",
         "dist/workers/code-intelligence-worker.js",
         "dist/workers/parser-worker.js",
+        "dist/workers/sql-postgres-worker.js",
         "dist/workers/embedding-model-worker.js",
         "dist/workers/patch-strategy-worker.js",
         "dist/workers/dynamic-wasm-worker.js",
@@ -49,12 +50,18 @@ const workerOutdir = path.join(outdir, "workers");
 // Preserve package-relative native binaries and grammar assets at runtime.
 // Bundle the LanceDB facade to exclude its obsolete optional embedding providers.
 const nativeExternals = [
+  "libpg-query",
   "@ast-grep/napi",
   "@ast-grep/napi-*",
   "@ast-grep/lang-*",
   "@lancedb/lancedb-*",
 ];
 const workers = [
+  {
+    client: "src/runtime/sql-postgres.ts",
+    entrypoint: "src/runtime/sql-postgres-worker.ts",
+    output: "sql-postgres-worker.js",
+  },
   {
     client: "src/patch/strategy/worker-client.ts",
     entrypoint: "src/patch/strategy/worker.ts",
@@ -119,7 +126,7 @@ const packagedWorkerPlugin: BunPlugin = {
     build.onLoad(
       {
         filter:
-          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|intelligence[\\/]+retrieval[\\/]+worker-session|patch[\\/]+strategy[\\/]+worker-client|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
+          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|intelligence[\\/]+retrieval[\\/]+worker-session|patch[\\/]+strategy[\\/]+worker-client|runtime[\\/]+sql-postgres|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
       },
       async ({ path: filePath }: { path: string }) => {
         const relative = path
@@ -134,11 +141,13 @@ const packagedWorkerPlugin: BunPlugin = {
             ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
             : relative === "src/intelligence/parser/pool.ts"
               ? 'new URL("./worker.ts", import.meta.url)'
-              : relative === "src/intelligence/retrieval/worker-session.ts"
-                ? 'new URL("./model-worker.ts", import.meta.url)'
-                : relative === "src/patch/strategy/worker-client.ts"
-                  ? 'new URL("./worker.ts", import.meta.url)'
-                  : 'new URL("./wasm-worker.ts", import.meta.url)';
+              : relative === "src/runtime/sql-postgres.ts"
+                ? 'new URL("./sql-postgres-worker.ts", import.meta.url)'
+                : relative === "src/intelligence/retrieval/worker-session.ts"
+                  ? 'new URL("./model-worker.ts", import.meta.url)'
+                  : relative === "src/patch/strategy/worker-client.ts"
+                    ? 'new URL("./worker.ts", import.meta.url)'
+                    : 'new URL("./wasm-worker.ts", import.meta.url)';
         if (!source.includes(marker))
           throw new Error(`Worker URL marker is missing from ${relative}`);
         return {

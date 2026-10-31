@@ -28,6 +28,7 @@ import { readWorkspaceRevisionBytes } from "../runtime/file-read.ts";
 import { sha256 } from "../runtime/hash";
 import { evaluatePolicyForCheck } from "../runtime/path-policy";
 import { resolveWorkspacePath } from "../runtime/paths";
+import { sqlAssistanceOptionsSchema } from "../runtime/sql-options-schema";
 import { type ConfiguredExecution, localExecution } from "./configured";
 
 interface JsonLocationToken {
@@ -568,6 +569,7 @@ export default function registerConfigurationTools(
                     )
                     .max(4)
                     .optional(),
+                  sql: sqlAssistanceOptionsSchema.optional(),
                   strategies: z
                     .array(z.enum(["ast", "aider_block"]))
                     .max(2)
