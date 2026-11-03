@@ -650,7 +650,7 @@ test("config_core replaces formatter array tables and preserves following sectio
   );
 });
 
-test("config_core activation approval is reusable across tools", async () => {
+test("config_core approval requires separate filesystem activation reusable across tools", async () => {
   const { external, options } = await fixture();
   const server = {
     server: { getClientCapabilities: () => ({ elicitation: {} }) },
@@ -683,9 +683,38 @@ test("config_core activation approval is reusable across tools", async () => {
     operation,
   );
   const config = await configRegistry.get(options);
+  const file = path.join(external, "value.txt");
+  let filesystemKey = "";
+  try {
+    await withResolvedConfig(config, () =>
+      withApprovalContext(scope("file_read"), () => resolveWorkspacePath(file)),
+    );
+  } catch (error) {
+    expect(error).toBeInstanceOf(InputRequiredSignal);
+    filesystemKey = Object.keys(
+      (error as InputRequiredSignal).result.inputRequests!,
+    )[0]!;
+  }
+  expect(filesystemKey).not.toBe("");
+  expect(filesystemKey).not.toBe(responseKey);
   await withResolvedConfig(config, () =>
-    withApprovalContext(scope("file_read"), async () => {
-      expect(await resolveWorkspacePath(path.join(external, "value.txt"))).toBe(
+    withApprovalContext(
+      scope("file_read", {
+        [filesystemKey]: {
+          action: "accept",
+          content: { decision: "allow_session" },
+        },
+      }),
+      async () => {
+        expect(await resolveWorkspacePath(file)).toBe(
+          path.join(await realpath(external), "value.txt"),
+        );
+      },
+    ),
+  );
+  await withResolvedConfig(config, () =>
+    withApprovalContext(scope("file_write"), async () => {
+      expect(await resolveWritablePath(file)).toBe(
         path.join(await realpath(external), "value.txt"),
       );
     }),

@@ -1,5 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -8,6 +15,7 @@ import {
   globalConfigPath,
   resolveConfig,
   withConfig,
+  withResolvedConfig,
 } from "../../src/config";
 import {
   existingPathPolicies,
@@ -339,6 +347,50 @@ test("configuration writes reload without restarting the registry", async () => 
     healthy: true,
   });
   expect(reloaded.config?.http.port).toBe(4321);
+});
+
+for (const target of ["project", "global"] as const) {
+  test(`direct configuration edits report their exact context generation for ${target} changes`, async () => {
+    const root = await realpath(await project("ast-mcp-config-write-context-"));
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      `${v2Source()}\n[mcp.configuration]\nrequire_approval = false\n`,
+    );
+    const options = hermeticConfig(root);
+    const globalFile = globalConfigPath(options);
+    await mkdir(path.dirname(globalFile), { recursive: true });
+    await writeFile(globalFile, "version = 2\n");
+    const decoyOptions = { ...options, clientRoots: [root] };
+    await configRegistry.snapshot(decoyOptions);
+    await configRegistry.snapshot(options);
+    const result = await withConfig(options, () =>
+      applyConfigCore({ target, http: { port: 4322 } }),
+    );
+    const intended = await configRegistry.snapshot(options);
+    const decoy = await configRegistry.snapshot(decoyOptions);
+    expect(intended.healthy, intended.error).toBeTrue();
+    expect(decoy.healthy, decoy.error).toBeTrue();
+    expect(intended.key).not.toBe(decoy.key);
+    expect(result.generation).toBe(intended.generation);
+    expect(result.generation).not.toBe(decoy.generation);
+    expect(result.filePath).toBe(
+      target === "global" ? globalFile : path.join(root, "ast-mcp.toml"),
+    );
+  });
+}
+
+test("configuration edits reject missing resolution metadata before writing", async () => {
+  const root = await realpath(await project("ast-mcp-config-write-unbound-"));
+  const file = path.join(root, "ast-mcp.toml");
+  const source = `${v2Source()}\n[mcp.configuration]\nrequire_approval = false\n`;
+  await writeFile(file, source);
+  const config = await resolveConfig(hermeticConfig(root));
+  await expect(
+    withResolvedConfig({ ...config }, () =>
+      applyConfigCore({ http: { port: 4323 } }),
+    ),
+  ).rejects.toThrow("Configuration resolution context is unavailable");
+  expect(await readFile(file, "utf8")).toBe(source);
 });
 
 test("version 1 configuration cannot be edited through MCP tools", async () => {

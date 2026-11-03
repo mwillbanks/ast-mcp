@@ -10,7 +10,7 @@ import {
   approvalSessionId,
   authorizeRequestedDecision,
   clearSessionApprovals,
-  grantUnrestrictedFilesystem,
+  filesystemDecision,
   InputRequiredSignal,
   unrestrictedFilesystemAuthorized,
   withApprovalContext,
@@ -132,11 +132,39 @@ test("session clearing revokes only its own unrestricted filesystem grants", asy
     expect(unrestrictedFilesystemAuthorized(restricted)).toBeFalse();
     const first = scope("first");
     const second = scope("second");
-    for (const active of [first, second]) {
-      await withApprovalContext(active, async () => {
-        grantUnrestrictedFilesystem(config);
-        expect(unrestrictedFilesystemAuthorized(config)).toBeTrue();
-      });
+    for (const sessionId of ["first", "second"]) {
+      const active = scope(sessionId);
+      let responseKey = "";
+      await expect(
+        withApprovalContext(active, async () =>
+          authorizeRequestedDecision(
+            filesystemDecision(config),
+            config.generation,
+          ),
+        ).catch((error) => {
+          if (error instanceof InputRequiredSignal)
+            responseKey = Object.keys(error.result.inputRequests!)[0]!;
+          throw error;
+        }),
+      ).rejects.toBeInstanceOf(InputRequiredSignal);
+      expect(responseKey).not.toBe("");
+      await withApprovalContext(
+        scope(sessionId, {
+          [responseKey]: {
+            action: "accept",
+            content: { decision: "allow_session" },
+          },
+        }),
+        async () => {
+          expect(
+            authorizeRequestedDecision(
+              filesystemDecision(config),
+              config.generation,
+            ),
+          ).toBeTrue();
+          expect(unrestrictedFilesystemAuthorized(config)).toBeTrue();
+        },
+      );
     }
     clearSessionApprovals("first");
     await withApprovalContext(first, async () =>

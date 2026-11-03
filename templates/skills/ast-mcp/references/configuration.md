@@ -64,6 +64,8 @@ Scoped allows, denies, and requests retain their normal behavior.
 Only unmatched baseline denial can request whole-filesystem activation.
 Once activated, unrestricted access retains its policy bypass.
 Project activation requires session-scoped host approval tied to effective configuration and generation.
+Approving a configuration edit does not activate unrestricted filesystem access, even with `allow_session`.
+Broad activation requires its separate filesystem approval.
 It does not change indexing, intelligence roots, storage, or workspace selection.
 Modern HTTP has no stable transport session.
 Requested approvals fail closed with `approval_required`; model arguments cannot bypass them.

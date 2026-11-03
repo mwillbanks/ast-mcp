@@ -139,10 +139,17 @@ export async function exerciseModernWorkspaceHttp(
   expect(opened.isError, JSON.stringify(opened)).not.toBeTrue();
   const workspaceId = opened.structuredContent.data.workspace.workspaceId;
   const status = await call(second, "workspace_status", { workspaceId });
+  expect(status.isError, JSON.stringify(status)).not.toBeTrue();
+  expect(status.structuredContent?.data, JSON.stringify(status)).toBeDefined();
   expect(status.structuredContent.data.workspaces[0].workspaceId).toBe(
     workspaceId,
   );
   const anonymous = await call(second, "workspace_status", {});
+  expect(anonymous.isError, JSON.stringify(anonymous)).not.toBeTrue();
+  expect(
+    anonymous.structuredContent?.data,
+    JSON.stringify(anonymous),
+  ).toBeDefined();
   expect(anonymous.structuredContent.data.workspaces).toEqual([]);
   const mapped = await call(second, "map", {
     workspaceId,

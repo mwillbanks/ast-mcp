@@ -240,6 +240,7 @@ export function supportsApprovalForm(
 export function approvalDiagnostics(
   server?: McpServer,
   context?: ServerContext,
+  generation?: number,
 ) {
   pruneApprovalChallenges();
   const session = context?.sessionId ?? "connection";
@@ -248,7 +249,7 @@ export function approvalDiagnostics(
     (challenge) =>
       challenge.sessionId === session && challenge.serverId === identity,
   );
-  const prefix = `${session}\u0000${identity}\u0000`;
+  const prefix = `${session}\u0000${identity}\u0000${generation}\u0000`;
   return {
     pendingCount: pending.length,
     oldestPendingAgeMs: pending.length
@@ -875,13 +876,6 @@ export function filesystemDecision(config: ResolvedConfig): PolicyDecision {
     specificity: Number.MAX_SAFE_INTEGER,
     symlinks: true,
   };
-}
-
-export function grantUnrestrictedFilesystem(config: ResolvedConfig): void {
-  if (config.safety.filesystem !== "unrestricted") return;
-  const scope = activeApproval.getStore();
-  if (!scope?.context || !scope.server || scope.requestScoped) return;
-  sessionGrants.add(key(filesystemDecision(config), scope, config.generation));
 }
 
 export function unrestrictedFilesystemAuthorized(

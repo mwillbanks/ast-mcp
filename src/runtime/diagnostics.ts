@@ -2,7 +2,7 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import packageJson from "../../package.json" with { type: "json" };
 import type { ResolvedConfig } from "../config";
-import { configRegistry } from "../config/registry";
+import { configRegistry, type ConfigSnapshot } from "../config/registry";
 import {
   approvalClient,
   approvalDiagnostics,
@@ -15,6 +15,9 @@ import { checkLatestVersion } from "./release";
 
 export interface DiagnosticsOptions {
   config?: Readonly<ResolvedConfig>;
+  configurationSnapshot?: (
+    context?: ServerContext,
+  ) => Promise<Readonly<ConfigSnapshot>>;
   context?: ServerContext;
   cwd?: string;
   fetch?: typeof fetch;
@@ -35,7 +38,10 @@ export async function collectDiagnostics(options: DiagnosticsOptions = {}) {
   let config = options.config;
   if (!config) {
     try {
-      config = await configRegistry.get({ cwd: options.cwd });
+      if (options.configurationSnapshot) {
+        const snapshot = await options.configurationSnapshot(options.context);
+        config = snapshot.healthy ? snapshot.config : undefined;
+      } else config = await configRegistry.get({ cwd: options.cwd });
     } catch {
       // Configuration error text can contain private paths or source content.
     }
@@ -104,7 +110,11 @@ export async function collectDiagnostics(options: DiagnosticsOptions = {}) {
       },
       reason: config ? undefined : "configuration_unavailable",
     },
-    approval: approvalDiagnostics(options.server, options.context),
+    approval: approvalDiagnostics(
+      options.server,
+      options.context,
+      config?.generation,
+    ),
     recovery: [
       "Tool-call approval and server filesystem approval are separate.",
       "A host permission profile or CLI override can supersede disk approval settings.",

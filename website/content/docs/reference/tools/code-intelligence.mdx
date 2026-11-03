@@ -400,13 +400,13 @@ Compacts repetitive text into a bounded payload.
 
 **Choose this tool:** Compact repetitive logs or text, rather than source. Supply text or query.
 
-**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+**Side effects:** Compacts supplied text or query in memory. Does not parse or read source files, edit files, or publish a persistent intelligence generation.
 
-**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+**Approval:** No filesystem access or path approval is required for the supplied text.
 
 **Output:** Returns a bounded compact text payload. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
 
-**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+**Important failures:** Request capacity, cancellation, deadlines, and output budgets can limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
 
 <ToolParameters name="squeeze" />
 

@@ -76,6 +76,11 @@ test("desktop tool TOC, keyboard parameters, nested alternatives, and defaults h
   await expect(page).toHaveURL(/#file_patch$/);
   await expect(patchLink).toHaveAttribute("data-active", "true");
   await expect(patchLink).toHaveAttribute("aria-current", "location");
+  const rootConstraints = page.locator('[id="parameters-file_patch-$"]');
+  await rootConstraints.getByRole("button").click();
+  await expect(rootConstraints).toContainText(
+    "Unknown properties are rejected",
+  );
   const nested = page.locator(
     '[id="parameters-file_patch-files.*.expectedSha256"]',
   );
@@ -96,6 +101,37 @@ test("desktop tool TOC, keyboard parameters, nested alternatives, and defaults h
   await expect(depth).toContainText("Default");
   await expect(depth).toContainText("8");
   expect(errors).toEqual([]);
+});
+
+test("legacy tool TOC keeps combined tool headings and nests subsections beneath their parent", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(base + "docs/tools/file-system");
+  const toc = page.getByRole("navigation", { name: "Tools on this page" });
+  const toolLinks = toc.locator(":scope > ul > li > a");
+  await expect(toolLinks).toHaveCount(6);
+  await expect(toolLinks).toContainText([
+    "file_hash",
+    "file_capabilities and file_read",
+    "file_write",
+    "file_patch",
+    "file_rename",
+    "file_chattr and file_delete",
+  ]);
+  const patch = toc.locator(":scope > ul > li").filter({
+    has: page.locator('a[href="#file_patch"]'),
+  });
+  const subsection = patch
+    .getByRole("list", { name: "Tool subsections" })
+    .getByRole("link", { name: "Optional SQL candidate validation" });
+  await subsection.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/#optional-sql-candidate-validation$/);
+  await expect(subsection).toHaveAttribute("aria-current", "location");
+  await expect(
+    page.locator("h3#optional-sql-candidate-validation"),
+  ).toBeInViewport();
 });
 
 test("mobile TOC and nested parameter controls remain usable without horizontal page overflow", async ({

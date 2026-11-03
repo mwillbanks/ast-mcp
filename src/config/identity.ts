@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -5,7 +6,27 @@ import {
   canonicalizePathSync,
   canonicalPathWithin,
 } from "../runtime/path-utils";
-import type { ResolveConfigOptions } from "./index";
+import type { ResolveConfigOptions, ResolvedConfig } from "./index";
+
+const resolutionOptions = new WeakMap<
+  Readonly<ResolvedConfig>,
+  ResolveConfigOptions
+>();
+
+export function bindConfigurationResolution<T extends Readonly<ResolvedConfig>>(
+  config: T,
+  options: ResolveConfigOptions,
+): T {
+  resolutionOptions.set(config, captureResolutionOptions(options));
+  return config;
+}
+
+export function configurationResolutionOptions(
+  config: Readonly<ResolvedConfig>,
+): ResolveConfigOptions | undefined {
+  const options = resolutionOptions.get(config);
+  return options ? captureResolutionOptions(options) : undefined;
+}
 
 const environmentNames = [
   "APPDATA",
@@ -72,6 +93,38 @@ export function configuredSelectionRoots(
   );
 }
 
+export function globalConfigPath(options: ResolveConfigOptions = {}) {
+  const env = options.env ?? process.env;
+  const home = options.home ?? os.homedir();
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32")
+    return path.join(
+      env.APPDATA ?? path.join(home, "AppData", "Roaming"),
+      "ast-mcp",
+      "ast-mcp.toml",
+    );
+  return path.join(
+    env.XDG_CONFIG_HOME ?? path.join(home, ".config"),
+    "ast-mcp",
+    "ast-mcp.toml",
+  );
+}
+
+/** Discover configuration with the resolver's lexical ancestor boundaries. */
+export function projectConfigurationPath(
+  projectRoot: string,
+): string | undefined {
+  let current = projectRoot;
+  while (true) {
+    const candidate = path.join(current, "ast-mcp.toml");
+    if (existsSync(candidate)) return candidate;
+    if (existsSync(path.join(current, ".git"))) return undefined;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
 /** A resolution identity never depends on identities produced by resolution. */
 export function configurationResolutionKey(
   options: ResolveConfigOptions,
@@ -106,7 +159,11 @@ export function configurationResolutionKey(
         : undefined,
     env,
     home: canonicalizePathSync(captured.home!),
+    globalConfiguration: path.resolve(globalConfigPath(captured)),
     platform: captured.platform,
     selectedRoots: selected.map(canonicalizePathSync),
+    // Lexical roots determine prospective ancestor walks and relative policy
+    // anchors. Keep them stable when discovered files appear or disappear.
+    selectionRoots: selected.map((root) => path.resolve(root)),
   });
 }

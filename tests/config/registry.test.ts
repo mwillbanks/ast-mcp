@@ -646,6 +646,7 @@ test("registry reconciles newly created and removed project discovery boundaries
       (config) => config.sources.project === undefined,
     );
     expect(bounded.config!.sources.project).toBeUndefined();
+    expect(bounded.key).toBe(initial.key);
     await rm(boundary, { recursive: true });
     const reopened = await reconciledSnapshot(
       registry,
@@ -656,6 +657,28 @@ test("registry reconciles newly created and removed project discovery boundaries
     expect(reopened.config!.sources.project).toBe(
       initial.config!.sources.project,
     );
+    expect(reopened.key).toBe(initial.key);
+    expect(reopened.generation).toBeGreaterThan(bounded.generation);
+
+    const ownSource = path.join(child, "ast-mcp.toml");
+    await writeFile(ownSource, "version = 2\n[telemetry]\nenabled = false\n");
+    const created = await reconciledSnapshot(
+      registry,
+      options,
+      reopened.generation,
+      (config) => config.telemetry.enabled === false,
+    );
+    expect(created.key).toBe(initial.key);
+    expect(created.config!.sources.project).toBe(await realpath(ownSource));
+    await rm(ownSource);
+    const restored = await reconciledSnapshot(
+      registry,
+      options,
+      created.generation,
+      (config) => config.sources.project === initial.config!.sources.project,
+    );
+    expect(restored.key).toBe(initial.key);
+    expect(restored.generation).toBeGreaterThan(created.generation);
   } finally {
     registry.close();
     await rm(root, { recursive: true, force: true });

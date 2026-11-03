@@ -22,8 +22,11 @@ import {
   type SqlAssistanceOptions,
 } from "../runtime/sql-assistance";
 import {
+  bindConfigurationResolution,
   captureResolutionOptions,
   configurationResolutionKey,
+  globalConfigPath,
+  projectConfigurationPath,
 } from "./identity";
 import {
   cliSchema,
@@ -387,44 +390,7 @@ async function existingDirectory(value: string) {
   return absolute;
 }
 
-export function globalConfigPath(options: ResolveConfigOptions = {}) {
-  const env = options.env ?? process.env;
-  const home = options.home ?? os.homedir();
-  const platform = options.platform ?? process.platform;
-  if (platform === "win32")
-    return path.join(
-      env.APPDATA ?? path.join(home, "AppData", "Roaming"),
-      "ast-mcp",
-      "ast-mcp.toml",
-    );
-  return path.join(
-    env.XDG_CONFIG_HOME ?? path.join(home, ".config"),
-    "ast-mcp",
-    "ast-mcp.toml",
-  );
-}
-
-async function projectConfigPath(projectRoot: string) {
-  let current = projectRoot;
-  while (true) {
-    const candidate = path.join(current, "ast-mcp.toml");
-    if (
-      await stat(candidate)
-        .then(() => true)
-        .catch(() => false)
-    )
-      return candidate;
-    if (
-      await stat(path.join(current, ".git"))
-        .then(() => true)
-        .catch(() => false)
-    )
-      return undefined;
-    const parent = path.dirname(current);
-    if (parent === current) return undefined;
-    current = parent;
-  }
-}
+export { globalConfigPath } from "./identity";
 
 function diagnostic(error: z.ZodError) {
   return error.issues
@@ -1399,7 +1365,7 @@ async function resolveForProject(
 ) {
   const { cwd, env } = resolutionRuntime(options);
   const globalPath = globalConfigPath(options);
-  const projectPath = await projectConfigPath(projectRoot);
+  const projectPath = projectConfigurationPath(projectRoot);
   const [global, project] = await loadResolutionLayers(
     globalPath,
     projectPath,
@@ -1542,7 +1508,7 @@ export async function resolveConfig(
     throw new ConfigurationError(
       `Request spans workspace roots with conflicting ast-mcp policies: ${matched.join(", ")}`,
     );
-  return first;
+  return bindConfigurationResolution(first, captured);
 }
 
 export function configRequestPaths(value: unknown): string[] {

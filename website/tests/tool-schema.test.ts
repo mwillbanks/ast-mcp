@@ -98,6 +98,54 @@ test("parameter tables preserve nested records, arrays, defaults, constraints, a
   );
 });
 
+test("root constraints and conjunctive required fields remain visible without changing named parameter paths", () => {
+  const rows = parameterRows({
+    type: "object",
+    additionalProperties: false,
+    minProperties: 1,
+    maxProperties: 3,
+    properties: {
+      token: { type: "string" },
+      optional: { type: "string" },
+      selection: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        allOf: [{ allOf: [{ required: ["name"] }] }],
+      },
+    },
+    allOf: [{ required: ["token"] }],
+    anyOf: [{ required: ["optional"] }, { required: ["token"] }],
+  });
+  expect(rows.$?.description).toContain("complete arguments object");
+  expect(rows.$?.description).toContain("Unknown properties are rejected");
+  expect(rows.$?.description).toContain("minProperties: 1");
+  expect(rows.$?.description).toContain("maxProperties: 3");
+  expect(rows.token?.required).toBe(true);
+  expect(rows.optional?.required).toBe(false);
+  expect(rows["selection.name"]?.required).toBe(true);
+  const branches = parameterRows({
+    required: ["token"],
+    allOf: [{ properties: { token: { type: "string" } } }],
+  });
+  expect(branches["[alternative 1].token"]?.required).toBe(true);
+  const mixed = parameterRows({
+    required: ["token"],
+    anyOf: [{ properties: { token: { type: "string" } } }],
+    allOf: [{ properties: { count: { type: "integer" } } }],
+  });
+  expect(mixed["[alternative 1].token"]?.required).toBe(true);
+  expect(mixed["[alternative 2].count"]?.type).toBe("integer");
+  expect(
+    parameterType({
+      anyOf: [{ type: "string" }, { type: "number" }],
+      allOf: [{ minLength: 1 }],
+    }),
+  ).toBe("(string | number) & (unknown)");
+  expect(parameterRows(false).$?.description).toContain(
+    "No values are accepted",
+  );
+});
+
 test("real schemas expose patch record branches, config alternatives, constraints, and defaults", () => {
   const patch = parameterRows(
     tools.find((tool) => tool.name === "file_patch")!.inputSchema,
@@ -120,6 +168,7 @@ test("real schemas expose patch record branches, config alternatives, constraint
   expect(graph["budget.maxDepth"]?.description).toContain("maximum: 1000");
   for (const tool of tools) {
     const rows = parameterRows(tool.inputSchema);
+    expect(rows.$?.description).toContain("Unknown properties are rejected");
     expect(Object.keys(rows)).toEqual(
       expect.arrayContaining(Object.keys(tool.inputSchema.properties)),
     );

@@ -39,6 +39,7 @@ export default function (
   registerConfigurationTools(server, execute);
   registerDiagnosticTools(server, {
     ...services.diagnostics,
+    configurationSnapshot: execute.configurationSnapshot,
     requestScoped: services.execution?.requestScoped,
   });
   registerFileTools(server, execute);

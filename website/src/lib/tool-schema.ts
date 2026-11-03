@@ -27,7 +27,11 @@ export interface ParameterRow {
 }
 
 function alternatives(schema: ParameterObject): ParameterSchema[] {
-  return schema.oneOf ?? schema.anyOf ?? schema.allOf ?? [];
+  return [
+    ...(schema.oneOf ?? []),
+    ...(schema.anyOf ?? []),
+    ...(schema.allOf ?? []),
+  ];
 }
 
 export function parameterType(schema: ParameterSchema): string {
@@ -35,9 +39,18 @@ export function parameterType(schema: ParameterSchema): string {
   if ("const" in schema) return JSON.stringify(schema.const);
   if (schema.enum)
     return schema.enum.map((value) => JSON.stringify(value)).join(" | ");
-  const choices = alternatives(schema);
-  if (choices.length)
-    return choices.map(parameterType).join(schema.allOf ? " & " : " | ");
+  const groups = [
+    { nodes: schema.oneOf, separator: " | " },
+    { nodes: schema.anyOf, separator: " | " },
+    { nodes: schema.allOf, separator: " & " },
+  ].filter((group) => group.nodes?.length);
+  if (groups.length)
+    return groups
+      .map(({ nodes, separator }) => {
+        const value = nodes!.map(parameterType).join(separator);
+        return groups.length > 1 ? `(${value})` : value;
+      })
+      .join(" & ");
   if (schema.type === "array") {
     if (schema.prefixItems) {
       const members = schema.prefixItems.map(parameterType);
@@ -89,6 +102,16 @@ export function parameterConstraints(schema: ParameterSchema): string {
   return constraints.join("; ");
 }
 
+/** Requirements in every allOf branch also apply to sibling properties. */
+function requiredProperties(schema: ParameterObject): Set<string> {
+  return new Set([
+    ...(schema.required ?? []),
+    ...(schema.allOf ?? []).flatMap((branch) =>
+      typeof branch === "object" ? [...requiredProperties(branch)] : [],
+    ),
+  ]);
+}
+
 /** The checked-in JSON boundary is produced from validated registered schemas. */
 export function parameterRows(schema: unknown): Record<string, ParameterRow> {
   if (
@@ -103,6 +126,7 @@ export function parameterRows(schema: unknown): Record<string, ParameterRow> {
     name: string,
     required: boolean,
     context?: string,
+    inheritedRequired: Set<string> = new Set(),
   ) => {
     const object = typeof node === "boolean" ? undefined : node;
     if (name)
@@ -125,7 +149,10 @@ export function parameterRows(schema: unknown): Record<string, ParameterRow> {
           : {}),
       };
     if (!object) return;
-    const requiredNames = new Set(object.required);
+    const requiredNames = new Set([
+      ...inheritedRequired,
+      ...requiredProperties(object),
+    ]);
     for (const [key, child] of Object.entries(object.properties ?? {}))
       visit(child, name ? `${name}.${key}` : key, requiredNames.has(key));
     if (object.items !== undefined)
@@ -156,9 +183,19 @@ export function parameterRows(schema: unknown): Record<string, ParameterRow> {
         `${name}[alternative ${index + 1}]`,
         false,
         `Alternative ${index + 1} for the containing value.`,
+        requiredNames,
       ),
     );
   };
-  visit(schema as ParameterSchema, "", false);
+  const root = schema as ParameterSchema;
+  visit(root, "", false);
+  const constraints = parameterConstraints(root);
+  if (constraints)
+    rows.$ = {
+      type: parameterType(root),
+      typeDescription: parameterType(root),
+      description: `Constraints on the complete arguments object. ${constraints}`,
+      required: false,
+    };
   return rows;
 }

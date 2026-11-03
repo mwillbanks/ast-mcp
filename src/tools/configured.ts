@@ -3,7 +3,7 @@ import path from "node:path";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
-import { configRegistry } from "../config/registry";
+import { configRegistry, type ConfigSnapshot } from "../config/registry";
 import type {
   RevisionSelector,
   StoragePlacement,
@@ -30,6 +30,9 @@ export interface OpenConfiguredWorkspace {
 
 export interface ConfiguredExecution {
   clientRoots?(context?: ServerContext): Promise<string[]>;
+  configurationSnapshot?(
+    context?: ServerContext,
+  ): Promise<Readonly<ConfigSnapshot>>;
   generationDependencies?: GenerationDependencies;
   openWorkspace?(
     input: OpenConfiguredWorkspace,
@@ -165,6 +168,8 @@ export function configuredExecution(
   options: ExecutionOptions = {},
 ): ConfiguredExecution {
   const registry = options.workspaceRegistry ?? new WorkspaceRegistry();
+  const workspaceDirectory = (workspace: WorkspaceHandle) =>
+    registry.openingDirectory(workspace.workspaceId) ?? workspace.checkoutRoot;
   let rootsPromise: Promise<string[]> | undefined;
   const cachedClientRoots = (context?: ServerContext) => {
     // Modern MCP carries request capabilities and does not permit legacy roots RPCs.
@@ -245,8 +250,8 @@ export function configuredExecution(
         registry.validateRequestPaths(workspace, requestPaths);
       const current = await configRegistry.get({
         clientRoots: roots,
-        cwd: workspace.checkoutRoot,
-        requestPaths: [workspace.checkoutRoot],
+        cwd: workspaceDirectory(workspace),
+        requestPaths: [workspaceDirectory(workspace)],
       });
       workspace = await registry.get(workspace.workspaceId, {
         configurationGeneration: current.generation,
@@ -255,7 +260,7 @@ export function configuredExecution(
       });
     }
     const directory =
-      workspace?.checkoutRoot ??
+      (workspace ? workspaceDirectory(workspace) : undefined) ??
       (await registry.selectDirectory(
         roots,
         isFileOperation(tool)
@@ -320,6 +325,27 @@ export function configuredExecution(
         : executeConfigured(args, operation, context, tool),
     );
   execute.clientRoots = clientRoots;
+  execute.configurationSnapshot = async (context) => {
+    const workspace = currentWorkspace();
+    const directory = workspace ? workspaceDirectory(workspace) : undefined;
+    const snapshot = await configRegistry.snapshot({
+      clientRoots: await clientRoots(context),
+      cwd: directory,
+      requestPaths: directory ? [directory] : undefined,
+    });
+    if (workspace && snapshot.generation !== workspace.configurationGeneration)
+      throw new WorkspaceError(
+        "workspace_mismatch",
+        "Configuration changed after the workspace was opened",
+        {
+          drift: ["configurationGeneration"],
+          workspaceId: workspace.workspaceId,
+        },
+        true,
+        "workspace_open",
+      );
+    return snapshot;
+  };
   execute.generationDependencies = {
     mcpClients: {
       host: {

@@ -14,7 +14,7 @@ export interface RegisteredToolReference {
 
 /** Collect registrations only. Never retain or invoke a tool handler. */
 export function captureToolReference(
-  examples?: Record<string, unknown>,
+  examples?: Record<string, unknown[]>,
 ): RegisteredToolReference[] {
   const entries: RegisteredToolReference[] = [];
   const server = {
@@ -28,7 +28,12 @@ export function captureToolReference(
         annotations?: Record<string, unknown>;
       },
     ) {
-      if (examples) config.inputSchema.parse(examples[name]);
+      if (examples) {
+        const candidates = examples[name];
+        if (!candidates?.length)
+          throw new Error(`Missing documentation example for ${name}`);
+        for (const example of candidates) config.inputSchema.parse(example);
+      }
       entries.push({
         name,
         title: config.title,

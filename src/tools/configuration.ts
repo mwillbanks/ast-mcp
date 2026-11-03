@@ -326,20 +326,18 @@ function statusPayload(
 async function configStatus(
   server: McpServer,
   roots?: () => Promise<string[]>,
+  snapshot?: () => ReturnType<typeof configRegistry.snapshot>,
 ) {
   try {
+    if (snapshot) return toolSuccess(statusPayload(await snapshot()));
     const workspace = currentWorkspace();
-    const clientRoots = workspace
-      ? [workspace.checkoutRoot]
-      : await (roots ? roots() : statusClientRoots(server));
+    const clientRoots = await (roots ? roots() : statusClientRoots(server));
     return toolSuccess(
       statusPayload(
         await configRegistry.snapshot({
           clientRoots,
           cwd: workspace?.checkoutRoot,
-          revisionId: workspace?.selectedRevision.revisionId,
-          storageDomainId: workspace?.storageDomain.domainId,
-          workspaceId: workspace?.workspaceId,
+          requestPaths: workspace ? [workspace.checkoutRoot] : undefined,
         }),
       ),
     );
@@ -381,6 +379,9 @@ export default function registerConfigurationTools(
               server,
               execute.clientRoots
                 ? () => execute.clientRoots!(context)
+                : undefined,
+              execute.configurationSnapshot
+                ? () => execute.configurationSnapshot!(context)
                 : undefined,
             ),
           context,

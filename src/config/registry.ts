@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { setApprovalConfigInvalidator } from "../runtime/approval";
 import {
+  bindConfigurationResolution,
   captureResolutionOptions,
   configurationResolutionKey,
   configuredSelectionRoots,
@@ -317,7 +318,10 @@ export class ConfigRegistry {
     const generation = ++this.#generation;
     const snapshot = Object.freeze({
       config: resolved
-        ? Object.freeze({ ...resolved, generation })
+        ? bindConfigurationResolution(
+            Object.freeze({ ...resolved, generation }),
+            entry.options,
+          )
         : previous?.config,
       ...(error === undefined ? {} : { error }),
       fingerprints: collected.values,

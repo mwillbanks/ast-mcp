@@ -326,6 +326,141 @@ test("diagnostics still checks releases when configuration is malformed", async 
   }
 });
 
+for (const configDecision of ["allow_once", "allow_session"] as const) {
+  test(
+    configDecision +
+      " configuration approval cannot activate unrestricted filesystem access",
+    async () => {
+      const instance = await fixture();
+      const client = new Client(
+        { name: "generic-agent", version: "test" },
+        {
+          capabilities: { elicitation: { form: {} }, roots: {} },
+          supportedProtocolVersions: ["2025-11-25"],
+        },
+      );
+      const deniedPath = path.join(instance.external, "denied.txt");
+      let phase:
+        | "configuration"
+        | "decline filesystem"
+        | "activate filesystem" = "configuration";
+      let approvals = 0;
+      client.setRequestHandler("roots/list", async () => ({
+        roots: [{ uri: Bun.pathToFileURL(instance.root).href }],
+      }));
+      client.setRequestHandler("elicitation/create", async () => {
+        approvals++;
+        if (phase === "configuration")
+          return { action: "accept", content: { decision: configDecision } };
+        if (phase === "decline filesystem") return { action: "decline" };
+        return { action: "accept", content: { decision: "allow_session" } };
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      try {
+        await writeFile(deniedPath, "blocked value");
+        await writeFile(
+          path.join(instance.root, "ast-mcp.toml"),
+          [
+            "version = 2",
+            "[formatting]",
+            "enabled = false",
+            "[[paths]]",
+            'id = "blocked"',
+            "path = " + JSON.stringify(deniedPath),
+            'policies = { read = "deny", write = "deny", delete = "deny" }',
+            "",
+          ].join("\n"),
+        );
+        clearConfigCache();
+        configRegistry.invalidate();
+        await instance.server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const edit = await client.callTool({
+          name: "config_core",
+          arguments: { safety: { filesystem: "unrestricted" } },
+        });
+        expect(edit.isError, JSON.stringify(edit)).not.toBeTrue();
+        expect(approvals).toBe(1);
+        const diagnostic = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(diagnostic.structuredContent).toMatchObject({
+          data: {
+            configuration: {
+              filesystem: "unrestricted",
+              filesystemAuthority: "project",
+            },
+            approval: { sessionGrantPresent: false },
+          },
+        });
+        phase = "decline filesystem";
+        const read = (filePath: string) =>
+          client.callTool({
+            name: "file_read",
+            arguments: { files: [{ filePath, mode: "text" }] },
+          });
+        const blocked = await read(deniedPath);
+        expect(blocked.isError).toBeTrue();
+        expect(approvals).toBe(1);
+        const rejected = await read(path.join(instance.external, "value.txt"));
+        expect(rejected.structuredContent).toMatchObject({
+          error: { code: "approval_denied", details: { rule: "filesystem" } },
+        });
+        expect(approvals).toBe(2);
+        phase = "activate filesystem";
+        const accepted = await read(path.join(instance.external, "value.txt"));
+        expect(accepted.isError, JSON.stringify(accepted)).not.toBeTrue();
+        expect(JSON.stringify(accepted)).toContain("authorized value");
+        expect(approvals).toBe(3);
+        const bypassed = await read(deniedPath);
+        expect(bypassed.isError, JSON.stringify(bypassed)).not.toBeTrue();
+        expect(JSON.stringify(bypassed)).toContain("blocked value");
+        expect(approvals).toBe(3);
+        const activated = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(activated.structuredContent).toMatchObject({
+          data: { approval: { sessionGrantPresent: true } },
+        });
+        await writeFile(
+          path.join(instance.root, "ast-mcp.toml"),
+          "version = [invalid",
+        );
+        const invalid = await configRegistry.reload();
+        expect(
+          invalid.some(
+            (snapshot) => !snapshot.healthy && snapshot.config !== undefined,
+          ),
+        ).toBeTrue();
+        const unavailable = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(unavailable.structuredContent).toMatchObject({
+          data: {
+            configuration: {
+              healthy: false,
+              generation: null,
+              reason: "configuration_unavailable",
+            },
+            approval: { sessionGrantPresent: false },
+            versionCheck: { status: "current" },
+          },
+        });
+        expect(JSON.stringify(unavailable)).not.toContain(instance.root);
+        expect(JSON.stringify(unavailable)).not.toContain("version = [invalid");
+        expect(approvals).toBe(3);
+      } finally {
+        await client.close();
+        await instance.close();
+      }
+    },
+  );
+}
+
 test("modern request-scoped HTTP refuses filesystem approval but permits diagnostics", async () => {
   const instance = await fixture();
   const servers: ReturnType<typeof createServer>[] = [];
@@ -391,6 +526,9 @@ test("modern request-scoped HTTP refuses filesystem approval but permits diagnos
     });
     expect(scoped.isError).not.toBeTrue();
     expect(scoped.inputRequests).toBeUndefined();
+    expect(scoped.structuredContent).toMatchObject({
+      data: { files: [{ content: "authorized value" }] },
+    });
     const rejected = await call("file_read", {
       files: [
         { filePath: path.join(instance.external, "value.txt"), mode: "text" },

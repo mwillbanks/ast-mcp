@@ -161,6 +161,17 @@ test("approval response shape diagnostics never disclose unsupported host values
       { action: "private-host-action" },
       { action: "unsupported", issue: "unsupported_action" },
     ],
+    [
+      { action: "private-host-action", content: { decision: "allow_session" } },
+      {
+        action: "unsupported",
+        contentPresent: true,
+        content: "object",
+        decisionPresent: true,
+        decision: "string",
+        issue: "unsupported_action",
+      },
+    ],
     [{ action: "accept" }, { content: "missing", issue: "missing_content" }],
     [
       { action: "accept", content: null },
@@ -272,6 +283,15 @@ test("session grants reject replay across server, session, generation and expire
   ).rejects.toBeInstanceOf(InputRequiredSignal);
   expect(await authorize(instance, context("same", accept))).toBeTrue();
   expect(await authorize(instance)).toBeTrue();
+  expect(
+    approvalDiagnostics(instance, context(), 1).sessionGrantPresent,
+  ).toBeTrue();
+  expect(
+    approvalDiagnostics(instance, context(), 2).sessionGrantPresent,
+  ).toBeFalse();
+  expect(
+    approvalDiagnostics(instance, context()).sessionGrantPresent,
+  ).toBeFalse();
   await expect(
     authorize(instance, context(), decision, 2),
   ).rejects.toBeInstanceOf(InputRequiredSignal);
@@ -403,7 +423,10 @@ test("slow registry checks cannot consume a resumed probe challenge", async () =
   expect(approvalDiagnostics(instance, context())).toMatchObject({
     pendingCount: 0,
     sessionGrantPresent: false,
-    lastOutcome: { outcome: "accepted" },
+    lastOutcome: {
+      outcome: "accepted",
+      responseShape: expect.objectContaining({ action: "accept", issue: null }),
+    },
   });
   const now = Date.now;
   Date.now = () => now() + 6000;
