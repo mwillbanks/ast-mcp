@@ -219,13 +219,22 @@ jobs:
         if: needs.changes.outputs.coverage == 'true'
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
-        run: bun run test:coverage
+        run: bun run test:coverage --reporter=junit --reporter-outfile=${{ runner.temp }}/test-results.xml
       - name: Test affected package files
         if: needs.changes.outputs.coverage != 'true'
         env:
           AST_MCP_SKIP_PACKAGE_SMOKE: "1"
           AST_MCP_SELECTED_TESTS: ${{ needs.changes.outputs.selected_tests }}
+          AST_MCP_TEST_REPORT: ${{ runner.temp }}/test-results.xml
         run: bun scripts/testing/test-shard.ts --selected
+      - name: Retain test duration measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-timings-linux
+          path: ${{ runner.temp }}/test-results.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   package-platform-tests:
     name: ${{ matrix.selected && format('Affected package tests ({0})', matrix.os) || format('Package tests ({0}, shard {1})', matrix.os, matrix.shard) }}
@@ -264,8 +273,17 @@ jobs:
           SELECTED: ${{ matrix.selected }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ matrix.shards }}
+          AST_MCP_TEST_REPORT: ${{ runner.temp }}/test-results.xml
         run: |
           bun -e 'const args = process.env.SELECTED === "true" ? ["--selected"] : ["--shard", process.env.SHARD, "--shards", process.env.SHARDS]; const child = Bun.spawnSync([process.execPath, "scripts/testing/test-shard.ts", ...args], {stdin:"inherit",stdout:"inherit",stderr:"inherit"}); process.exit(child.exitCode ?? 1)'
+      - name: Retain test duration measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-timings-${{ matrix.os }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-results.xml
+          if-no-files-found: ignore
+          retention-days: 7
 
   package-native:
     name: Native package qualification (${{ matrix.os }})

@@ -10,8 +10,8 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import registerCodeIntelligence from "../../src/tools/code-intelligence";
-import { spawnHttpMcpProcess } from "../support/live-process";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 const repository = path.resolve(import.meta.dir, "../..");
 const startupTimeoutMs = 15_000;

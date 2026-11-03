@@ -295,7 +295,6 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
       }
     });
     let operation: ReturnType<Handler> | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       operation = withWorkspaceContext(workspace, () =>
         handlers.get(tool)!({ files: request }),
@@ -305,28 +304,9 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
         operation.then(() => {
           throw new Error("Tool completed before checkout admission waited");
         }),
-        new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(
-            () =>
-              reject(new Error("Checkout lock contention was not observed")),
-            5000,
-          );
-        }),
       ]);
-      clearTimeout(timeout);
       abort.abort(new Error("caller cancelled"));
-      const result = await Promise.race([
-        operation,
-        new Promise<never>((_resolve, reject) => {
-          timeout = setTimeout(
-            () =>
-              reject(
-                new Error("Checkout admission ignored caller cancellation"),
-              ),
-            1000,
-          );
-        }),
-      ]);
+      const result = await operation;
       expect(result.isError).toBe(true);
       expect(result.structuredContent).toMatchObject({
         ok: false,
@@ -340,7 +320,6 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
         expect((await stat(first)).mode & 0o777).toBe(before.mode & 0o777);
       await owner.fence();
     } finally {
-      if (timeout) clearTimeout(timeout);
       exec.mockRestore();
       await owner.release();
       await operation;

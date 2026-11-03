@@ -39,23 +39,13 @@ test("native requests honor cancellation from the MCP request envelope during se
   } as ServerContext);
   await started.promise;
   abort.abort(new Error("caller cancelled"));
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await Promise.race([
-      request,
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Cancellation ignored during native setup")),
-          1000,
-        );
-      }),
-    ]);
+    const result = await request;
     expect(result).toMatchObject({
       isError: true,
       structuredContent: { error: { code: "aborted" } },
     });
   } finally {
-    clearTimeout(timer);
     setup.reject(new Error("test cleanup"));
     await request;
   }

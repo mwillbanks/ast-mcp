@@ -3,6 +3,7 @@ import { expect, spyOn, test } from "bun:test";
 import { globalTelemetryEnabled } from "../../src/config";
 import { PROCESS_SIGNALS } from "../../src/runtime/signals";
 import { createProcessServer } from "../../src/server/lifecycle";
+import { createMockTime } from "../support/mock-time";
 
 for (const analyticsFails of [false, true]) {
   test(`process fatal forwards startup policy before cleanup when analytics fails=${analyticsFails}`, async () => {
@@ -76,6 +77,7 @@ for (const analyticsFails of [false, true]) {
 }
 
 test("process server deadline exits nonzero while cleanup remains pending", async () => {
+  const time = createMockTime();
   const server = createProcessServer();
   const pending = Promise.withResolvers<void>();
   const started = Promise.withResolvers<void>();
@@ -83,18 +85,6 @@ test("process server deadline exits nonzero while cleanup remains pending", asyn
     started.resolve();
     return pending.promise;
   });
-  const originalTimeout = globalThis.setTimeout;
-  let deadline: (() => void) | undefined;
-  const timer = spyOn(globalThis, "setTimeout").mockImplementation(
-    Object.assign(
-      (...args: Parameters<typeof setTimeout>) => {
-        const [handler, milliseconds] = args;
-        if (milliseconds === 5000) deadline = handler as () => void;
-        return originalTimeout(...args);
-      },
-      { __promisify__: originalTimeout.__promisify__ },
-    ),
-  );
   const exit = spyOn(process, "exit").mockImplementation(
     () => undefined as never,
   );
@@ -102,8 +92,7 @@ test("process server deadline exits nonzero while cleanup remains pending", asyn
   const closing = server.close();
   try {
     await started.promise;
-    expect(deadline).toBeDefined();
-    deadline?.();
+    await time.advanceBy(5000);
     expect(exit).toHaveBeenCalledWith(1);
     expect(stderr).toHaveBeenCalledWith(
       "ast-mcp connection shutdown timed out\n",
@@ -113,7 +102,7 @@ test("process server deadline exits nonzero while cleanup remains pending", asyn
     pending.resolve();
     await closing;
     close.mockRestore();
-    timer.mockRestore();
+    time.dispose();
     exit.mockRestore();
     stderr.mockRestore();
   }

@@ -39,10 +39,10 @@ describe("package test shards", () => {
     expect(new Set(combined).size).toBe(files.length);
     expect(combined.sort()).toEqual(files);
     expect(files).toContain("tests/tooling/test-shard.test.ts");
-    expect(files).toContain("tests/tooling/package-smoke.test.ts");
+    expect(files).toContain("tests/integration/package-consumers.test.ts");
     expect(
       shards.filter((shard) =>
-        shard.includes("tests/tooling/package-smoke.test.ts"),
+        shard.includes("tests/integration/package-consumers.test.ts"),
       ),
     ).toHaveLength(1);
     expect(files).toContain("templates/skills/ast-mcp/evals/source.test.ts");
@@ -67,7 +67,7 @@ describe("package test shards", () => {
       expect(discovered).toEqual(expected);
       for (const count of [2, 3, 5]) {
         const shards = Array.from({ length: count }, (_, shard) =>
-          selectTestShard(discovered, shard, count),
+          selectTestShard(discovered, shard, count, {}),
         );
         expect(shards.flat().sort()).toEqual(expected);
         expect(new Set(shards.flat()).size).toBe(expected.length);
@@ -177,6 +177,28 @@ describe("package test shards", () => {
         retryDelay: 100,
       });
     }
+  });
+
+  test("balances measured durations independently of inventory order", () => {
+    const files = ["a", "b", "c", "d", "e"];
+    const weights = { a: 10, b: 9, c: 2, d: 2, e: 1 };
+    const shards = [0, 1].map((index) =>
+      selectTestShard(files, index, 2, weights),
+    );
+    expect(shards.flat().sort()).toEqual(files);
+    expect(
+      shards.map((group) =>
+        group.reduce(
+          (sum, file) => sum + weights[file as keyof typeof weights],
+          0,
+        ),
+      ),
+    ).toEqual([12, 12]);
+    expect(selectTestShard([...files].reverse(), 0, 2, weights)).toEqual(
+      shards[0],
+    );
+    expect(() => selectTestShard(["a", "a"], 0, 2)).toThrow("unique");
+    expect(() => selectTestShard(["a"], 0, 1, { a: 0 })).toThrow("positive");
   });
 
   test("reject invalid shard coordinates", () => {

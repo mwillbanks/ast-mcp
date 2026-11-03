@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import {
   ParserWorkerPool,
@@ -108,6 +113,7 @@ describe("parser worker failure and lifecycle contracts", () => {
       terminate(): void;
     }> = [];
     let terminated = 0;
+    const dispatched = deferred<void>();
     const workerFactory: ParserPoolOptions["workerFactory"] = () => {
       const worker = {
         onmessage: null as ((event: MessageEvent) => void) | null,
@@ -123,6 +129,7 @@ describe("parser worker failure and lifecycle contracts", () => {
                 data: { type: "ready", ok: true },
               } as MessageEvent),
             );
+          else if (transports.length === 1) dispatched.resolve();
           else if (transports.length > 1 && message.request)
             queueMicrotask(() =>
               worker.onmessage?.({
@@ -152,7 +159,7 @@ describe("parser worker failure and lifecycle contracts", () => {
       ...request,
       source: "export const recovered = true;",
     });
-    await Bun.sleep(1);
+    await dispatched.promise;
     transports[0]?.onerror?.({ message: "transport failed" } as ErrorEvent);
     expect(await failed).toMatchObject({
       code: "worker-error",
@@ -170,6 +177,7 @@ describe("parser worker failure and lifecycle contracts", () => {
   test("rejects malformed worker replies and ignores stale request IDs", async () => {
     let receive!: (data: unknown) => void;
     let dispatchedId = 0;
+    const dispatched = deferred<void>();
     const pool = new ParserWorkerPool({
       minWorkers: 0,
       maxWorkers: 1,
@@ -180,7 +188,10 @@ describe("parser worker failure and lifecycle contracts", () => {
           postMessage(message: { type: string; id?: number }) {
             if (message.type === "initialize")
               queueMicrotask(() => receive({ type: "ready", ok: true }));
-            else dispatchedId = message.id!;
+            else {
+              dispatchedId = message.id!;
+              dispatched.resolve();
+            }
           },
           terminate() {},
         };
@@ -190,7 +201,7 @@ describe("parser worker failure and lifecycle contracts", () => {
     });
     try {
       const pending = pool.parse(request);
-      await Bun.sleep(1);
+      await dispatched.promise;
       receive({ type: "result", id: dispatchedId + 1, ok: true });
       expect(pool.stats.active).toBe(1);
       receive({ type: "result", id: dispatchedId, ok: false });

@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
-import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
+import { spawnHttpMcpProcess, spawnLiveProcess } from "./support/live-process";
 
 const fastFailure =
   'import { writeSync } from "node:fs";writeSync(2,"startup failed\\n");process.exit(7)';

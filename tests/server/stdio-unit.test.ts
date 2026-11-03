@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
 import { BatchingStdioServerTransport } from "../../src/server/stdio";
+import { deferred, flushMicrotasks } from "../support/mock-time";
 
 test("stdio transport batches split JSON-RPC input and sends framed output", async () => {
   const stdin = new PassThrough();
@@ -77,7 +78,7 @@ test("oversized and malformed frames resynchronize without disconnecting", async
     'discarded\nnot-json\n[]\n42\n{"id":9,"jsonrpc":"2.0","method":"ping"}\n',
   );
   expect(messages).toEqual([{ id: 9, jsonrpc: "2.0", method: "ping" }]);
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flushMicrotasks();
   const responses = output
     .trim()
     .split("\n")
@@ -97,8 +98,10 @@ test("EOF closes once and rejects writes waiting for drain", async () => {
   const stdout = new PassThrough({ highWaterMark: 1 });
   const transport = new BatchingStdioServerTransport(stdin, stdout);
   let closes = 0;
+  const ended = deferred<void>();
   transport.onclose = () => {
     closes += 1;
+    ended.resolve();
   };
   await transport.start();
   const pending = transport.send({
@@ -108,7 +111,7 @@ test("EOF closes once and rejects writes waiting for drain", async () => {
   } as never);
   const failure = pending.catch((error: Error) => error);
   stdin.end();
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await ended.promise;
   expect((await failure) as Error).toMatchObject({
     message: "Stdio transport is closed",
   });

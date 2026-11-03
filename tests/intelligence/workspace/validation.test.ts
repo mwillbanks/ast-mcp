@@ -1,4 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import {
   mkdir,
   mkdtemp,

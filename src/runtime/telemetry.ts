@@ -10,6 +10,7 @@ import {
   resolveConfig,
   type ResolvedConfig,
 } from "../config";
+import { createDeadline } from "./deadline";
 import { canonicalizePathSync } from "./path-utils";
 
 declare const AST_MCP_BUILD_ID: string;
@@ -164,6 +165,7 @@ export interface TelemetryOptions {
   shutdownMs?: number;
   requestTimeoutMs?: number;
   slowToolMs?: number;
+  yieldToEventLoop?: () => Promise<void>;
   now?: () => number;
 }
 
@@ -526,7 +528,8 @@ export class Telemetry {
       });
     }
     // The MCP sink fans out through microtasks before enqueueing into posthog-node.
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    if (this.options.yieldToEventLoop) await this.options.yieldToEventLoop();
+    else await new Promise<void>((resolve) => setImmediate(resolve));
   }
   async #createSdk(): Promise<Sdk | undefined> {
     try {
@@ -618,11 +621,12 @@ export class Telemetry {
         this.#terminated
       )
         return ignored();
+      using deadline = createDeadline(this.options.requestTimeoutMs ?? 1000);
       return await (this.options.fetch ?? globalThis.fetch)(HOST + "/batch/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ api_key: TOKEN, batch }),
-        signal: AbortSignal.timeout(this.options.requestTimeoutMs ?? 1000),
+        signal: deadline.signal,
       });
     } catch {
       return ignored();

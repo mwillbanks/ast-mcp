@@ -1,4 +1,9 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import { analyzeDocument } from "../../../src/intelligence/documents/index.ts";
 import { parseSource } from "../../../src/intelligence/parser/index.ts";

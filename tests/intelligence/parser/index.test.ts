@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import path from "node:path";
 
 import packageJson from "../../../package.json" with { type: "json" };

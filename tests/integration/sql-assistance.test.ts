@@ -15,8 +15,8 @@ import type {
   SqlPatchDecision,
 } from "../../src/runtime/sql-assistance";
 import { hermeticConfig } from "../support/hermetic-config";
-import { spawnHttpMcpProcess } from "../support/live-process";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 const executable = path.resolve(import.meta.dir, "../../bin/ast-mcp.ts");
 const source = "SELECT 1;\n";

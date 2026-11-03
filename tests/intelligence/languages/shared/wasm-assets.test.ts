@@ -1,4 +1,9 @@
-import { afterAll, expect, test } from "bun:test";
+import { beforeEach, afterAll, expect, test } from "bun:test";
+
+import { createMockTime } from "../../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import { Language, Parser } from "web-tree-sitter";
 

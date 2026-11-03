@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -373,7 +378,7 @@ describe("mutation journal correctness", () => {
 
   test("ignores ordinary shared-store jobs", async () => {
     await withJournal(async (fixture) => {
-      const timestamp = new Date().toISOString();
+      const timestamp = new Date("2026-09-10T00:00:00.000Z").toISOString();
       const jobId = createIdentity("job", { name: "ordinary-job" });
       await fixture.store.putJob({
         attempt: 0,

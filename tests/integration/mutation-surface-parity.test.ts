@@ -27,8 +27,8 @@ import {
 import { sha256 } from "../../src/runtime/hash";
 import registerLifecycleTools from "../../src/tools/lifecycle";
 import { hermeticConfig } from "../support/hermetic-config";
-import { spawnHttpMcpProcess } from "../support/live-process";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 const repository = path.resolve(import.meta.dir, "../..");
 const configuration = `version = 2

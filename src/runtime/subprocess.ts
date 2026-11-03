@@ -53,11 +53,21 @@ export async function readSubprocessOutput(
   }).decode(bytes);
 }
 
-function settledWithin(processHandle: ManagedSubprocess, timeoutMs: number) {
-  return Promise.race([
-    processHandle.exited.then(() => true),
-    Bun.sleep(timeoutMs).then(() => false),
-  ]);
+async function settledWithin(
+  processHandle: ManagedSubprocess,
+  timeoutMs: number,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      processHandle.exited.then(() => true),
+      new Promise<false>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function signalPosixProcessTree(

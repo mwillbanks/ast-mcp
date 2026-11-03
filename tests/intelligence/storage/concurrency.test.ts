@@ -1,3 +1,14 @@
+import { beforeEach, spyOn } from "bun:test";
+
+import {
+  createMockTime,
+  deferred,
+  type MockTime,
+} from "../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -39,17 +50,6 @@ async function domain(): Promise<StorageDomain> {
     schemaVersion: INTELLIGENCE_SCHEMA_VERSION,
     storagePath,
   };
-}
-
-async function waitFor(
-  predicate: () => Promise<boolean>,
-  attempts = 300,
-): Promise<void> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for coordinator state");
 }
 
 function sourceRow(index: number) {
@@ -173,96 +173,6 @@ describe("LanceDB storage coordination", () => {
     await store.shutdownCoordinator();
   });
 
-  test("renews long operations across processes and recovers a stale owner", async () => {
-    const storage = await domain();
-    const store = await LanceIntelligenceStore.open(storage, {
-      leaseDurationMs: 1_000,
-    });
-    const initialLease = (await store.rows("coordinator_recovery"))[0];
-    let finishOperation!: () => void;
-    const operationGate = new Promise<void>((resolve) => {
-      finishOperation = resolve;
-    });
-    const longOperation = store.serializeMigration(
-      "long operation",
-      async () => {
-        await operationGate;
-        return "finished";
-      },
-    );
-    await waitFor(async () => {
-      const lease = (await store.rows("coordinator_recovery"))[0];
-      return (
-        Date.parse(String(lease?.lease_expires_at)) >
-        Date.parse(String(initialLease?.lease_expires_at))
-      );
-    });
-
-    const encoded = Buffer.from(JSON.stringify(storage)).toString("base64");
-    const modulePath = Bun.fileURLToPath(
-      new URL("../../../src/intelligence/storage/store.ts", import.meta.url),
-    );
-    const script = `
-      import { LanceIntelligenceStore } from ${JSON.stringify(modulePath)};
-      const domain = JSON.parse(Buffer.from(${JSON.stringify(encoded)}, "base64").toString());
-      try {
-        const store = await LanceIntelligenceStore.open(domain, { leaseDurationMs: 1_000 });
-        await store.putRows("artifacts", []);
-        console.log("unexpected-success");
-        process.exit(2);
-      } catch (error) {
-        console.log(error?.code ?? "unknown");
-        process.exit(error?.code === "coordinator_unavailable" ? 0 : 3);
-      }
-    `;
-    const child = Bun.spawn([process.execPath, "-e", script], {
-      cwd: process.cwd(),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe("coordinator_unavailable");
-    finishOperation();
-    expect(await longOperation).toBe("finished");
-    await store.shutdownCoordinator();
-    clearCoordinatorRegistryForTests();
-
-    const raw = await lancedb.connect(storage.storagePath, {
-      readConsistencyInterval: 0,
-    });
-    const leaseTable = await raw.openTable("coordinator_recovery");
-    const staleOwnerId = `coordinator:v1:${"1".repeat(64)}`;
-    await leaseTable.update({
-      values: {
-        coordinator_id: staleOwnerId,
-        epoch: 40,
-        heartbeat_at: "2020-01-01T00:00:00.000Z",
-        lease_expires_at: "2020-01-01T00:00:00.000Z",
-        owner_id: staleOwnerId,
-        state: "active",
-      },
-      where: "lease_key = 'writer'",
-    });
-    leaseTable.close();
-    raw.close();
-
-    const recovered = await LanceIntelligenceStore.open(storage, {
-      leaseDurationMs: 60_000,
-    });
-    await recovered.putRows("artifacts", [sourceRow(77)]);
-    const recoveredLease = (await recovered.rows("coordinator_recovery"))[0];
-    expect(recoveredLease?.epoch).toBe(41);
-    expect(recoveredLease?.owner_id).not.toBe(staleOwnerId);
-    expect(await recovered.count("artifacts")).toBe(1);
-    await recovered.shutdownCoordinator();
-  });
-
   test("aborts a long operation when the coordinator loses its epoch", async () => {
     const storage = await domain();
     let reportLeaseLoss!: (error: unknown) => void;
@@ -273,7 +183,15 @@ describe("LanceDB storage coordination", () => {
       leaseDurationMs: 1_000,
       onLeaseLost: reportLeaseLoss,
     });
-    const initialLease = (await store.rows("coordinator_recovery"))[0];
+    const entered = deferred<void>();
+    const renewed = deferred<void>();
+    const originalFence = store.coordinator.fence.bind(store.coordinator);
+    const fence = spyOn(store.coordinator, "fence").mockImplementation(
+      async (lease) => {
+        await originalFence(lease);
+        renewed.resolve();
+      },
+    );
     let finishOperation!: () => void;
     const operationGate = new Promise<void>((resolve) => {
       finishOperation = resolve;
@@ -281,17 +199,15 @@ describe("LanceDB storage coordination", () => {
     const longOperation = store.serializeMigration(
       "fenced operation",
       async () => {
+        entered.resolve();
         await operationGate;
         return "must not publish";
       },
     );
-    await waitFor(async () => {
-      const lease = (await store.rows("coordinator_recovery"))[0];
-      return (
-        Date.parse(String(lease?.lease_expires_at)) >
-        Date.parse(String(initialLease?.lease_expires_at))
-      );
-    });
+    await entered.promise;
+    await time.advanceBy(334);
+    await renewed.promise;
+    fence.mockRestore();
 
     const raw = await lancedb.connect(storage.storagePath, {
       readConsistencyInterval: 0,
@@ -302,8 +218,8 @@ describe("LanceDB storage coordination", () => {
       values: {
         coordinator_id: stolenOwnerId,
         epoch: Number((await store.rows("coordinator_recovery"))[0]?.epoch) + 1,
-        heartbeat_at: new Date().toISOString(),
-        lease_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        heartbeat_at: time.date().toISOString(),
+        lease_expires_at: new Date(time.now() + 60_000).toISOString(),
         owner_id: stolenOwnerId,
         state: "active",
       },
@@ -312,6 +228,7 @@ describe("LanceDB storage coordination", () => {
     leaseTable.close();
     raw.close();
 
+    await time.advanceBy(334);
     await expect(leaseLoss).resolves.toMatchObject({
       code: "coordinator_unavailable",
       retryable: true,
@@ -399,17 +316,18 @@ describe("LanceDB storage coordination", () => {
     expect(malformedAttempts).toBe(1);
 
     let defaultSleepAttempts = 0;
-    expect(
-      await withLanceRetry(
-        "default sleep",
-        async () => {
-          defaultSleepAttempts += 1;
-          if (defaultSleepAttempts === 1) throw new Error("commit conflict");
-          return "recovered";
-        },
-        { maxRetryAttempts: 2, random: () => 0 },
-      ),
-    ).toBe("recovered");
+    const recovery = withLanceRetry(
+      "default sleep",
+      async () => {
+        defaultSleepAttempts += 1;
+        if (defaultSleepAttempts === 1) throw new Error("commit conflict");
+        return "recovered";
+      },
+      { maxRetryAttempts: 2, random: () => 0 },
+    );
+    await time.advanceBy(5);
+    expect(await recovery).toBe("recovered");
+    expect(defaultSleepAttempts).toBe(2);
 
     await expect(
       withLanceRetry(

@@ -1,9 +1,18 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, open, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { sha256Handle } from "../../src/runtime/hash";
+import {
+  createMockTime,
+  flushMicrotasks,
+  type MockTime,
+} from "../support/mock-time";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 
 const folders: string[] = [];
 afterEach(async () => {
@@ -128,6 +137,7 @@ test.each(["deadline", "cancellation"])(
     const originalRead = handle.read.bind(handle);
     const controller = new AbortController();
     const reason = new Error("cancelled pending descriptor read");
+
     let releaseRead!: () => void;
     let readStarted!: () => void;
     const pendingRead = new Promise<void>((resolve) => {
@@ -162,8 +172,7 @@ test.each(["deadline", "cancellation"])(
         return error;
       },
     );
-    // Bound the mock independently so assertion failures cannot strand cleanup.
-    const fallback = setTimeout(releaseRead, 2_000);
+
     try {
       await Promise.race([
         started,
@@ -174,7 +183,8 @@ test.each(["deadline", "cancellation"])(
         }),
       ]);
       if (mode === "cancellation") controller.abort(reason);
-      await Bun.sleep(150);
+      if (mode === "deadline") await time.advanceBy(100);
+      await flushMicrotasks();
       expect(settled).toBe(false);
       expect(close).not.toHaveBeenCalled();
       releaseRead();
@@ -190,7 +200,6 @@ test.each(["deadline", "cancellation"])(
       expect(next).toEqual(bytes.subarray(7, 18));
       expect((await handle.stat()).isFile()).toBe(true);
     } finally {
-      clearTimeout(fallback);
       releaseRead();
       await hashing;
       read.mockRestore();

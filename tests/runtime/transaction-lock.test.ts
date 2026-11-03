@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { beforeEach, expect, spyOn, test } from "bun:test";
 import * as fsSync from "node:fs";
 import {
   link,
@@ -18,6 +18,53 @@ import {
   acquireTransactionLockSync,
   isTransactionLockArtifact,
 } from "../../src/runtime/transaction-lock.ts";
+import {
+  createMockTime,
+  deferred,
+  type MockTime,
+} from "../support/mock-time.ts";
+
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
+
+async function afterRegisteredPoll<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  drive: (controller: AbortController) => void | Promise<void>,
+): Promise<T> {
+  const controller = new AbortController();
+  const entered = deferred<void>();
+  const add = controller.signal.addEventListener.bind(controller.signal);
+  const observer = spyOn(
+    controller.signal,
+    "addEventListener",
+  ).mockImplementation(
+    (...args: Parameters<AbortSignal["addEventListener"]>) => {
+      add(...args);
+      if (args[0] === "abort") entered.resolve();
+    },
+  );
+  const result = operation(controller.signal).then(
+    (value) => ({ ok: true as const, value }),
+    (error) => ({ ok: false as const, error: error as unknown }),
+  );
+  try {
+    const waiting = await Promise.race([
+      entered.promise.then(() => true),
+      result.then(() => false),
+    ]);
+    expect(waiting).toBeTrue();
+    await drive(controller);
+    const outcome = await result;
+    if (!outcome.ok) throw outcome.error;
+    return outcome.value;
+  } finally {
+    controller.abort();
+    await result;
+    observer.mockRestore();
+  }
+}
 
 test("shared guards exclude different logical namespaces and preserve owner locks after local contention", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-shared-guard-"));
@@ -25,76 +72,35 @@ test("shared guards exclude different logical namespaces and preserve owner lock
   const identity = path.join(root, "first-account");
   const other = path.join(root, "second-account");
   const owner = await acquireTransactionLock(identity, { sharedDatabasePath });
-  const modulePath = Bun.fileURLToPath(
-    new URL("../../src/runtime/transaction-lock.ts", import.meta.url),
-  );
   try {
     await expect(
-      acquireTransactionLock(other, {
-        sharedDatabasePath,
-        deadline: Date.now() + 25,
-      }),
+      afterRegisteredPoll(
+        (signal) =>
+          acquireTransactionLock(other, {
+            sharedDatabasePath,
+            signal,
+            deadline: time.now() + 25,
+          }),
+        () => time.advanceBy(25),
+      ),
     ).rejects.toMatchObject({ code: "lock_deadline" });
     expect(() =>
       acquireTransactionLockSync(other, { sharedDatabasePath }),
     ).toThrow("already held");
     const privateOnly = acquireTransactionLockSync(other);
     privateOnly.release();
-    const abort = new AbortController();
-    const waiting = acquireTransactionLock(other, {
-      sharedDatabasePath,
-      signal: abort.signal,
-      pollMs: 1000,
-    });
-    const abortTimer = setTimeout(() => abort.abort(), 20);
-    try {
-      await expect(waiting).rejects.toMatchObject({ code: "lock_aborted" });
-    } finally {
-      clearTimeout(abortTimer);
-    }
-    // Independent SQLite proves local failed attempts did not release POSIX process locks.
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "--eval",
-        "import { acquireTransactionLock } from " +
-          JSON.stringify(modulePath) +
-          ";" +
-          "import { systemAccount } from " +
-          JSON.stringify(
-            Bun.fileURLToPath(
-              new URL(
-                "../../src/runtime/private-lock-directory.ts",
-                import.meta.url,
-              ),
-            ),
-          ) +
-          "; await systemAccount();" +
-          "try { const lock = await acquireTransactionLock(" +
-          JSON.stringify(path.join(root, "third-account")) +
-          ", {sharedDatabasePath:" +
-          JSON.stringify(sharedDatabasePath) +
-          ",deadline:Date.now()+500}); lock.release(); console.log('unexpected'); }" +
-          "catch(error) { console.log(error.code); }",
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const childTimer = setTimeout(() => child.kill("SIGKILL"), 10_000);
-    let code: number, output: string, errors: string;
-    try {
-      [code, output, errors] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-    } finally {
-      clearTimeout(childTimer);
-      child.kill("SIGKILL");
-      await child.exited;
-    }
-    expect(code).toBe(0);
-    expect(errors).toBe("");
-    expect(output.trim()).toBe("lock_deadline");
+    await expect(
+      afterRegisteredPoll(
+        (signal) =>
+          acquireTransactionLock(other, {
+            sharedDatabasePath,
+            signal,
+            pollMs: 1_000,
+          }),
+        (controller) => controller.abort(),
+      ),
+    ).rejects.toMatchObject({ code: "lock_aborted" });
+
     owner.fence();
   } finally {
     owner.release();
@@ -420,7 +426,14 @@ test("transaction locks bound waits, honor cancellation, and release idempotentl
   const owner = await acquireTransactionLock(database);
   try {
     await expect(
-      acquireTransactionLock(database, { deadline: Date.now() + 20 }),
+      afterRegisteredPoll(
+        (signal) =>
+          acquireTransactionLock(database, {
+            signal,
+            deadline: time.now() + 20,
+          }),
+        () => time.advanceBy(20),
+      ),
     ).rejects.toMatchObject({ code: "lock_deadline" });
     await expect(
       acquireTransactionLock(database, { tryOnly: true }),
@@ -431,19 +444,15 @@ test("transaction locks bound waits, honor cancellation, and release idempotentl
       acquireTransactionLock(database, { signal: preAborted.signal }),
     ).rejects.toMatchObject({ code: "lock_aborted" });
     await expect(
-      acquireTransactionLock(database, { deadline: new Date(Date.now() - 1) }),
+      acquireTransactionLock(database, { deadline: new Date(time.now() - 1) }),
     ).rejects.toMatchObject({ code: "lock_deadline" });
-    const abort = new AbortController();
-    const pending = acquireTransactionLock(database, {
-      signal: abort.signal,
-      pollMs: 1000,
-    });
-    const timer = setTimeout(() => abort.abort(), 20);
-    try {
-      await expect(pending).rejects.toMatchObject({ code: "lock_aborted" });
-    } finally {
-      clearTimeout(timer);
-    }
+    await expect(
+      afterRegisteredPoll(
+        (signal) => acquireTransactionLock(database, { signal, pollMs: 1_000 }),
+        (controller) => controller.abort(),
+      ),
+    ).rejects.toMatchObject({ code: "lock_aborted" });
+
     owner.fence();
     owner.release();
     owner.release();
@@ -473,46 +482,3 @@ test("malformed lock databases fail immediately without retrying or changing byt
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test("the operating system releases a crashed process transaction", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-os-crash-"));
-  const database = path.join(root, "guard.sqlite");
-  const modulePath = Bun.fileURLToPath(
-    new URL("../../src/runtime/transaction-lock.ts", import.meta.url),
-  );
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      "--eval",
-      `
-    import { acquireTransactionLock } from ${JSON.stringify(modulePath)};
-    const lock = await acquireTransactionLock(${JSON.stringify(database)});
-    console.log("ready");
-    await Bun.sleep(60_000);
-  `,
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
-  const timer = setTimeout(() => child.kill("SIGKILL"), 12_000);
-  try {
-    const reader = child.stdout.getReader();
-    const ready = await reader.read();
-    reader.releaseLock();
-    expect(new TextDecoder().decode(ready.value).trim()).toBe("ready");
-    await expect(
-      acquireTransactionLock(database, { deadline: Date.now() + 20 }),
-    ).rejects.toMatchObject({ code: "lock_deadline" });
-    child.kill("SIGKILL");
-    await child.exited;
-    const successor = await acquireTransactionLock(database, {
-      deadline: Date.now() + 1_000,
-    });
-    successor.fence();
-    successor.release();
-  } finally {
-    clearTimeout(timer);
-    child.kill("SIGKILL");
-    await child.exited;
-    await rm(root, { recursive: true, force: true });
-  }
-}, 15_000);

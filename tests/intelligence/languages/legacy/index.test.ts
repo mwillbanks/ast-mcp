@@ -1,4 +1,10 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { Worker } from "node:worker_threads";
 
 import {
@@ -427,13 +433,19 @@ describe("legacy language adapters", () => {
     });
     expect(await activeOutcome).toMatchObject({ code: "aborted" });
     expect((await recovery).symbols[0]?.name).toBe("recovered");
-    await expect(
-      analyzeLegacyLanguage({
-        languageId: "ocaml",
-        source: "let x = 1\n".repeat(10_000),
-        timeoutMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: "timeout" });
+    const timed = analyzeLegacyLanguage({
+      languageId: "ocaml",
+      source: "let x = 1",
+      timeoutMs: 0,
+    }).catch((error: unknown) => error);
+    try {
+      expect(legacyWorkerStats().pendingRequests).toBe(1);
+      await time.advanceBy(0);
+      expect(await timed).toMatchObject({ code: "timeout" });
+    } finally {
+      await closeLegacyLanguageWorker();
+      await timed;
+    }
     await drainLegacyLanguageWorker();
     expect(legacyWorkerStats()).toEqual({
       outstandingBytes: 0,

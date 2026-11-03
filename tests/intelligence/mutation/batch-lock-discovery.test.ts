@@ -1,4 +1,9 @@
-import { expect, spyOn, test } from "bun:test";
+import { beforeEach, expect, spyOn, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";

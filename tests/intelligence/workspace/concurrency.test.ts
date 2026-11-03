@@ -1,4 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import {
   mkdir,
   mkdtemp,
@@ -90,6 +95,8 @@ function serverWithoutRoots(): McpServer {
 }
 
 afterEach(async () => {
+  configRegistry.close();
+  clearConfigCache();
   await Promise.all(
     created.splice(0).map((root) => rm(root, { force: true, recursive: true })),
   );
@@ -176,10 +183,13 @@ test("simultaneous linked-worktree requests read and mutate only their checkout"
     ),
   ).toBe(true);
 
+  const firstEntered = deferred<void>();
+  const secondEntered = deferred<void>();
   const [mainPath, linkedPath] = await Promise.all([
     withConfig(hermeticConfig(main), () =>
       withWorkspaceContext(mainWorkspace, async () => {
-        await Bun.sleep(8);
+        firstEntered.resolve();
+        await secondEntered.promise;
         const target = await resolveWritablePath("same.txt", "write");
         await writeFile(target, "main-updated\n");
         return target;
@@ -187,7 +197,8 @@ test("simultaneous linked-worktree requests read and mutate only their checkout"
     ),
     withConfig(hermeticConfig(linked), () =>
       withWorkspaceContext(linkedWorkspace, async () => {
-        await Bun.sleep(1);
+        await firstEntered.promise;
+        secondEntered.resolve();
         const target = await resolveWritablePath("same.txt", "write");
         await writeFile(target, "linked-updated\n");
         return target;

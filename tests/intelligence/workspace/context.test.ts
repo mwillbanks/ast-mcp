@@ -1,4 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import {
   mkdir,
   mkdtemp,
@@ -234,10 +239,13 @@ test("workspace context is async-local and never changes process routing state",
   const beforeCwd = process.cwd();
   const beforePwd = process.env.PWD;
 
+  const firstEntered = deferred<void>();
+  const secondEntered = deferred<void>();
   const [firstPath, secondPath] = await Promise.all([
     withConfig(hermeticConfig(first), () =>
       withWorkspaceContext(firstWorkspace, async () => {
-        await Bun.sleep(10);
+        firstEntered.resolve();
+        await secondEntered.promise;
         expect(await intelligenceRoot(["same.txt"])).toBe(
           firstWorkspace.checkoutRoot,
         );
@@ -249,7 +257,8 @@ test("workspace context is async-local and never changes process routing state",
     ),
     withConfig(hermeticConfig(second), () =>
       withWorkspaceContext(secondWorkspace, async () => {
-        await Bun.sleep(1);
+        await firstEntered.promise;
+        secondEntered.resolve();
         expect(currentWorkspace()?.workspaceId).toBe(
           secondWorkspace.workspaceId,
         );

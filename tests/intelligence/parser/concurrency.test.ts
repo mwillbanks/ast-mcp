@@ -1,4 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import {
+  type MockTime,
+  createMockTime,
+  deferred,
+} from "../../support/mock-time.ts";
+let mockTime: MockTime;
+beforeEach(() => {
+  mockTime = createMockTime();
+});
 import { resolve } from "node:path";
 
 import {
@@ -199,21 +209,6 @@ describe("parser physical retirement", () => {
       'import { parentPort } from "node:worker_threads"; ' + code,
     );
 
-  test("the production transport waits for physical worker stop", async () => {
-    const worker = createParserTransport(
-      url(
-        "const counter = new Int32Array(new SharedArrayBuffer(4)); parentPort.postMessage(counter); while (true) Atomics.add(counter, 0, 1);",
-      ),
-    );
-    const counter = await new Promise<Int32Array>((resolve) => {
-      worker.onmessage = (event) => resolve(event.data);
-    });
-    await Promise.resolve(worker.terminate());
-    const stopped = Atomics.load(counter, 0);
-    await Bun.sleep(10);
-    expect(Atomics.load(counter, 0)).toBe(stopped);
-  });
-
   test("the production transport forwards crashes and unexpected exits", async () => {
     for (const [code, message] of [
       ['throw new Error("transport crash")', "transport crash"],
@@ -234,6 +229,7 @@ describe("parser physical retirement", () => {
   function factory(
     terminate: () => Promise<number>,
     counts: { created: number },
+    dispatched?: () => void,
   ) {
     return () => {
       const ordinal = ++counts.created;
@@ -247,17 +243,20 @@ describe("parser physical retirement", () => {
                 data: { type: "ready", ok: true },
               } as MessageEvent),
             );
-          else if (ordinal > 1)
-            queueMicrotask(() =>
-              worker.onmessage?.({
-                data: {
-                  type: "result",
-                  ok: true,
-                  id: message.id,
-                  facts: parseSource(request),
-                },
-              } as MessageEvent),
-            );
+          else {
+            dispatched?.();
+            if (ordinal > 1)
+              queueMicrotask(() =>
+                worker.onmessage?.({
+                  data: {
+                    type: "result",
+                    ok: true,
+                    id: message.id,
+                    facts: parseSource(request),
+                  },
+                } as MessageEvent),
+              );
+          }
         },
         terminate,
       };
@@ -271,6 +270,7 @@ describe("parser physical retirement", () => {
       finish = resolve;
     });
     const counts = { created: 0 };
+    const dispatched = deferred<void>();
     const pool = new ParserWorkerPool({
       minWorkers: 0,
       maxWorkers: 1,
@@ -278,17 +278,18 @@ describe("parser physical retirement", () => {
       workerFactory: factory(
         () => (counts.created === 1 ? retirement : Promise.resolve(0)),
         counts,
+        () => dispatched.resolve(),
       ),
     });
     const controller = new AbortController();
     const first = pool
       .parse(request, { signal: controller.signal })
       .catch((error: unknown) => error);
-    await Bun.sleep(1);
+    await dispatched.promise;
     controller.abort();
     expect(await first).toMatchObject({ code: "aborted" });
     const next = pool.parse(request);
-    await Bun.sleep(5);
+    expect(pool.stats.queued).toBe(1);
     expect(counts.created).toBe(1);
     finish(0);
     expect((await next).symbols[0]?.name).toBe("recovered");
@@ -306,6 +307,7 @@ describe("parser physical retirement", () => {
     });
     await expect(failing.close()).rejects.toThrow("retirement failed");
     await expect(failing.close()).rejects.toThrow("retirement failed");
+    const time = mockTime;
     let finish!: (code: number) => void;
     const gate = new Promise<number>((resolve) => {
       finish = resolve;
@@ -315,8 +317,18 @@ describe("parser physical retirement", () => {
       defaultTimeoutMs: 20,
       workerFactory: factory(() => gate, { created: 0 }),
     });
-    await expect(stuck.close()).rejects.toThrow("retirement timed out");
-    finish(0);
-    await stuck.close();
+    try {
+      const closing = stuck.close().catch((error: unknown) => error);
+      await time.advanceBy(20);
+      expect(await closing).toMatchObject({
+        message: "Parser worker retirement timed out",
+      });
+      finish(0);
+      await stuck.close();
+    } finally {
+      finish(0);
+      await stuck.close();
+      time.dispose();
+    }
   });
 });

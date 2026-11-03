@@ -16,6 +16,7 @@ import {
   currentWorkspace,
   type WorkspaceHandle,
 } from "../intelligence/workspace/context.ts";
+import { createDeadline } from "./deadline.ts";
 import { sha256, sha256Handle } from "./hash.ts";
 import {
   ensurePrivateLockDirectory,
@@ -200,9 +201,8 @@ export async function stageFileSnapshot(
   filePath: string,
   signal?: AbortSignal,
 ): Promise<StagedFileSnapshot> {
-  const readSignal = signal
-    ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-    : AbortSignal.timeout(30_000);
+  using deadline = createDeadline(30_000, signal);
+  const readSignal = deadline.signal;
   readSignal.throwIfAborted();
   const namespace = snapshotNamespace();
   const root = await snapshotRoot(namespace);

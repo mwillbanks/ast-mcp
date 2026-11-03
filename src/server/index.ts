@@ -9,6 +9,7 @@ import {
   clearSessionApprovals,
   recordApprovalTransportFailure,
 } from "../runtime/approval";
+import { createDeadline } from "../runtime/deadline";
 import { Telemetry, type TelemetryOptions } from "../runtime/telemetry";
 import { registerSkills } from "../skills";
 import tools from "../tools";
@@ -42,6 +43,7 @@ export function createServer(
   // The legacy input-required shim bypasses elicitInput and sends requests directly.
   const request = server.server.request.bind(server.server);
   server.server.request = ((...args: unknown[]) => {
+    let cancelDeadline: (() => void) | undefined;
     if ((args[0] as { method?: string }).method === "elicitation/create") {
       const optionsIndex = args.length >= 3 ? 2 : 1;
       const requestOptions = args[optionsIndex] as
@@ -53,28 +55,29 @@ export function createServer(
       const deadlineMs = probe
         ? Math.min(approvalTimeoutMs, 5000)
         : approvalTimeoutMs;
-      const timeout = AbortSignal.timeout(deadlineMs);
+      const deadline = createDeadline(deadlineMs, requestOptions?.signal);
+      cancelDeadline = deadline.dispose;
       args[optionsIndex] = {
         ...requestOptions,
         maxTotalTimeout: Math.min(
           requestOptions?.maxTotalTimeout ?? deadlineMs,
           deadlineMs,
         ),
-        signal: requestOptions?.signal
-          ? AbortSignal.any([requestOptions.signal, timeout])
-          : timeout,
+        signal: deadline.signal,
       };
     }
-    return Reflect.apply(request, undefined, args).catch((error: unknown) => {
-      if ((args[0] as { method?: string }).method === "elicitation/create")
-        recordApprovalTransportFailure(
-          server,
-          (args[0] as { params?: { _meta?: Record<string, unknown> } }).params
-            ?._meta?.["io.ast-mcp/approvalChallenge"],
-          error,
-        );
-      throw error;
-    });
+    return Reflect.apply(request, undefined, args)
+      .catch((error: unknown) => {
+        if ((args[0] as { method?: string }).method === "elicitation/create")
+          recordApprovalTransportFailure(
+            server,
+            (args[0] as { params?: { _meta?: Record<string, unknown> } }).params
+              ?._meta?.["io.ast-mcp/approvalChallenge"],
+            error,
+          );
+        throw error;
+      })
+      .finally(() => cancelDeadline?.());
   }) as typeof server.server.request;
 
   const telemetry = new Telemetry(telemetryOptions);

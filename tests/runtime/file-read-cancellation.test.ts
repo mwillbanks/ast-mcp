@@ -1,4 +1,14 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+
+import {
+  createMockTime,
+  flushMicrotasks,
+  type MockTime,
+} from "../support/mock-time";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import * as fs from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -83,15 +93,16 @@ for (const kind of ["read", "hash", "capabilities"] as const)
           throw new Error("Operation completed before opening its stream");
         }),
       ]);
+      await time.advanceBy(1000);
       await expect(operation).rejects.toMatchObject({
         code: "timeout",
         retryable: true,
       });
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flushMicrotasks();
       expect(stalled.streams.length).toBeGreaterThan(0);
       expect(stalled.streams.every((stream) => stream.destroyed)).toBe(true);
       const count = stalled.streams.length;
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flushMicrotasks();
       expect(stalled.streams).toHaveLength(count);
     } finally {
       stalled.restore();
@@ -126,8 +137,9 @@ for (const kind of ["read", "capabilities"] as const)
           throw new Error("Operation completed before starting its parser");
         }),
       ]);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flushMicrotasks();
       expect(signal.aborted).toBe(false);
+      await time.advanceBy(1000);
       await expect(operation).rejects.toMatchObject({ code: "timeout" });
       expect(signal.aborted).toBe(true);
       expect(parse).toHaveBeenCalledTimes(1);

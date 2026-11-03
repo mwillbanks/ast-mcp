@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { spawnLiveProcess } from "../support/live-process";
+import { spawnLiveProcess } from "./support/live-process";
 
 const encoder = new TextEncoder();
 test("stdio batch suppresses notification responses and preserves request IDs", async () => {

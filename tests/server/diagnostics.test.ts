@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +20,12 @@ import {
 } from "../../src/runtime/approval";
 import { collectDiagnostics } from "../../src/runtime/diagnostics";
 import { createServer } from "../../src/server";
+import { createMockTime, deferred, type MockTime } from "../support/mock-time";
+
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 
 async function fixture(timeoutMs = 1000) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-diagnostics-"));
@@ -68,8 +74,8 @@ async function fixture(timeoutMs = 1000) {
         else process.env[key] = value;
       }
       clearConfigCache();
-      configRegistry.invalidate();
       clearSessionApprovals();
+      configRegistry.close();
       await rm(root, { recursive: true, force: true });
       await rm(external, { recursive: true, force: true });
     },
@@ -181,8 +187,10 @@ test("legacy probe timeout remains bounded and records sanitized timeout state",
       supportedProtocolVersions: ["2025-11-25"],
     },
   );
+  const started = deferred<void>();
   client.setRequestHandler("elicitation/create", async (request) => {
     expect(request.params._meta?.codex_approval_kind).toBeUndefined();
+    started.resolve();
     return new Promise<never>(() => {});
   });
   const [clientTransport, serverTransport] =
@@ -190,13 +198,20 @@ test("legacy probe timeout remains bounded and records sanitized timeout state",
   try {
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
-    const start = performance.now();
-    const probe = await client.callTool({
+    const pending = client.callTool({
       name: "approval_probe",
       arguments: {},
     });
+    await started.promise;
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await time.advanceBy(29);
+    expect(settled).toBe(false);
+    await time.advanceBy(1);
+    const probe = await pending;
     expect(probe.isError).toBeTrue();
-    expect(performance.now() - start).toBeLessThan(1000);
     expect(approvalDiagnostics(instance.server)).toMatchObject({
       pendingCount: 0,
       sessionGrantPresent: false,

@@ -1,4 +1,15 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import {
+  type MockTime,
+  createMockTime,
+  deferred,
+  flushMicrotasks,
+} from "../../support/mock-time.ts";
+let mockTime: MockTime;
+beforeEach(() => {
+  mockTime = createMockTime();
+});
 
 import { createIdentity } from "../../../src/intelligence/contracts/common.ts";
 import { createStorageDomainId } from "../../../src/intelligence/contracts/storage.ts";
@@ -89,7 +100,7 @@ test("observes provider rejection when the provider synchronously aborts its cal
     },
   );
   expect(result.status).toBe("cancelled");
-  await Bun.sleep(1);
+  await flushMicrotasks();
 });
 
 let responseMode:
@@ -99,8 +110,7 @@ let responseMode:
   | "out-of-range"
   | "reject"
   | "schema-invalid"
-  | "success"
-  | "timeout" = "success";
+  | "success" = "success";
 let observedAuthorization: string | null = null;
 let observedBody: Record<string, unknown> | null = null;
 const server = Bun.serve({
@@ -109,10 +119,6 @@ const server = Bun.serve({
     observedBody = (await incoming.json()) as Record<string, unknown>;
     if (responseMode === "reject")
       return new Response("secret=server-token", { status: 429 });
-    if (responseMode === "timeout") {
-      await Bun.sleep(100);
-      return Response.json({});
-    }
     const content =
       responseMode === "malformed"
         ? "not-json"
@@ -385,61 +391,90 @@ describe("optional evidence generation", () => {
   });
 
   test("reports timeout and cancellation deterministically", async () => {
-    responseMode = "timeout";
-    const timed = await generateWithEvidence(base, {
-      ...request({
-        endpoint,
-        kind: "http",
-        model: "local/model",
-      }),
-      budget: {
-        maxEvidenceBytes: 10_000,
-        maxEvidenceItems: 1,
-        maxOutputBytes: 1_000,
-        maxOutputTokens: 100,
-        timeoutMs: 10,
-      },
-    });
-    expect(timed.status).toBe("timeout");
-    expect(timed.reason).toBe("generation_timeout");
-
-    const controller = new AbortController();
-    const cancellation = generateWithEvidence(base, {
-      ...request({
-        endpoint,
-        kind: "http",
-        model: "local/model",
-      }),
-      signal: controller.signal,
-    });
-    setTimeout(() => controller.abort(), 1);
-    const cancelled = await cancellation;
-    expect(cancelled.status).toBe("cancelled");
-    expect(cancelled.reason).toBe("generation_cancelled");
-
-    const preAborted = new AbortController();
-    preAborted.abort();
-    let providerCalls = 0;
-    const cancelledBeforeProvider = await generateWithEvidence(
-      base,
-      {
-        ...request({
-          endpoint,
-          kind: "http",
-          model: "local/model",
-        }),
-        signal: preAborted.signal,
-      },
-      {
-        fetch: async () => {
-          providerCalls += 1;
-          return Response.json({});
+    const time = mockTime;
+    const fetchStarted = deferred<void>();
+    const stalledFetch = (
+      _input: Request | string | URL,
+      init?: RequestInit,
+    ) => {
+      fetchStarted.resolve();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new Error("provider aborted")),
+          { once: true },
+        );
+      });
+    };
+    try {
+      const pending = generateWithEvidence(
+        base,
+        {
+          ...request({
+            endpoint,
+            kind: "http",
+            model: "local/model",
+          }),
+          budget: {
+            maxEvidenceBytes: 10_000,
+            maxEvidenceItems: 1,
+            maxOutputBytes: 1_000,
+            maxOutputTokens: 100,
+            timeoutMs: 10,
+          },
         },
-      },
-    );
-    expect(cancelledBeforeProvider.status).toBe("cancelled");
-    expect(cancelledBeforeProvider.reason).toBe("generation_cancelled");
-    expect(providerCalls).toBe(0);
+        { fetch: stalledFetch },
+      );
+      await fetchStarted.promise;
+      await time.advanceBy(10);
+      const timed = await pending;
+      expect(timed.status).toBe("timeout");
+      expect(timed.reason).toBe("generation_timeout");
+
+      const controller = new AbortController();
+      const cancellation = generateWithEvidence(
+        base,
+        {
+          ...request({
+            endpoint,
+            kind: "http",
+            model: "local/model",
+          }),
+          signal: controller.signal,
+        },
+        { fetch: stalledFetch },
+      );
+      controller.abort();
+      const cancelled = await cancellation;
+      expect(cancelled.status).toBe("cancelled");
+      expect(cancelled.reason).toBe("generation_cancelled");
+
+      const preAborted = new AbortController();
+      preAborted.abort();
+      let providerCalls = 0;
+      const cancelledBeforeProvider = await generateWithEvidence(
+        base,
+        {
+          ...request({
+            endpoint,
+            kind: "http",
+            model: "local/model",
+          }),
+          signal: preAborted.signal,
+        },
+        {
+          fetch: async () => {
+            providerCalls += 1;
+            return Response.json({});
+          },
+        },
+      );
+      expect(cancelledBeforeProvider.status).toBe("cancelled");
+      expect(cancelledBeforeProvider.reason).toBe("generation_cancelled");
+      expect(providerCalls).toBe(0);
+    } finally {
+      time.dispose();
+    }
   });
 
   test("requires advertised MCP sampling and preserves provider choice", async () => {

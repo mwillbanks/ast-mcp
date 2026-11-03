@@ -1,4 +1,9 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import type { ResolvedConfig } from "../../../src/config/index.ts";
 import { dynamicWorkerStats } from "../../../src/intelligence/languages/dynamic/analyzer.ts";
@@ -104,7 +109,6 @@ test("a new session waits for final-session worker shutdown before dispatching",
     ).join("\n"),
   });
   const closing = first.close();
-  await Bun.sleep(0);
 
   const next = new IntelligenceSourceDispatcher({ parse });
   try {
@@ -162,11 +166,13 @@ test("runtime drains embeddings and retires old model pools within its bound", a
   expect(closed).toEqual(["fixture/model-a"]);
 
   const retired: string[] = [];
+  const firstRetired = deferred<void>();
   const rotating = new IntelligenceRuntime({
     config: async () => resolvedConfig(selectedModel),
     embeddingProviderFactory: (config) => ({
       async close() {
         retired.push(config.modelId);
+        if (config.modelId === "fixture/model-a") firstRetired.resolve();
       },
       config,
       async embed(texts) {
@@ -178,7 +184,7 @@ test("runtime drains embeddings and retires old model pools within its bound", a
     selectedModel = `fixture/model-${suffix}`;
     await rotating.queryVector(suffix, true);
   }
-  await Bun.sleep(0);
+  await firstRetired.promise;
   expect(retired).toContain("fixture/model-a");
   await rotating.close();
   expect(new Set(retired)).toEqual(
@@ -195,6 +201,7 @@ test("runtime close drains an active index operation before workers close", asyn
   const startedGate = new Promise<void>((resolve) => {
     started = resolve;
   });
+  let operationActive = false;
   let dispatcherCloses = 0;
   let parserCloses = 0;
   const runtime = new IntelligenceRuntime({
@@ -204,6 +211,7 @@ test("runtime close drains an active index operation before workers close", asyn
         throw new Error("unused");
       },
       async close() {
+        expect(operationActive).toBeFalse();
         dispatcherCloses += 1;
       },
     },
@@ -218,13 +226,14 @@ test("runtime close drains an active index operation before workers close", asyn
   });
 
   const pending = runtime.runIndexOperation(undefined, async () => {
+    operationActive = true;
     started();
     await releaseGate;
+    operationActive = false;
     return "published";
   });
   await startedGate;
   const closing = runtime.close();
-  await Bun.sleep(0);
   expect(dispatcherCloses).toBe(0);
   expect(parserCloses).toBe(0);
 
@@ -265,7 +274,6 @@ test("runtime close drains admitted configuration before provider creation", asy
   const pending = runtime.queryVector("deferred", true);
   await configStartedGate;
   const closing = runtime.close();
-  await Bun.sleep(0);
   expect(providerCloses).toBe(0);
 
   releaseConfig();
@@ -284,6 +292,8 @@ test("shutdown closes all resources and waits for delayed closes after a failure
   });
   let parserCloses = 0;
   let embeddingCloses = 0;
+  const parserClosing = deferred<void>();
+  const embeddingClosed = deferred<void>();
   const dispatcherFailure = new Error("dispatcher close failed");
   const runtime = new IntelligenceRuntime({
     config: async () => resolvedConfig("fixture/failed-close"),
@@ -301,6 +311,7 @@ test("shutdown closes all resources and waits for delayed closes after a failure
       },
       async close() {
         parserCloses += 1;
+        parserClosing.resolve();
         await parserGate;
       },
     },
@@ -311,6 +322,7 @@ test("shutdown closes all resources and waits for delayed closes after a failure
       },
       async close() {
         embeddingCloses += 1;
+        embeddingClosed.resolve();
       },
     }),
   });
@@ -320,7 +332,7 @@ test("shutdown closes all resources and waits for delayed closes after a failure
     settled = true;
     return error;
   });
-  await Bun.sleep(0);
+  await Promise.all([parserClosing.promise, embeddingClosed.promise]);
   expect(parserCloses).toBe(1);
   expect(embeddingCloses).toBe(1);
   expect(settled).toBe(false);

@@ -1,4 +1,10 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -544,6 +550,7 @@ describe("infrastructure language adapters", () => {
           ...(operation === "timeout" ? { timeoutMs: 0 } : {}),
         }).catch((failure: unknown) => failure);
         await dispatch.dispatched;
+        if (operation === "timeout") await time.advanceBy(0);
         if (operation === "abort") controller.abort();
         if (operation === "close") await closeInfraLanguageWorker();
         if (operation === "interrupt") await interruptInfraLanguageWorker();

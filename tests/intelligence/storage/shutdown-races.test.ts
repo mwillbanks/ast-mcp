@@ -1,4 +1,14 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import {
+  createMockTime,
+  deferred,
+  type MockTime,
+} from "../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -51,73 +61,6 @@ async function fixture() {
   };
 }
 
-test("coordinator close waits for a peer process writer before releasing its lease", async () => {
-  const { store, domain, cleanup } = await fixture();
-  const modulePath = Bun.fileURLToPath(
-    new URL("../../../src/runtime/transaction-lock.ts", import.meta.url),
-  );
-  const identity = path.join(domain.storagePath, ".ast-mcp-storage-writer");
-  const connection = await lancedb.connect(domain.storagePath, {
-    readConsistencyInterval: 0,
-  });
-  const table = await connection.openTable("coordinator_recovery");
-  const child = Bun.spawn(
-    [
-      process.execPath,
-      "--eval",
-      `
-    import { acquireTransactionLock } from ${JSON.stringify(modulePath)};
-    const owner = await acquireTransactionLock(${JSON.stringify(identity + "-different-private-account")}, {sharedDatabasePath: ${JSON.stringify(path.join(domain.storagePath, ".ast-mcp-storage-writer.sqlite"))}});
-    console.log("ready");
-    await new Promise(resolve => process.stdin.once("data", resolve));
-    owner.release();
-  `,
-    ],
-    { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
-  );
-  const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
-  let closing: Promise<void> | undefined;
-  try {
-    const reader = child.stdout.getReader();
-    const ready = await reader.read();
-    reader.releaseLock();
-    expect(new TextDecoder().decode(ready.value).trim()).toBe("ready");
-    await table.checkoutLatest();
-    const before = (await table.query().toArray())[0];
-    let settled = false;
-    closing = store.shutdownCoordinator().then(() => {
-      settled = true;
-    });
-    await Bun.sleep(30);
-    expect(settled).toBe(false);
-    await expect(
-      store.coordinator.exclusive("late write", async () => undefined),
-    ).rejects.toThrow("closing");
-    await table.checkoutLatest();
-    const during = (await table.query().toArray())[0];
-    expect(during?.lease_expires_at).toBe(before?.lease_expires_at);
-    child.stdin.write("release\n");
-    child.stdin.end();
-    expect(await child.exited).toBe(0);
-    await closing;
-    await table.checkoutLatest();
-    const after = (await table.query().toArray())[0];
-    expect(after?.state).toBe("clean");
-    expect(Date.parse(String(after?.lease_expires_at))).toBeLessThan(
-      Date.parse(String(before?.lease_expires_at)),
-    );
-  } finally {
-    clearTimeout(timer);
-    child.kill("SIGKILL");
-    await child.exited;
-    await closing;
-    table.close();
-    connection.close();
-    await store.shutdownCoordinator();
-    await cleanup();
-  }
-});
-
 test("reopening waits for a draining coordinator before acquiring its replacement", async () => {
   const { store, domain, cleanup } = await fixture();
   const entered = gate();
@@ -128,6 +71,7 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
   });
   let closing: Promise<void> | undefined;
   let reopening: Promise<LanceIntelligenceStore> | undefined;
+  let waitForClosing: ReturnType<typeof spyOn> | undefined;
   try {
     await Promise.race([
       entered.promise,
@@ -149,6 +93,20 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
         domain.storagePath,
       ),
     ).toThrow("closing");
+    const waitingForClose = deferred<void>();
+    const coordinatorClosing = (
+      store.coordinator as unknown as {
+        closing: Promise<void>;
+      }
+    ).closing;
+    const originalCatch = coordinatorClosing.catch.bind(coordinatorClosing);
+    waitForClosing = spyOn(coordinatorClosing, "catch").mockImplementation(((
+      ...args: Parameters<Promise<void>["catch"]>
+    ) => {
+      const waited = originalCatch(...args);
+      waitingForClose.resolve();
+      return waited;
+    }) as Promise<void>["catch"]);
     let opened = false;
     reopening = LanceIntelligenceStore.open(domain).then((next) => {
       opened = true;
@@ -156,7 +114,12 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
     });
     // Observe early failures while retaining the rejection for the assertion path.
     void reopening.catch(() => undefined);
-    await Bun.sleep(20);
+    await Promise.race([
+      waitingForClose.promise,
+      reopening.then(() => {
+        throw new Error("Replacement bypassed the coordinator drain boundary");
+      }),
+    ]);
     expect(opened).toBe(false);
     finish.resolve();
     await operation;
@@ -168,6 +131,7 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
     finish.resolve();
     await Promise.allSettled([operation, closing]);
     const next = await reopening?.catch(() => undefined);
+    waitForClosing?.mockRestore();
     try {
       await Promise.all([
         store.shutdownCoordinator(),
@@ -213,7 +177,6 @@ test("closing a peer drains its queued write before disposing its connection", a
   const closing = peer.shutdownCoordinator().then(() => {
     settled = true;
   });
-  await Bun.sleep(10);
   expect(settled).toBe(false);
   await expect(peer.putRows("artifacts", [])).rejects.toThrow("closing");
   finish.resolve();
@@ -235,28 +198,34 @@ test("failed operations drain their pending heartbeat before settling", async ()
   const heartbeatEntered = gate();
   const heartbeatFinish = gate();
   const failOperation = gate();
+  const operationEntered = deferred<void>();
+  let heartbeatFinished = false;
   const originalFence = store.coordinator.fence.bind(store.coordinator);
   const fence = spyOn(store.coordinator, "fence").mockImplementation(
     async (lease) => {
       heartbeatEntered.resolve();
       await heartbeatFinish.promise;
       await originalFence(lease);
+      heartbeatFinished = true;
     },
   );
   const failure = new Error("operation failed");
   let settled = false;
   const operation = store.serializeMigration("failing operation", async () => {
+    operationEntered.resolve();
     await failOperation.promise;
     throw failure;
   });
   const observed = operation.catch((error: unknown) => {
+    expect(heartbeatFinished).toBeTrue();
     settled = true;
     return error;
   });
   try {
+    await operationEntered.promise;
+    await time.advanceBy(1_000);
     await heartbeatEntered.promise;
     failOperation.resolve();
-    await Bun.sleep(20);
     expect(settled).toBe(false);
     heartbeatFinish.resolve();
     expect(await observed).toBe(failure);
@@ -267,99 +236,6 @@ test("failed operations drain their pending heartbeat before settling", async ()
     fence.mockRestore();
     await store.shutdownCoordinator();
     await cleanup();
-  }
-});
-
-test("expired writer metadata cannot admit a second process during an active operation", async () => {
-  const storagePath = await mkdtemp(
-    path.join(os.tmpdir(), "ast-mcp-expired-storage-"),
-  );
-  const placement = { kind: "explicit" as const, path: storagePath };
-  const domain: StorageDomain = {
-    domainId: createStorageDomainId({
-      engine: "lancedb",
-      placement,
-      pool: "shared",
-      storagePath,
-    }),
-    engine: "lancedb",
-    placement,
-    pool: "shared",
-    schemaVersion: "ast-mcp.intelligence.v1",
-    storagePath,
-  };
-  const store = await LanceIntelligenceStore.open(domain, {
-    leaseDurationMs: 60_000,
-  });
-  let enter!: () => void;
-  let finish!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    enter = resolve;
-  });
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  const operation = store.serializeMigration(
-    "paused native operation",
-    async () => {
-      enter();
-      await gate;
-    },
-  );
-  const observed = operation.catch((error: unknown) => error);
-  await entered;
-  try {
-    const connection = await lancedb.connect(storagePath, {
-      readConsistencyInterval: 0,
-    });
-    const table = await connection.openTable("coordinator_recovery");
-    try {
-      // Simulate a paused owner whose lease deadline passed without allowing its
-      // already-started native operation to finish.
-      await table.update({
-        values: { lease_expires_at: "2020-01-01T00:00:00.000Z" },
-        where: "lease_key = 'writer'",
-      });
-    } finally {
-      table.close();
-      connection.close();
-    }
-    const modulePath = Bun.fileURLToPath(
-      new URL("../../../src/intelligence/storage/store.ts", import.meta.url),
-    );
-    const child = Bun.spawn(
-      [
-        process.execPath,
-        "--eval",
-        `
-      import { LanceIntelligenceStore } from ${JSON.stringify(modulePath)};
-      try {
-        const store = await LanceIntelligenceStore.open(${JSON.stringify(domain)});
-        await store.shutdownCoordinator();
-        process.exit(2);
-      } catch (error) {
-        console.log(error.code);
-        process.exit(error.code === "coordinator_unavailable" ? 0 : 3);
-      }
-    `,
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    const [code, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("coordinator_unavailable");
-    expect(code).toBe(0);
-  } finally {
-    finish();
-    await expect(observed).resolves.toMatchObject({
-      code: "coordinator_unavailable",
-    });
-    await store.shutdownCoordinator();
-    await rm(storagePath, { recursive: true, force: true });
   }
 });
 

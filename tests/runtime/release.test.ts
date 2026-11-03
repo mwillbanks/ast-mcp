@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import * as runtimeRelease from "../../src/runtime/release";
+import { createMockTime, flushMicrotasks } from "../support/mock-time";
 
 const exportedReleasePath = "../../templates/skills/ast-mcp/scripts/release.ts";
 const exportedRelease = (await import(
@@ -26,7 +27,7 @@ for (const [name, implementation] of [
 
     test("report validation enforces complete discriminated release outcomes", async () => {
       const base = {
-        checkedAt: new Date().toISOString(),
+        checkedAt: "2026-01-01T00:00:00.000Z",
         runningVersion: "1.2.3",
         latestVersion: "1.2.4",
         status: "outdated",
@@ -162,12 +163,13 @@ for (const [name, implementation] of [
     });
 
     test("release checks bound network stalls and redact errors", async () => {
-      const start = performance.now();
-      const result = await checkLatestVersion("0.6.6", {
+      const time = createMockTime();
+      const pending = checkLatestVersion("0.6.6", {
         timeoutMs: 10,
         fetch: (() => new Promise(() => {})) as unknown as typeof fetch,
       });
-      expect(performance.now() - start).toBeLessThan(1000);
+      await time.advanceBy(10);
+      const result = await pending;
       expect(result).toMatchObject({
         status: "unavailable",
         reason: "timeout",
@@ -245,6 +247,7 @@ for (const [name, implementation] of [
     });
 
     test("stream cancellation failures preserve timeout and invalid-body outcomes", async () => {
+      const time = createMockTime();
       for (const oversized of [false, true]) {
         let cancelled = 0;
         const body = new ReadableStream<Uint8Array>({
@@ -256,10 +259,12 @@ for (const [name, implementation] of [
             return Promise.reject(new Error("private cancellation detail"));
           },
         });
-        const result = await checkLatestVersion("0.6.6", {
+        const pending = checkLatestVersion("0.6.6", {
           timeoutMs: 10,
           fetch: (async () => new Response(body)) as unknown as typeof fetch,
         });
+        await time.advanceBy(10);
+        const result = await pending;
         expect(result.reason).toBe(
           oversized ? "invalid_registry_response" : "timeout",
         );
@@ -271,6 +276,7 @@ for (const [name, implementation] of [
     });
 
     test("late registry responses are cancelled after the public deadline", async () => {
+      const time = createMockTime();
       let resolveResponse!: (response: Response) => void;
       let cancelled = false;
       const body = new ReadableStream<Uint8Array>({
@@ -278,16 +284,18 @@ for (const [name, implementation] of [
           cancelled = true;
         },
       });
-      const result = await checkLatestVersion("0.6.6", {
+      const pending = checkLatestVersion("0.6.6", {
         timeoutMs: 10,
         fetch: (() =>
           new Promise<Response>((resolve) => {
             resolveResponse = resolve;
           })) as unknown as typeof fetch,
       });
+      await time.advanceBy(10);
+      const result = await pending;
       expect(result.reason).toBe("timeout");
       resolveResponse(new Response(body));
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await flushMicrotasks();
       expect(cancelled).toBeTrue();
       expect(body.locked).toBeFalse();
     });

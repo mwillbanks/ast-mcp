@@ -15,8 +15,8 @@ import {
   readGitRevisionFile,
   resolveRevision,
 } from "../../src/intelligence/workspace";
-import { spawnHttpMcpProcess } from "../support/live-process";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 const limit = 2 * 1024 * 1024;
 const small = "export function historical() { return 1; }\n";

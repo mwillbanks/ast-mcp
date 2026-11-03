@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import { sourceArtifactIdentity } from "../../../src/intelligence/contracts/artifacts.ts";
 import { createIdentity } from "../../../src/intelligence/contracts/common.ts";

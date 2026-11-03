@@ -14,6 +14,7 @@ import {
   type SqlPatchDecision,
 } from "../../src/runtime/sql-assistance";
 import { hermeticConfig } from "../support/hermetic-config";
+import { createMockTime } from "../support/mock-time";
 
 const dialect = "patch-policy-fixture";
 let loads = 0;
@@ -523,6 +524,7 @@ for (const repair of [false, true]) {
 }
 
 test("expired SQL preview receipts reject without replacement", async () => {
+  const time = createMockTime();
   await project(async (_root, source, file) => {
     const preview = result(
       await patchFiles({
@@ -536,8 +538,7 @@ test("expired SQL preview receipts reject without replacement", async () => {
       }),
       file,
     );
-    const expiredAt = Date.now() + 6 * 60 * 1000;
-    const clock = spyOn(Date, "now").mockReturnValue(expiredAt);
+    await time.advanceBy(6 * 60 * 1000);
     try {
       await expect(
         patchFiles({
@@ -549,7 +550,7 @@ test("expired SQL preview receipts reject without replacement", async () => {
       ).rejects.toMatchObject({ code: "preview_receipt_expired" });
       expect(await readFile(file, "utf8")).toBe(source);
     } finally {
-      clock.mockRestore();
+      time.dispose();
     }
   });
 });

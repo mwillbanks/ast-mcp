@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { readFileSafely } from "../../src/runtime/file-read";
 import { FILE_HASH_CHUNK_BYTES, sha256Handle } from "../../src/runtime/hash";
+import { createMockTime } from "../support/mock-time";
 
 const folders: string[] = [];
 afterEach(async () => {
@@ -114,10 +115,9 @@ test("empty text retains an empty range and whole-file digest", async () => {
 });
 
 test("descriptor hashing observes its deadline and retains descriptor ownership", async () => {
+  const time = createMockTime();
   const filePath = await fixture("deadline");
   const handle = await open(filePath, "r");
-  const deadline = AbortSignal.timeout(1);
-  const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(deadline);
   const original = handle.read.bind(handle);
   const read = spyOn(handle, "read").mockImplementation((async (
     buffer: Buffer,
@@ -126,7 +126,7 @@ test("descriptor hashing observes its deadline and retains descriptor ownership"
     position: number,
   ) => {
     const result = await original(buffer, offset, length, position);
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await time.advanceBy(30_000);
     return result;
   }) as typeof handle.read);
   try {
@@ -135,7 +135,7 @@ test("descriptor hashing observes its deadline and retains descriptor ownership"
     });
     expect((await handle.stat()).isFile()).toBe(true);
   } finally {
-    timeout.mockRestore();
+    time.dispose();
     read.mockRestore();
     await handle.close();
   }

@@ -564,7 +564,7 @@ describe("conservative CI scope selection", () => {
     ".github/workflows/ci.yml",
     "scripts/testing/ci-selection.ts",
     "tests/support/mock.ts",
-    "tests/tooling/package-smoke.test.ts",
+    "tests/integration/package-consumers.test.ts",
     "unknown.ts",
     "tests/runtime/deleted.test.ts",
   ])("shared or unknown changes force full qualification: %s", (file) => {

@@ -4,7 +4,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { SKILL_URI } from "../../src/skills";
-import { spawnLiveProcess } from "./live-process";
 
 export const skillsMeta = {
   "io.modelcontextprotocol/protocolVersion": "2026-07-28",
@@ -54,35 +53,6 @@ export async function exerciseSkillsRequests(
     ),
   ).toBeTrue();
   expect((await request("skills/list")).result.skills[0].uri).toBe(SKILL_URI);
-}
-
-export async function exerciseSkillsStdio(executable: string, cwd: string) {
-  const live = spawnLiveProcess(process.execPath, [executable, "mcp"], {
-    cwd,
-    timeoutMs: 30_000,
-  });
-  let id = 0;
-  try {
-    await exerciseSkillsRequests(async (method, params = {}) => {
-      const requestId = ++id;
-      live.process.stdin.write(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: requestId,
-          method,
-          params: { ...params, _meta: skillsMeta },
-        }) + "\n",
-      );
-      for (;;) {
-        const message = JSON.parse(await live.readStdoutLine());
-        if (message.id === requestId) return message;
-      }
-    });
-    live.process.stdin.end();
-    expect(await live.waitForExit()).toBe(0);
-  } finally {
-    await live.stop();
-  }
 }
 
 export function modernHttpRequest(url: URL) {

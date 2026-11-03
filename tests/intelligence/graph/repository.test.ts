@@ -1,4 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -205,7 +211,7 @@ describe("LanceDB graph repository", () => {
       large.workspace,
       {
         budget: {
-          deadline: performance.now() + 5_000,
+          deadline: time.monotonic() + 5_000,
           maxBytes: 100_000,
           maxEdges: 2,
           maxNodes: 3,
@@ -360,7 +366,7 @@ describe("LanceDB graph repository", () => {
     const load = (reader: PinnedGenerationReader) =>
       repository.load(reader, selected.scope, selected.workspace, {
         budget: {
-          deadline: performance.now() + 5_000,
+          deadline: time.monotonic() + 5_000,
           maxBytes: 100_000,
           maxEdges: 1,
           maxNodes: 3,
@@ -439,7 +445,7 @@ describe("LanceDB graph repository", () => {
         selected.workspace,
         {
           budget: {
-            deadline: performance.now() + 15_000,
+            deadline: time.monotonic() + 15_000,
             maxBytes: 50_000_000,
             maxEdges: 300,
             maxNodes: 2_000,
@@ -862,7 +868,7 @@ describe("LanceDB graph repository", () => {
             workspace,
             {
               budget: {
-                deadline: performance.now() + 5_000,
+                deadline: time.monotonic() + 5_000,
                 maxBytes: 100_000,
                 maxEdges: 10,
                 maxNodes: 10,

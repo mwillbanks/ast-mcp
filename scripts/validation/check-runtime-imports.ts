@@ -1,7 +1,9 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import ts from "typescript-strada";
+
+import { sourceDirectory } from "./source-directory";
 
 export interface ImportViolation {
   file: string;
@@ -95,13 +97,7 @@ export async function checkRuntimeImports(
 ): Promise<ImportViolation[]> {
   const violations: ImportViolation[] = [];
   async function scan(directory: string) {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
-    }
+    const entries = await sourceDirectory(directory);
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const file = path.join(directory, entry.name);
       if (

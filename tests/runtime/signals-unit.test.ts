@@ -8,6 +8,7 @@ import {
   processSignals,
   type SignalHost,
 } from "../../src/runtime/signals";
+import { createMockTime } from "../support/mock-time";
 
 class FakeSignalHost implements SignalHost {
   readonly exits: number[] = [];
@@ -95,6 +96,7 @@ test("selects signals supported by each operating system", () => {
 });
 
 test("signal cleanup has a bounded deadline", async () => {
+  const time = createMockTime();
   const host = new FakeSignalHost();
   const dispose = installProcessSignalHandlers(
     () => new Promise(() => {}),
@@ -102,7 +104,7 @@ test("signal cleanup has a bounded deadline", async () => {
     10,
   );
   host.trigger(PROCESS_SIGNALS[0] as ProcessSignal);
-  await Bun.sleep(30);
+  await time.advanceBy(10);
   expect(host.exits).toEqual([1]);
   expect(host.messages[0]).toContain("timed out");
   dispose();
@@ -142,6 +144,7 @@ test("fatal exceptions clean up once and exit unsuccessfully", async () => {
 });
 
 test("fatal cleanup cannot hang indefinitely", async () => {
+  const time = createMockTime();
   const listeners = new Map<string, (error: unknown) => void>();
   const exits: number[] = [];
   const host = {
@@ -162,7 +165,7 @@ test("fatal cleanup cannot hang indefinitely", async () => {
     10,
   );
   listeners.get("unhandledRejection")?.(new Error("fatal rejection"));
-  await Bun.sleep(30);
+  await time.advanceBy(10);
   expect(exits).toEqual([1]);
   dispose();
 });

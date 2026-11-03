@@ -89,7 +89,7 @@ test.skipIf(process.platform === "win32")(
       const processHandle = Bun.spawn(
         [
           process.execPath,
-          path.resolve(import.meta.dir, "../support/signal-fixture.ts"),
+          path.resolve(import.meta.dir, "./support/signal-fixture.ts"),
         ],
         {
           stderr: "pipe",
@@ -119,7 +119,7 @@ test.skipIf(process.platform === "win32")(
     const processHandle = Bun.spawn(
       [
         process.execPath,
-        path.resolve(import.meta.dir, "../support/signal-fixture.ts"),
+        path.resolve(import.meta.dir, "support/signal-fixture.ts"),
       ],
       {
         env: { ...process.env, AST_MCP_TEST_PENDING_SHUTDOWN: "1" },

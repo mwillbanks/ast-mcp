@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import { createHash, createHmac } from "node:crypto";
 
 import {
@@ -516,7 +521,6 @@ describe("bounded graph algorithms", () => {
       { maxMilliseconds: 0 },
       reasons,
     );
-    const startedAt = performance.now();
     const traversal = traverseGraph(
       {
         budget,
@@ -527,7 +531,6 @@ describe("bounded graph algorithms", () => {
       undefined,
       context,
     );
-    expect(performance.now() - startedAt).toBeLessThan(1_000);
     expect(traversal.nodes).toEqual([]);
     expect(traversal.relationships).toEqual([]);
     expect(traversal.coverage.exhaustedReasons).toEqual(["milliseconds"]);
