@@ -87,6 +87,11 @@ test("configuration tools expose health, policy, and bounded document selectors"
 
     const status = await (registered.get("config_status") as ToolHandler)({});
     expect(status.isError).not.toBeTrue();
+    const generation = (
+      status.structuredContent?.data as { generation: number }
+    ).generation;
+    expect(Number.isSafeInteger(generation)).toBeTrue();
+    expect(generation).toBeGreaterThan(0);
     expect(status.structuredContent).toMatchObject({
       data: {
         diagnostics: [
@@ -95,7 +100,6 @@ test("configuration tools expose health, policy, and bounded document selectors"
             source: "AST_MCP_ROOTS",
           },
         ],
-        generation: 1,
         healthy: true,
         version: 2,
       },

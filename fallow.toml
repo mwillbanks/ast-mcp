@@ -61,16 +61,57 @@ ignoreExportsUsedInFile = true
 # Surface every duplicated pair so architectural consolidation is comprehensive.
 minOccurrences = 2
 
-# Reviewed semantic-boundary duplicates retain family-specific behavior.
-# The installed skill copies the batch adapter without importing project source.
+# Reviewed semantic boundaries, with exact content fingerprints and instance counts.
+# Fallow #3292 replaced order-based empty-token collision IDs with lexical hashes:
+# https://github.com/fallow-rs/fallow/pull/3292
+# All 48 fragments below predate this dependency upgrade and match the HEAD baseline.
 ignoredClones = [
-  "dup:c77b3abb6f87acd9-r6:2",
-  "dup:c77b3abb6f87acd9-r2:2",
-  "dup:c77b3abb6f87acd9-r5:2",
-  "dup:c77b3abb6f87acd9-r1:2",
-  "dup:c77b3abb6f87acd9-r4:2",
-  "dup:c77b3abb6f87acd9-r3:2",
-  "dup:c77b3abb6f87acd9-r7:2",
+  # Configuration permits relative explicit storage; workspace contracts require absolute paths.
+  "dup:1aefd42b:2",
+  # Filesystem registrations preserve distinct mutation schemas, annotations, and lifecycle handlers.
+  "dup:f3e16354:4",
+  # Persisted configuration and the configuration-edit tool have distinct nullable edit semantics.
+  "dup:a244fac5:2",
+  # Worker messages and module-resolution inputs validate records at separate trust boundaries.
+  "dup:d0cd0ab9:2",
+  # Worker-side and client-side validators inspect different supported syntax-fact families.
+  "dup:a3f100e7:2",
+  # Service install and removal retain separate preflight and prior-state recovery paths.
+  "dup:891f2ff6:2",
+  # Transformer and Potion adapters preserve provider-specific managed-session construction.
+  "dup:cf778614:2",
+  # Generation evidence contracts and tool inputs enforce different range and request schemas.
+  "dup:1c936c75:2",
+  # Resolved configuration requires values; user configuration accepts optional snake-case inputs.
+  "dup:bb5d6c95:2",
+  # Infrastructure and legacy language workers hash their independently supported fact families.
+  "dup:f782d1f2:2",
+  # Formatter edit inputs permit clearing a path; persisted formatter configuration does not.
+  "dup:0c4d2d6e:2",
+  # Persisted MCP settings and edit-tool settings belong to separate full configuration schemas.
+  "dup:79430155:2",
+  # Mutation commit and rollback synchronization preserve opposite rename-recovery directions.
+  "dup:7b5c3689:2",
+  # Host install and uninstall enumerate targets within distinct transaction lifecycles.
+  "dup:ad7da736:2",
+  # Service-state queries and service mutations retain different subprocess interruption contracts.
+  "dup:cbb5fdb4:2",
+  # Persisted safety settings and configuration edits have distinct hook bounds and clear semantics.
+  "dup:f92fa2bc:2",
+  # Embedded calls and references remap different entity fields and identity inputs.
+  "dup:029b70b0:2",
+  # Recovery validates retained snapshot and live-file descriptors in separate ownership lifetimes.
+  "dup:ed6c5879:2",
+  # Lexical and vector retrieval retain different tables, result decoding, and search semantics.
+  "dup:e2603a8f:2",
+  # Transformer and Potion adapters own independent close state and isolated sessions.
+  "dup:e7d540ae:2",
+  # Topic words and relation summaries rank distinct evidence and produce different labels.
+  "dup:a4bef96e:2",
+  # Transformer and Potion providers invoke different session APIs and normalize different outputs.
+  "dup:38a31906:2",
+  # Bounded release HTTP reads and cancellable subprocess reads retain distinct stream policies.
+  "dup:89e3c7c0:2",
 ]
 
 [rules]

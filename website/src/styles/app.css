@@ -175,3 +175,24 @@ body {
 :where(#nd-page) h2 {
   letter-spacing: -0.025em;
 }
+
+.tool-parameters {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tool-parameters button > code {
+  min-width: 0;
+  width: 45%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.tool-parameters button > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tool-parameters [data-state="open"] > div {
+  overflow-wrap: anywhere;
+}

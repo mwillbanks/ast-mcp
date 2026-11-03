@@ -17,6 +17,7 @@ import {
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Language, Parser } from "web-tree-sitter";
 
+import packageJson from "../../package.json" with { type: "json" };
 import { wasmGrammarAssets } from "../../src/intelligence/languages/shared/wasm-assets";
 import { commandForPlatform } from "../../src/runtime/subprocess";
 import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
@@ -596,7 +597,7 @@ async function exerciseConsumer(installer: string) {
     }
     expect(installedManifest.dependencies["@lancedb/lancedb"]).toBeUndefined();
     expect(installedManifest.devDependencies["@lancedb/lancedb"]).toBe(
-      "0.40.0",
+      packageJson.devDependencies["@lancedb/lancedb"],
     );
     await expect(
       readFile(

@@ -1,0 +1,4772 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Explicitly tests a bounded approval form and checks the latest release. Acceptance grants no filesystem permission and persists no configuration.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "approval_probe",
+    "title": "Probe Approval Transport"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native AST call targets for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "depth": {
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "direct": {
+          "type": "boolean"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "callees",
+    "title": "Native callees"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native AST callers of a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "depth": {
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "direct": {
+          "type": "boolean"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "callers",
+    "title": "Native callers"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Updates grouped core ast-mcp.toml sections (cli.output, workspace, safety, files, formatting, intelligence, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cli": {
+          "additionalProperties": false,
+          "properties": {
+            "output": {
+              "additionalProperties": false,
+              "properties": {
+                "interactive": {
+                  "enum": ["human", "json", "yaml", "toml"],
+                  "type": "string"
+                },
+                "non_interactive": {
+                  "enum": ["human", "json", "yaml", "toml"],
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "dependencies": {
+          "additionalProperties": false,
+          "properties": {
+            "dprint_binary": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "files": {
+          "additionalProperties": false,
+          "properties": {
+            "patch": {
+              "additionalProperties": false,
+              "properties": {
+                "aider_matchers": {
+                  "items": {
+                    "enum": [
+                      "exact",
+                      "whitespace",
+                      "relative-indentation",
+                      "diff-match-patch"
+                    ],
+                    "type": "string"
+                  },
+                  "maxItems": 4,
+                  "type": "array"
+                },
+                "sql": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "dialect": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+                      "type": "string"
+                    },
+                    "policy": {
+                      "enum": ["advisory", "required", "skip"],
+                      "type": "string"
+                    },
+                    "variant": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+                      "type": "string"
+                    },
+                    "version": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "strategies": {
+                  "items": {
+                    "enum": ["ast", "aider_block"],
+                    "type": "string"
+                  },
+                  "maxItems": 2,
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            },
+            "read": {
+              "additionalProperties": false,
+              "properties": {
+                "modes": {
+                  "items": {
+                    "enum": ["ast", "text"],
+                    "type": "string"
+                  },
+                  "maxItems": 2,
+                  "type": "array"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "formatting": {
+          "additionalProperties": false,
+          "properties": {
+            "dprint_config": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "fallback": {
+              "enum": ["preserve", "dprint", "reject"],
+              "type": "string"
+            },
+            "formatters": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "args": {
+                    "items": {
+                      "maxLength": 4096,
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "type": "array"
+                  },
+                  "command": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "extensions": {
+                    "items": {
+                      "pattern": "^\\.[^./\\\\]+$",
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "type": "array"
+                  },
+                  "globs": {
+                    "items": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 64,
+                    "type": "array"
+                  },
+                  "id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "mode": {
+                    "default": "stdout",
+                    "enum": ["stdout", "in_place"],
+                    "type": "string"
+                  },
+                  "timeout_ms": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 120000,
+                    "type": "integer"
+                  }
+                },
+                "required": ["command", "id"],
+                "type": "object"
+              },
+              "maxItems": 64,
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "http": {
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "port": {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "session_sweep_interval_ms": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            },
+            "session_timeout_ms": {
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "intelligence": {
+          "additionalProperties": false,
+          "properties": {
+            "federation": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "generation": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "provider": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "type": ["string", "number", "boolean"]
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "retrieval": {
+              "additionalProperties": false,
+              "properties": {
+                "embedding": {
+                  "additionalProperties": {
+                    "type": ["string", "number", "boolean"]
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "semantic": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "storage": {
+              "additionalProperties": false,
+              "properties": {
+                "placement": {
+                  "additionalProperties": {
+                    "type": ["string", "number"]
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "mcp": {
+          "additionalProperties": false,
+          "properties": {
+            "configuration": {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "require_approval": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "safety": {
+          "additionalProperties": false,
+          "properties": {
+            "filesystem": {
+              "enum": ["restricted", "unrestricted"],
+              "type": "string"
+            },
+            "hook": {
+              "additionalProperties": false,
+              "properties": {
+                "allow_tools": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "maxItems": 128,
+                  "type": "array"
+                },
+                "block_tools": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "maxItems": 128,
+                  "type": "array"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "require_hash": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "target": {
+          "enum": ["global", "project"],
+          "type": "string"
+        },
+        "telemetry": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "workspace": {
+          "additionalProperties": false,
+          "properties": {
+            "roots": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "worktrees": {
+              "enum": ["include", "request", "ignore"],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "name": "config_core",
+    "title": "Update Core AST MCP Configuration"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Adds, updates, or removes [[paths]] rules in ast-mcp.toml as a batch. Does not change core sections. Configuration changes require user approval by default.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "operations": {
+          "items": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "op": {
+                    "const": "add",
+                    "type": "string"
+                  },
+                  "rule": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "excludes": {
+                        "items": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 256,
+                        "type": "array"
+                      },
+                      "follow_symlinks": {
+                        "type": "boolean"
+                      },
+                      "id": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "includes": {
+                        "items": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 256,
+                        "type": "array"
+                      },
+                      "path": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "policies": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "delete": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          },
+                          "read": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          },
+                          "write": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          }
+                        },
+                        "required": ["read", "write"],
+                        "type": "object"
+                      }
+                    },
+                    "required": ["path", "policies", "id"],
+                    "type": "object"
+                  }
+                },
+                "required": ["op", "rule"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "op": {
+                    "const": "update",
+                    "type": "string"
+                  },
+                  "rule": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "excludes": {
+                        "items": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 256,
+                        "type": "array"
+                      },
+                      "follow_symlinks": {
+                        "type": "boolean"
+                      },
+                      "includes": {
+                        "items": {
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 256,
+                        "type": "array"
+                      },
+                      "path": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "policies": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "delete": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          },
+                          "read": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          },
+                          "write": {
+                            "enum": ["allow", "deny", "request"],
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "required": ["id", "op", "rule"],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "op": {
+                    "const": "remove",
+                    "type": "string"
+                  }
+                },
+                "required": ["id", "op"],
+                "type": "object"
+              }
+            ]
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "target": {
+          "enum": ["global", "project"],
+          "type": "string"
+        }
+      },
+      "required": ["operations"],
+      "type": "object"
+    },
+    "name": "config_paths",
+    "title": "Update AST MCP Path Rules"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns the redacted effective configuration, source provenance, generation, formatter selection order, and health-relevant metadata.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "config_status",
+    "title": "Inspect Effective AST MCP Configuration"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns token-budgeted native AST context for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "depth": {
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "direct": {
+          "type": "boolean"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "context",
+    "title": "Native context"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns import cycles from the native dependency graph. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hide_ambiguous": {
+          "type": "boolean"
+        },
+        "hide_external": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "cycles",
+    "title": "Native cycles"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native forward import dependencies for a file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hide_ambiguous": {
+          "type": "boolean"
+        },
+        "hide_external": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "deps",
+    "title": "Native deps"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Reports sanitized runtime, approval, capability and configuration state before filesystem approval. Always checks the public npm latest release with a five-second deadline.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "diagnostics",
+    "title": "Diagnose AST MCP"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns a compact native AST module digest. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "max_members": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "digest",
+    "title": "Native digest"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Reads bounded values from JSON, JSONC, TOML, or YAML by RFC 6901 selectors and returns the whole-file hash.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filePath": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "selectors": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["filePath", "selectors"],
+      "type": "object"
+    },
+    "name": "document_query",
+    "title": "Query Structured Documents"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Reports the intrinsic and effective AST/text read, AST/Aider patch, and AST search capabilities for each file.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filePaths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["filePaths"],
+      "type": "object"
+    },
+    "name": "file_capabilities",
+    "title": "Inspect File Capabilities"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Applies guarded attributes through verified file handles to 1–50 files under deterministic locks; cancellation and incomplete rollback return structured failures.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "properties": {
+              "chattr": {
+                "properties": {
+                  "chmod": {
+                    "maximum": 511,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "chown": {
+                    "properties": {
+                      "gid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "uid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["gid", "uid"],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "expectedSha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": ["chattr"],
+            "type": "object"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_chattr",
+    "title": "Change File Attributes Safely"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Deletes 1–50 files after one reference inventory per root and removes only authorized empty ancestors. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "properties": {
+              "expectedSha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              "forceReferences": {
+                "type": "boolean"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_delete",
+    "title": "Delete Files Safely"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Batches streaming whole-file SHA-256 calculations without loading file contents into memory. Use this for fresh patch hashes, including AST-capable files. Accepts up to 50 paths.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "filePaths": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["filePaths"],
+      "type": "object"
+    },
+    "name": "file_hash",
+    "title": "Hash Files Without Reading Content"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview applies the strategy without formatting or committing; formatting runs only at commit, including previewReceipt commit. Receipts are reserved across the batch and consumed after mutation completion; confirmed no-change or verified rollback permits retry until expiry, while changed source or uncertain recovery requires a new preview.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "aiderBlocks": {
+                "items": {
+                  "properties": {
+                    "replace": {
+                      "type": "string"
+                    },
+                    "search": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["replace", "search"],
+                  "type": "object"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              "astRules": {
+                "items": {
+                  "properties": {
+                    "expectedMatches": {
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991,
+                      "type": "integer"
+                    },
+                    "fix": {
+                      "type": "string"
+                    },
+                    "pattern": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": ["fix", "pattern"],
+                  "type": "object"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              "chattr": {
+                "properties": {
+                  "chmod": {
+                    "maximum": 511,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "chown": {
+                    "properties": {
+                      "gid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "uid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["gid", "uid"],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "expectedSha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              },
+              "patchStrategy": {
+                "enum": ["ast", "aider_block"],
+                "type": "string"
+              },
+              "preview": {
+                "type": "boolean"
+              },
+              "previewReceipt": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sql": {
+                "additionalProperties": false,
+                "properties": {
+                  "dialect": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+                    "type": "string"
+                  },
+                  "policy": {
+                    "enum": ["advisory", "required", "skip"],
+                    "type": "string"
+                  },
+                  "variant": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$",
+                    "type": "string"
+                  },
+                  "version": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.+-]*$",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_patch",
+    "title": "Patch Files Through the Enforced State Machine"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Reads files using an agent-selected auto, ast, or text mode. AST mode returns a source map/requested symbols or RFC 6901-selected structured-document values; text mode returns a bounded slice. Each result includes capabilities and a streaming whole-file SHA-256. Text slices default to lines [0, 100] and are capped at 1000 lines and 1048576 bytes.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "filePath": {
+                "type": "string"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "lines": {
+                "description": "Zero-based, end-exclusive [start, end] line range",
+                "items": false,
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  }
+                ],
+                "type": "array"
+              },
+              "maxBytes": {
+                "exclusiveMinimum": 0,
+                "maximum": 1048576,
+                "type": "integer"
+              },
+              "mode": {
+                "enum": ["auto", "ast", "text"],
+                "type": "string"
+              },
+              "range": {
+                "additionalProperties": false,
+                "properties": {
+                  "end": {
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991,
+                    "type": "integer"
+                  },
+                  "start": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": ["end", "start"],
+                "type": "object"
+              },
+              "selectors": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              },
+              "symbols": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              }
+            },
+            "required": ["filePath"],
+            "type": "object"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_read",
+    "title": "Read Files as AST or Text"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Renames 1–50 files without replacement and creates authorized missing destination parents without marker files. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "properties": {
+              "destination": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "expectedSha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": ["destination"],
+            "type": "object"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_rename",
+    "title": "Rename Files Safely"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Creates or replaces 1–50 files and creates authorized missing parents without marker files. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "additionalProperties": {
+            "properties": {
+              "chattr": {
+                "properties": {
+                  "chmod": {
+                    "maximum": 511,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "chown": {
+                    "properties": {
+                      "gid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "uid": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["gid", "uid"],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "content": {
+                "type": "string"
+              },
+              "expectedSha256": {
+                "maxLength": 64,
+                "minLength": 64,
+                "type": "string"
+              }
+            },
+            "required": ["content"],
+            "type": "object"
+          },
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["files"],
+      "type": "object"
+    },
+    "name": "file_write",
+    "title": "Write Files Safely"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns structurally related native index entries. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "find_related",
+    "title": "Native find related"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": true,
+      "readOnlyHint": true
+    },
+    "description": "Optionally generates a cited answer from explicitly supplied, revision-scoped evidence.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "allowedCorpusArtifactIds": {
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "budget": {
+          "additionalProperties": false,
+          "properties": {
+            "maxEvidenceBytes": {
+              "default": 128000,
+              "exclusiveMinimum": 0,
+              "maximum": 10000000,
+              "type": "integer"
+            },
+            "maxEvidenceItems": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "maximum": 1000,
+              "type": "integer"
+            },
+            "maxOutputBytes": {
+              "default": 32000,
+              "exclusiveMinimum": 0,
+              "maximum": 10000000,
+              "type": "integer"
+            },
+            "maxOutputTokens": {
+              "default": 2048,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "evidence": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "artifactId": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "entityId": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "range": {
+                "additionalProperties": false,
+                "properties": {
+                  "end": {
+                    "properties": {
+                      "column": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "line": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["line", "column"],
+                    "type": "object"
+                  },
+                  "endByte": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "start": {
+                    "properties": {
+                      "column": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "line": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": ["line", "column"],
+                    "type": "object"
+                  },
+                  "startByte": {
+                    "maximum": 9007199254740991,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": ["startByte", "endByte", "start", "end"],
+                "type": "object"
+              },
+              "text": {
+                "maxLength": 10000000,
+                "type": "string"
+              }
+            },
+            "required": ["artifactId", "entityId", "path", "range", "text"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "prompt": {
+          "maxLength": 1000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceId",
+        "allowedCorpusArtifactIds",
+        "evidence",
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "name": "generate",
+    "title": "Generate Cited Intelligence Answer"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns the native file dependency graph. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hide_ambiguous": {
+          "type": "boolean"
+        },
+        "hide_external": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "graph",
+    "title": "Native graph"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Compares two explicitly selected workspace generations and requires federation for cross-repository requests.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "additionalProperties": false,
+          "properties": {
+            "generationId": {
+              "pattern": "^generation:v1:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "workspaceId": {
+              "pattern": "^workspace:v1:[a-f0-9]{64}$",
+              "type": "string"
+            }
+          },
+          "required": ["generationId", "workspaceId"],
+          "type": "object"
+        },
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "maxBytes": 1000000,
+            "maxDepth": 8,
+            "maxEdges": 10000,
+            "maxMilliseconds": 5000,
+            "maxNodes": 5000,
+            "pageSize": 100
+          },
+          "properties": {
+            "maxBytes": {
+              "default": 1000000,
+              "exclusiveMinimum": 0,
+              "maximum": 67108864,
+              "type": "integer"
+            },
+            "maxDepth": {
+              "default": 8,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxEdges": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "maxMilliseconds": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "pageSize": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "cursor": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        "federation": {
+          "default": false,
+          "type": "boolean"
+        },
+        "pageSize": {
+          "default": 100,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "additionalProperties": false,
+          "properties": {
+            "generationId": {
+              "pattern": "^generation:v1:[a-f0-9]{64}$",
+              "type": "string"
+            },
+            "workspaceId": {
+              "pattern": "^workspace:v1:[a-f0-9]{64}$",
+              "type": "string"
+            }
+          },
+          "required": ["generationId", "workspaceId"],
+          "type": "object"
+        }
+      },
+      "required": ["base", "target"],
+      "type": "object"
+    },
+    "name": "graph_diff",
+    "title": "Diff Intelligence Graphs"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns one graph node with paginated relationships and source evidence.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "maxBytes": 1000000,
+            "maxDepth": 8,
+            "maxEdges": 10000,
+            "maxMilliseconds": 5000,
+            "maxNodes": 5000,
+            "pageSize": 100
+          },
+          "properties": {
+            "maxBytes": {
+              "default": 1000000,
+              "exclusiveMinimum": 0,
+              "maximum": 67108864,
+              "type": "integer"
+            },
+            "maxDepth": {
+              "default": 8,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxEdges": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "maxMilliseconds": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "pageSize": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "cursor": {
+          "default": 0,
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nodeId": {
+          "pattern": "^graph-node:v1:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "pageSize": {
+          "default": 50,
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId", "nodeId"],
+      "type": "object"
+    },
+    "name": "graph_explain",
+    "title": "Explain Intelligence Graph Node"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Finds a bounded shortest path with evidence-backed relationships.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "maxBytes": 1000000,
+            "maxDepth": 8,
+            "maxEdges": 10000,
+            "maxMilliseconds": 5000,
+            "maxNodes": 5000,
+            "pageSize": 100
+          },
+          "properties": {
+            "maxBytes": {
+              "default": 1000000,
+              "exclusiveMinimum": 0,
+              "maximum": 67108864,
+              "type": "integer"
+            },
+            "maxDepth": {
+              "default": 8,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxEdges": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "maxMilliseconds": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "pageSize": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "direction": {
+          "default": "forward",
+          "enum": ["forward", "reverse"],
+          "type": "string"
+        },
+        "edgeKinds": {
+          "items": {
+            "enum": [
+              "contains",
+              "declares",
+              "references",
+              "imports",
+              "exports",
+              "calls",
+              "inherits",
+              "implements",
+              "overrides",
+              "reads",
+              "writes",
+              "documents",
+              "links",
+              "depends-on"
+            ],
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "resolutionStatuses": {
+          "items": {
+            "enum": [
+              "explicit",
+              "resolved",
+              "inferred",
+              "ambiguous",
+              "unresolved"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "sourceNodeId": {
+          "pattern": "^graph-node:v1:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "targetNodeId": {
+          "pattern": "^graph-node:v1:[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId", "sourceNodeId", "targetNodeId"],
+      "type": "object"
+    },
+    "name": "graph_path",
+    "title": "Find Intelligence Graph Path"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Traverses, expands impact, or finds components in the selected workspace generation.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "additionalProperties": false,
+          "default": {
+            "maxBytes": 1000000,
+            "maxDepth": 8,
+            "maxEdges": 10000,
+            "maxMilliseconds": 5000,
+            "maxNodes": 5000,
+            "pageSize": 100
+          },
+          "properties": {
+            "maxBytes": {
+              "default": 1000000,
+              "exclusiveMinimum": 0,
+              "maximum": 67108864,
+              "type": "integer"
+            },
+            "maxDepth": {
+              "default": 8,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxEdges": {
+              "default": 10000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "maxMilliseconds": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "pageSize": {
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "cursor": {
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        },
+        "direction": {
+          "default": "forward",
+          "enum": ["forward", "reverse"],
+          "type": "string"
+        },
+        "edgeKinds": {
+          "items": {
+            "enum": [
+              "contains",
+              "declares",
+              "references",
+              "imports",
+              "exports",
+              "calls",
+              "inherits",
+              "implements",
+              "overrides",
+              "reads",
+              "writes",
+              "documents",
+              "links",
+              "depends-on"
+            ],
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "operation": {
+          "default": "traverse",
+          "enum": ["traverse", "impact", "components"],
+          "type": "string"
+        },
+        "resolutionStatuses": {
+          "items": {
+            "enum": [
+              "explicit",
+              "resolved",
+              "inferred",
+              "ambiguous",
+              "unresolved"
+            ],
+            "type": "string"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "startNodeIds": {
+          "items": {
+            "pattern": "^graph-node:v1:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "maxItems": 1000,
+          "minItems": 1,
+          "type": "array"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId", "startNodeIds"],
+      "type": "object"
+    },
+    "name": "graph_query",
+    "title": "Query Intelligence Graph"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns callers, callees, dependents, and tests for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "depth": {
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "direct": {
+          "type": "boolean"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hide_ambiguous": {
+          "type": "boolean"
+        },
+        "hide_external": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "impact",
+    "title": "Native impact"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native inheritance and implementation relationships. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "implements",
+    "title": "Native implements"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Builds, refreshes, verifies, collects, or inspects the LanceDB intelligence index.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "default": "status",
+          "enum": ["build", "refresh", "verify", "collect", "status"],
+          "type": "string"
+        },
+        "collection": {
+          "additionalProperties": false,
+          "properties": {
+            "keepFailedJobsForDays": {
+              "maximum": 3650,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "keepPublishedGenerations": {
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "maxDeletesPerTable": {
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "integer"
+            },
+            "pinGraceSeconds": {
+              "maximum": 86400,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "unreachableArtifactDays": {
+              "maximum": 3650,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId"],
+      "type": "object"
+    },
+    "name": "index",
+    "title": "Manage Intelligence Index"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns freshness, coverage, storage, and generation status for one workspace.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "maxRowsPerTable": {
+          "exclusiveMinimum": 0,
+          "maximum": 100000,
+          "type": "integer"
+        },
+        "timeoutMs": {
+          "exclusiveMinimum": 0,
+          "maximum": 120000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId"],
+      "type": "object"
+    },
+    "name": "index_status",
+    "title": "Inspect Intelligence Index"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native AST symbols, imports, and diagnostics by file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "max_members": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "map",
+    "title": "Native map"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Explains the effective read, write, or delete decision for a batch of paths without performing the operation.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "enum": ["read", "write", "delete"],
+                "type": "string"
+              },
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": ["operation", "path"],
+            "type": "object"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["checks"],
+      "type": "object"
+    },
+    "name": "policy_check",
+    "title": "Check Path Authorization Policy"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Ranks revision-scoped exact, lexical, semantic, and graph evidence within explicit budgets.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "additionalProperties": false,
+          "properties": {
+            "maxBytes": {
+              "default": 128000,
+              "exclusiveMinimum": 0,
+              "maximum": 100000000,
+              "type": "integer"
+            },
+            "maxCandidates": {
+              "default": 500,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "integer"
+            },
+            "maxDepth": {
+              "default": 2,
+              "maximum": 32,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxGraphBytes": {
+              "default": 2000000,
+              "exclusiveMinimum": 0,
+              "maximum": 100000000,
+              "type": "integer"
+            },
+            "maxItems": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "maximum": 10000,
+              "type": "integer"
+            },
+            "maxNodes": {
+              "default": 500,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "integer"
+            },
+            "maxVectorCandidates": {
+              "default": 200,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "type": "integer"
+            },
+            "maxVectorScan": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 1000000,
+              "type": "integer"
+            },
+            "timeoutMs": {
+              "default": 5000,
+              "exclusiveMinimum": 0,
+              "maximum": 120000,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "deniedPaths": {
+          "default": [],
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exactSymbols": {
+          "default": [],
+          "items": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "includedPaths": {
+          "default": [],
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "intent": {
+          "default": "implementation",
+          "enum": ["implementation", "behavior", "documentation"],
+          "type": "string"
+        },
+        "languages": {
+          "default": [],
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query": {
+          "maxLength": 1000000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "semantic": {
+          "type": "boolean"
+        },
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "required": ["workspaceId", "query"],
+      "type": "object"
+    },
+    "name": "retrieve",
+    "title": "Retrieve Intelligence Context"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native reverse import dependencies for a file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "hide_ambiguous": {
+          "type": "boolean"
+        },
+        "hide_external": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "reverse_deps",
+    "title": "Native reverse deps"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Finds native structural AST matches and previews rewrites; write=true is disabled; commit through file_patch. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "json": {
+          "type": "boolean"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "pattern": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "rewrite": {
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "write": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "run",
+    "title": "Native run"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Searches native AST symbols and source text. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "search",
+    "title": "Native search"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns native AST source for selected symbols. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "symbols": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "type": "array"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "show",
+    "title": "Native show"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Compacts repetitive text into a bounded payload.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "squeeze",
+    "title": "Native squeeze"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns exported native AST symbols. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "surface",
+    "title": "Native surface"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns a bounded native call trace. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "budget": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000000,
+          "type": "integer"
+        },
+        "depth": {
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "type": "integer"
+        },
+        "detail": {
+          "enum": ["names", "signatures", "full"],
+          "type": "string"
+        },
+        "direct": {
+          "type": "boolean"
+        },
+        "file": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "glob": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "lang": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "path": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
+        },
+        "root": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "scan_limit": {
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "type": "integer"
+        },
+        "target": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_ms": {
+          "exclusiveMinimum": 0,
+          "maximum": 300000,
+          "type": "integer"
+        },
+        "top_k": {
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "type": "integer"
+        },
+        "workspaceId": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "trace",
+    "title": "Native trace"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Opens an absolute checkout or repository directory for this server session and returns its validated workspace, Git revision, configuration, and storage identities.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "directory": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "working",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "index",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "commit",
+                  "type": "string"
+                },
+                "oid": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[a-f0-9]{64}$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^[a-f0-9]{40}$",
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": ["kind", "oid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "branch",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "tag",
+                  "type": "string"
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            }
+          ]
+        },
+        "storage": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "global",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "local",
+                  "type": "string"
+                }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "parent",
+                  "type": "string"
+                },
+                "levels": {
+                  "maximum": 32,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": ["kind", "levels"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "explicit",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "path"],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "required": ["directory"],
+      "type": "object"
+    },
+    "name": "workspace_open",
+    "title": "Open Workspace"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns workspace, repository, Git, revision, storage, and working-state identities for this server session.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "workspaceId": {
+          "pattern": "^workspace:v1:[a-f0-9]{64}$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "workspace_status",
+    "title": "Inspect Workspace Status"
+  }
+]

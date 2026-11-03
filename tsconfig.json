@@ -24,6 +24,7 @@
     "scripts/validation/check-prose-cli.ts",
     "scripts/validation/check-template-drift.ts",
     "scripts/validation/check-runtime-imports.ts",
+    "scripts/validation/check-tool-reference.ts",
     "scripts/release/dispatch-release-ci.ts",
     "scripts/testing/test-shard.ts",
     "scripts/testing/ci-selection.ts",

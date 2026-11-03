@@ -45,6 +45,7 @@ test("file access defaults allow temp paths while preserving workspace protectio
   const config = await resolveConfig({ cwd: root, env: {} });
   expect(config.safety).toEqual({
     filesystem: "restricted",
+    filesystemAuthority: "default",
     allowAnyPath: false,
     allowExternalRoots: false,
     allowTempDirectory: true,

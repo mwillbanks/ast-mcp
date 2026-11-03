@@ -229,6 +229,157 @@ async function fixture(extra = "", global = false) {
   return { base, external, options, root };
 }
 
+test("project unrestricted preserves scoped permissions and policy-operation parity", async () => {
+  const { root, external, options } = await fixture(
+    '[safety]\nfilesystem = "unrestricted"\n',
+  );
+  const file = path.join(external, "value.txt");
+  await writeFile(file, "scoped");
+  const global = globalConfigPath(options);
+  await mkdir(path.dirname(global), { recursive: true });
+  await writeFile(
+    global,
+    `version = 2
+[safety]
+filesystem = "restricted"
+[[paths]]
+id = "scoped"
+path = ${JSON.stringify(external)}
+policies = { read = "allow", write = "deny", delete = "request" }
+`,
+  );
+  const config = await resolveConfig(options);
+  expect(config.safety.filesystemAuthority).toBe("project");
+  const server = {
+    server: { getClientCapabilities: () => ({ elicitation: {} }) },
+  };
+  await withResolvedConfig(config, () =>
+    withApprovalContext(
+      {
+        server: server as never,
+        context: { sessionId: "stateless", mcpReq: {} } as never,
+        tool: "file_read",
+        requestScoped: true,
+      },
+      async () => {
+        expect(
+          await evaluatePolicyForCheck(config, file, "read"),
+        ).toMatchObject({ policy: "allow", authorization: "scoped" });
+        expect(await resolveWorkspacePath(file)).toBe(await realpath(file));
+        expect(
+          await evaluatePolicyForCheck(config, file, "write"),
+        ).toMatchObject({ policy: "deny", authorization: "scoped" });
+        await expect(resolveWritablePath(file)).rejects.toMatchObject({
+          code: "path_denied",
+        });
+        expect(
+          await evaluatePolicyForCheck(config, file, "delete"),
+        ).toMatchObject({
+          policy: "request",
+          authorization: "scoped",
+          ruleId: "scoped",
+        });
+        await expect(
+          deleteFilesSafely({ [file]: { expectedSha256: sha256("scoped") } }),
+        ).rejects.toMatchObject({
+          code: "approval_required",
+          details: { rule: "path" },
+        });
+        expect(
+          await evaluatePolicyForCheck(
+            config,
+            path.join(root, "ast-mcp.toml"),
+            "write",
+          ),
+        ).toMatchObject({
+          policy: "request",
+          source: "configuration",
+          authorization: "scoped",
+        });
+        expect(
+          await evaluatePolicyForCheck(
+            config,
+            path.join(external, "../uncovered"),
+            "write",
+          ),
+        ).toMatchObject({
+          policy: "request",
+          authorization: "unrestricted_pending",
+          approvalKind: "filesystem",
+        });
+      },
+    ),
+  );
+  const projectExpansion = {
+    ...config,
+    paths: config.paths.map((rule) => ({
+      ...rule,
+      source: "project" as const,
+    })),
+  };
+  expect(evaluatePolicy(projectExpansion, file, "read")).toMatchObject({
+    policy: "request",
+    authorization: "scoped",
+    ruleId: "scoped",
+  });
+  await expect(
+    withResolvedConfig(projectExpansion, () => resolveWorkspacePath(file)),
+  ).rejects.toMatchObject({ code: "approval_required" });
+  const worktree = {
+    ...config,
+    workspace: {
+      ...config.workspace,
+      linkedWorktrees: [root, external],
+      worktrees: "request" as const,
+    },
+  };
+  expect(evaluatePolicy(worktree, file, "read")).toMatchObject({
+    policy: "request",
+    authorization: "scoped",
+  });
+  await expect(
+    withResolvedConfig(worktree, () => resolveWorkspacePath(file)),
+  ).rejects.toMatchObject({ code: "approval_required" });
+  if (process.platform !== "win32") {
+    const link = path.join(root, "escape.txt");
+    await symlink(file, link);
+    expect(await evaluatePolicyForCheck(config, link, "read")).toMatchObject({
+      policy: "deny",
+      authorization: "scoped",
+    });
+    await expect(
+      withResolvedConfig(config, () => resolveWorkspacePath(link)),
+    ).rejects.toThrow("Symbolic-link targets are not permitted");
+  }
+  expect(await readFile(file, "utf8")).toBe("scoped");
+});
+
+test("redundant project unrestricted settings preserve trusted global authority", async () => {
+  const { root, external, options } = await fixture(
+    '[safety]\nfilesystem = "unrestricted"\n',
+    true,
+  );
+  await writeFile(
+    path.join(root, "ast-mcp.toml"),
+    'version = 2\n[safety]\nfilesystem = "unrestricted"\n',
+  );
+  const config = await configRegistry.get(options);
+  expect(config.provenance["safety.filesystem"]).toBe("project");
+  expect(config.safety.filesystemAuthority).toBe("global");
+  expect(
+    evaluatePolicy(config, path.join(external, "new"), "write"),
+  ).toMatchObject({ policy: "allow", authorization: "unrestricted" });
+  const global = globalConfigPath(options);
+  await writeFile(global, 'version = 2\n[safety]\nfilesystem = "restricted"\n');
+  await configRegistry.reload();
+  const changed = await configRegistry.get(options);
+  expect(changed.generation).toBeGreaterThan(config.generation);
+  expect(changed.safety.filesystemAuthority).toBe("project");
+  expect(
+    evaluatePolicy(changed, path.join(external, "new"), "write"),
+  ).toMatchObject({ policy: "request", authorization: "unrestricted_pending" });
+});
+
 test("global unrestricted mode bypasses denials and symlinks while intelligence remains scoped", async () => {
   const { external, options, root } = await fixture(
     '[safety]\nfilesystem = "unrestricted"\n[[paths]]\nid = "deny"\npath = "."\npolicies = {read = "deny", write = "deny"}\n',
@@ -395,6 +546,11 @@ test("project unrestricted activation is session bound and safety changes revoke
       ),
     ),
   ).rejects.toBeInstanceOf(InputRequiredSignal);
+  await expect(
+    withResolvedConfig({ ...config, generation: config.generation + 1 }, () =>
+      withApprovalContext(scope("file_read"), () => resolveWorkspacePath(file)),
+    ),
+  ).rejects.toBeInstanceOf(InputRequiredSignal);
   const changed = {
     ...config,
     safety: { ...config.safety, requireHash: false },
@@ -526,7 +682,7 @@ test("config_core activation approval is reusable across tools", async () => {
     }),
     operation,
   );
-  const config = await resolveConfig(options);
+  const config = await configRegistry.get(options);
   await withResolvedConfig(config, () =>
     withApprovalContext(scope("file_read"), async () => {
       expect(await resolveWorkspacePath(path.join(external, "value.txt"))).toBe(

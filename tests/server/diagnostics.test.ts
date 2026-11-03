@@ -23,6 +23,10 @@ import { createServer } from "../../src/server";
 
 async function fixture(timeoutMs = 1000) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-diagnostics-"));
+  const external = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-diagnostics-external-"),
+  );
+  await writeFile(path.join(external, "value.txt"), "authorized value");
   await mkdir(path.join(root, ".git"));
   await writeFile(
     path.join(root, "ast-mcp.toml"),
@@ -54,6 +58,7 @@ async function fixture(timeoutMs = 1000) {
   );
   return {
     root,
+    external,
     server,
     fetchCalls: () => fetchCalls,
     async close() {
@@ -66,6 +71,7 @@ async function fixture(timeoutMs = 1000) {
       configRegistry.invalidate();
       clearSessionApprovals();
       await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
     },
   };
 }
@@ -112,7 +118,10 @@ test("legacy Codex rejection remains diagnosable and probe acceptance never gran
         name: "file_read",
         arguments: {
           files: [
-            { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+            {
+              filePath: path.join(instance.external, "value.txt"),
+              mode: "text",
+            },
           ],
         },
       });
@@ -249,7 +258,7 @@ test("native protocol approvals preserve denial and recover through correlated a
     await clientTransport.start();
     const args = {
       files: [
-        { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+        { filePath: path.join(instance.external, "value.txt"), mode: "text" },
       ],
     };
     const first = await request("file_read", args);
@@ -375,9 +384,16 @@ test("modern request-scoped HTTP refuses filesystem approval but permits diagnos
     return ((await response.json()) as any).result;
   };
   try {
-    const rejected = await call("file_read", {
+    const scoped = await call("file_read", {
       files: [
         { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+      ],
+    });
+    expect(scoped.isError).not.toBeTrue();
+    expect(scoped.inputRequests).toBeUndefined();
+    const rejected = await call("file_read", {
+      files: [
+        { filePath: path.join(instance.external, "value.txt"), mode: "text" },
       ],
     });
     expect(rejected.structuredContent).toMatchObject({

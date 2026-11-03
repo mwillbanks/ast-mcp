@@ -1,0 +1,472 @@
+---
+title: Structural code intelligence
+description: Inspect selected source without building a persistent index.
+---
+
+Inspect selected source without building a persistent index. Start with the [Code Intelligence guide](/docs/guides/code-intelligence) for a complete workflow.
+
+Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
+
+## callees
+
+Returns native AST call targets for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Inspect call targets used by a symbol. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns bounded outgoing call relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="callees" />
+
+```json
+{
+  "name": "callees",
+  "arguments": {
+    "target": "currentConfig",
+    "paths": ["src"]
+  }
+}
+```
+
+## callers
+
+Returns native AST callers of a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Find symbols that call a target before editing it. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns bounded incoming call relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="callers" />
+
+```json
+{
+  "name": "callers",
+  "arguments": {
+    "target": "currentConfig",
+    "paths": ["src"]
+  }
+}
+```
+
+## context
+
+Returns token-budgeted native AST context for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Gather a token-budgeted context around a symbol. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns selected symbol facts and nearby relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="context" />
+
+```json
+{
+  "name": "context",
+  "arguments": {
+    "target": "currentConfig",
+    "paths": ["src"],
+    "budget": 2000
+  }
+}
+```
+
+## cycles
+
+Returns import cycles from the native dependency graph. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Locate dependency cycles before moving module boundaries.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns bounded import cycles and scan coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="cycles" />
+
+```json
+{
+  "name": "cycles",
+  "arguments": {
+    "path": "src"
+  }
+}
+```
+
+## deps
+
+Returns native forward import dependencies for a file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Follow forward import dependencies from one file. Supply file or path.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns resolved and ambiguous forward import relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="deps" />
+
+```json
+{
+  "name": "deps",
+  "arguments": {
+    "file": "src/index.ts"
+  }
+}
+```
+
+## digest
+
+Returns a compact native AST module digest. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Get a compact directory overview before choosing files.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns compact module summaries and bounded scan coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="digest" />
+
+```json
+{
+  "name": "digest",
+  "arguments": {
+    "paths": ["src"],
+    "detail": "names"
+  }
+}
+```
+
+## find_related
+
+Returns structurally related native index entries. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Discover structurally related entries around known code. Supply query, target, or path.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns related native index entries and evidence. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="find_related" />
+
+```json
+{
+  "name": "find_related",
+  "arguments": {
+    "path": "src/config/index.ts"
+  }
+}
+```
+
+## graph
+
+Returns the native file dependency graph. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Inspect the immediate file dependency graph without persistent indexing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns dependency graph nodes and relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="graph" />
+
+```json
+{
+  "name": "graph",
+  "arguments": {
+    "path": "src/tools"
+  }
+}
+```
+
+## impact
+
+Returns callers, callees, dependents, and tests for a symbol. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Estimate callers, dependents, and tests before a symbol change. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns combined native call, dependency, and test impact. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="impact" />
+
+```json
+{
+  "name": "impact",
+  "arguments": {
+    "target": "currentConfig",
+    "paths": ["src", "tests"]
+  }
+}
+```
+
+## implements
+
+Returns native inheritance and implementation relationships. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Find inheritance or implementation relationships for a target. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns native inheritance and implementation relationships. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="implements" />
+
+```json
+{
+  "name": "implements",
+  "arguments": {
+    "target": "IntelligenceToolService",
+    "paths": ["src"]
+  }
+}
+```
+
+## map
+
+Returns native AST symbols, imports, and diagnostics by file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Inspect symbols, imports, and parser diagnostics for selected files.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns file maps, symbols, imports, diagnostics, and scan coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="map" />
+
+```json
+{
+  "name": "map",
+  "arguments": {
+    "paths": ["src"],
+    "detail": "signatures"
+  }
+}
+```
+
+## reverse_deps
+
+Returns native reverse import dependencies for a file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Find files affected by a dependency change. Supply file or path.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns native reverse import relationships and coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="reverse_deps" />
+
+```json
+{
+  "name": "reverse_deps",
+  "arguments": {
+    "file": "src/config/index.ts"
+  }
+}
+```
+
+## run
+
+Finds native structural AST matches and previews rewrites; write=true is disabled; commit through file_patch. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Preview a structural match or rewrite before a guarded patch. Supply pattern. Never request write=true; use file_patch to commit a reviewed rewrite.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns bounded matches or preview diffs. write=true is disabled; commit through file_patch. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="run" />
+
+```json
+{
+  "name": "run",
+  "arguments": {
+    "pattern": "currentConfig()",
+    "paths": ["src/tools"],
+    "lang": "typescript"
+  }
+}
+```
+
+## search
+
+Searches native AST symbols and source text. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Find a symbol or source fragment before opening exact files. Supply query, target, or path.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns native AST and source-text matches with locations. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="search" />
+
+```json
+{
+  "name": "search",
+  "arguments": {
+    "query": "currentConfig",
+    "path": "src"
+  }
+}
+```
+
+## show
+
+Returns native AST source for selected symbols. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Extract selected symbol source after discovery.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns ast-mcp.show.v2 files, source ranges, and coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="show" />
+
+```json
+{
+  "name": "show",
+  "arguments": {
+    "path": "src/config/index.ts",
+    "symbols": ["currentConfig"]
+  }
+}
+```
+
+## squeeze
+
+Compacts repetitive text into a bounded payload.
+
+**Choose this tool:** Compact repetitive logs or text, rather than source. Supply text or query.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns a bounded compact text payload. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="squeeze" />
+
+```json
+{
+  "name": "squeeze",
+  "arguments": {
+    "text": "Repeated diagnostic text\nRepeated diagnostic text"
+  }
+}
+```
+
+## surface
+
+Returns exported native AST symbols. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Inspect exported API shape before changing a public boundary.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns exported native AST symbols and coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="surface" />
+
+```json
+{
+  "name": "surface",
+  "arguments": {
+    "path": "src/tools"
+  }
+}
+```
+
+## trace
+
+Returns a bounded native call trace. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.
+
+**Choose this tool:** Follow a bounded call trace from a target symbol. Supply target; this requirement is enforced after schema parsing.
+
+**Side effects:** Parses or inspects selected source without publishing a persistent intelligence generation. Does not edit files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns bounded native call paths and ambiguity information. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Denied roots, unsupported languages, ambiguous targets, and scan or output budgets limit results. Inspect incomplete, truncated, and omission fields before treating absence as proof.
+
+<ToolParameters name="trace" />
+
+```json
+{
+  "name": "trace",
+  "arguments": {
+    "target": "currentConfig",
+    "paths": ["src"],
+    "depth": 2
+  }
+}
+```

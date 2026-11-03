@@ -22,6 +22,10 @@ import {
   type SqlAssistanceOptions,
 } from "../runtime/sql-assistance";
 import {
+  captureResolutionOptions,
+  configurationResolutionKey,
+} from "./identity";
+import {
   cliSchema,
   type CliOutputFormat,
   createFormatterSchema,
@@ -163,6 +167,8 @@ export interface ResolvedConfig {
   provenance: Record<string, "default" | "global" | "project" | "environment">;
   safety: {
     filesystem: "restricted" | "unrestricted";
+    /** Authority to expand privileges, independent of last-writer provenance. */
+    filesystemAuthority?: "default" | "global" | "project" | "environment";
     allowAnyPath: boolean;
     allowExternalRoots: boolean;
     allowTempDirectory: boolean;
@@ -1262,7 +1268,14 @@ function resolvedConfiguration(args: {
     ]),
     projectRoot,
     provenance,
-    safety: resolvedSafety(value),
+    safety: {
+      ...resolvedSafety(value),
+      filesystemAuthority:
+        value.safety?.filesystem === "unrestricted" &&
+        global.value?.safety?.filesystem === "unrestricted"
+          ? "global"
+          : (provenance["safety.filesystem"] ?? "default"),
+    },
     sources: resolvedSources(environment, global, project),
     telemetry: {
       enabled:
@@ -1311,33 +1324,6 @@ async function resolvedDprint(value: InternalConfig, projectRoot: string) {
     value.formatting?.dprint_config ?? path.join(projectRoot, "dprint.json");
   const fingerprint = enabled ? await validateDprintConfig(config) : "disabled";
   return { config, fingerprint };
-}
-
-function resolutionCacheKey(args: {
-  candidates: string[];
-  cwd: string;
-  env: NodeJS.ProcessEnv;
-  environment: ReturnType<typeof environmentLayer>;
-  globalPath: string;
-  projectPath: string | undefined;
-  projectRoot: string;
-  revisionId: string | undefined;
-  storageDomainId: string | undefined;
-  trustedRoots: string[];
-  workspaceId: string | undefined;
-}) {
-  return JSON.stringify({
-    candidates: args.candidates,
-    cwd: args.cwd,
-    environment: args.environment.names.map((name) => [name, args.env[name]]),
-    globalPath: args.globalPath,
-    projectPath: args.projectPath,
-    projectRoot: args.projectRoot,
-    revisionId: args.revisionId,
-    storageDomainId: args.storageDomainId,
-    trustedRoots: args.trustedRoots,
-    workspaceId: args.workspaceId,
-  });
 }
 
 async function sameResolvedPath(left: string, right: string): Promise<boolean> {
@@ -1436,19 +1422,10 @@ async function resolveForProject(
   );
   if (sourceVersions.includes(1)) value.version = 1;
   const dprint = await resolvedDprint(value, projectRoot);
-  const key = resolutionCacheKey({
-    candidates,
-    cwd,
-    env,
-    environment,
-    globalPath,
-    projectPath,
-    projectRoot,
-    revisionId: options.revisionId,
-    storageDomainId: options.storageDomainId,
-    trustedRoots,
-    workspaceId: options.workspaceId,
-  });
+  const key = JSON.stringify([
+    configurationResolutionKey(options),
+    canonicalizePathSync(projectRoot),
+  ]);
   const linked = await discoveredLinkedWorktrees(
     projectRoot,
     candidates,
@@ -1552,11 +1529,12 @@ function policiesEquivalent(left: ResolvedConfig, right: ResolvedConfig) {
 export async function resolveConfig(
   options: ResolveConfigOptions = {},
 ): Promise<ResolvedConfig> {
-  const { candidates, trustedRoots } = await projectRoots(options);
-  const matched = matchedProjectRoots(candidates, options.requestPaths ?? []);
+  const captured = captureResolutionOptions(options);
+  const { candidates, trustedRoots } = await projectRoots(captured);
+  const matched = matchedProjectRoots(candidates, captured.requestPaths ?? []);
   const configs = await Promise.all(
     matched.map((root) =>
-      resolveForProject(root, candidates, trustedRoots, options),
+      resolveForProject(root, candidates, trustedRoots, captured),
     ),
   );
   const first = configs[0] as ResolvedConfig;

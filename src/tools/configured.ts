@@ -12,6 +12,7 @@ import type { GenerationDependencies } from "../intelligence/generation/index.ts
 import { withWorkspaceGitContext } from "../intelligence/workspace/git.ts";
 import {
   currentWorkspace,
+  WorkspaceError,
   type WorkspaceHandle,
   WorkspaceRegistry,
   withWorkspaceContext,
@@ -87,43 +88,50 @@ async function configuredWorkspace(
 }> {
   if (clientRoots.length)
     await registry.selectDirectory(clientRoots, [input.directory]);
-  let config = await configRegistry.get({
+  else if (!fileOperation) {
+    const hostConfig = await configRegistry.get();
+    await withResolvedConfig(hostConfig, () =>
+      withApprovalContext(approval, async () => {
+        assertReadableTree(hostConfig, input.directory);
+      }),
+    );
+  }
+  const resolution = {
     clientRoots,
+    cwd: input.directory,
     requestPaths: [input.directory],
-  });
+  };
+  const config = await configRegistry.get(resolution);
   if (!fileOperation)
     await withResolvedConfig(config, () =>
       withApprovalContext(approval, async () => {
         assertReadableTree(config, input.directory);
       }),
     );
-  let workspace = await registry.open({
+  const workspace = await registry.open({
     configurationGeneration: config.generation,
     directory: input.directory,
     revision: input.revision,
     storage: input.storage ?? config.intelligence.storage.placement,
   });
-  config = await configRegistry.get({
-    clientRoots,
-    cwd: input.directory,
-    requestPaths: [input.directory],
-    revisionId: workspace.selectedRevision.revisionId,
-    storageDomainId: workspace.storageDomain.domainId,
-    workspaceId: workspace.workspaceId,
-  });
-  if (config.generation !== workspace.configurationGeneration)
-    workspace = await registry.open({
-      configurationGeneration: config.generation,
-      directory: workspace.checkoutRoot,
-      revision: input.revision,
-      storage: input.storage ?? config.intelligence.storage.placement,
-    });
-  await registry.get(workspace.workspaceId, {
-    configurationGeneration: config.generation,
+  const current = await configRegistry.get(resolution);
+  if (workspace.configurationGeneration !== current.generation)
+    throw new WorkspaceError(
+      "workspace_mismatch",
+      "Configuration changed while the workspace was opening",
+      {
+        drift: ["configurationGeneration"],
+        workspaceId: workspace.workspaceId,
+      },
+      true,
+      "workspace_open",
+    );
+  const verified = await registry.get(workspace.workspaceId, {
+    configurationGeneration: current.generation,
     revisionId: workspace.selectedRevision.revisionId,
     storageDomainId: workspace.storageDomain.domainId,
   });
-  return { config, workspace };
+  return { config: current, workspace: verified };
 }
 
 function fileSelectionPaths(roots: string[], requestPaths: string[]): string[] {
@@ -239,9 +247,6 @@ export function configuredExecution(
         clientRoots: roots,
         cwd: workspace.checkoutRoot,
         requestPaths: [workspace.checkoutRoot],
-        revisionId: workspace.selectedRevision.revisionId,
-        storageDomainId: workspace.storageDomain.domainId,
-        workspaceId: workspace.workspaceId,
       });
       workspace = await registry.get(workspace.workspaceId, {
         configurationGeneration: current.generation,

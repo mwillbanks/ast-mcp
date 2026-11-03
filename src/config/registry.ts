@@ -1,10 +1,13 @@
 import { type FSWatcher, watch } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 import { setApprovalConfigInvalidator } from "../runtime/approval";
-import { canonicalPathWithin } from "../runtime/path-utils";
+import {
+  captureResolutionOptions,
+  configurationResolutionKey,
+  configuredSelectionRoots,
+} from "./identity";
 import {
   clearConfigCache,
   globalConfigPath,
@@ -32,105 +35,6 @@ interface RegistryEntry {
   reloadForce?: boolean;
   snapshot?: Readonly<ConfigSnapshot>;
   watchers: FSWatcher[];
-}
-
-function capturedOptions(options: ResolveConfigOptions): ResolveConfigOptions {
-  const launchCwd = path.resolve(options.launchCwd ?? process.cwd());
-  const cwd =
-    options.cwd === undefined
-      ? undefined
-      : path.resolve(launchCwd, options.cwd);
-  const env = environmentFingerprint(options.env ?? process.env);
-  for (const name of ["APPDATA", "XDG_CONFIG_HOME"] as const) {
-    if (env[name] !== undefined) env[name] = path.resolve(launchCwd, env[name]);
-  }
-  return {
-    ...options,
-    cwd,
-    launchCwd,
-    env,
-    home: path.resolve(launchCwd, options.home ?? os.homedir()),
-    platform: options.platform ?? process.platform,
-    clientRoots: options.clientRoots?.map((value) =>
-      path.resolve(
-        launchCwd,
-        value.startsWith("file:") ? Bun.fileURLToPath(new URL(value)) : value,
-      ),
-    ),
-    requestPaths: options.requestPaths ? [...options.requestPaths] : undefined,
-  };
-}
-
-function environmentFingerprint(environment: NodeJS.ProcessEnv) {
-  const fingerprint: Record<string, string> = {};
-  for (const name of [
-    "APPDATA",
-    "XDG_CONFIG_HOME",
-    "AST_MCP_PROJECT_ROOT",
-    "AST_MCP_ROOTS",
-    "CLAUDE_PROJECT_DIR",
-    "AST_MCP_ALLOW_ANY_PATH",
-    "AST_MCP_ALLOW_EXTERNAL_ROOTS",
-    "AST_MCP_ALLOW_TEMP_DIRECTORY",
-    "AST_MCP_DPRINT_CONFIG",
-    "AST_MCP_EMBEDDING_MODEL",
-    "DPRINT_BINARY",
-    "AST_MCP_HTTP_HOST",
-    "PORT",
-    "AST_MCP_SESSION_TIMEOUT_MS",
-    "AST_MCP_SESSION_SWEEP_INTERVAL_MS",
-  ]) {
-    const value = environment[name];
-    if (value !== undefined) fingerprint[name] = value;
-  }
-  return fingerprint;
-}
-
-function selectedRoots(
-  clientRoots: string[],
-  requestPaths: string[],
-  cwd: string,
-): string[] {
-  const matched = clientRoots.filter((root) =>
-    requestPaths.some((requestPath) => canonicalPathWithin(root, requestPath)),
-  );
-  if (matched.length > 0) return matched;
-  return [clientRoots[0] ?? cwd];
-}
-
-function configuredSelectionRoots(
-  clientRoots: string[],
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-): string[] {
-  if (clientRoots.length) return clientRoots;
-  if (env.AST_MCP_PROJECT_ROOT)
-    return [path.resolve(cwd, env.AST_MCP_PROJECT_ROOT)];
-  return (env.AST_MCP_ROOTS?.split(path.delimiter).filter(Boolean) ?? []).map(
-    (root) => path.resolve(cwd, root),
-  );
-}
-
-function keyFor(options: ResolveConfigOptions): string {
-  const cwd = options.cwd ?? options.launchCwd!;
-  const env = options.env!;
-  const clientRoots = options.clientRoots ?? [];
-  const selectionRoots = configuredSelectionRoots(clientRoots, cwd, env);
-  const requestPaths = (options.requestPaths ?? [])
-    .filter((item) => path.isAbsolute(item))
-    .map((item) => path.resolve(item));
-  return JSON.stringify({
-    clientRoots,
-    cwd,
-    explicitCwd: options.cwd !== undefined,
-    env: environmentFingerprint(env),
-    home: options.home,
-    platform: options.platform,
-    revisionId: options.revisionId,
-    selectedRoots: selectedRoots(selectionRoots, requestPaths, cwd),
-    storageDomainId: options.storageDomainId,
-    workspaceId: options.workspaceId,
-  });
 }
 
 type FingerprintRole = "configuration" | "identity" | "boundary";
@@ -269,6 +173,7 @@ async function stableResolution(entry: RegistryEntry) {
 
 export class ConfigRegistry {
   readonly #entries = new Map<string, RegistryEntry>();
+  #generation = 0;
   readonly #reconcileTimer: ReturnType<typeof setInterval>;
   constructor(
     readonly debounceMs = 75,
@@ -315,14 +220,14 @@ export class ConfigRegistry {
   async snapshot(
     options: ResolveConfigOptions = {},
   ): Promise<Readonly<ConfigSnapshot>> {
-    const captured = capturedOptions(options);
-    const key = keyFor(captured);
+    const captured = captureResolutionOptions(options);
+    const key = configurationResolutionKey(captured);
     const entry = this.#entry(key, captured);
     if (!entry.promise) entry.promise = this.#reload(key, entry);
     return entry.promise;
   }
   invalidate(options: ResolveConfigOptions = {}): void {
-    const key = keyFor(capturedOptions(options));
+    const key = configurationResolutionKey(options);
     const entry = this.#entries.get(key);
     if (Object.keys(options).length === 0) {
       for (const [entryKey, entryValue] of this.#entries)
@@ -409,7 +314,7 @@ export class ConfigRegistry {
           configurationIdentity(resolved))
     )
       return previous;
-    const generation = (previous?.generation ?? 0) + 1;
+    const generation = ++this.#generation;
     const snapshot = Object.freeze({
       config: resolved
         ? Object.freeze({ ...resolved, generation })

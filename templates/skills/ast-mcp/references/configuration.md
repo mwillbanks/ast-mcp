@@ -58,7 +58,12 @@ Approved external rules remain separate from intelligence roots.
 
 `filesystem = "unrestricted"` bypasses path boundaries and symlink policies.
 It preserves OS permissions, hashes, atomic operations, and immutable revisions.
-Project activation requires session-scoped host approval tied to effective configuration.
+Trusted global unrestricted authority survives a repeated project setting.
+Without that authority, evaluate scoped rules before requesting broad activation.
+Scoped allows, denies, and requests retain their normal behavior.
+Only unmatched baseline denial can request whole-filesystem activation.
+Once activated, unrestricted access retains its policy bypass.
+Project activation requires session-scoped host approval tied to effective configuration and generation.
 It does not change indexing, intelligence roots, storage, or workspace selection.
 Modern HTTP has no stable transport session.
 Requested approvals fail closed with `approval_required`; model arguments cannot bypass them.

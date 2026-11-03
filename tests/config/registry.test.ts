@@ -63,6 +63,53 @@ test("reloading changed selections preserves unrelated and unchanged snapshots",
   }
 });
 
+test("unexpected fingerprint failures reject access and queued reloads recover without poisoning other identities", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const base = { env: {}, home: path.join(root, "home") };
+  const options = { ...base, cwd: first };
+  const originalStat = fsPromises.stat;
+  const failure = new Error("injected fingerprint provider failure");
+  let failNextProbe = false;
+  const metadata = spyOn(fsPromises, "stat");
+  metadata.mockImplementation(((
+    ...args: Parameters<typeof fsPromises.stat>
+  ) => {
+    if (failNextProbe && String(args[0]) === path.join(first, ".git")) {
+      failNextProbe = false;
+      throw failure;
+    }
+    return Reflect.apply(originalStat, fsPromises, args);
+  }) as typeof fsPromises.stat);
+  try {
+    const initial = await registry.snapshot(options);
+    const unrelated = await registry.snapshot({ ...base, cwd: second });
+    // Ordinary filesystem rejections are handled as missing paths. Inject an
+    // unexpected synchronous provider fault to exercise rejected reload promises.
+    failNextProbe = true;
+    await expect(registry.reload()).rejects.toBe(failure);
+    expect(failNextProbe).toBeFalse();
+    await expect(registry.get(options)).rejects.toBe(failure);
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reload();
+    const recovered = await registry.snapshot(options);
+    expect(recovered.healthy).toBeTrue();
+    expect(recovered.key).toBe(initial.key);
+    expect(recovered.generation).toBeGreaterThan(initial.generation);
+    expect((await registry.get(options)).telemetry.enabled).toBeFalse();
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+  } finally {
+    registry.close();
+    metadata.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("explicit reload absorbs pending debounce and delayed duplicate notifications", async () => {
   const { root, first } = await fixture();
   const registry = new ConfigRegistry(60_000);
@@ -779,7 +826,7 @@ test("registry evicts inactive identities and safely reloads an evicted configur
     );
     const replacement = await registry.snapshot({ ...base, cwd: first });
     expect(replacement.config).not.toBe(initial.config);
-    expect(replacement.generation).toBe(1);
+    expect(replacement.generation).toBeGreaterThan(initial.generation);
     expect(replacement.key).toBe(initial.key);
     expect(replacement.config!.telemetry.enabled).toBeFalse();
     expect(await registry.reload()).toHaveLength(1);

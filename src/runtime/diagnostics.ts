@@ -90,6 +90,10 @@ export async function collectDiagnostics(options: DiagnosticsOptions = {}) {
       generation: config?.generation ?? null,
       filesystem: config?.safety.filesystem ?? "unknown",
       filesystemSource: config?.provenance["safety.filesystem"] ?? "unknown",
+      filesystemAuthority:
+        config?.safety.filesystemAuthority ??
+        config?.provenance["safety.filesystem"] ??
+        "unknown",
       requireHash: config?.safety.requireHash ?? null,
       hookEnabled: config?.safety.hook.enabled ?? null,
       formattingEnabled: config?.formatting.enabled ?? null,

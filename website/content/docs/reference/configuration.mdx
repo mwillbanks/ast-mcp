@@ -17,6 +17,8 @@ The project file is the nearest `ast-mcp.toml` from the selected workspace root 
 
 Objects merge by field and arrays replace the lower-precedence array, except that global and project `[[paths]]` rules are both retained for policy evaluation. Workspace roots, path-rule anchors, dprint configuration, and relative executable paths resolve from the TOML file that declares them. Use an absolute embedding `local_path` to avoid process-working-directory ambiguity. Unknown sections or keys, unsupported versions, malformed TOML, and invalid values fail with the source path and dotted key instead of being ignored.
 
+`config_status.safety.filesystemAuthority` and diagnostics `configuration.filesystemAuthority` report privilege authority separately from last-writer provenance. Repeating trusted global unrestricted access in a project preserves that authority. Project-only expansion first follows scoped rules; only unmatched baseline denial requests broad activation. `policy_check` reports the same route through `authorization`: `scoped`, `unrestricted_pending`, or `unrestricted`. After broad activation, existing unrestricted policy bypass remains in effect. Configuration changes or explicit invalidation revoke generation-bound session approvals.
+
 ## Schema
 
 Version 2 is the long-term schema. Omitting `version` retains version 1 compatibility and emits deprecation diagnostics; ast-mcp never rewrites configuration automatically.

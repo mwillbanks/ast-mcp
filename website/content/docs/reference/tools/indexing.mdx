@@ -1,0 +1,248 @@
+---
+title: Indexing, graphs, retrieval, and generation
+description: Publish a revision-scoped index, query evidence, and optionally generate cited answers.
+---
+
+Publish a revision-scoped index, query evidence, and optionally generate cited answers. Start with the [Code Intelligence guide](/docs/guides/code-intelligence) for a complete workflow.
+
+Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
+
+## generate
+
+Optionally generates a cited answer from explicitly supplied, revision-scoped evidence.
+
+**Choose this tool:** Draft a cited answer only after selecting trustworthy retrieval evidence.
+
+**Side effects:** Invokes the configured HTTP generation provider or host MCP sampling. Sends the supplied prompt and evidence to that provider.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns status, generated answer, citations, and failure reason where applicable. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Disabled providers, unsupported sampling, absent secrets, rejected evidence, timeouts, and unavailable providers do not produce a trusted answer.
+
+<ToolParameters name="generate" />
+
+```json
+{
+  "name": "generate",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "prompt": "Explain this evidence.",
+    "allowedCorpusArtifactIds": [
+      "source:v1:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ],
+    "evidence": [
+      {
+        "artifactId": "source:v1:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "entityId": "graph-node:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "src/index.ts",
+        "range": {
+          "startByte": 0,
+          "endByte": 1,
+          "start": {
+            "line": 0,
+            "column": 0
+          },
+          "end": {
+            "line": 0,
+            "column": 1
+          }
+        },
+        "text": "x"
+      }
+    ]
+  }
+}
+```
+
+## graph_diff
+
+Compares two explicitly selected workspace generations and requires federation for cross-repository requests.
+
+**Choose this tool:** Compare published graphs from explicit workspace and generation pairs.
+
+**Side effects:** Reads both graph snapshots. Cross-repository comparison also requires configured and requested federation.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns bounded added, removed, or changed graph evidence and continuation state. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Wrong generation ownership, unavailable publications, and disabled federation reject comparisons.
+
+<ToolParameters name="graph_diff" />
+
+```json
+{
+  "name": "graph_diff",
+  "arguments": {
+    "base": {
+      "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "generationId": "generation:v1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "target": {
+      "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "generationId": "generation:v1:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}
+```
+
+## graph_explain
+
+Returns one graph node with paginated relationships and source evidence.
+
+**Choose this tool:** Explain a known node and inspect its source evidence.
+
+**Side effects:** Reads bounded graph relationships and evidence.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns the node, relationships, source evidence, and continuation state. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Unknown node IDs, missing generations, stale workspaces, and resource limits constrain the explanation.
+
+<ToolParameters name="graph_explain" />
+
+```json
+{
+  "name": "graph_explain",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "nodeId": "graph-node:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}
+```
+
+## graph_path
+
+Finds a bounded shortest path with evidence-backed relationships.
+
+**Choose this tool:** Find a bounded shortest path between two known graph nodes.
+
+**Side effects:** Reads graph relationships without modifying the index.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns the selected path with source evidence and coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** A missing path under incomplete coverage does not prove disconnection. Invalid nodes and budgets constrain search.
+
+<ToolParameters name="graph_path" />
+
+```json
+{
+  "name": "graph_path",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceNodeId": "graph-node:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "targetNodeId": "graph-node:v1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  }
+}
+```
+
+## graph_query
+
+Traverses, expands impact, or finds components in the selected workspace generation.
+
+**Choose this tool:** Traverse relationships, expand impact, or find components from known graph node IDs.
+
+**Side effects:** Reads the selected published graph with bounded traversal.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns graph nodes, edges, evidence, pagination, and coverage. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Non-graph IDs, absent generations, invalid cursors, and exhausted budgets fail or truncate queries.
+
+<ToolParameters name="graph_query" />
+
+```json
+{
+  "name": "graph_query",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "startNodeIds": [
+      "graph-node:v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ]
+  }
+}
+```
+
+## index
+
+Builds, refreshes, verifies, collects, or inspects the LanceDB intelligence index.
+
+**Choose this tool:** Build or refresh a persistent generation before repeated retrieval and graph queries.
+
+**Side effects:** Build and refresh write index artifacts. Verify checks publications; collect removes eligible historical artifacts; status inspects state.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns job, publication generation, freshness, storage, and coverage information. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Stale handles, unavailable storage, indexing failures, and resource limits require inspection. Historical source remains immutable.
+
+<ToolParameters name="index" />
+
+```json
+{
+  "name": "index",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "action": "build"
+  }
+}
+```
+
+## index_status
+
+Returns freshness, coverage, storage, and generation status for one workspace.
+
+**Choose this tool:** Inspect index publication and bounded table counts without rebuilding.
+
+**Side effects:** Reads index status and counts within configured limits.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns generation and storage status with bounded row counts. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Unknown workspaces, storage errors, or timeouts reject or limit results.
+
+<ToolParameters name="index_status" />
+
+```json
+{
+  "name": "index_status",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "maxRowsPerTable": 1000
+  }
+}
+```
+
+## retrieve
+
+Ranks revision-scoped exact, lexical, semantic, and graph evidence within explicit budgets.
+
+**Choose this tool:** Find source evidence by terms, symbols, filters, and optional semantic scoring.
+
+**Side effects:** Reads a published generation. Semantic scoring may load configured embedding artifacts.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns ranked path, range, text, identity, freshness, semantic state, and coverage evidence. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** An absent or stale generation, disabled semantic support, model failure, or degraded coverage limits conclusions.
+
+<ToolParameters name="retrieve" />
+
+```json
+{
+  "name": "retrieve",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query": "Where is configuration generation validated?"
+  }
+}
+```

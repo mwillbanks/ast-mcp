@@ -146,6 +146,118 @@ test("decline, explicit denial, cancellation and malformed responses remain dist
   }
 });
 
+test("approval response shape diagnostics never disclose unsupported host values", async () => {
+  for (const [response, shape] of [
+    [
+      null,
+      {
+        action: "missing",
+        content: "missing",
+        decision: "missing",
+        issue: "unsupported_action",
+      },
+    ],
+    [
+      { action: "private-host-action" },
+      { action: "unsupported", issue: "unsupported_action" },
+    ],
+    [{ action: "accept" }, { content: "missing", issue: "missing_content" }],
+    [
+      { action: "accept", content: null },
+      {
+        contentPresent: true,
+        content: "null",
+        decisionPresent: false,
+        issue: "invalid_content",
+      },
+    ],
+    [
+      { action: "accept", content: [] },
+      {
+        contentPresent: true,
+        content: "array",
+        decisionPresent: false,
+        issue: "invalid_content",
+      },
+    ],
+    ...[
+      ["private-content", "string"],
+      [123, "number"],
+      [false, "boolean"],
+      [Symbol("private-content"), "other"],
+    ].map(
+      ([content, type]) =>
+        [
+          { action: "accept", content },
+          {
+            contentPresent: true,
+            content: type,
+            decisionPresent: false,
+            decision: "missing",
+            issue: "invalid_content",
+          },
+        ] as const,
+    ),
+    ...[
+      [null, "null"],
+      [[], "array"],
+      [{ secret: "private-content" }, "object"],
+      [false, "boolean"],
+      [Symbol("private-content"), "other"],
+    ].map(
+      ([value, type]) =>
+        [
+          { action: "accept", content: { decision: value } },
+          {
+            contentPresent: true,
+            content: "object",
+            decisionPresent: true,
+            decision: type,
+            issue: "unsupported_decision",
+          },
+        ] as const,
+    ),
+    [
+      { action: "accept", content: {} },
+      { decision: "missing", issue: "missing_decision" },
+    ],
+    [
+      { action: "accept", content: { decision: 123 } },
+      {
+        decisionPresent: true,
+        decision: "number",
+        issue: "unsupported_decision",
+      },
+    ],
+    [
+      {
+        action: "accept",
+        content: {
+          decision: "private-host-value",
+          secret: "private-form-content",
+        },
+      },
+      { decision: "string", issue: "unsupported_decision" },
+    ],
+  ] as const) {
+    const instance = server();
+    const pending = await challenge(instance);
+    await expect(
+      authorize(instance, context("same", { [pending.key]: response })),
+    ).rejects.toMatchObject({
+      code: "approval_response_invalid",
+      details: { responseShape: shape },
+    });
+    const diagnostic = approvalDiagnostics(instance, context());
+    expect(diagnostic).toMatchObject({
+      sessionGrantPresent: false,
+      lastOutcome: { responseShape: shape, outcome: "malformed" },
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("private-");
+    expect(JSON.stringify(diagnostic)).not.toContain(pending.key);
+  }
+});
+
 test("session grants reject replay across server, session, generation and expired challenges", async () => {
   const instance = server();
   const pending = await challenge(instance);

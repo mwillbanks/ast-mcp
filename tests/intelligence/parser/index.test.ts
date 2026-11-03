@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 
+import packageJson from "../../../package.json" with { type: "json" };
 import {
   EmbeddedSourceMap,
   findStructuralMatches,
@@ -438,7 +439,9 @@ describe("native intelligence parser", () => {
           `@ast-grep/lang-${entry.languageId}@${expectedVersion}`,
         );
       } else {
-        expect(entry.grammarVersion).toStartWith("@ast-grep/napi@0.51.0:");
+        expect(entry.grammarVersion).toStartWith(
+          `@ast-grep/napi@${packageJson.dependencies["@ast-grep/napi"]}:`,
+        );
       }
     }
 

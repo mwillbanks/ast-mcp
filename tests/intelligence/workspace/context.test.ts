@@ -292,7 +292,7 @@ test("workspace context is async-local and never changes process routing state",
   );
 });
 
-test("configuration cache keys include workspace, revision, and storage identities", async () => {
+test("configuration cache identity excludes derived workspace, revision, and storage coordinates", async () => {
   const root = await temporary("ast-mcp-workspace-config-key-");
   const registry = new ConfigRegistry(1, 60_000, 8);
   try {
@@ -309,7 +309,8 @@ test("configuration cache keys include workspace, revision, and storage identiti
       storageDomainId: "storage-domain:v1:".concat("5".repeat(64)),
       workspaceId: "workspace:v1:".concat("6".repeat(64)),
     });
-    expect(first.key).not.toBe(second.key);
+    expect(first.key).toBe(second.key);
+    expect(first).toBe(second);
     clearConfigCache();
     const firstResolved = await resolveConfig({
       ...base,
@@ -323,7 +324,7 @@ test("configuration cache keys include workspace, revision, and storage identiti
       storageDomainId: "storage-domain:v1:".concat("5".repeat(64)),
       workspaceId: "workspace:v1:".concat("6".repeat(64)),
     });
-    expect(firstResolved).not.toBe(secondResolved);
+    expect(firstResolved).toBe(secondResolved);
   } finally {
     registry.close();
   }
