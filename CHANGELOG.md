@@ -2,18 +2,16 @@
 
 ## [0.7.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.0...ast-mcp-v0.7.1) (2026-11-03)
 
-
 ### 🐛 Fixes
 
-* **68:** contain configuration timer lifetimes ([4bc5bf7](https://github.com/mwillbanks/ast-mcp/commit/4bc5bf75b5bb7330d8726c303b29d6cdf8bfecf4))
-* **68:** harden configuration and approval state ([6549817](https://github.com/mwillbanks/ast-mcp/commit/65498172d1f02e6d5455e73533e33b51e89ba608))
-* **68:** stabilize configuration and scoped access ([#69](https://github.com/mwillbanks/ast-mcp/issues/69)) ([6d77deb](https://github.com/mwillbanks/ast-mcp/commit/6d77deb578039539e368ef8a3a5603bd7c3a4662))
-* **68:** stabilize identity and authorization ([f491780](https://github.com/mwillbanks/ast-mcp/commit/f4917805ca8c60c4e7fb5b50c5f6acbca5083bf3))
-
+- **68:** contain configuration timer lifetimes ([4bc5bf7](https://github.com/mwillbanks/ast-mcp/commit/4bc5bf75b5bb7330d8726c303b29d6cdf8bfecf4))
+- **68:** harden configuration and approval state ([6549817](https://github.com/mwillbanks/ast-mcp/commit/65498172d1f02e6d5455e73533e33b51e89ba608))
+- **68:** stabilize configuration and scoped access ([#69](https://github.com/mwillbanks/ast-mcp/issues/69)) ([6d77deb](https://github.com/mwillbanks/ast-mcp/commit/6d77deb578039539e368ef8a3a5603bd7c3a4662))
+- **68:** stabilize identity and authorization ([f491780](https://github.com/mwillbanks/ast-mcp/commit/f4917805ca8c60c4e7fb5b50c5f6acbca5083bf3))
 
 ### 🧪 Tests
 
-* **68:** enforce deterministic unit timing ([6ada829](https://github.com/mwillbanks/ast-mcp/commit/6ada82999e027f331193932fa79163e3c02a5c6d))
+- **68:** enforce deterministic unit timing ([6ada829](https://github.com/mwillbanks/ast-mcp/commit/6ada82999e027f331193932fa79163e3c02a5c6d))
 
 ## [0.7.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.6.6...ast-mcp-v0.7.0) (2026-10-31)
 
