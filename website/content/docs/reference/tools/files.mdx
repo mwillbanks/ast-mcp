@@ -1,0 +1,275 @@
+---
+title: Files and mutations
+description: Inspect, hash, create, patch, move, and delete files through guarded operations.
+---
+
+Inspect, hash, create, patch, move, and delete files through guarded operations. Start with the [Code Intelligence guide](/docs/guides/code-intelligence) for a complete workflow.
+
+Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
+
+## document_query
+
+Reads bounded values from JSON, JSONC, TOML, or YAML by RFC 6901 selectors and returns the whole-file hash.
+
+**Choose this tool:** Inspect selected JSON, JSONC, TOML, or YAML values with RFC 6901 pointers.
+
+**Side effects:** Reads a structured document without editing it.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns selected values and a whole-file hash. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Invalid documents, unsupported formats, absent selectors, and policy denial produce actionable failures.
+
+<ToolParameters name="document_query" />
+
+```json
+{
+  "name": "document_query",
+  "arguments": {
+    "filePath": "/absolute/path/to/package.json",
+    "selectors": ["/scripts", "/dependencies"]
+  }
+}
+```
+
+## file_capabilities
+
+Reports the intrinsic and effective AST/text read, AST/Aider patch, and AST search capabilities for each file.
+
+**Choose this tool:** Check supported read modes and patch strategies before selecting a method.
+
+**Side effects:** Inspects file kinds, parse health, and effective configuration; does not edit.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns intrinsic and effective capabilities, including parse status. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Missing or inaccessible files reject the request; unsupported methods remain unavailable.
+
+<ToolParameters name="file_capabilities" />
+
+```json
+{
+  "name": "file_capabilities",
+  "arguments": {
+    "filePaths": ["/absolute/path/to/source.ts"]
+  }
+}
+```
+
+## file_chattr
+
+Applies guarded attributes through verified file handles to 1–50 files under deterministic locks; cancellation and incomplete rollback return structured failures.
+
+**Choose this tool:** Apply explicit file metadata without rewriting contents.
+
+**Side effects:** Changes requested mode or same-owner attributes under file locks.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns applied metadata. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** OS permission errors, unsupported ownership changes, denied paths, or stale hashes reject the operation.
+
+<ToolParameters name="file_chattr" />
+
+```json
+{
+  "name": "file_chattr",
+  "arguments": {
+    "files": {
+      "/absolute/path/to/script.sh": {
+        "expectedSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "chattr": {
+          "chmod": 493
+        }
+      }
+    }
+  }
+}
+```
+
+## file_delete
+
+Deletes 1–50 files after one reference inventory per root and removes only authorized empty ancestors. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.
+
+**Choose this tool:** Delete only inspected, authorized files with fresh hashes.
+
+**Side effects:** Removes files and eligible empty parents. Referenced source files require explicit reference handling.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns deletion results for the batch. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Stale hashes, live import references, and denied delete permissions stop deletion. Do not override references without reviewing their impact.
+
+<ToolParameters name="file_delete" />
+
+```json
+{
+  "name": "file_delete",
+  "arguments": {
+    "files": {
+      "/absolute/path/to/obsolete.md": {
+        "expectedSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    }
+  }
+}
+```
+
+## file_hash
+
+Batches streaming whole-file SHA-256 calculations without loading file contents into memory. Use this for fresh patch hashes, including AST-capable files. Accepts up to 50 paths.
+
+**Choose this tool:** Obtain a fresh whole-file hash immediately before a guarded mutation.
+
+**Side effects:** Streams file bytes without returning their contents.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns a SHA-256 for each requested path. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Missing or denied files reject the request. A stale hash cannot authorize a later mutation.
+
+<ToolParameters name="file_hash" />
+
+```json
+{
+  "name": "file_hash",
+  "arguments": {
+    "filePaths": ["/absolute/path/to/source.ts"]
+  }
+}
+```
+
+## file_patch
+
+Patches multiple files in one declared files batch. Each value contains a patchStrategy, ordered aiderBlocks or astRules, and optional preview mode. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced. Preview applies the strategy without formatting or committing; formatting runs only at commit, including previewReceipt commit. Receipts are reserved across the batch and consumed after mutation completion; confirmed no-change or verified rollback permits retry until expiry, while changed source or uncertain recovery requires a new preview.
+
+**Choose this tool:** Patch existing files with a structural rule or a uniquely anchored Aider block. Select patchStrategy and its matching ordered rule list. Obtain a fresh file_hash immediately before mutation. For commit, remove preview or use the returned previewReceipt with the fresh expectedSha256.
+
+**Side effects:** Preview returns an unformatted candidate and receipt. Commit applies configured formatting and atomically writes guarded files.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns per-file preview diffs and receipts, or committed hashes and match methods. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Stale hashes or receipts, ambiguous matches, disabled strategies, and formatter failures stop the commit. Refresh inspection and preview before retrying.
+
+<ToolParameters name="file_patch" />
+
+```json
+{
+  "name": "file_patch",
+  "arguments": {
+    "files": {
+      "/absolute/path/to/source.ts": {
+        "patchStrategy": "aider_block",
+        "expectedSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "aiderBlocks": [
+          {
+            "search": "const enabled = false;",
+            "replace": "const enabled = true;"
+          }
+        ],
+        "preview": true
+      }
+    }
+  }
+}
+```
+
+## file_read
+
+Reads files using an agent-selected auto, ast, or text mode. AST mode returns a source map/requested symbols or RFC 6901-selected structured-document values; text mode returns a bounded slice. Each result includes capabilities and a streaming whole-file SHA-256. Text slices default to lines [0, 100] and are capped at 1000 lines and 1048576 bytes.
+
+**Choose this tool:** Read bounded source slices, selected symbols, or structured values before editing.
+
+**Side effects:** Reads files only. Historical revisions remain read-only.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns per-file content, capabilities, slice coverage, and streaming whole-file SHA-256. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Missing files, denied paths, unsupported read modes, and capped slices require narrower or supported requests.
+
+<ToolParameters name="file_read" />
+
+```json
+{
+  "name": "file_read",
+  "arguments": {
+    "files": [
+      {
+        "filePath": "/absolute/path/to/source.ts",
+        "mode": "text",
+        "range": {
+          "start": 0,
+          "end": 80
+        }
+      }
+    ]
+  }
+}
+```
+
+## file_rename
+
+Renames 1–50 files without replacement and creates authorized missing destination parents without marker files. A fresh expectedSha256 is required by default; safety.require_hash=false makes it optional, but supplied hashes remain enforced.
+
+**Choose this tool:** Move a file to an absent destination after inspecting both paths.
+
+**Side effects:** Locks source and destination, uses no-replace moves, and attempts rollback on ordinary batch failures.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns each source and destination result. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Existing destinations, cross-root moves, denied delete or write, and stale hashes reject the move. Crash-atomic recovery is not guaranteed.
+
+<ToolParameters name="file_rename" />
+
+```json
+{
+  "name": "file_rename",
+  "arguments": {
+    "files": {
+      "/absolute/path/to/old.md": {
+        "destination": "/absolute/path/to/new.md",
+        "expectedSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    }
+  }
+}
+```
+
+## file_write
+
+Creates or replaces 1–50 files and creates authorized missing parents without marker files. Existing files require a fresh expectedSha256 by default; safety.require_hash=false makes it optional, but any supplied hash is still verified.
+
+**Choose this tool:** Create new files through the guarded batch boundary. Supply expectedSha256 when replacing an existing file; inspect capabilities first.
+
+**Side effects:** Creates authorized missing parents and applies configured formatting before writing. Existing replacements require a fresh hash and supported file capabilities.
+
+**Approval:** Read, write, and delete policies apply independently. A request decision requires host approval; scoped grants do not activate unrestricted access.
+
+**Output:** Returns created paths, hashes, and metadata. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Existing destinations without the required hash, policy denial, or formatting failures reject writes. Use file_patch for structural changes.
+
+<ToolParameters name="file_write" />
+
+```json
+{
+  "name": "file_write",
+  "arguments": {
+    "files": {
+      "/absolute/path/to/new.md": {
+        "content": "# Notes\n"
+      }
+    }
+  }
+}
+```

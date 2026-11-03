@@ -1,7 +1,15 @@
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 
+import { configRegistry } from "../../src/config/registry";
 import { startHttpServer } from "../../src/http";
 import * as lifecycle from "../../src/server/lifecycle";
+import { createMockTime, deferred, type MockTime } from "../support/mock-time";
+
+let time: MockTime;
+afterEach(() => configRegistry.close());
+beforeEach(() => {
+  time = createMockTime();
+});
 
 const headers = {
   accept: "application/json, text/event-stream",
@@ -68,9 +76,11 @@ test("HTTP servers isolate sessions and close only their own resources", async (
 
 test("shutdown releases a legacy server awaiting connection and rejects late registration", async () => {
   const original = lifecycle.createServer;
-  const started = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<void>();
-  const connected = Promise.withResolvers<void>();
+  const started = deferred<void>();
+  const release = deferred<void>();
+  const connected = deferred<void>();
+  const lateClosed = deferred<void>();
+  let released = false;
   let closes = 0;
   let transportCloses = 0;
   const injected = spyOn(lifecycle, "createServer").mockImplementation(
@@ -96,6 +106,7 @@ test("shutdown releases a legacy server awaiting connection and rejects late reg
       server.close = async () => {
         closes++;
         await close();
+        if (released) lateClosed.resolve();
       };
       return server;
     },
@@ -127,22 +138,15 @@ test("shutdown releases a legacy server awaiting connection and rejects late reg
       request.then(() => {
         throw new Error("setup did not start");
       }),
-      Bun.sleep(1000).then(() => {
-        throw new Error("setup timed out");
-      }),
     ]);
-    await Promise.race([
-      server.close(),
-      Bun.sleep(1000).then(() => {
-        throw new Error("shutdown blocked");
-      }),
-    ]);
+    await server.close();
     expect(closes).toBeGreaterThan(0);
     expect(await request).toBe(503);
     const beforeLateConnection = closes;
+    released = true;
     release.resolve();
     await connected.promise;
-    await Bun.sleep(0);
+    await lateClosed.promise;
     expect(closes).toBeGreaterThan(beforeLateConnection);
     expect(transportCloses).toBeGreaterThan(0);
   } finally {
@@ -342,7 +346,18 @@ test("idle sessions expire without closing an active server", async () => {
   const server = await startHttpServer({ host: "127.0.0.1", port: 0 });
   try {
     const id = await initializeLegacySession(server);
-    await Bun.sleep(40);
+    await time.advanceBy(10);
+    // The idle policy expires strictly after the configured deadline.
+    const beforeDeadline = await fetch(new URL("/mcp", server.url), {
+      method: "POST",
+      headers: { ...headers, "mcp-session-id": id },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }),
+    });
+    await beforeDeadline.text();
+    expect(beforeDeadline.status).toBe(200);
+    await time.advanceBy(10);
+    // The successful request refreshed the activity epoch at the boundary.
+    await time.advanceBy(5);
     const expired = await fetch(new URL("/mcp", server.url), {
       method: "POST",
       headers: { ...headers, "mcp-session-id": id },

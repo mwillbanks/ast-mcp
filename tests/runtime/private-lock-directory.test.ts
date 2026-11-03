@@ -12,6 +12,7 @@ import {
   readSystemAccount,
   systemAccount,
 } from "../../src/runtime/private-lock-directory.ts";
+import { createMockTime } from "../support/mock-time";
 
 test("account lookup uses the current runtime and clears native home overrides inside its child", () => {
   const command = accountLookupCommand();
@@ -108,26 +109,44 @@ test("account lookup removes environment home and runtime options with mixed cas
 });
 
 test("account lookup deadlines terminate a nonresponsive child", async () => {
-  const original = Bun.spawn;
-  let child: ReturnType<typeof Bun.spawn> | undefined;
-  const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
-    child = original(
-      [process.execPath, "--eval", "setInterval(() => {}, 1000)"],
-      { stdout: "pipe", stderr: "ignore" },
-    );
-    return child;
-  });
+  const time = createMockTime();
+  const exited = Promise.withResolvers<number>();
+  let output!: ReadableStreamDefaultController<Uint8Array>;
+  let killed = false;
+  const child = {
+    stdout: new ReadableStream<Uint8Array>({
+      start(controller) {
+        output = controller;
+      },
+    }),
+    exited: exited.promise,
+    kill() {
+      if (killed) return;
+      killed = true;
+      output.close();
+      exited.resolve(1);
+    },
+  };
+  const spawn = spyOn(Bun, "spawn").mockReturnValue(child as never);
+  const lookup = readSystemAccount().then(
+    () => {
+      throw new Error("Stalled account lookup unexpectedly succeeded");
+    },
+    (error) => error,
+  );
   try {
-    await expect(readSystemAccount()).rejects.toMatchObject({
+    expect(killed).toBeFalse();
+    await time.advanceBy(5000);
+    expect(await lookup).toMatchObject({
       code: "mutation_lock_account_unavailable",
     });
-    expect(child?.exitCode !== null || child?.signalCode !== null).toBe(true);
+    expect(killed).toBeTrue();
   } finally {
+    child.kill();
+    await lookup;
     spawn.mockRestore();
-    child?.kill("SIGKILL");
-    if (child) await child.exited;
   }
-}, 10_000);
+});
 
 test("cached account resolution retries after a transient lookup failure", async () => {
   const isolated = await import(

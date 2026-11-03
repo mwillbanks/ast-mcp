@@ -4,6 +4,8 @@ description: Hash, read, write, patch, rename, change attributes, and delete wit
 icon: Files
 ---
 
+For complete parameters and examples, use [Reference → Files and mutations](/docs/reference/tools/files). Use [Configuration and diagnostics](/docs/reference/tools/configuration) to understand policy and approval.
+
 File operations are batch-oriented and explicit about state. Mutation tools declare a `files` object whose keys are paths, avoiding dictionary-only top-level schemas that some hosts cannot encode. Each batch accepts 1–50 requests, including renames.
 
 ## file_hash

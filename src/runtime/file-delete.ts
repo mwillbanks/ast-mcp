@@ -23,6 +23,7 @@ import {
 import { ParserWorkerPool } from "../intelligence/parser/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { detectAstLanguage } from "../patch/languages";
+import { createDeadline } from "./deadline";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
 import { assertReadableTree } from "./path-policy";
@@ -349,6 +350,7 @@ export async function deleteFilesSafely(
   requests: FileDeleteBatch,
   signal?: AbortSignal,
 ) {
+  using deadline = createDeadline(30_000, signal);
   const pool = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
   const verification: ReferenceVerification = {
     directories: new Map(),
@@ -359,10 +361,7 @@ export async function deleteFilesSafely(
     targetIndex: new Map<string, string[]>(),
     candidates: 0,
     sourceBytes: 0,
-    signal: AbortSignal.any([
-      AbortSignal.timeout(30_000),
-      ...(signal ? [signal] : []),
-    ]),
+    signal: deadline.signal,
   };
   const entries: Awaited<ReturnType<typeof prepareDeleteEntry>>[] = [];
   try {

@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
+import { createDeadline } from "./deadline";
+
 export const FILE_HASH_CHUNK_BYTES = 1024 * 1024;
 export function sha256(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
@@ -19,26 +21,37 @@ export async function sha256Handle(
   signal?: AbortSignal,
   timeoutMs = 30_000,
 ): Promise<string> {
-  const deadline = AbortSignal.timeout(timeoutMs);
-  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  readSignal.throwIfAborted();
-  const metadata = await handle.stat();
-  readSignal.throwIfAborted();
-  if (!metadata.isFile())
-    throw Object.assign(new Error("Hashing requires a regular file"), {
-      code: "file_not_regular",
-      retryable: false,
-    });
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(FILE_HASH_CHUNK_BYTES);
-  let position = 0;
-  while (true) {
+  const deadline = createDeadline(timeoutMs);
+  const readSignal = signal
+    ? AbortSignal.any([signal, deadline.signal])
+    : deadline.signal;
+  try {
     readSignal.throwIfAborted();
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+    const metadata = await handle.stat();
     readSignal.throwIfAborted();
-    if (bytesRead === 0) return hash.digest("hex");
-    hash.update(buffer.subarray(0, bytesRead));
-    position += bytesRead;
+    if (!metadata.isFile())
+      throw Object.assign(new Error("Hashing requires a regular file"), {
+        code: "file_not_regular",
+        retryable: false,
+      });
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(FILE_HASH_CHUNK_BYTES);
+    let position = 0;
+    while (true) {
+      readSignal.throwIfAborted();
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        buffer.length,
+        position,
+      );
+      readSignal.throwIfAborted();
+      if (bytesRead === 0) return hash.digest("hex");
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    deadline.dispose();
   }
 }
 
@@ -46,15 +59,18 @@ export async function sha256File(
   filePath: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const deadline = AbortSignal.timeout(30_000);
-  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  readSignal.throwIfAborted();
-  const hash = createHash("sha256");
-  const stream = createReadStream(filePath, {
-    highWaterMark: FILE_HASH_CHUNK_BYTES,
-    signal: readSignal,
-  });
+  const deadline = createDeadline(30_000);
+  const readSignal = signal
+    ? AbortSignal.any([signal, deadline.signal])
+    : deadline.signal;
+  let stream: ReturnType<typeof createReadStream> | undefined;
   try {
+    readSignal.throwIfAborted();
+    const hash = createHash("sha256");
+    stream = createReadStream(filePath, {
+      highWaterMark: FILE_HASH_CHUNK_BYTES,
+      signal: readSignal,
+    });
     for await (const chunk of stream) {
       readSignal.throwIfAborted();
       hash.update(chunk);
@@ -62,6 +78,7 @@ export async function sha256File(
     readSignal.throwIfAborted();
     return hash.digest("hex");
   } finally {
-    stream.destroy();
+    stream?.destroy();
+    deadline.dispose();
   }
 }

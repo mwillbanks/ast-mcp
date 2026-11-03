@@ -1,0 +1,171 @@
+---
+title: Configuration and diagnostics
+description: Configure version 2 policy and diagnose authorization behavior.
+---
+
+Configure version 2 policy and diagnose authorization behavior. Start with the [Code Intelligence guide](/docs/guides/code-intelligence) for a complete workflow.
+
+Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
+
+## approval_probe
+
+Explicitly tests a bounded approval form and checks the latest release. Acceptance grants no filesystem permission and persists no configuration.
+
+**Choose this tool:** Test host approval transport when real approval forms fail.
+
+**Side effects:** Sends a bounded diagnostic approval form and checks the latest release. Acceptance grants no filesystem permission.
+
+**Approval:** This diagnostic explicitly requests a host form. Acceptance grants no file access.
+
+**Output:** Returns probe and release-check results with sanitized diagnostics. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Unsupported host elicitation, cancellation, malformed responses, and absent decisions remain failures. Do not treat success as a path grant.
+
+<ToolParameters name="approval_probe" />
+
+```json
+{
+  "name": "approval_probe",
+  "arguments": {}
+}
+```
+
+## config_core
+
+Updates grouped core ast-mcp.toml sections (cli.output, workspace, safety, files, formatting, intelligence, http, dependencies, mcp.configuration). Does not rewrite the whole file or change [[paths]]. Configuration changes require user approval by default.
+
+**Choose this tool:** Change grouped version 2 settings while preserving path rules and unrelated configuration.
+
+**Side effects:** Writes the selected project or global configuration transactionally and invalidates its registry generation.
+
+**Approval:** Host approval is required by default. Changes to mcp.configuration always require approval. Model arguments cannot grant permission.
+
+**Output:** Returns updated configuration state and generation. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Disabled configuration tools, version 1 documents, protected settings, malformed values, and declined approval reject the update. Reopen affected workspace handles.
+
+<ToolParameters name="config_core" />
+
+```json
+{
+  "name": "config_core",
+  "arguments": {
+    "safety": {
+      "require_hash": true
+    }
+  }
+}
+```
+
+## config_paths
+
+Adds, updates, or removes [[paths]] rules in ast-mcp.toml as a batch. Does not change core sections. Configuration changes require user approval by default.
+
+**Choose this tool:** Add, update, or remove ordered path rules by stable rule ID.
+
+**Side effects:** Writes only path rule tables, then invalidates configuration and affected grants.
+
+**Approval:** Host approval is required by default. Changes to mcp.configuration always require approval. Model arguments cannot grant permission.
+
+**Output:** Returns updated configuration state and path rules. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Missing or duplicate rule IDs, invalid paths, disabled tools, or declined approval stop the transaction.
+
+<ToolParameters name="config_paths" />
+
+```json
+{
+  "name": "config_paths",
+  "arguments": {
+    "operations": [
+      {
+        "op": "add",
+        "rule": {
+          "id": "docs",
+          "path": "./docs",
+          "policies": {
+            "read": "allow",
+            "write": "request"
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+## config_status
+
+Returns the redacted effective configuration, source provenance, generation, formatter selection order, and health-relevant metadata.
+
+**Choose this tool:** Inspect effective settings, their provenance, and formatter selection before troubleshooting.
+
+**Side effects:** Reads configuration and reports redacted state.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns configuration generation, health, diagnostics, sources, effective policy, and formatting. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Invalid configuration is reported as unhealthy. A stale selected workspace requires reopening.
+
+<ToolParameters name="config_status" />
+
+```json
+{
+  "name": "config_status",
+  "arguments": {}
+}
+```
+
+## diagnostics
+
+Reports sanitized runtime, approval, capability and configuration state before filesystem approval. Always checks the public npm latest release with a five-second deadline.
+
+**Choose this tool:** Diagnose runtime or approval failures before requesting filesystem access.
+
+**Side effects:** Checks the public npm latest release with a five-second deadline. Does not grant access.
+
+**Approval:** No filesystem approval is needed for the diagnostic. This tool never activates unrestricted access.
+
+**Output:** Returns sanitized runtime, capability, configuration, approval route, and response-shape details. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Network failure affects the version check. Sanitized shape diagnostics never imply malformed approval was accepted.
+
+<ToolParameters name="diagnostics" />
+
+```json
+{
+  "name": "diagnostics",
+  "arguments": {}
+}
+```
+
+## policy_check
+
+Explains the effective read, write, or delete decision for a batch of paths without performing the operation.
+
+**Choose this tool:** Explain read, write, and delete decisions before attempting the operation.
+
+**Side effects:** Evaluates the same authorization routes as file operations, without granting approval or changing files.
+
+**Approval:** Workspace authorization applies. Indexing roots, storage, and generation capability remain separate from filesystem grants.
+
+**Output:** Returns allow, deny, or request decisions, reasons, and authorization route details. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** A request decision is not a grant. Protected configuration, symlink escape, and worktree restrictions still apply.
+
+<ToolParameters name="policy_check" />
+
+```json
+{
+  "name": "policy_check",
+  "arguments": {
+    "checks": [
+      {
+        "path": "/absolute/path/to/source.ts",
+        "operation": "read"
+      }
+    ]
+  }
+}
+```

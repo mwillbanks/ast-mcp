@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 
+import { configRegistry } from "../../src/config/registry";
 import { toolFailure, toolSuccess } from "../../src/helpers/mcp-schema";
 import {
   authorizeRequestedDecision,
@@ -14,6 +15,17 @@ import {
   withApprovalContext,
 } from "../../src/runtime/approval";
 import { createServer } from "../../src/server";
+import {
+  createMockTime,
+  deferred,
+  flushMicrotasks,
+  type MockTime,
+} from "../support/mock-time";
+
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 
 async function fixture(timeoutMs: number, count = 1) {
   const root = await mkdtemp(
@@ -88,6 +100,7 @@ async function fixture(timeoutMs: number, count = 1) {
       await client.close();
       await server.close();
       clearSessionApprovals();
+      configRegistry.close();
       await rm(root, { recursive: true, force: true });
     },
   };
@@ -95,7 +108,7 @@ async function fixture(timeoutMs: number, count = 1) {
 
 test("silent approval expires while reads and ping stay responsive and retries remain healthy", async () => {
   const instance = await fixture(200);
-  const started = Promise.withResolvers<void>();
+  const started = deferred<void>();
   let mode = "silent";
   instance.client.setRequestHandler("elicitation/create", async () => {
     if (mode === "silent") {
@@ -124,6 +137,13 @@ test("silent approval expires while reads and ping stay responsive and retries r
     });
     expect(read.isError).not.toBe(true);
     expect(JSON.stringify(read)).toContain("responsive");
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await time.advanceBy(199);
+    expect(settled).toBe(false);
+    await time.advanceBy(1);
     expect((await pending).isError).toBe(true);
     expect(instance.mutations()).toBe(0);
     mode = "decline";
@@ -151,45 +171,59 @@ test("silent approval expires while reads and ping stay responsive and retries r
 
 test("progress notifications cannot extend the approval deadline", async () => {
   const instance = await fixture(50);
-  let progress: ReturnType<typeof setInterval> | undefined;
+  const started = deferred<string | number>();
   instance.client.setRequestHandler("elicitation/create", async (request) => {
     const progressToken = request.params._meta?.progressToken;
     expect(progressToken).toBeDefined();
-    let value = 0;
-    progress = setInterval(() => {
-      void instance.client
-        .notification({
-          method: "notifications/progress",
-          params: {
-            progressToken: progressToken!,
-            progress: ++value,
-          },
-        })
-        .catch(() => {});
-    }, 5);
+    started.resolve(progressToken!);
     return new Promise<never>(() => {});
   });
   try {
     await instance.connect();
-    const start = performance.now();
-    const result = await instance.client.callTool({
+    const pending = instance.client.callTool({
       name: "fixture_approval",
       arguments: {},
     });
+    const progressToken = await started.promise;
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    const notify = (progress: number) =>
+      instance.client.notification({
+        method: "notifications/progress",
+        params: { progressToken, progress },
+      });
+    await notify(1);
+    await time.advanceBy(25);
+    await notify(2);
+    await time.advanceBy(24);
+    await notify(3);
+    expect(settled).toBe(false);
+    await time.advanceBy(1);
+    const result = await pending;
     expect(result.isError).toBe(true);
-    expect(performance.now() - start).toBeLessThan(500);
     expect(instance.mutations()).toBe(0);
     expect(await instance.client.ping()).toEqual({});
   } finally {
-    clearInterval(progress);
     await instance.close();
   }
 });
 
 test("cancelled approval cannot resume mutation after a late acceptance", async () => {
   const instance = await fixture(1000);
-  const started = Promise.withResolvers<void>();
-  const answer = Promise.withResolvers<{
+  const elicitationFinished = deferred<void>();
+  const originalRequest = instance.server.server.request.bind(
+    instance.server.server,
+  );
+  instance.server.server.request = ((...args: unknown[]) => {
+    const pending = Reflect.apply(originalRequest, undefined, args);
+    if ((args[0] as { method?: string }).method !== "elicitation/create")
+      return pending;
+    return pending.finally(() => elicitationFinished.resolve());
+  }) as typeof instance.server.server.request;
+  const started = deferred<void>();
+  const answer = deferred<{
     action: "accept";
     content: { decision: string };
   }>();
@@ -211,7 +245,8 @@ test("cancelled approval cannot resume mutation after a late acceptance", async 
       action: "accept",
       content: { decision: "allow_session" },
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await elicitationFinished.promise;
+    await flushMicrotasks();
     expect(await instance.client.ping()).toEqual({});
     expect(instance.mutations()).toBe(0);
   } finally {

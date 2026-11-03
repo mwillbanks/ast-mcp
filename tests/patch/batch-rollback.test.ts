@@ -17,6 +17,7 @@ import { patchFiles, writeFilesSafely } from "../../src/patch/engine";
 import { sha256 } from "../../src/runtime/hash";
 import { withFileLock } from "../../src/runtime/locks";
 import { hermeticConfig } from "../support/hermetic-config";
+import { createMockTime } from "../support/mock-time";
 
 async function configuredRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -109,6 +110,7 @@ test("cancelled patch and write batches roll back completed commits and remain u
 });
 
 test("file batch lock waits honor deadlines and cancellation", async () => {
+  const time = createMockTime();
   const root = await configuredRoot("ast-mcp-batch-lock-wait-");
   const target = path.join(root, "target.txt");
   await writeFile(target, "before\n");
@@ -130,42 +132,67 @@ test("file batch lock waits honor deadlines and cancellation", async () => {
         withFileLock(target, async (owner) => {
           // Advance only after the held acquisition queue checks its clock.
           let deadlineChecks = 0;
-          await expect(
-            withConfig(hermeticConfig(root), () =>
-              writeFilesSafely(
-                {
-                  [target]: {
-                    expectedSha256: sha256("before\n"),
-                    content: "after\n",
-                  },
+          const deadlineWaiting = Promise.withResolvers<void>();
+          const deadlineAttempt = withConfig(hermeticConfig(root), () =>
+            writeFilesSafely(
+              {
+                [target]: {
+                  expectedSha256: sha256("before\n"),
+                  content: "after\n",
                 },
-                { deadline: 2, now: () => ++deadlineChecks },
-              ),
+              },
+              {
+                deadline: 2,
+                now: () => {
+                  deadlineWaiting.resolve();
+                  return ++deadlineChecks;
+                },
+              },
             ),
-          ).rejects.toMatchObject({ code: "lock_deadline" });
+          );
+          const deadlineResult = deadlineAttempt.then(
+            () => {
+              throw new Error("Held queue bypassed deadline");
+            },
+            (error) => error,
+          );
+          await deadlineWaiting.promise;
+          await time.advanceBy(10);
+          expect(await deadlineResult).toMatchObject({ code: "lock_deadline" });
           expect(deadlineChecks).toBe(2);
           const controller = new AbortController();
           let cancellationChecks = 0;
-          await expect(
-            withConfig(hermeticConfig(root), () =>
-              patchFiles(
-                {
-                  [target]: {
-                    expectedSha256: sha256("before\n"),
-                    patchStrategy: "aider_block",
-                    aiderBlocks: [{ search: "before", replace: "after" }],
-                  },
+          const cancellationWaiting = Promise.withResolvers<void>();
+          const cancellationAttempt = withConfig(hermeticConfig(root), () =>
+            patchFiles(
+              {
+                [target]: {
+                  expectedSha256: sha256("before\n"),
+                  patchStrategy: "aider_block",
+                  aiderBlocks: [{ search: "before", replace: "after" }],
                 },
-                {
-                  signal: controller.signal,
-                  now: () => {
-                    if (++cancellationChecks === 2) controller.abort();
-                    return Date.now();
-                  },
+              },
+              {
+                signal: controller.signal,
+                now: () => {
+                  cancellationWaiting.resolve();
+                  if (++cancellationChecks === 2) controller.abort();
+                  return time.now();
                 },
-              ),
+              },
             ),
-          ).rejects.toMatchObject({ code: "lock_aborted" });
+          );
+          const cancellationResult = cancellationAttempt.then(
+            () => {
+              throw new Error("Held queue bypassed cancellation");
+            },
+            (error) => error,
+          );
+          await cancellationWaiting.promise;
+          await time.advanceBy(10);
+          expect(await cancellationResult).toMatchObject({
+            code: "lock_aborted",
+          });
           expect(cancellationChecks).toBe(2);
           expect(began).toBe(0);
           await owner.fence();
@@ -181,10 +208,10 @@ test("file batch lock waits honor deadlines and cancellation", async () => {
               await lease.fence();
             },
             {
-              deadline: Date.now() + 2000,
+              deadline: time.now() + 2000,
               now: () => {
-                if (++retryChecks === 3) observeWait();
-                return Date.now();
+                if (++retryChecks === 1) observeWait();
+                return time.now();
               },
             },
           );
@@ -198,6 +225,7 @@ test("file batch lock waits honor deadlines and cancellation", async () => {
           await owner.fence();
         }),
     );
+    await time.advanceBy(10);
     await queuedRetry;
     expect(retried).toBeTrue();
     expect(await readFile(target, "utf8")).toBe("before\n");

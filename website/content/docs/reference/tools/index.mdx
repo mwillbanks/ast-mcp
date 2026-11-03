@@ -1,0 +1,22 @@
+---
+title: Tools
+description: Complete reference for every registered AST MCP tool and its exposed input schema.
+---
+
+Choose a category below. Each tool has one canonical reference entry, a stable heading, an example, and a Fumadocs parameter table.
+
+| Category                                                                      | Use it for                                                                              |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Workspaces](/docs/reference/tools/workspaces)                                | Open session-local checkout handles and inspect their state.                            |
+| [Files and mutations](/docs/reference/tools/files)                            | Inspect, hash, create, patch, move, and delete files through guarded operations.        |
+| [Configuration and diagnostics](/docs/reference/tools/configuration)          | Configure version 2 policy and diagnose authorization behavior.                         |
+| [Structural code intelligence](/docs/reference/tools/code-intelligence)       | Inspect selected source without building a persistent index.                            |
+| [Indexing, graphs, retrieval, and generation](/docs/reference/tools/indexing) | Publish a revision-scoped index, query evidence, and optionally generate cited answers. |
+
+Start with [Code Intelligence](/docs/guides/code-intelligence) for configuration and a working sequence. Use the [filesystem access guide](/docs/guides/filesystem-access) for scoped permissions and approval behavior.
+
+The category pages reuse the documentation layout's one anchor provider. Desktop navigation tracks the active tool; the mobile table of contents provides the same anchors. Expand parameters with a pointer or keyboard to inspect constraints and nested alternatives.
+
+Parameter tables describe exposed schemas. Tool-specific requirements enforced after schema parsing appear in each tool's selection guidance. Empty objects mean that the tool has no input parameters. Dotted fields belong to their containing object; required children apply when that object is present.
+
+Descriptions and parameter metadata are captured from every registration, including dynamically registered structural tools. Website builds use a checked-in snapshot and need only website dependencies. Root `tools:reference` checks drift against current registrations without invoking handlers. To refresh metadata, capture `bun run tools:reference --print` and update the snapshot through the guarded file boundary. Root `tools:check` includes this check.

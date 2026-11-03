@@ -33,6 +33,13 @@ Load [host-context.md](host-context.md) when Full access or worktree inference d
 Runtime diagnostics inspect loaded state before filesystem approval.
 They do not authorize arbitrary file reads.
 Reports omit credentials, source contents, unrelated paths, and replayable approval identifiers.
+`filesystemSource` records last-writer provenance; `filesystemAuthority` records privilege authority.
+Policy decisions expose `authorization`: `scoped`, `unrestricted_pending`, or `unrestricted`.
+Approval observations expose bounded `responseShape` categories for action, content, decision, and issue.
+`contentPresent` and `decisionPresent` report presence separately.
+Content and decision types are `missing`, `null`, `array`, `object`, `string`, `number`, `boolean`, or `other`.
+Issues distinguish unsupported actions, missing or invalid content, missing decisions, and unsupported decisions.
+These categories contain no raw responses, form values, or challenge identifiers.
 Keep diagnostic evidence sanitized before sharing it.
 
 Use `doctor --scope local` for project host inspection or `--scope global` for user host inspection.

@@ -50,4 +50,9 @@ const next: DocumentGoldens = {
   records: await Promise.all(current.records.map(regenerate)),
   unsupported: await regenerate(current.unsupported),
 };
-await Bun.write(goldenPath, `${JSON.stringify(next, null, 2)}\n`);
+const output = `${JSON.stringify(next, null, 2)}\n`;
+if (process.argv.includes("--stdout")) {
+  process.stdout.write(output);
+} else {
+  await Bun.write(goldenPath, output);
+}

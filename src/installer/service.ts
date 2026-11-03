@@ -236,16 +236,22 @@ const defaultRunner = runServiceCommand;
 export async function waitForService(url: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   for (let attempt = 0; attempt < 25 && Date.now() < deadline; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(
-          Math.max(1, Math.min(500, deadline - Date.now())),
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () =>
+        controller.abort(
+          new DOMException("Readiness deadline elapsed", "TimeoutError"),
         ),
-      });
+      Math.max(1, Math.min(500, deadline - Date.now())),
+    );
+    try {
+      const response = await fetch(url, { signal: controller.signal });
       await response.body?.cancel();
       if (response.status < 500) return;
     } catch {
       // The service may still be starting.
+    } finally {
+      clearTimeout(timer);
     }
     const remaining = deadline - Date.now();
     if (remaining > 0) await Bun.sleep(Math.min(100, remaining));

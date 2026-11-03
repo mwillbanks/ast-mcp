@@ -1,4 +1,9 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -525,7 +530,6 @@ test("embedding publication waits for sibling writes before exposing a batch fai
     });
   try {
     await failedJob;
-    await Bun.sleep(1);
     expect(settled).toBe(false);
     release();
     expect(await result).toMatchObject({ message: "first chunk failed" });
@@ -845,50 +849,68 @@ describe("retrieval embedding provider", () => {
     });
     let blockedCalls = 0;
     let blockedClosed = false;
+    const blockedEvents: string[] = [];
+    const blockedStarted = Promise.withResolvers<void>();
     const blocked: EmbeddingProvider = {
       close: async () => {
+        blockedEvents.push("closed");
         blockedClosed = true;
       },
       config,
       embed: async (texts) => {
         blockedCalls += 1;
-        if (blockedCalls === 1) await blockedGate;
+        if (blockedCalls === 1) {
+          blockedEvents.push("started");
+          blockedStarted.resolve();
+          await blockedGate;
+          blockedEvents.push("finished");
+        }
         return texts.map(() => [1, 0]);
       },
     };
     const bounded = new EmbeddingWorkerPool(config, () => blocked);
-    const first = bounded.embed("first");
-    await Bun.sleep(5);
-    expect(bounded.pending).toBe(1);
-    const second = bounded.embed("second");
-    expect(bounded.pending).toBe(2);
-    let queuedCancellation: unknown;
-    const secondSettled = second.catch((error: unknown) => {
-      queuedCancellation = error;
-    });
-    await expect(bounded.embed("third")).rejects.toBeInstanceOf(
-      EmbeddingQueueFullError,
-    );
-    const controller = new AbortController();
-    controller.abort();
-    await expect(
-      bounded.embed("cancel", { signal: controller.signal }),
-    ).rejects.toBeInstanceOf(EmbeddingCancelledError);
-    const closing = bounded.close();
-    await Bun.sleep(5);
-    expect(blockedClosed).toBeFalse();
-    release();
-    await expect(first).resolves.toEqual([1, 0]);
-    await secondSettled;
-    expect(queuedCancellation).toBeInstanceOf(EmbeddingCancelledError);
-    await closing;
-    expect(bounded.pending).toBe(0);
-    expect(blockedClosed).toBeTrue();
-    await bounded.close();
-    await bounded.close();
-    await expect(bounded.embed("closed")).rejects.toBeInstanceOf(
-      EmbeddingUnavailableError,
-    );
+    try {
+      const first = bounded.embed("first");
+      await blockedStarted.promise;
+      expect(bounded.pending).toBe(1);
+      const second = bounded.embed("second");
+      expect(bounded.pending).toBe(2);
+      let queuedCancellation: unknown;
+      const secondSettled = second.catch((error: unknown) => {
+        queuedCancellation = error;
+      });
+      await expect(bounded.embed("third")).rejects.toBeInstanceOf(
+        EmbeddingQueueFullError,
+      );
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        bounded.embed("cancel", { signal: controller.signal }),
+      ).rejects.toBeInstanceOf(EmbeddingCancelledError);
+      blockedEvents.push("close requested");
+      const closing = bounded.close();
+      release();
+      await expect(first).resolves.toEqual([1, 0]);
+      await secondSettled;
+      expect(queuedCancellation).toBeInstanceOf(EmbeddingCancelledError);
+      await closing;
+      expect(bounded.pending).toBe(0);
+      expect(blockedClosed).toBeTrue();
+      expect(blockedEvents).toEqual([
+        "started",
+        "close requested",
+        "finished",
+        "closed",
+      ]);
+      await bounded.close();
+      await bounded.close();
+      await expect(bounded.embed("closed")).rejects.toBeInstanceOf(
+        EmbeddingUnavailableError,
+      );
+    } finally {
+      release();
+      await bounded.close();
+    }
     await pool.close();
     expect(retrying.closed).toBeTrue();
 
@@ -2014,7 +2036,7 @@ describe("LanceDB hybrid retrieval", () => {
       close: async () => {},
       config,
       async embed(texts) {
-        await Bun.sleep(5);
+        await Promise.resolve();
         return texts.map(() => [1, 0]);
       },
     };

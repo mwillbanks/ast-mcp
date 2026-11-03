@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,7 @@ import type { MutationLifecycle } from "../../src/intelligence/mutation/types";
 import { type PatchBatch, patchFiles } from "../../src/patch/engine";
 import { sha256 } from "../../src/runtime/hash";
 import { hermeticConfig } from "../support/hermetic-config";
+import { createMockTime } from "../support/mock-time";
 
 const source = "before\n";
 const lifecycle = (
@@ -22,7 +23,13 @@ const lifecycle = (
   ...overrides,
 });
 
-async function fixture(operation: (files: string[]) => Promise<void>) {
+async function fixture(
+  operation: (
+    files: string[],
+    time: ReturnType<typeof createMockTime>,
+  ) => Promise<void>,
+) {
+  const time = createMockTime();
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-receipt-retry-"));
   const files = ["first.txt", "second.txt", "alias.txt"].map((name) =>
     path.join(root, name),
@@ -34,8 +41,10 @@ async function fixture(operation: (files: string[]) => Promise<void>) {
   );
   await Promise.all(files.map((file) => writeFile(file, source)));
   try {
-    await withConfig(hermeticConfig(root), () => operation(files));
+    await withConfig(hermeticConfig(root), () => operation(files, time));
   } finally {
+    await time.advanceBy(6 * 60 * 1000);
+    time.dispose();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -208,32 +217,21 @@ for (const uncertainty of [
 }
 
 test("receipt expiry during journal preparation prevents replacement", async () => {
-  await fixture(async ([first]) => {
-    const expire: Array<() => void> = [];
-    const realTimeout = globalThis.setTimeout;
-    const timers = spyOn(globalThis, "setTimeout").mockImplementation(((
-      callback: (...args: unknown[]) => void,
-      delay?: number,
-      ...args: unknown[]
-    ) => {
-      if (delay === 5 * 60 * 1000) expire.push(() => callback(...args));
-      return realTimeout(callback, delay, ...args);
-    }) as typeof setTimeout);
-    let requests: PatchBatch;
-    try {
-      ({ requests } = await previews([first!]));
-    } finally {
-      timers.mockRestore();
-    }
-    expect(expire).toHaveLength(1);
+  await fixture(async ([first], time) => {
+    const { requests } = await previews([first!]);
     await expect(
       withMutationLifecycle(
         lifecycle({
           begin: async () => {
-            expire[0]!();
+            await time.advanceBy(5 * 60 * 1000);
           },
         }),
-        () => patchFiles(requests),
+        // Model a journal whose lock remains valid beyond receipt expiry.
+        () =>
+          patchFiles(requests, {
+            leaseMs: 30 * 60 * 1000,
+            deadline: time.now() + 30 * 60 * 1000,
+          }),
       ),
     ).rejects.toMatchObject({ code: "preview_receipt_expired" });
     expect(await readFile(first!, "utf8")).toBe(source);
@@ -241,8 +239,8 @@ test("receipt expiry during journal preparation prevents replacement", async () 
 });
 
 test("released receipt reservations preserve their original expiry", async () => {
-  await fixture(async ([first]) => {
-    const { requests, output } = await previews([first!]);
+  await fixture(async ([first], time) => {
+    const { requests } = await previews([first!]);
     await expect(
       withMutationLifecycle(
         lifecycle({
@@ -253,15 +251,11 @@ test("released receipt reservations preserve their original expiry", async () =>
         () => patchFiles(requests),
       ),
     ).rejects.toThrow("retryable failure");
-    const clock = spyOn(Date, "now").mockReturnValue(
-      Date.parse(String(output[first!]!.receiptExpiresAt)) + 1,
-    );
-    try {
+    await time.advanceBy(5 * 60 * 1000 + 1);
+    {
       await expect(patchFiles(requests)).rejects.toMatchObject({
         code: "preview_receipt_expired",
       });
-    } finally {
-      clock.mockRestore();
     }
     expect(await readFile(first!, "utf8")).toBe(source);
   });

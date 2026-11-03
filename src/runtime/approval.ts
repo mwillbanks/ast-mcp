@@ -62,6 +62,81 @@ export type ApprovalOutcome =
   | "timeout"
   | "transport_error";
 
+type ApprovalValueType =
+  | "missing"
+  | "null"
+  | "array"
+  | "object"
+  | "string"
+  | "number"
+  | "boolean"
+  | "other";
+
+function responseValueType(value: unknown): ApprovalValueType {
+  if (value === undefined) return "missing";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  const type = typeof value;
+  return type === "object" ||
+    type === "string" ||
+    type === "number" ||
+    type === "boolean"
+    ? type
+    : "other";
+}
+
+export interface ApprovalResponseShape {
+  action: "accept" | "decline" | "cancel" | "missing" | "unsupported";
+  contentPresent: boolean;
+  content: ApprovalValueType;
+  decisionPresent: boolean;
+  decision: ApprovalValueType;
+  issue:
+    | "unsupported_action"
+    | "missing_content"
+    | "invalid_content"
+    | "missing_decision"
+    | "unsupported_decision"
+    | null;
+}
+
+function responseShape(
+  response: ApprovalResponse,
+  decision: PolicyDecision,
+): ApprovalResponseShape {
+  const action = response?.action;
+  const content = response?.content;
+  const value = content?.decision;
+  const allowed =
+    decision.approvalKind === "filesystem"
+      ? ["deny", "allow_session"]
+      : decision.approvalKind === "probe"
+        ? ["deny", "allow_once"]
+        : ["deny", "allow_once", "allow_session", "always_allow"];
+  const shape: ApprovalResponseShape = {
+    action:
+      action === "accept" || action === "decline" || action === "cancel"
+        ? action
+        : action === undefined
+          ? "missing"
+          : "unsupported",
+    contentPresent: content !== undefined,
+    content: responseValueType(content),
+    decisionPresent: value !== undefined,
+    decision: responseValueType(value),
+    issue: null,
+  };
+  if (shape.action === "missing" || shape.action === "unsupported")
+    shape.issue = "unsupported_action";
+  else if (shape.action === "accept") {
+    if (shape.content === "missing") shape.issue = "missing_content";
+    else if (shape.content !== "object") shape.issue = "invalid_content";
+    else if (shape.decision === "missing") shape.issue = "missing_decision";
+    else if (!allowed.includes(value!)) shape.issue = "unsupported_decision";
+  }
+  return shape;
+}
+
 export interface ApprovalObservation {
   at: string;
   outcome: ApprovalOutcome;
@@ -69,6 +144,8 @@ export interface ApprovalObservation {
   operation: PolicyDecision["operation"];
   source: PolicyDecision["source"];
   rule: "filesystem" | "path" | "probe";
+  authorization: PolicyDecision["authorization"];
+  responseShape?: ApprovalResponseShape;
 }
 
 let observations = new WeakMap<McpServer, Map<string, ApprovalObservation>>();
@@ -88,6 +165,7 @@ function observe(
   scope: ApprovalScope,
   decision: PolicyDecision,
   outcome: ApprovalOutcome,
+  shape?: ApprovalResponseShape,
 ): void {
   if (!scope.server) return;
   let sessions = observations.get(scope.server);
@@ -99,6 +177,8 @@ function observe(
   sessions.delete(session);
   sessions.set(session, {
     at: new Date().toISOString(),
+    authorization: decision.authorization,
+    ...(shape ? { responseShape: shape } : {}),
     outcome,
     actor: "unknown",
     operation: decision.operation,
@@ -160,6 +240,7 @@ export function supportsApprovalForm(
 export function approvalDiagnostics(
   server?: McpServer,
   context?: ServerContext,
+  generation?: number,
 ) {
   pruneApprovalChallenges();
   const session = context?.sessionId ?? "connection";
@@ -168,7 +249,7 @@ export function approvalDiagnostics(
     (challenge) =>
       challenge.sessionId === session && challenge.serverId === identity,
   );
-  const prefix = `${session}\u0000${identity}\u0000`;
+  const prefix = `${session}\u0000${identity}\u0000${generation}\u0000`;
   return {
     pendingCount: pending.length,
     oldestPendingAgeMs: pending.length
@@ -448,11 +529,11 @@ function key(
   return [
     scope.context?.sessionId ?? "connection",
     serverIdentity,
-    filesystem ? 0 : generation,
+    generation,
     filesystem ? "filesystem" : scope.tool,
     decision.ruleId ?? decision.source,
-    decision.operation,
-    decision.canonicalPath,
+    filesystem ? "filesystem" : decision.operation,
+    filesystem ? "filesystem" : decision.canonicalPath,
   ].join("\u0000");
 }
 
@@ -534,6 +615,7 @@ function approvalRequired(decision: PolicyDecision): Error {
       code: "approval_required",
       details: {
         operation: decision.operation,
+        authorization: decision.authorization,
         source: decision.source,
         policy: decision.policy,
         reason: "A stable host form approval is required",
@@ -550,6 +632,7 @@ function approvalRequired(decision: PolicyDecision): Error {
 function approvalResponseError(
   decision: PolicyDecision,
   outcome: ApprovalOutcome,
+  shape: ApprovalResponseShape,
 ): Error {
   const code =
     outcome === "cancelled"
@@ -565,6 +648,8 @@ function approvalResponseError(
       code,
       details: {
         outcome,
+        authorization: decision.authorization,
+        responseShape: shape,
         actor: "unknown",
         operation: decision.operation,
         source: decision.source,
@@ -747,14 +832,15 @@ export function authorizeRequestedDecision(
   );
   if (accepted !== undefined) {
     issuedChallenges.delete(grantKey);
-    observe(scope, decision, "accepted");
+    observe(scope, decision, "accepted", responseShape(response!, decision));
     return accepted;
   }
   if (response !== undefined) {
     const outcome = responseOutcome(response);
     issuedChallenges.delete(grantKey);
-    observe(scope, decision, outcome);
-    throw approvalResponseError(decision, outcome);
+    const shape = responseShape(response, decision);
+    observe(scope, decision, outcome, shape);
+    throw approvalResponseError(decision, outcome, shape);
   }
   const { capabilities } = approvalClient(scope.server, scope.context);
   if (!supportsApprovalForm(capabilities)) {
@@ -767,7 +853,7 @@ export function authorizeRequestedDecision(
   throw requestApproval(scope, decision, nextResponseKey);
 }
 
-function filesystemDecision(config: ResolvedConfig): PolicyDecision {
+export function filesystemDecision(config: ResolvedConfig): PolicyDecision {
   const fingerprint = createHash("sha256")
     .update(
       JSON.stringify({
@@ -792,36 +878,22 @@ function filesystemDecision(config: ResolvedConfig): PolicyDecision {
   };
 }
 
-export function grantUnrestrictedFilesystem(config: ResolvedConfig): void {
-  if (config.safety.filesystem !== "unrestricted") return;
-  const scope = activeApproval.getStore();
-  if (!scope?.context || !scope.server || scope.requestScoped) return;
-  sessionGrants.add(key(filesystemDecision(config), scope, 0));
-}
-
 export function unrestrictedFilesystemAuthorized(
   config: ResolvedConfig,
 ): boolean {
   if (config.safety.filesystem !== "unrestricted") return false;
-  if (config.provenance["safety.filesystem"] !== "project") return true;
+  const authority =
+    config.safety.filesystemAuthority ?? config.provenance["safety.filesystem"];
+  if (authority === "global" || authority === "environment") return true;
   const scope = activeApproval.getStore();
   return Boolean(
     scope?.context &&
     scope.server &&
     !scope.requestScoped &&
-    sessionGrants.has(key(filesystemDecision(config), scope, 0)),
+    sessionGrants.has(
+      key(filesystemDecision(config), scope, config.generation),
+    ),
   );
-}
-
-export function assertUnrestrictedFilesystem(config: ResolvedConfig): void {
-  if (
-    config.safety.filesystem !== "unrestricted" ||
-    config.provenance["safety.filesystem"] !== "project"
-  )
-    return;
-  const decision = filesystemDecision(config);
-  if (!authorizeRequestedDecision(decision, 0))
-    throw approvalRequired(decision);
 }
 
 export function approvalSessionId(): string {

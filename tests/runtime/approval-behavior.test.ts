@@ -14,6 +14,7 @@ import {
 } from "../../src/runtime/approval";
 import { codexApprovalMetadata } from "../../src/runtime/hosts/codex";
 import registerDiagnosticTools from "../../src/tools/diagnostics";
+import { createMockTime } from "../support/mock-time";
 
 afterEach(() => clearSessionApprovals());
 
@@ -146,6 +147,129 @@ test("decline, explicit denial, cancellation and malformed responses remain dist
   }
 });
 
+test("approval response shape diagnostics never disclose unsupported host values", async () => {
+  for (const [response, shape] of [
+    [
+      null,
+      {
+        action: "missing",
+        content: "missing",
+        decision: "missing",
+        issue: "unsupported_action",
+      },
+    ],
+    [
+      { action: "private-host-action" },
+      { action: "unsupported", issue: "unsupported_action" },
+    ],
+    [
+      { action: "private-host-action", content: { decision: "allow_session" } },
+      {
+        action: "unsupported",
+        contentPresent: true,
+        content: "object",
+        decisionPresent: true,
+        decision: "string",
+        issue: "unsupported_action",
+      },
+    ],
+    [{ action: "accept" }, { content: "missing", issue: "missing_content" }],
+    [
+      { action: "accept", content: null },
+      {
+        contentPresent: true,
+        content: "null",
+        decisionPresent: false,
+        issue: "invalid_content",
+      },
+    ],
+    [
+      { action: "accept", content: [] },
+      {
+        contentPresent: true,
+        content: "array",
+        decisionPresent: false,
+        issue: "invalid_content",
+      },
+    ],
+    ...[
+      ["private-content", "string"],
+      [123, "number"],
+      [false, "boolean"],
+      [Symbol("private-content"), "other"],
+    ].map(
+      ([content, type]) =>
+        [
+          { action: "accept", content },
+          {
+            contentPresent: true,
+            content: type,
+            decisionPresent: false,
+            decision: "missing",
+            issue: "invalid_content",
+          },
+        ] as const,
+    ),
+    ...[
+      [null, "null"],
+      [[], "array"],
+      [{ secret: "private-content" }, "object"],
+      [false, "boolean"],
+      [Symbol("private-content"), "other"],
+    ].map(
+      ([value, type]) =>
+        [
+          { action: "accept", content: { decision: value } },
+          {
+            contentPresent: true,
+            content: "object",
+            decisionPresent: true,
+            decision: type,
+            issue: "unsupported_decision",
+          },
+        ] as const,
+    ),
+    [
+      { action: "accept", content: {} },
+      { decision: "missing", issue: "missing_decision" },
+    ],
+    [
+      { action: "accept", content: { decision: 123 } },
+      {
+        decisionPresent: true,
+        decision: "number",
+        issue: "unsupported_decision",
+      },
+    ],
+    [
+      {
+        action: "accept",
+        content: {
+          decision: "private-host-value",
+          secret: "private-form-content",
+        },
+      },
+      { decision: "string", issue: "unsupported_decision" },
+    ],
+  ] as const) {
+    const instance = server();
+    const pending = await challenge(instance);
+    await expect(
+      authorize(instance, context("same", { [pending.key]: response })),
+    ).rejects.toMatchObject({
+      code: "approval_response_invalid",
+      details: { responseShape: shape },
+    });
+    const diagnostic = approvalDiagnostics(instance, context());
+    expect(diagnostic).toMatchObject({
+      sessionGrantPresent: false,
+      lastOutcome: { responseShape: shape, outcome: "malformed" },
+    });
+    expect(JSON.stringify(diagnostic)).not.toContain("private-");
+    expect(JSON.stringify(diagnostic)).not.toContain(pending.key);
+  }
+});
+
 test("session grants reject replay across server, session, generation and expired challenges", async () => {
   const instance = server();
   const pending = await challenge(instance);
@@ -160,6 +284,15 @@ test("session grants reject replay across server, session, generation and expire
   ).rejects.toBeInstanceOf(InputRequiredSignal);
   expect(await authorize(instance, context("same", accept))).toBeTrue();
   expect(await authorize(instance)).toBeTrue();
+  expect(
+    approvalDiagnostics(instance, context(), 1).sessionGrantPresent,
+  ).toBeTrue();
+  expect(
+    approvalDiagnostics(instance, context(), 2).sessionGrantPresent,
+  ).toBeFalse();
+  expect(
+    approvalDiagnostics(instance, context()).sessionGrantPresent,
+  ).toBeFalse();
   await expect(
     authorize(instance, context(), decision, 2),
   ).rejects.toBeInstanceOf(InputRequiredSignal);
@@ -200,10 +333,10 @@ test("one timeout cannot clear another session's identical prompt", async () => 
 });
 
 test("an expired native challenge cannot replay acceptance", async () => {
+  const time = createMockTime();
   const instance = server();
   const pending = await challenge(instance);
-  const originalNow = Date.now;
-  Date.now = () => originalNow() + 300_001;
+  await time.advanceBy(300_001);
   try {
     expect(approvalDiagnostics(instance, context())).toMatchObject({
       pendingCount: 0,
@@ -221,7 +354,7 @@ test("an expired native challenge cannot replay acceptance", async () => {
       ),
     ).rejects.toBeInstanceOf(InputRequiredSignal);
   } finally {
-    Date.now = originalNow;
+    time.dispose();
   }
 });
 
@@ -264,6 +397,7 @@ test("probe acceptance never creates a grant and each subsequent probe requires 
 });
 
 test("slow registry checks cannot consume a resumed probe challenge", async () => {
+  const time = createMockTime();
   const instance = server("codex-cli");
   const handlers = new Map<
     string,
@@ -291,17 +425,19 @@ test("slow registry checks cannot consume a resumed probe challenge", async () =
   expect(approvalDiagnostics(instance, context())).toMatchObject({
     pendingCount: 0,
     sessionGrantPresent: false,
-    lastOutcome: { outcome: "accepted" },
+    lastOutcome: {
+      outcome: "accepted",
+      responseShape: expect.objectContaining({ action: "accept", issue: null }),
+    },
   });
-  const now = Date.now;
-  Date.now = () => now() + 6000;
+  await time.advanceBy(6000);
   try {
     for (const resolve of releases) resolve();
     expect(await resumed).toMatchObject({
       structuredContent: { data: { outcome: "accepted" } },
     });
   } finally {
-    Date.now = now;
+    time.dispose();
     for (const resolve of releases) resolve();
   }
 });
@@ -359,6 +495,7 @@ test("probe challenge limits remain retryable errors and cleanup restores a fres
 });
 
 test("custom rule IDs retain ordinary path approval semantics and generation revocation", async () => {
+  const time = createMockTime();
   for (const ruleId of ["filesystem:custom-policy", "diagnostic-probe"]) {
     const instance = server("codex-cli");
     const selected = { ...decision, ruleId };
@@ -370,30 +507,25 @@ test("custom rule IDs retain ordinary path approval semantics and generation rev
       persist: ["session", "always"],
       "io.ast-mcp/probe": false,
     });
-    const now = Date.now;
-    Date.now = () => now() + 6000;
-    try {
-      expect(
-        await withApprovalContext(
-          {
-            server: instance,
-            context: context("same", {
-              [pending.key]: {
-                action: "accept",
-                content: { decision: "allow_once" },
-              },
-            }),
-            tool: "file_write",
-          },
-          async () => [
-            authorizeRequestedDecision(selected, 1),
-            authorizeRequestedDecision(selected, 1),
-          ],
-        ),
-      ).toEqual([true, true]);
-    } finally {
-      Date.now = now;
-    }
+    await time.advanceBy(6000);
+    expect(
+      await withApprovalContext(
+        {
+          server: instance,
+          context: context("same", {
+            [pending.key]: {
+              action: "accept",
+              content: { decision: "allow_once" },
+            },
+          }),
+          tool: "file_write",
+        },
+        async () => [
+          authorizeRequestedDecision(selected, 1),
+          authorizeRequestedDecision(selected, 1),
+        ],
+      ),
+    ).toEqual([true, true]);
     expect(approvalDiagnostics(instance, context())).toMatchObject({
       pendingCount: 0,
       sessionGrantPresent: false,
@@ -428,6 +560,7 @@ test("custom rule IDs retain ordinary path approval semantics and generation rev
     ).rejects.toBeInstanceOf(InputRequiredSignal);
     clearSessionApprovals("same", instance);
   }
+  time.dispose();
 });
 
 test("transport rejection records its observed failure without attributing a malformed response", async () => {

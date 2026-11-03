@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
+import { createDeadline } from "./deadline";
 import { sha256 } from "./hash";
 
 export interface FileSnapshot {
@@ -15,8 +16,8 @@ export async function readFileSnapshot(
   filePath: string,
   signal?: AbortSignal,
 ): Promise<FileSnapshot> {
-  const deadline = AbortSignal.timeout(30_000);
-  const readSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  using deadline = createDeadline(30_000, signal);
+  const readSignal = deadline.signal;
   readSignal.throwIfAborted();
   const handle = await open(
     filePath,

@@ -1,4 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import {
   mkdir,
   mkdtemp,
@@ -20,6 +25,7 @@ import {
   currentConfig,
   withConfig,
 } from "../../../src/config/index.ts";
+import { configRegistry } from "../../../src/config/registry.ts";
 import { withFencedFileLocks } from "../../../src/intelligence/mutation/locks.ts";
 import {
   discoverGitWorkspace,
@@ -89,6 +95,8 @@ function serverWithoutRoots(): McpServer {
 }
 
 afterEach(async () => {
+  configRegistry.close();
+  clearConfigCache();
   await Promise.all(
     created.splice(0).map((root) => rm(root, { force: true, recursive: true })),
   );
@@ -175,10 +183,13 @@ test("simultaneous linked-worktree requests read and mutate only their checkout"
     ),
   ).toBe(true);
 
+  const firstEntered = deferred<void>();
+  const secondEntered = deferred<void>();
   const [mainPath, linkedPath] = await Promise.all([
     withConfig(hermeticConfig(main), () =>
       withWorkspaceContext(mainWorkspace, async () => {
-        await Bun.sleep(8);
+        firstEntered.resolve();
+        await secondEntered.promise;
         const target = await resolveWritablePath("same.txt", "write");
         await writeFile(target, "main-updated\n");
         return target;
@@ -186,7 +197,8 @@ test("simultaneous linked-worktree requests read and mutate only their checkout"
     ),
     withConfig(hermeticConfig(linked), () =>
       withWorkspaceContext(linkedWorkspace, async () => {
-        await Bun.sleep(1);
+        await firstEntered.promise;
+        secondEntered.resolve();
         const target = await resolveWritablePath("same.txt", "write");
         await writeFile(target, "linked-updated\n");
         return target;
@@ -297,19 +309,17 @@ test("modern requests use explicit paths without legacy roots RPCs", async () =>
   }
 });
 
-test("configured execution reopens when configuration changes during discovery", async () => {
+test("configured execution rejects inconsistent discovery handles without reopening", async () => {
   const root = await temporary("ast-mcp-workspace-generation-race-");
   const originalOpen = WorkspaceRegistry.prototype.open;
   let opens = 0;
   WorkspaceRegistry.prototype.open = async function (options) {
     const workspace = await originalOpen.call(this, options);
     opens += 1;
-    return opens === 1
-      ? {
-          ...workspace,
-          configurationGeneration: workspace.configurationGeneration + 1,
-        }
-      : workspace;
+    return {
+      ...workspace,
+      configurationGeneration: workspace.configurationGeneration + 1,
+    };
   };
   try {
     const execute = configuredExecution(serverForRoot(root));
@@ -317,20 +327,46 @@ test("configured execution reopens when configuration changes during discovery",
     expect(await execute.clientRoots?.()).toHaveLength(1);
     execute.refreshRoots?.();
     expect(await execute.clientRoots?.()).toHaveLength(1);
-    const workspace = await execute.openWorkspace?.({ directory: root });
-    expect(opens).toBe(2);
-    expect(workspace?.checkoutRoot).toBe(await realpath(root));
+    await expect(
+      execute.openWorkspace!({ directory: root }),
+    ).rejects.toMatchObject({ code: "workspace_mismatch" });
+    expect(opens).toBe(1);
     latestRootsChangedHandler?.();
     expect(await execute.clientRoots?.()).toHaveLength(1);
-    try {
-      expect(
-        (await execute.workspaceStatus?.(workspace?.workspaceId))?.selected
-          ?.workspaceId,
-      ).toBe(workspace?.workspaceId);
-      expect((await execute.workspaceStatus?.())?.workspaces).toHaveLength(1);
-    } catch (error) {
-      expect(error).toMatchObject({ code: "workspace_mismatch" });
+  } finally {
+    WorkspaceRegistry.prototype.open = originalOpen;
+  }
+});
+
+test("configuration invalidation during discovery rejects a stale handle and allows a fresh open", async () => {
+  const root = await temporary("ast-mcp-workspace-config-invalidation-");
+  const originalOpen = WorkspaceRegistry.prototype.open;
+  let opens = 0;
+  WorkspaceRegistry.prototype.open = async function (options) {
+    const workspace = await originalOpen.call(this, options);
+    opens += 1;
+    if (opens === 1) {
+      configRegistry.invalidate();
+      await configRegistry.get({
+        clientRoots: [root],
+        cwd: root,
+        requestPaths: [root],
+      });
     }
+    return workspace;
+  };
+  try {
+    const execute = configuredExecution(serverForRoot(root));
+    await expect(
+      execute.openWorkspace!({ directory: root }),
+    ).rejects.toMatchObject({ code: "workspace_mismatch" });
+    expect(opens).toBe(1);
+    const workspace = await execute.openWorkspace!({ directory: root });
+    expect(opens).toBe(2);
+    expect(
+      (await execute.workspaceStatus!(workspace.workspaceId)).selected
+        ?.workspaceId,
+    ).toBe(workspace.workspaceId);
   } finally {
     WorkspaceRegistry.prototype.open = originalOpen;
   }

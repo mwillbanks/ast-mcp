@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 
+import durations from "./test-durations.json";
+
 export function discoverTestFiles(root = process.cwd()): string[] {
   const files = ["tests", "templates"]
     .flatMap((directory) =>
@@ -20,6 +22,7 @@ export function selectTestShard(
   files: readonly string[],
   shard: number,
   shards: number,
+  weights: Readonly<Record<string, number>> = durations.files,
 ): string[] {
   if (
     !Number.isInteger(shards) ||
@@ -32,7 +35,33 @@ export function selectTestShard(
       "Shard must be a zero-based integer smaller than the positive shard count",
     );
   }
-  return files.filter((_, index) => index % shards === shard);
+  if (new Set(files).size !== files.length)
+    throw new Error("Test inventory must contain unique paths");
+  const bins = Array.from({ length: shards }, () => ({
+    load: 0,
+    files: [] as string[],
+  }));
+  const measured = Object.values(weights)
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  const baseline = measured[Math.floor(measured.length / 2)] ?? 1;
+  const weight = (file: string) => {
+    const value = weights[file] ?? baseline;
+    if (!Number.isFinite(value) || value <= 0)
+      throw new Error("Test durations must be finite positive numbers");
+    return value;
+  };
+  const ordered = [...files].sort(
+    (a, b) => weight(b) - weight(a) || a.localeCompare(b),
+  );
+  for (const file of ordered) {
+    const target = bins.reduce((best, candidate) =>
+      candidate.load < best.load ? candidate : best,
+    );
+    target.files.push(file);
+    target.load += weight(file);
+  }
+  return bins[shard].files.sort();
 }
 
 export function selectedTestFiles(
@@ -80,7 +109,18 @@ export function runTestShard(
     );
   const result = Bun.spawnSync({
     cwd: root,
-    cmd: [process.execPath, "run", "test", ...files],
+    cmd: [
+      process.execPath,
+      "run",
+      "test",
+      ...files,
+      ...(process.env.AST_MCP_TEST_REPORT
+        ? [
+            "--reporter=junit",
+            "--reporter-outfile=" + process.env.AST_MCP_TEST_REPORT,
+          ]
+        : []),
+    ],
     stderr: output,
     stdin: "inherit",
     stdout: output,

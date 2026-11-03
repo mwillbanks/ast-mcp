@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { spawnHttpMcpProcess } from "../support/live-process";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess } from "./support/live-process";
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");

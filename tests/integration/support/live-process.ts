@@ -1,7 +1,7 @@
 import {
   commandForPlatform,
   terminateProcessTree,
-} from "../../src/runtime/subprocess";
+} from "../../../src/runtime/subprocess";
 
 type PipeSubprocess = Bun.Subprocess<"pipe", "pipe", "pipe">;
 
@@ -30,17 +30,21 @@ async function drain(
   stream: ReadableStream<Uint8Array>,
   chunks: string[],
   state: StreamState,
+  notify: () => void,
 ) {
   const decoder = new TextDecoder();
   try {
-    for await (const chunk of stream)
+    for await (const chunk of stream) {
       chunks.push(decoder.decode(chunk, { stream: true }));
+      notify();
+    }
     chunks.push(decoder.decode());
   } catch (error) {
     state.failure = { reason: error };
     throw error;
   } finally {
     state.closed = true;
+    notify();
   }
 }
 
@@ -71,12 +75,21 @@ export function spawnLiveProcess(
       windowsVerbatimArguments: platformCommand.windowsVerbatimArguments,
     },
   );
+  const changes = new Set<() => void>();
+  const notify = () => {
+    for (const change of changes) change();
+  };
+  let processExitCode: number | undefined;
+  void processHandle.exited.then((code) => {
+    processExitCode = code;
+    notify();
+  });
   const stdout: string[] = [];
   const stderr: string[] = [];
   const stdoutState: StreamState = { closed: false };
   const stderrState: StreamState = { closed: false };
-  const stdoutDrain = drain(processHandle.stdout, stdout, stdoutState);
-  const stderrDrain = drain(processHandle.stderr, stderr, stderrState);
+  const stdoutDrain = drain(processHandle.stdout, stdout, stdoutState, notify);
+  const stderrDrain = drain(processHandle.stderr, stderr, stderrState, notify);
   const outputSettled = Promise.allSettled([stdoutDrain, stderrDrain]);
   const outputDrained = outputSettled.then((results) => {
     const failure = results.find((result) => result.status === "rejected");
@@ -88,11 +101,24 @@ export function spawnLiveProcess(
   let stopPromise: Promise<void> | undefined;
   const timeoutMs = options.timeoutMs ?? 10_000;
 
-  async function settleOutput(deadline: number) {
-    await Promise.race([
-      outputDrained,
-      Bun.sleep(Math.min(1_000, Math.max(0, deadline - Date.now()))),
-    ]);
+  async function bounded<T>(
+    pending: Promise<T>,
+    milliseconds: number,
+    fallback: () => T,
+  ): Promise<T> {
+    const timeout = Promise.withResolvers<T>();
+    const timer = setTimeout(() => {
+      try {
+        timeout.resolve(fallback());
+      } catch (error) {
+        timeout.reject(error);
+      }
+    }, milliseconds);
+    try {
+      return await Promise.race([pending, timeout.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async function waitFor<T>(
@@ -100,26 +126,44 @@ export function spawnLiveProcess(
     inspect: () => T | undefined,
     waitMs: number,
     stream?: { name: "stdout" | "stderr"; state: StreamState },
-  ) {
-    const deadline = Date.now() + waitMs;
-    while (Date.now() < deadline) {
-      const result = inspect();
-      if (result !== undefined) return result;
-      if (stream?.state.failure) throw stream.state.failure.reason;
-      if (stream?.state.closed) {
-        const reason =
-          processHandle.exitCode !== null
-            ? `the process exited with code ${processHandle.exitCode}`
-            : `${stream.name} closed`;
-        throw new Error(
-          `${description} failed because ${reason}: ${capturedOutput(stdout, stderr)}`,
-        );
+  ): Promise<T> {
+    const controller = new AbortController();
+    const operation = (async () => {
+      for (;;) {
+        const change = Promise.withResolvers<void>();
+        const notify = () => change.resolve();
+        changes.add(notify);
+        try {
+          const result = inspect();
+          if (result !== undefined) return result;
+          if (stream?.state.failure) throw stream.state.failure.reason;
+          if (stream?.state.closed) {
+            const reason =
+              processHandle.exitCode !== null
+                ? `the process exited with code ${processHandle.exitCode}`
+                : `${stream.name} closed`;
+            throw new Error(
+              `${description} failed because ${reason}: ${capturedOutput(stdout, stderr)}`,
+            );
+          }
+          if (controller.signal.aborted) throw controller.signal.reason;
+          controller.signal.addEventListener("abort", notify, { once: true });
+          await change.promise;
+        } finally {
+          changes.delete(notify);
+          controller.signal.removeEventListener("abort", notify);
+        }
       }
-      await Bun.sleep(10);
+    })();
+    try {
+      return await bounded(operation, waitMs, () => {
+        throw new Error(
+          `${description} timed out after ${waitMs}ms: ${capturedOutput(stdout, stderr)}`,
+        );
+      });
+    } finally {
+      controller.abort(new Error("Readiness wait ended"));
     }
-    throw new Error(
-      `${description} timed out after ${waitMs}ms: ${capturedOutput(stdout, stderr)}`,
-    );
   }
 
   return {
@@ -143,19 +187,21 @@ export function spawnLiveProcess(
     async stop() {
       stopPromise ??= (async () => {
         await terminateProcessTree(processHandle, { graceMs: 2_000 });
-        const settled = await Promise.race([
+        const settled = await bounded(
           outputSettled.then(() => true),
-          Bun.sleep(2_000).then(() => false),
-        ]);
+          2_000,
+          () => false,
+        );
         // Failed readers cannot prove that inherited pipes or descendants closed.
         if (!settled || stdoutState.failure || stderrState.failure) {
           await terminateProcessTree(processHandle, { force: true });
           if (
             !settled &&
-            !(await Promise.race([
+            !(await bounded(
               outputSettled.then(() => true),
-              Bun.sleep(2_000).then(() => false),
-            ]))
+              2_000,
+              () => false,
+            ))
           )
             throw new Error(
               `Process pipes did not close after teardown: ${capturedOutput(stdout, stderr)}`,
@@ -167,13 +213,12 @@ export function spawnLiveProcess(
     },
     // Report leader exit with bounded capture grace; descendants may still own pipes.
     async waitForExit(waitMs = timeoutMs) {
-      const deadline = Date.now() + waitMs;
       const exitCode = await waitFor(
         "Waiting for process exit",
-        () => processHandle.exitCode ?? undefined,
+        () => processExitCode,
         waitMs,
       );
-      await settleOutput(deadline);
+      await bounded(outputDrained, Math.min(1_000, waitMs), () => undefined);
       return exitCode;
     },
     async waitForStderr(pattern, waitMs = timeoutMs) {

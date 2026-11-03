@@ -12,6 +12,7 @@ import {
 import { Suspense } from "react";
 
 import { getMDXComponents } from "@/components/mdx";
+import { isToolReference, ToolTOC } from "@/components/tool-reference";
 import { baseOptions } from "@/lib/layout.shared";
 
 import { Route as rootRoute } from "../__root";
@@ -41,7 +42,23 @@ export const Route = createRoute({
 const clientLoader = browserCollections.docs.createClientLoader({
   component({ default: MDX, frontmatter, toc }) {
     return (
-      <DocsPage toc={toc}>
+      <DocsPage
+        toc={toc}
+        tableOfContent={
+          isToolReference(toc)
+            ? {
+                component: (
+                  <aside
+                    id="nd-toc"
+                    className="sticky top-(--fd-docs-row-1) h-[calc(var(--fd-docs-height)-var(--fd-docs-row-1))] overflow-auto [grid-area:toc] w-(--fd-toc-width) pt-12 pe-4 pb-2 xl:layout:[--fd-toc-width:268px] max-xl:hidden"
+                  >
+                    <ToolTOC />
+                  </aside>
+                ),
+              }
+            : undefined
+        }
+      >
         <DocsTitle>{frontmatter.title}</DocsTitle>
         <DocsDescription>{frontmatter.description}</DocsDescription>
         <DocsBody>

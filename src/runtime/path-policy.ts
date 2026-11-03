@@ -7,7 +7,7 @@ import type { ResolvedConfig } from "../config";
 import type { PathPolicy } from "../config/v2-schema";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import {
-  assertUnrestrictedFilesystem,
+  filesystemDecision,
   authorizeRequestedDecision,
   unrestrictedFilesystemAuthorized,
 } from "./approval";
@@ -24,6 +24,7 @@ export type PathOperation = "read" | "write" | "delete";
 export interface PolicyDecision {
   /** Internal synthetic approvals only; never derive this from a path rule ID. */
   approvalKind?: "filesystem" | "probe";
+  authorization?: "scoped" | "unrestricted" | "unrestricted_pending";
   canonicalPath: string;
   operation: PathOperation;
   policy: PathPolicy;
@@ -183,25 +184,13 @@ function matchRule(
   };
 }
 
-export function evaluatePolicy(
+function evaluateRestrictedPolicy(
   config: ResolvedConfig,
   targetPath: string,
   operation: PathOperation,
   platform: NodeJS.Platform = process.platform,
 ): PolicyDecision {
   const canonicalPath = path.resolve(targetPath);
-  if (config.safety.filesystem === "unrestricted") {
-    assertUnrestrictedFilesystem(config);
-    return {
-      canonicalPath,
-      operation,
-      policy: "allow",
-      reason: "Unrestricted filesystem access",
-      source: "baseline",
-      specificity: Number.MAX_SAFE_INTEGER,
-      symlinks: true,
-    };
-  }
   if (
     operation !== "read" &&
     protectedConfiguration(config, canonicalPath, platform)
@@ -288,6 +277,44 @@ export function evaluatePolicy(
   });
 }
 
+export function evaluatePolicy(
+  config: ResolvedConfig,
+  targetPath: string,
+  operation: PathOperation,
+  platform: NodeJS.Platform = process.platform,
+): PolicyDecision {
+  if (unrestrictedFilesystemAuthorized(config))
+    return {
+      canonicalPath: path.resolve(targetPath),
+      operation,
+      policy: "allow",
+      reason: "Unrestricted filesystem access",
+      source: "baseline",
+      specificity: Number.MAX_SAFE_INTEGER,
+      symlinks: true,
+      authorization: "unrestricted",
+    };
+  const scoped = evaluateRestrictedPolicy(
+    config,
+    targetPath,
+    operation,
+    platform,
+  );
+  if (
+    config.safety.filesystem === "unrestricted" &&
+    scoped.policy === "deny" &&
+    scoped.source === "baseline" &&
+    scoped.ruleId === undefined
+  )
+    return {
+      ...filesystemDecision(config),
+      canonicalPath: scoped.canonicalPath,
+      operation,
+      authorization: "unrestricted_pending",
+    };
+  return { ...scoped, authorization: "scoped" };
+}
+
 function symlinkDenied(
   decision: PolicyDecision,
   target: string,
@@ -330,20 +357,6 @@ export async function evaluatePolicyForCheck(
     ? targetPath
     : path.resolve(base, targetPath);
   const linkPath = await canonicalPolicyPath(inputPath);
-  if (
-    config.safety.filesystem === "unrestricted" &&
-    !unrestrictedFilesystemAuthorized(config)
-  )
-    return {
-      canonicalPath: linkPath,
-      operation,
-      policy: "request",
-      reason:
-        "Project unrestricted filesystem access requires session approval",
-      source: "project",
-      specificity: Number.MAX_SAFE_INTEGER,
-      symlinks: true,
-    };
   const linkDecision = evaluatePolicy(config, linkPath, operation);
   const metadata = await lstat(linkPath).catch(() => undefined);
   if (!metadata?.isSymbolicLink()) return linkDecision;

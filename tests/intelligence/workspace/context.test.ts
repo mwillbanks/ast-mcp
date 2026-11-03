@@ -1,4 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
+
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import {
   mkdir,
   mkdtemp,
@@ -234,10 +239,13 @@ test("workspace context is async-local and never changes process routing state",
   const beforeCwd = process.cwd();
   const beforePwd = process.env.PWD;
 
+  const firstEntered = deferred<void>();
+  const secondEntered = deferred<void>();
   const [firstPath, secondPath] = await Promise.all([
     withConfig(hermeticConfig(first), () =>
       withWorkspaceContext(firstWorkspace, async () => {
-        await Bun.sleep(10);
+        firstEntered.resolve();
+        await secondEntered.promise;
         expect(await intelligenceRoot(["same.txt"])).toBe(
           firstWorkspace.checkoutRoot,
         );
@@ -249,7 +257,8 @@ test("workspace context is async-local and never changes process routing state",
     ),
     withConfig(hermeticConfig(second), () =>
       withWorkspaceContext(secondWorkspace, async () => {
-        await Bun.sleep(1);
+        await firstEntered.promise;
+        secondEntered.resolve();
         expect(currentWorkspace()?.workspaceId).toBe(
           secondWorkspace.workspaceId,
         );
@@ -292,7 +301,7 @@ test("workspace context is async-local and never changes process routing state",
   );
 });
 
-test("configuration cache keys include workspace, revision, and storage identities", async () => {
+test("configuration cache identity excludes derived workspace, revision, and storage coordinates", async () => {
   const root = await temporary("ast-mcp-workspace-config-key-");
   const registry = new ConfigRegistry(1, 60_000, 8);
   try {
@@ -309,7 +318,8 @@ test("configuration cache keys include workspace, revision, and storage identiti
       storageDomainId: "storage-domain:v1:".concat("5".repeat(64)),
       workspaceId: "workspace:v1:".concat("6".repeat(64)),
     });
-    expect(first.key).not.toBe(second.key);
+    expect(first.key).toBe(second.key);
+    expect(first).toBe(second);
     clearConfigCache();
     const firstResolved = await resolveConfig({
       ...base,
@@ -323,7 +333,7 @@ test("configuration cache keys include workspace, revision, and storage identiti
       storageDomainId: "storage-domain:v1:".concat("5".repeat(64)),
       workspaceId: "workspace:v1:".concat("6".repeat(64)),
     });
-    expect(firstResolved).not.toBe(secondResolved);
+    expect(firstResolved).toBe(secondResolved);
   } finally {
     registry.close();
   }

@@ -1,4 +1,10 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -533,6 +539,7 @@ describe("systems language WASM adapters", () => {
           })
           .catch((failure: unknown) => failure);
         await dispatch.dispatched;
+        if (operation === "timeout") await time.advanceBy(0);
         if (operation === "abort") controller.abort();
         if (operation === "close") await closeSystemsLanguageWorker();
         if (operation === "interrupt") await interruptSystemsLanguageWorker();

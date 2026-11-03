@@ -16,6 +16,8 @@ Inspect the host's MCP logs and the server's stderr. Protocol responses use stdo
 
 After updating the package or launch configuration, restart or reconnect the MCP server through your host. An MCP server cannot restart its host-owned stdio process. Restarting stdio or a legacy HTTP session clears its session-scoped approvals. Modern stateless HTTP has no trusted caller session for host approval, so any request requiring elicitation fails closed with `approval_required`; use stdio or a legacy host session for approval flows. Explicit global permissions remain usable. If tools are available but the skill is missing, check whether the host supports MCP Skills. Compatible clients discover and load the skill from the server; other clients need `ast-mcp skills export <destination>` and host-side setup. See the [skills guide](/docs/guides/skills).
 
+Use `diagnostics` after a rejected approval. `configuration.filesystemAuthority` distinguishes trusted privilege authority from last-writer `filesystemSource`. Approval `lastOutcome.responseShape` reports action categories, `contentPresent`, `decisionPresent`, and bounded content and decision types: `missing`, `null`, `array`, `object`, `string`, `number`, `boolean`, or `other`. Its `issue` distinguishes unsupported actions, absent or invalid content, absent decisions, and unsupported decisions. These details omit raw responses, form values, and challenge identifiers. A malformed envelope never grants access.
+
 Recoverable framing and tool errors leave the connection usable. Fatal failures emit diagnostics, perform bounded cleanup, and exit nonzero. Shutdown uses a five-second deadline.
 
 ## Slow or blocked requests

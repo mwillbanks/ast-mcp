@@ -15,6 +15,7 @@ import { deleteFilesSafely } from "../../src/runtime/file-delete";
 import { sha256 } from "../../src/runtime/hash";
 import * as mutationLocks from "../../src/runtime/locks";
 import { withFileLock } from "../../src/runtime/locks";
+import { createMockTime } from "../support/mock-time";
 
 let root = "";
 
@@ -135,21 +136,9 @@ test("file_delete cancels while waiting for a held mutation lease", async () => 
     controller.signal,
   );
   try {
-    await Promise.race([
-      waiting.promise,
-      Bun.sleep(5_000).then(() => {
-        throw new Error("Deletion did not reach mutation lease acquisition");
-      }),
-    ]);
+    await waiting.promise;
     controller.abort();
-    await expect(
-      Promise.race([
-        deletion,
-        Bun.sleep(500).then(() => {
-          throw new Error("Deletion still waits for the held lease");
-        }),
-      ]),
-    ).rejects.toMatchObject({ code: "lock_aborted" });
+    await expect(deletion).rejects.toMatchObject({ code: "lock_aborted" });
     expect(await readFile(filePath, "utf8")).toBe(content);
   } finally {
     release();
@@ -160,6 +149,7 @@ test("file_delete cancels while waiting for a held mutation lease", async () => 
 });
 
 test("file_delete reports committed deletion when cleanup lease remains held", async () => {
+  const time = createMockTime();
   const folder = await temporaryRoot();
   const canonical = await realpath(folder);
   const filePath = path.join(folder, "nested", "note.txt");
@@ -181,11 +171,24 @@ test("file_delete reports committed deletion when cleanup lease remains held", a
     },
   );
   await held;
-  const started = performance.now();
+  const enteredCleanup = Promise.withResolvers<void>();
+  const acquire = mutationLocks.withFileLocks;
+  const observe = spyOn(mutationLocks, "withFileLocks").mockImplementation(((
+    ...args: Parameters<typeof acquire>
+  ) => {
+    const pending = acquire(...args);
+    if (args[0].some((file) => file.endsWith(".ast-mcp-directory-cleanup")))
+      enteredCleanup.resolve();
+    return pending;
+  }) as typeof acquire);
   try {
-    const result = await deleteFilesSafely({
+    const deletion = deleteFilesSafely({
       [filePath]: { expectedSha256: sha256("delete me\n") },
     });
+    await enteredCleanup.promise;
+    expect(await Bun.file(filePath).exists()).toBeFalse();
+    await time.advanceBy(1000);
+    const result = await deletion;
     expect(result.cleanup).toEqual({
       status: "deferred",
       code: "lock_deadline",
@@ -193,8 +196,8 @@ test("file_delete reports committed deletion when cleanup lease remains held", a
     expect(result.removedDirectories).toEqual([]);
     expect(await Bun.file(filePath).exists()).toBeFalse();
     expect(await fsPromises.stat(path.dirname(filePath))).toBeDefined();
-    expect(performance.now() - started).toBeLessThan(2_000);
   } finally {
+    observe.mockRestore();
     release();
     await holder;
   }

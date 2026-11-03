@@ -1,4 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, spyOn, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +26,7 @@ import {
 } from "../../../src/runtime/file-read.ts";
 import { sha256 } from "../../../src/runtime/hash.ts";
 import { resolveWritablePath } from "../../../src/runtime/paths.ts";
+import { terminateProcessTree } from "../../../src/runtime/subprocess.ts";
 import { hermeticConfig } from "../../support/hermetic-config.ts";
 
 const created: string[] = [];
@@ -365,21 +372,59 @@ test("Git subprocesses force-kill commands that ignore graceful termination", as
     stdout: new Blob().stream(),
   };
   Bun.spawn = (() => child) as unknown as typeof Bun.spawn;
+  const groupSignal = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("Controlled child has no operating-system process group");
+  });
+  let pending: ReturnType<typeof runGitRaw> | undefined;
   try {
     const controller = new AbortController();
-    const pending = runGitRaw(
-      "/unused",
-      ["status"],
-      controller.signal,
-      () => {},
-    );
+    pending = runGitRaw("/unused", ["status"], controller.signal, () => {});
     controller.abort();
+    await time.advanceBy(249);
+    expect(signals).toEqual(process.platform === "win32" ? [] : ["SIGTERM"]);
+    expect(exitCode).toBeNull();
+    await time.advanceBy(1);
     expect(await pending).toMatchObject({ code: 137 });
+    expect(time.pending()).toBe(0);
     expect(signals).toEqual(
       process.platform === "win32" ? [undefined] : ["SIGTERM", "SIGKILL"],
     );
   } finally {
+    exitCode = 137;
+    finish(exitCode);
+    if (pending) await pending;
     Bun.spawn = originalSpawn;
+    groupSignal.mockRestore();
+  }
+});
+
+test("Git termination cancels the grace timer when the child exits immediately", async () => {
+  let exitCode: number | null = null;
+  let finish!: (code: number) => void;
+  const exited = new Promise<number>((resolve) => {
+    finish = resolve;
+  });
+  const groupSignal = spyOn(process, "kill").mockImplementation(() => {
+    throw new Error("Controlled child has no operating-system process group");
+  });
+  const child = {
+    get exitCode() {
+      return exitCode;
+    },
+    exited,
+    kill() {
+      exitCode = 0;
+      finish(0);
+    },
+    pid: 123,
+  };
+  try {
+    await terminateProcessTree(child, { graceMs: 250, platform: "linux" });
+    expect(child.exitCode).toBe(0);
+    expect(time.pending()).toBe(0);
+  } finally {
+    finish(0);
+    groupSignal.mockRestore();
   }
 });
 

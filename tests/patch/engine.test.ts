@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +6,15 @@ import path from "node:path";
 import { patchFile, writeFileSafely } from "../../src/patch/engine";
 import { sha256 } from "../../src/runtime/hash";
 import { withFileLock, withFileLocks } from "../../src/runtime/locks";
+import {
+  createMockTime,
+  deferred,
+  flushMicrotasks,
+} from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 const folders: string[] = [];
 afterEach(async () => {
@@ -86,20 +95,27 @@ describe("write state machine", () => {
     ).rejects.toThrow("outside");
   });
 
-  test("serializes in-process and cross-process file locks", async () => {
+  test("serializes contending file locks and normalizes multi-file requests", async () => {
     const folder = await root();
     const file = path.join(folder, "value.txt");
-    const externalLock = path.join(folder, ".value.txt.ast-mcp.lock");
-    await writeFile(externalLock, "held");
-    const release = setTimeout(() => {
-      void rm(externalLock, { force: true });
-    }, 20);
-    try {
-      expect(await withFileLock(file, async () => "locked")).toBe("locked");
-    } finally {
-      clearTimeout(release);
-      await rm(externalLock, { force: true });
-    }
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const first = withFileLock(file, async () => {
+      entered.resolve();
+      await release.promise;
+      return "first";
+    });
+    await entered.promise;
+    let secondEntered = false;
+    const contending = withFileLock(file, async () => {
+      secondEntered = true;
+      return "locked";
+    });
+    await flushMicrotasks();
+    expect(secondEntered).toBeFalse();
+    release.resolve();
+    expect(await first).toBe("first");
+    expect(await contending).toBe("locked");
     const second = path.join(folder, "second.txt");
     expect(
       await withFileLocks([second, file, second], async () => "multi-locked"),

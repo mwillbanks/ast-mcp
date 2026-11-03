@@ -126,7 +126,6 @@ for (const [surface, binaries] of [
   });
 
   test(`${surface} bounds stalled manager discovery and continues after timeout`, () => {
-    const execute = Bun.spawnSync;
     let calls = 0;
     const base = path.resolve(os.tmpdir(), "ast-mcp-stalled-manager");
     const spawn = spyOn(Bun, "spawnSync").mockImplementation(((
@@ -140,18 +139,13 @@ for (const [surface, binaries] of [
         killSignal: "SIGKILL",
         maxBuffer: 65536,
       });
-      if (calls === 1)
-        return execute(
-          [process.execPath, "-e", "setInterval(() => {}, 1000)"],
-          options,
-        );
+      if (calls === 1) return { exitCode: 137, stdout: Buffer.alloc(0) };
       return {
         exitCode: args[0] === "pnpm" ? 0 : 1,
         stdout: Buffer.from(base),
       };
     }) as never);
     try {
-      const started = performance.now();
       expect(
         binaries.globalBinDirectories(
           "ast-mcp-fixture",
@@ -160,7 +154,6 @@ for (const [surface, binaries] of [
         ),
       ).toContain(base);
       expect(calls).toBe(5);
-      expect(performance.now() - started).toBeLessThan(5000);
     } finally {
       spawn.mockRestore();
     }

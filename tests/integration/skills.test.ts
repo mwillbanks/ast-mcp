@@ -3,14 +3,14 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
 import {
   exerciseSkillsHttp,
-  exerciseSkillsStdio,
   exerciseModernWorkspaceHttp,
   skillsMeta,
 } from "../support/skills-protocol";
 import { removeTempDirectory } from "../support/temp-directory";
+import { spawnHttpMcpProcess, spawnLiveProcess } from "./support/live-process";
+import { exerciseSkillsStdio } from "./support/skills-stdio";
 
 test("modern stdio preserves fragmented batches and recovers malformed and oversized frames", async () => {
   const live = spawnLiveProcess(process.execPath, [

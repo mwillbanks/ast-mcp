@@ -9,6 +9,8 @@ import {
   resolveInstallerEndpoint,
   updateHttpToml,
 } from "../../src/installer/transport";
+import * as locks from "../../src/runtime/locks";
+import { createMockTime } from "../support/mock-time";
 
 test("rejects invalid and ambiguous HTTP configuration before persistence", () => {
   expect(() => updateHttpToml("[http\n", { port: 4567 })).toThrow(
@@ -203,6 +205,17 @@ test("installer preserves retryable migration conflicts", async () => {
 });
 
 test("concurrent installers serialize shared checkout and home state", async () => {
+  createMockTime();
+  const attempted = Promise.withResolvers<void>();
+  const acquire = locks.withFencedFileLocks;
+  let admissions = 0;
+  const observe = spyOn(locks, "withFencedFileLocks").mockImplementation(
+    (...args) => {
+      const pending = acquire(...args);
+      if (++admissions === 2) attempted.resolve();
+      return pending;
+    },
+  );
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-install-race-"));
   const home = path.join(root, "home");
   await mkdir(path.join(root, ".git"));
@@ -239,7 +252,7 @@ test("concurrent installers serialize shared checkout and home state", async () 
         secondEntered = true;
       },
     });
-    await Bun.sleep(40);
+    await attempted.promise;
     expect(secondEntered).toBeFalse();
     release();
     await Promise.all([first, second]);
@@ -263,6 +276,7 @@ test("concurrent installers serialize shared checkout and home state", async () 
         .mcpServers,
     ).toHaveProperty("ast-mcp");
   } finally {
+    observe.mockRestore();
     release();
     await Promise.allSettled([first, ...(second ? [second] : [])]);
     await rm(root, { recursive: true, force: true });

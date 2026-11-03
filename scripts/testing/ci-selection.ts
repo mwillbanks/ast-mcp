@@ -173,7 +173,7 @@ function scope(
   for (const file of files) {
     if (
       [
-        "tests/tooling/package-smoke.test.ts",
+        "tests/integration/package-consumers.test.ts",
         "tests/tooling/ci-selection.test.ts",
         "tests/tooling/test-shard.test.ts",
         "tests/tooling/release-workflows.test.ts",

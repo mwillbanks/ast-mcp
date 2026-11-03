@@ -3,7 +3,7 @@ import path from "node:path";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
-import { configRegistry } from "../config/registry";
+import { configRegistry, type ConfigSnapshot } from "../config/registry";
 import type {
   RevisionSelector,
   StoragePlacement,
@@ -12,6 +12,7 @@ import type { GenerationDependencies } from "../intelligence/generation/index.ts
 import { withWorkspaceGitContext } from "../intelligence/workspace/git.ts";
 import {
   currentWorkspace,
+  WorkspaceError,
   type WorkspaceHandle,
   WorkspaceRegistry,
   withWorkspaceContext,
@@ -29,6 +30,9 @@ export interface OpenConfiguredWorkspace {
 
 export interface ConfiguredExecution {
   clientRoots?(context?: ServerContext): Promise<string[]>;
+  configurationSnapshot?(
+    context?: ServerContext,
+  ): Promise<Readonly<ConfigSnapshot>>;
   generationDependencies?: GenerationDependencies;
   openWorkspace?(
     input: OpenConfiguredWorkspace,
@@ -87,43 +91,50 @@ async function configuredWorkspace(
 }> {
   if (clientRoots.length)
     await registry.selectDirectory(clientRoots, [input.directory]);
-  let config = await configRegistry.get({
+  else if (!fileOperation) {
+    const hostConfig = await configRegistry.get();
+    await withResolvedConfig(hostConfig, () =>
+      withApprovalContext(approval, async () => {
+        assertReadableTree(hostConfig, input.directory);
+      }),
+    );
+  }
+  const resolution = {
     clientRoots,
+    cwd: input.directory,
     requestPaths: [input.directory],
-  });
+  };
+  const config = await configRegistry.get(resolution);
   if (!fileOperation)
     await withResolvedConfig(config, () =>
       withApprovalContext(approval, async () => {
         assertReadableTree(config, input.directory);
       }),
     );
-  let workspace = await registry.open({
+  const workspace = await registry.open({
     configurationGeneration: config.generation,
     directory: input.directory,
     revision: input.revision,
     storage: input.storage ?? config.intelligence.storage.placement,
   });
-  config = await configRegistry.get({
-    clientRoots,
-    cwd: input.directory,
-    requestPaths: [input.directory],
-    revisionId: workspace.selectedRevision.revisionId,
-    storageDomainId: workspace.storageDomain.domainId,
-    workspaceId: workspace.workspaceId,
-  });
-  if (config.generation !== workspace.configurationGeneration)
-    workspace = await registry.open({
-      configurationGeneration: config.generation,
-      directory: workspace.checkoutRoot,
-      revision: input.revision,
-      storage: input.storage ?? config.intelligence.storage.placement,
-    });
-  await registry.get(workspace.workspaceId, {
-    configurationGeneration: config.generation,
+  const current = await configRegistry.get(resolution);
+  if (workspace.configurationGeneration !== current.generation)
+    throw new WorkspaceError(
+      "workspace_mismatch",
+      "Configuration changed while the workspace was opening",
+      {
+        drift: ["configurationGeneration"],
+        workspaceId: workspace.workspaceId,
+      },
+      true,
+      "workspace_open",
+    );
+  const verified = await registry.get(workspace.workspaceId, {
+    configurationGeneration: current.generation,
     revisionId: workspace.selectedRevision.revisionId,
     storageDomainId: workspace.storageDomain.domainId,
   });
-  return { config, workspace };
+  return { config: current, workspace: verified };
 }
 
 function fileSelectionPaths(roots: string[], requestPaths: string[]): string[] {
@@ -157,6 +168,8 @@ export function configuredExecution(
   options: ExecutionOptions = {},
 ): ConfiguredExecution {
   const registry = options.workspaceRegistry ?? new WorkspaceRegistry();
+  const workspaceDirectory = (workspace: WorkspaceHandle) =>
+    registry.openingDirectory(workspace.workspaceId) ?? workspace.checkoutRoot;
   let rootsPromise: Promise<string[]> | undefined;
   const cachedClientRoots = (context?: ServerContext) => {
     // Modern MCP carries request capabilities and does not permit legacy roots RPCs.
@@ -237,11 +250,8 @@ export function configuredExecution(
         registry.validateRequestPaths(workspace, requestPaths);
       const current = await configRegistry.get({
         clientRoots: roots,
-        cwd: workspace.checkoutRoot,
-        requestPaths: [workspace.checkoutRoot],
-        revisionId: workspace.selectedRevision.revisionId,
-        storageDomainId: workspace.storageDomain.domainId,
-        workspaceId: workspace.workspaceId,
+        cwd: workspaceDirectory(workspace),
+        requestPaths: [workspaceDirectory(workspace)],
       });
       workspace = await registry.get(workspace.workspaceId, {
         configurationGeneration: current.generation,
@@ -250,7 +260,7 @@ export function configuredExecution(
       });
     }
     const directory =
-      workspace?.checkoutRoot ??
+      (workspace ? workspaceDirectory(workspace) : undefined) ??
       (await registry.selectDirectory(
         roots,
         isFileOperation(tool)
@@ -315,6 +325,27 @@ export function configuredExecution(
         : executeConfigured(args, operation, context, tool),
     );
   execute.clientRoots = clientRoots;
+  execute.configurationSnapshot = async (context) => {
+    const workspace = currentWorkspace();
+    const directory = workspace ? workspaceDirectory(workspace) : undefined;
+    const snapshot = await configRegistry.snapshot({
+      clientRoots: await clientRoots(context),
+      cwd: directory,
+      requestPaths: directory ? [directory] : undefined,
+    });
+    if (workspace && snapshot.generation !== workspace.configurationGeneration)
+      throw new WorkspaceError(
+        "workspace_mismatch",
+        "Configuration changed after the workspace was opened",
+        {
+          drift: ["configurationGeneration"],
+          workspaceId: workspace.workspaceId,
+        },
+        true,
+        "workspace_open",
+      );
+    return snapshot;
+  };
   execute.generationDependencies = {
     mcpClients: {
       host: {

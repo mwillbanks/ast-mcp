@@ -1,5 +1,5 @@
 // fallow-ignore-file unused-file -- Spawned child-process entry point for signal lifecycle tests.
-import { installProcessSignalHandlers } from "../../src/runtime/signals";
+import { installProcessSignalHandlers } from "../../../src/runtime/signals";
 
 installProcessSignalHandlers(async (signal) => {
   process.stderr.write(`closed:${signal}\n`);

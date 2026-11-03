@@ -1,15 +1,21 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { resolveConfig, withConfig } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import {
   structuredUpstreamToolResult,
   toolFailure,
 } from "../../src/helpers/mcp-schema";
 import registerFileTools from "../../src/tools/files";
 import { hermeticConfig } from "../support/hermetic-config";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 type RegisteredTool = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -207,6 +213,7 @@ test("file tool handlers execute keyed batches without transport indirection", a
     expect(astRead.isError).not.toBeTrue();
     expect(textRead.isError).not.toBeTrue();
   } finally {
+    await configRegistry.close();
     await rm(folder, { force: true, recursive: true });
   }
 });

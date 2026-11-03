@@ -1,4 +1,10 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -501,13 +507,21 @@ describe("JVM WASM language adapters", () => {
     activeController.abort();
     await expect(activeRequest).rejects.toMatchObject({ code: "aborted" });
     await drainJvmLanguageWorker();
-    await expect(
-      jvmLanguageAdapter("java").analyze({
+    const timed = jvmLanguageAdapter("java")
+      .analyze({
         languageId: "java",
         source: "class Timeout {}",
         timeoutMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: "timeout" });
+      })
+      .catch((error: unknown) => error);
+    try {
+      expect(jvmWorkerStats().pendingRequests).toBe(1);
+      await time.advanceBy(0);
+      expect(await timed).toMatchObject({ code: "timeout" });
+    } finally {
+      await closeJvmLanguageWorker();
+      await timed;
+    }
     await expect(
       jvmLanguageAdapter("java").analyze({
         languageId: "java",

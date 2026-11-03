@@ -6,6 +6,7 @@
     "telemetry",
     "skills",
     "http-transport",
-    "skill-evaluations"
+    "skill-evaluations",
+    "code-intelligence"
   ]
 }

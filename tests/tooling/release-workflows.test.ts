@@ -100,7 +100,7 @@ appendFileSync(process.env.AST_MCP_FIXTURE_TEST_MARKER!, ${JSON.stringify(name)}
             '\ntest("unrelated behavior", () => { throw new Error("qualifier filter missing"); });',
         ),
         writeFile(
-          join(root, "tests/tooling/package-smoke.test.ts"),
+          join(root, "tests/integration/package-consumers.test.ts"),
           fixture(["packed consumer"]),
         ),
       ]);
@@ -497,7 +497,8 @@ describe("release workflow contracts", () => {
     expect(job(ci, "package-consumers").if).toContain("outputs.consumers");
     const coverage = job(ci, "package-coverage").steps ?? [];
     expect(
-      coverage.find((step) => step.run === "bun run test:coverage")?.if,
+      coverage.find((step) => step.run?.startsWith("bun run test:coverage "))
+        ?.if,
     ).toContain("coverage == 'true'");
     expect(
       coverage.find((step) => step.run?.endsWith("--selected"))?.env

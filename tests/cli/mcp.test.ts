@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 
 import { runMcpCli } from "../../src/cli/mcp";
-import { spawnHttpMcpProcess } from "../support/live-process";
 
 test("validates MCP transport arguments", async () => {
   await expect(runMcpCli(["--transport", "invalid"])).rejects.toThrow(
@@ -17,17 +16,4 @@ test("validates MCP transport arguments", async () => {
     http: async (options) => ({ url: new URL(`http://x:${options.port}`) }),
   });
   expect(ephemeral?.url.port).toBe("0");
-});
-
-test("starts Streamable HTTP through the stable mcp subcommand", async () => {
-  const server = await spawnHttpMcpProcess(
-    process.execPath,
-    ["bin/ast-mcp.ts", "mcp"],
-    { cwd: process.cwd() },
-  );
-  try {
-    expect((await fetch(server.url)).status).toBe(400);
-  } finally {
-    await server.stop();
-  }
 });

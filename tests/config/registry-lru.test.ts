@@ -30,7 +30,10 @@ test("configuration registry bounds watchers with least-recently-used eviction",
     const second = await registry.snapshot(options(secondRoot));
     expect(await registry.snapshot(options(firstRoot))).toBe(first);
     await registry.snapshot(options(thirdRoot));
-    expect(await registry.snapshot(options(secondRoot))).not.toBe(second);
+    expect(await registry.snapshot(options(firstRoot))).toBe(first);
+    const replacement = await registry.snapshot(options(secondRoot));
+    expect(replacement).not.toBe(second);
+    expect(replacement.generation).toBeGreaterThan(second.generation);
   } finally {
     registry.close();
     await rm(parent, { force: true, recursive: true });

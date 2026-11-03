@@ -1,4 +1,10 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { beforeEach, afterAll, describe, expect, test } from "bun:test";
+
+import { createMockTime, type MockTime } from "../../../support/mock-time.ts";
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 import { Worker } from "node:worker_threads";
 
 import {
@@ -789,13 +795,19 @@ describe.serial("dynamic language WASM adapters", () => {
     expect(await activeOutcome).toMatchObject({ code: "aborted" });
     await drainDynamicLanguageWorker();
 
-    await expect(
-      analyzeDynamicLanguage({
-        languageId: "python",
-        source: "x = 1\n".repeat(100_000),
-        timeoutMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: "timeout" });
+    const timed = analyzeDynamicLanguage({
+      languageId: "python",
+      source: "x = 1",
+      timeoutMs: 0,
+    }).catch((error: unknown) => error);
+    try {
+      expect(dynamicWorkerStats().pendingRequests).toBe(1);
+      await time.advanceBy(0);
+      expect(await timed).toMatchObject({ code: "timeout" });
+    } finally {
+      await closeDynamicLanguageWorker();
+      await timed;
+    }
     await drainDynamicLanguageWorker();
     expect(dynamicWorkerStats()).toEqual({
       active: false,

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,9 +20,19 @@ import {
 } from "../../src/runtime/approval";
 import { collectDiagnostics } from "../../src/runtime/diagnostics";
 import { createServer } from "../../src/server";
+import { createMockTime, deferred, type MockTime } from "../support/mock-time";
+
+let time: MockTime;
+beforeEach(() => {
+  time = createMockTime();
+});
 
 async function fixture(timeoutMs = 1000) {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-diagnostics-"));
+  const external = await mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-diagnostics-external-"),
+  );
+  await writeFile(path.join(external, "value.txt"), "authorized value");
   await mkdir(path.join(root, ".git"));
   await writeFile(
     path.join(root, "ast-mcp.toml"),
@@ -54,6 +64,7 @@ async function fixture(timeoutMs = 1000) {
   );
   return {
     root,
+    external,
     server,
     fetchCalls: () => fetchCalls,
     async close() {
@@ -63,9 +74,10 @@ async function fixture(timeoutMs = 1000) {
         else process.env[key] = value;
       }
       clearConfigCache();
-      configRegistry.invalidate();
       clearSessionApprovals();
+      configRegistry.close();
       await rm(root, { recursive: true, force: true });
+      await rm(external, { recursive: true, force: true });
     },
   };
 }
@@ -112,7 +124,10 @@ test("legacy Codex rejection remains diagnosable and probe acceptance never gran
         name: "file_read",
         arguments: {
           files: [
-            { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+            {
+              filePath: path.join(instance.external, "value.txt"),
+              mode: "text",
+            },
           ],
         },
       });
@@ -172,8 +187,10 @@ test("legacy probe timeout remains bounded and records sanitized timeout state",
       supportedProtocolVersions: ["2025-11-25"],
     },
   );
+  const started = deferred<void>();
   client.setRequestHandler("elicitation/create", async (request) => {
     expect(request.params._meta?.codex_approval_kind).toBeUndefined();
+    started.resolve();
     return new Promise<never>(() => {});
   });
   const [clientTransport, serverTransport] =
@@ -181,13 +198,20 @@ test("legacy probe timeout remains bounded and records sanitized timeout state",
   try {
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
-    const start = performance.now();
-    const probe = await client.callTool({
+    const pending = client.callTool({
       name: "approval_probe",
       arguments: {},
     });
+    await started.promise;
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await time.advanceBy(29);
+    expect(settled).toBe(false);
+    await time.advanceBy(1);
+    const probe = await pending;
     expect(probe.isError).toBeTrue();
-    expect(performance.now() - start).toBeLessThan(1000);
     expect(approvalDiagnostics(instance.server)).toMatchObject({
       pendingCount: 0,
       sessionGrantPresent: false,
@@ -249,7 +273,7 @@ test("native protocol approvals preserve denial and recover through correlated a
     await clientTransport.start();
     const args = {
       files: [
-        { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+        { filePath: path.join(instance.external, "value.txt"), mode: "text" },
       ],
     };
     const first = await request("file_read", args);
@@ -317,6 +341,141 @@ test("diagnostics still checks releases when configuration is malformed", async 
   }
 });
 
+for (const configDecision of ["allow_once", "allow_session"] as const) {
+  test(
+    configDecision +
+      " configuration approval cannot activate unrestricted filesystem access",
+    async () => {
+      const instance = await fixture();
+      const client = new Client(
+        { name: "generic-agent", version: "test" },
+        {
+          capabilities: { elicitation: { form: {} }, roots: {} },
+          supportedProtocolVersions: ["2025-11-25"],
+        },
+      );
+      const deniedPath = path.join(instance.external, "denied.txt");
+      let phase:
+        | "configuration"
+        | "decline filesystem"
+        | "activate filesystem" = "configuration";
+      let approvals = 0;
+      client.setRequestHandler("roots/list", async () => ({
+        roots: [{ uri: Bun.pathToFileURL(instance.root).href }],
+      }));
+      client.setRequestHandler("elicitation/create", async () => {
+        approvals++;
+        if (phase === "configuration")
+          return { action: "accept", content: { decision: configDecision } };
+        if (phase === "decline filesystem") return { action: "decline" };
+        return { action: "accept", content: { decision: "allow_session" } };
+      });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      try {
+        await writeFile(deniedPath, "blocked value");
+        await writeFile(
+          path.join(instance.root, "ast-mcp.toml"),
+          [
+            "version = 2",
+            "[formatting]",
+            "enabled = false",
+            "[[paths]]",
+            'id = "blocked"',
+            "path = " + JSON.stringify(deniedPath),
+            'policies = { read = "deny", write = "deny", delete = "deny" }',
+            "",
+          ].join("\n"),
+        );
+        clearConfigCache();
+        configRegistry.invalidate();
+        await instance.server.connect(serverTransport);
+        await client.connect(clientTransport);
+        const edit = await client.callTool({
+          name: "config_core",
+          arguments: { safety: { filesystem: "unrestricted" } },
+        });
+        expect(edit.isError, JSON.stringify(edit)).not.toBeTrue();
+        expect(approvals).toBe(1);
+        const diagnostic = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(diagnostic.structuredContent).toMatchObject({
+          data: {
+            configuration: {
+              filesystem: "unrestricted",
+              filesystemAuthority: "project",
+            },
+            approval: { sessionGrantPresent: false },
+          },
+        });
+        phase = "decline filesystem";
+        const read = (filePath: string) =>
+          client.callTool({
+            name: "file_read",
+            arguments: { files: [{ filePath, mode: "text" }] },
+          });
+        const blocked = await read(deniedPath);
+        expect(blocked.isError).toBeTrue();
+        expect(approvals).toBe(1);
+        const rejected = await read(path.join(instance.external, "value.txt"));
+        expect(rejected.structuredContent).toMatchObject({
+          error: { code: "approval_denied", details: { rule: "filesystem" } },
+        });
+        expect(approvals).toBe(2);
+        phase = "activate filesystem";
+        const accepted = await read(path.join(instance.external, "value.txt"));
+        expect(accepted.isError, JSON.stringify(accepted)).not.toBeTrue();
+        expect(JSON.stringify(accepted)).toContain("authorized value");
+        expect(approvals).toBe(3);
+        const bypassed = await read(deniedPath);
+        expect(bypassed.isError, JSON.stringify(bypassed)).not.toBeTrue();
+        expect(JSON.stringify(bypassed)).toContain("blocked value");
+        expect(approvals).toBe(3);
+        const activated = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(activated.structuredContent).toMatchObject({
+          data: { approval: { sessionGrantPresent: true } },
+        });
+        await writeFile(
+          path.join(instance.root, "ast-mcp.toml"),
+          "version = [invalid",
+        );
+        const invalid = await configRegistry.reload();
+        expect(
+          invalid.some(
+            (snapshot) => !snapshot.healthy && snapshot.config !== undefined,
+          ),
+        ).toBeTrue();
+        const unavailable = await client.callTool({
+          name: "diagnostics",
+          arguments: {},
+        });
+        expect(unavailable.structuredContent).toMatchObject({
+          data: {
+            configuration: {
+              healthy: false,
+              generation: null,
+              reason: "configuration_unavailable",
+            },
+            approval: { sessionGrantPresent: false },
+            versionCheck: { status: "current" },
+          },
+        });
+        expect(JSON.stringify(unavailable)).not.toContain(instance.root);
+        expect(JSON.stringify(unavailable)).not.toContain("version = [invalid");
+        expect(approvals).toBe(3);
+      } finally {
+        await client.close();
+        await instance.close();
+      }
+    },
+  );
+}
+
 test("modern request-scoped HTTP refuses filesystem approval but permits diagnostics", async () => {
   const instance = await fixture();
   const servers: ReturnType<typeof createServer>[] = [];
@@ -375,9 +534,19 @@ test("modern request-scoped HTTP refuses filesystem approval but permits diagnos
     return ((await response.json()) as any).result;
   };
   try {
-    const rejected = await call("file_read", {
+    const scoped = await call("file_read", {
       files: [
         { filePath: path.join(instance.root, "value.txt"), mode: "text" },
+      ],
+    });
+    expect(scoped.isError).not.toBeTrue();
+    expect(scoped.inputRequests).toBeUndefined();
+    expect(scoped.structuredContent).toMatchObject({
+      data: { files: [{ content: "authorized value" }] },
+    });
+    const rejected = await call("file_read", {
+      files: [
+        { filePath: path.join(instance.external, "value.txt"), mode: "text" },
       ],
     });
     expect(rejected.structuredContent).toMatchObject({

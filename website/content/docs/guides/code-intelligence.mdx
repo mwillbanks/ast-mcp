@@ -1,0 +1,233 @@
+---
+title: Code Intelligence
+description: Inspect structure, build a persistent index, and trace evidence through bounded graph and retrieval tools.
+icon: BrainCircuit
+---
+
+Code Intelligence combines two layers. Structural tools parse the files you select for immediate answers. The persistent intelligence index stores revision-scoped syntax, document, retrieval, and graph artifacts for repeated queries.
+
+Start with structural inspection. Build an index when you need durable retrieval or graph relationships. Add embeddings or generation only when your task needs them. The TOML excerpts below are sections to add to a version 2 `ast-mcp.toml`; they are not complete standalone configuration files.
+
+## Choose the right layer
+
+| Need                                    | Use                                                                                | What it gives you                                                                            |
+| --------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Understand a file or directory now      | `map`, `digest`, `show`, `surface`                                                 | Bounded AST facts, signatures, exports, or selected source. No persistent index is required. |
+| Follow code relationships now           | `deps`, `reverse_deps`, `callers`, `callees`, `trace`, `impact`, `graph`, `cycles` | Structural relationships computed from the selected source.                                  |
+| Search or inspect related source now    | `search`, `find_related`, `context`, `run`                                         | Bounded syntax-aware discovery and context.                                                  |
+| Reuse analyzed repository data          | `index`, `index_status`                                                            | A revision-scoped published generation with freshness and coverage information.              |
+| Find evidence across code and documents | `retrieve`                                                                         | Ranked exact, lexical, optional semantic, and graph evidence with source ranges.             |
+| Explain graph relationships             | `graph_query`, `graph_explain`, `graph_path`, `graph_diff`                         | Bounded graph traversal, node explanations, paths, and revision comparisons.                 |
+| Draft an answer from selected evidence  | `generate`                                                                         | Optional cited generation over evidence you explicitly provide.                              |
+
+See the [Code Intelligence tool reference](/docs/reference/tools/code-intelligence) for each tool's parameters and output.
+
+## A first workflow
+
+Open the checkout root. The returned `workspace.workspaceId` scopes later calls. Workspace handles and approval grants belong to the current server session. See the [workspace tool reference](/docs/reference/tools/workspaces) for open and status parameters.
+
+```json
+{
+  "tool": "workspace_open",
+  "arguments": {
+    "directory": "/absolute/path/to/repository"
+  }
+}
+```
+
+Inspect selected files before building persistent state. `map` reports symbols, imports, and parser diagnostics; `digest` gives a compact directory view. Choose narrow paths when you already know the area.
+
+```json
+{
+  "tool": "map",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "paths": ["src/index.ts", "src/tools"],
+    "detail": "signatures"
+  }
+}
+```
+
+Build the index for repeatable retrieval and graph queries. The build parses supported source and documents, publishes a generation, and reports its revision, storage, freshness, and coverage.
+
+```json
+{
+  "tool": "index",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "action": "build"
+  }
+}
+```
+
+Search the published generation for a question. Exact symbols, path filters, language filters, and intent can narrow the result. Semantic search is off by default; the example below uses the default lexical and structural signals.
+
+```json
+{
+  "tool": "retrieve",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "query": "Where is configuration generation checked before a workspace operation?"
+  }
+}
+```
+
+Read each result's `path`, `range`, and `text` as evidence. Check `freshness.stale`, `coverage.degraded`, `coverage.semanticState`, and `truncated` before treating missing results as proof that no matching code exists. Use [`file_read`](/docs/reference/tools/files) or [`show`](/docs/reference/tools/code-intelligence) on the relevant source to verify context. See the [indexing and retrieval reference](/docs/reference/tools/indexing) for their full parameters.
+
+Graph tools require graph node IDs. A retrieved result's `entityId` can seed a query only when its namespace is `graph-node:v1`; other entity IDs are not node IDs. Copy a valid ID into `startNodeIds`. The returned graph nodes include `nodeId` values you can pass to `graph_explain` or `graph_path`. Do not derive or guess IDs from names.
+
+```json
+{
+  "tool": "graph_query",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "startNodeIds": ["<graph-node:v1 ID from a retrieved result>"]
+  }
+}
+```
+
+`graph_explain` returns the node, related relationships, and source evidence. `graph_path` returns a bounded shortest path between two known nodes.
+
+```json
+{
+  "tool": "graph_explain",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "nodeId": "<node.nodeId returned by a graph result>"
+  }
+}
+```
+
+```json
+{
+  "tool": "graph_path",
+  "arguments": {
+    "workspaceId": "<workspace.workspaceId from workspace_open>",
+    "sourceNodeId": "<source node ID returned by a graph result>",
+    "targetNodeId": "<target node ID returned by a graph result>"
+  }
+}
+```
+
+Graph operations have bounded time, byte, depth, node, edge, and page budgets. Their results include coverage and pagination fields. An incomplete or truncated result describes only the portion examined.
+
+## Storage, revisions, and identities
+
+By default, `workspace_open` uses global storage. Set `storage` on that call to choose a placement, or set `intelligence.storage.placement` in configuration.
+
+| Placement                          | Use it when                                                                                         |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `global`                           | You want content-addressed artifacts shared across repositories and revisions. This is the default. |
+| `local`                            | You want storage scoped to one repository.                                                          |
+| `parent` with `levels`             | You want storage at a selected ancestor level above the repository.                                 |
+| `explicit` with an absolute `path` | You need a specific storage directory.                                                              |
+
+The open call accepts the same choices:
+
+```json
+{
+  "tool": "workspace_open",
+  "arguments": {
+    "directory": "/absolute/path/to/repository",
+    "storage": { "kind": "parent", "levels": 1 }
+  }
+}
+```
+
+For configuration, choose one placement:
+
+```toml
+[intelligence.storage.placement]
+kind = "global" # Or "local".
+```
+
+```toml
+[intelligence.storage.placement]
+kind = "parent"
+levels = 1
+```
+
+```toml
+[intelligence.storage.placement]
+kind = "explicit"
+path = "/absolute/path/to/ast-mcp-data"
+```
+
+Each response reports identity fields. `repository` identifies the Git repository. `revision` identifies the selected working tree or historical Git revision. `workspace` binds the checkout, configuration generation, revision, dirty overlay, and storage domain. `storage` describes the selected storage domain. `generation` identifies a published index snapshot for that workspace.
+
+These identities serve different scopes. Keep using the workspace ID returned by the current session's `workspace_open`. A changed checkout, configuration, storage selection, revision, or working-tree overlay can make an existing handle stale. If a call reports `workspace_mismatch` or suggests `workspace_open`, reopen the intended checkout and use the newly returned workspace ID.
+
+`workspace_open` defaults to the working revision. You can select a historical revision with `revision: { "kind": "commit", "oid": "<commit>" }`, or use a branch or tag selector. Historical selections are read-only. Their revision identity is separate from the workspace and published generation identities.
+
+## Refresh and mutation freshness
+
+An index generation records the source state used to build it. Use `index_status` to inspect the latest generation and its bounded table counts. Use `index` with `action: "verify"` to verify the latest published generation, `"refresh"` to reanalyze changed source, or `"build"` to create a generation from the selected source.
+
+Guarded file mutations update intelligence freshness through the mutation lifecycle. A successful change may publish a new generation; a failed or incomplete mutation does not make an older generation current. Re-run `index_status` or `retrieve` to inspect freshness after edits. If a historical revision was selected, open the working revision before editing.
+
+Stale-workspace errors mean the stored handle no longer matches the selected checkout state. Reopen the workspace and repeat the operation with its returned ID. For configuration failures, see [connection diagnosis](/docs/guides/connection-diagnosis), the [configuration reference](/docs/reference/configuration), and the [configuration tools](/docs/reference/tools/configuration).
+
+## Semantic retrieval (optional)
+
+Structural tools and lexical retrieval work without downloading an embedding model. Semantic retrieval is disabled by default. Enable it only when similarity beyond symbols and terms is useful:
+
+```toml
+[intelligence.retrieval]
+semantic = true
+
+[intelligence.retrieval.embedding]
+model_id = "onnx-community/granite-embedding-30m-english-ONNX"
+revision = "a141ffafe5810d8ee499de14086b5259527ed6ff"
+dimensions = 384
+dtype = "q8"
+pooling = "mean"
+device = "cpu"
+workers = 1
+batch_size = 8
+max_queue = 256
+# Optional local model artifacts; use a local absolute path.
+# local_path = "/absolute/path/to/model"
+```
+
+The model ID and revision select model content; the default profile pins a Granite revision. It uses 384-dimensional embeddings, q8 quantized model weights, mean pooling, CPU execution, one worker, batches of eight, and a bounded queue. The server downloads model artifacts on first use by default, and the configured revision is passed to the Transformers runtime. If you need offline or explicitly managed artifacts, set `local_path` to a directory containing the model files listed in the artifact manifest. ast-mcp checks those files against the manifest before loading them. Keep the local files available to the server process.
+
+After you enable or change semantic configuration, reopen the checkout with `workspace_open` and use its new workspace ID; the configuration generation changes, so the old handle is stale. Then run `index` with `action: "build"` or `"refresh"` to publish embeddings for the selected source. Use `retrieve` with `semantic: true` to request semantic scoring for one query. The model must be configured and available. Its result reports `semanticState`; inspect it and coverage before interpreting absent matches. Pin the model revision and keep dimensions, dtype, and pooling consistent with that model. Device availability varies by platform. Workers, batch size, and queue size bound resource use.
+
+## Optional answer generation
+
+Generation is disabled by default. Enable it only if users need an answer drafted from retrieved evidence. The `generate` tool requires explicit evidence and allowed corpus artifact IDs. Pass the source `artifactId`, `entityId`, `path`, `range`, and `text` from selected retrieval results. Generated output includes citations into that supplied evidence; generation does not replace checking the original source.
+
+An HTTP provider uses a configured endpoint and model. Store the secret outside TOML and configure only the environment-variable name:
+
+```toml
+[intelligence.generation]
+enabled = true
+
+[intelligence.generation.provider]
+kind = "http"
+endpoint = "https://example.invalid/v1/generate"
+model = "your-model"
+api_key_env = "AST_MCP_GENERATION_KEY"
+```
+
+Set `AST_MCP_GENERATION_KEY` in the server's environment. Do not place the key value in configuration or tool arguments. Configure an MCP sampling provider when the host supplies sampling capability:
+
+```toml
+[intelligence.generation]
+enabled = true
+
+[intelligence.generation.provider]
+kind = "mcp"
+server_id = "host"
+model = "host-selected-model"
+```
+
+The host must support the MCP sampling capability for this provider. If it does not, generation returns an unavailable or failed status; structural tools and retrieval remain usable. Both providers can return disabled, rejected, timeout, unavailable, or failed results. Review `status`, `reason`, and citations.
+
+## Federation, languages, and limits
+
+Federation is disabled by default. Enable `intelligence.federation.enabled` only when cross-repository graph comparison is required. A cross-repository `graph_diff` also needs an explicit federation request. Repository scope and storage placement still apply; federation does not merge workspaces or grant access to another repository.
+
+Language support depends on the registered parsers and project analyzers. Structural parsing, document extraction, graph resolution, and semantic chunking can have different coverage for a file. Narrow `paths` or `languages` when useful, and inspect diagnostics and coverage. Unsupported languages or files can be omitted from a partial result.
+
+Every broad scan, index operation, retrieval query, and graph algorithm has explicit resource limits. Look for `incomplete`, `exhaustive`, `degraded`, `truncated`, omission reasons, and returned counts. An empty result with incomplete coverage is not evidence of absence. Narrow the selection or increase a supported operation budget within its documented maximum. For structural tool behavior, see the [Code Intelligence overview](/docs/tools/code-intelligence); for inputs and limits, use the [structural tools](/docs/reference/tools/code-intelligence), [file tools](/docs/reference/tools/files), and [indexing and retrieval tools](/docs/reference/tools/indexing).

@@ -11,6 +11,19 @@ export interface ModelWorkerRequest {
   texts: readonly string[];
 }
 
+export interface ModelSessionTimers {
+  setTimeout(
+    callback: () => void,
+    delay: number,
+  ): ReturnType<typeof setTimeout>;
+  clearTimeout(timer: ReturnType<typeof setTimeout> | undefined): void;
+}
+
+const nativeTimers: ModelSessionTimers = {
+  setTimeout: (callback, delay) => setTimeout(callback, delay),
+  clearTimeout: (timer) => clearTimeout(timer),
+};
+
 interface Pending {
   bytes: number;
   started: boolean;
@@ -49,13 +62,14 @@ export class ManagedModelSession {
     private readonly workerFactory: (url: URL) => Worker = (url) =>
       new Worker(url),
     private readonly queueTimeoutMs = 300_000,
+    private readonly timers: ModelSessionTimers = nativeTimers,
   ) {}
 
   private fail(active: Worker, message: string): void {
     if (this.worker !== active) return;
     this.worker = undefined;
     for (const request of this.pending.values()) {
-      clearTimeout(request.timer);
+      this.timers.clearTimeout(request.timer);
       request.reject(new Error(message));
     }
     this.pending.clear();
@@ -81,7 +95,7 @@ export class ManagedModelSession {
     for (const waiting of [...this.recovery]) {
       this.recovery.delete(waiting);
       this.recoveryBytes -= waiting.bytes;
-      clearTimeout(waiting.timer);
+      this.timers.clearTimeout(waiting.timer);
       if (error) waiting.reject(error);
       else void this.embed(waiting.texts).then(waiting.resolve, waiting.reject);
     }
@@ -97,7 +111,7 @@ export class ManagedModelSession {
         texts,
         resolve,
         reject,
-        timer: setTimeout(() => {
+        timer: this.timers.setTimeout(() => {
           this.recovery.delete(waiting);
           this.recoveryBytes -= bytes;
           reject(new Error("embedding_worker_retirement_timeout"));
@@ -111,7 +125,7 @@ export class ManagedModelSession {
   private finish(id: number): Pending | undefined {
     const request = this.pending.get(id);
     if (!request) return undefined;
-    clearTimeout(request.timer);
+    this.timers.clearTimeout(request.timer);
     this.pending.delete(id);
     this.pendingBytes -= request.bytes;
     return request;
@@ -146,8 +160,8 @@ export class ManagedModelSession {
           return;
         }
         request.started = true;
-        clearTimeout(request.timer);
-        request.timer = setTimeout(
+        this.timers.clearTimeout(request.timer);
+        request.timer = this.timers.setTimeout(
           () => this.fail(active, "embedding_worker_timeout"),
           this.timeoutMs,
         );
@@ -214,7 +228,7 @@ export class ManagedModelSession {
         return;
       }
       const id = this.nextId++;
-      const timer = setTimeout(
+      const timer = this.timers.setTimeout(
         () => this.fail(active, "embedding_worker_load_timeout"),
         this.queueTimeoutMs,
       );
@@ -251,7 +265,7 @@ export class ManagedModelSession {
       await Promise.race([
         this.retirement,
         new Promise<void>((_resolve, reject) => {
-          timer = setTimeout(
+          timer = this.timers.setTimeout(
             () =>
               reject(
                 new EmbeddingUnavailableError(
@@ -263,7 +277,7 @@ export class ManagedModelSession {
         }),
       ]);
     } finally {
-      clearTimeout(timer);
+      this.timers.clearTimeout(timer);
     }
   }
 }

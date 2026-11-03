@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import { LanguageWorkerClient } from "../../../../src/intelligence/languages/shared/language-worker-client.ts";
 import type { LanguageWorkerResult } from "../../../../src/intelligence/languages/shared/worker-protocol-validator.ts";

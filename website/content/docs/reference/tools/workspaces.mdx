@@ -1,0 +1,58 @@
+---
+title: Workspaces
+description: Open session-local checkout handles and inspect their state.
+---
+
+Open session-local checkout handles and inspect their state. Start with the [Code Intelligence guide](/docs/guides/code-intelligence) for a complete workflow.
+
+Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
+
+## workspace_open
+
+Opens an absolute checkout or repository directory for this server session and returns its validated workspace, Git revision, configuration, and storage identities.
+
+**Choose this tool:** Open a checkout before a persistent query, a historical read, or selecting storage.
+
+**Side effects:** Creates a session-local handle. Resolves Git, configuration, and storage; does not build an index.
+
+**Approval:** The checkout must satisfy trusted roots and path policy. Requested access requires host approval.
+
+**Output:** Returns the workspace handle and repository, revision, storage, configuration, and dirty-overlay identities. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Invalid directories, inaccessible roots, and changing configuration reject the open. Reopen after configuration or source drift.
+
+<ToolParameters name="workspace_open" />
+
+```json
+{
+  "name": "workspace_open",
+  "arguments": {
+    "directory": "/absolute/path/to/repository"
+  }
+}
+```
+
+## workspace_status
+
+Returns workspace, repository, Git, revision, storage, and working-state identities for this server session.
+
+**Choose this tool:** Inspect the current session's handles before selecting or reopening a workspace.
+
+**Side effects:** Validates handles against their checkout state. Does not create a replacement handle.
+
+**Approval:** The checkout must satisfy trusted roots and path policy. Requested access requires host approval.
+
+**Output:** Returns selected state and workspace status records. Tool failures use the existing structured error envelope; inspect its code, retryability, and suggested next call.
+
+**Important failures:** Unknown or stale workspace IDs fail closed; use workspace_open again.
+
+<ToolParameters name="workspace_status" />
+
+```json
+{
+  "name": "workspace_status",
+  "arguments": {
+    "workspaceId": "workspace:v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+```

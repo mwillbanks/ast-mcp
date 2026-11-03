@@ -1,4 +1,9 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +25,7 @@ import {
   Type,
   Utf8,
 } from "apache-arrow";
-import * as legacy from "apache-arrow-18";
+import * as fixture from "apache-arrow-fixture";
 
 import {
   createIdentity,
@@ -40,24 +45,24 @@ import {
   TABLE_SCHEMAS,
 } from "../../../src/intelligence/storage/index.ts";
 
-function oldType(type: DataType): legacy.DataType {
+function fixtureType(type: DataType): fixture.DataType {
   switch (type.typeId) {
     case Type.Binary:
-      return new legacy.Binary();
+      return new fixture.Binary();
     case Type.Bool:
-      return new legacy.Bool();
+      return new fixture.Bool();
     case Type.Utf8:
-      return new legacy.Utf8();
+      return new fixture.Utf8();
     case Type.Int:
-      return new legacy.Int32();
+      return new fixture.Int32();
     case Type.FixedSizeList:
       if (DataType.isFixedSizeList(type)) {
         const child = type.children[0]!;
-        return new legacy.FixedSizeList(
+        return new fixture.FixedSizeList(
           type.listSize,
-          new legacy.Field(
+          new fixture.Field(
             child.name,
-            oldType(child.type),
+            fixtureType(child.type),
             child.nullable,
             child.metadata,
           ),
@@ -66,31 +71,31 @@ function oldType(type: DataType): legacy.DataType {
       break;
     case Type.Float:
       if (DataType.isFloat(type) && type.precision === 1)
-        return new legacy.Float32();
-      return new legacy.Float64();
+        return new fixture.Float32();
+      return new fixture.Float64();
     case Type.List:
       if (DataType.isList(type)) {
         const child = type.children[0]!;
-        return new legacy.List(
-          new legacy.Field(
+        return new fixture.List(
+          new fixture.Field(
             child.name,
-            oldType(child.type),
+            fixtureType(child.type),
             child.nullable,
             child.metadata,
           ),
         );
       }
   }
-  throw new Error("Unsupported legacy fixture type");
+  throw new Error("Unsupported Arrow fixture type");
 }
 
-function oldSchema(schema: Schema): legacy.Schema {
-  return new legacy.Schema(
+function fixtureSchema(schema: Schema): fixture.Schema {
+  return new fixture.Schema(
     schema.fields.map(
       (field) =>
-        new legacy.Field(
+        new fixture.Field(
           field.name,
-          oldType(field.type),
+          fixtureType(field.type),
           field.nullable,
           field.metadata,
         ),
@@ -117,7 +122,7 @@ async function domain(): Promise<StorageDomain> {
 }
 
 describe("Arrow storage boundary", () => {
-  test("normalizes Arrow 21 schemas and preserves nested metadata across package versions", () => {
+  test("normalizes current Arrow schemas and preserves nested metadata", () => {
     const schema = new Schema(
       [
         new Field("bytes", new Binary(), true, new Map([["kind", "source"]])),
@@ -158,7 +163,7 @@ describe("Arrow storage boundary", () => {
     );
     const normalized = toLanceSchema(schema);
     expect(arrowSchemaSignature(normalized)).toBe(arrowSchemaSignature(schema));
-    expect(arrowSchemaSignature(oldSchema(schema))).toBe(
+    expect(arrowSchemaSignature(toLanceSchema(fixtureSchema(schema)))).toBe(
       arrowSchemaSignature(schema),
     );
     expect(normalized.fields.map((field) => field.name)).toEqual(
@@ -290,7 +295,7 @@ describe("Arrow storage boundary", () => {
         ),
       );
     expect(() =>
-      assertCompatibleSchema("embeddings", oldSchema(expected)),
+      assertCompatibleSchema("embeddings", fixtureSchema(expected)),
     ).not.toThrow();
     for (const changed of [
       new Schema([...expected.fields].reverse()),
@@ -387,7 +392,7 @@ describe("Arrow storage boundary", () => {
     }
   });
 
-  test("opens Arrow 18 tables, migrates legacy tags once, and roundtrips empty and nullable values read-only", async () => {
+  test("opens current Arrow fixture tables, migrates legacy tags once, and roundtrips empty and nullable values read-only", async () => {
     const storage = await domain();
     const artifactIds = [0, 1, 2].map((value) =>
       createIdentity("source", { arrowUpgrade: value }),
@@ -401,7 +406,7 @@ describe("Arrow storage boundary", () => {
       );
       const artifacts = await connection.createEmptyTable(
         "artifacts",
-        oldSchema(beforeTags),
+        fixtureSchema(beforeTags),
       );
       try {
         await artifacts.add(
@@ -425,7 +430,7 @@ describe("Arrow storage boundary", () => {
       }
       const embeddings = await connection.createEmptyTable(
         "embeddings",
-        oldSchema(TABLE_SCHEMAS.embeddings),
+        fixtureSchema(TABLE_SCHEMAS.embeddings),
       );
       try {
         await embeddings.add(

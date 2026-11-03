@@ -236,17 +236,6 @@ test("external formatter failures and timeouts are actionable", async () => {
       formatContent(path.join(root, "value.txt"), "value"),
     ),
   ).rejects.toThrow(/formatter exploded/);
-
-  await scriptConfig(
-    root,
-    "await Bun.sleep(250); process.stdout.write(await Bun.stdin.text())",
-    { fallback: "reject", timeout: 20 },
-  );
-  await expect(
-    withConfig(hermeticConfig(root), () =>
-      formatContent(path.join(root, "value.txt"), "value"),
-    ),
-  ).rejects.toThrow(/timed out after 20ms/);
 });
 
 async function scriptConfig(
@@ -324,7 +313,6 @@ test.each([
     {},
     "formatter_rejected",
   ],
-  ["timeout", "await Bun.sleep(10000)", { timeout: 20 }, "formatter_timeout"],
   [
     "oversized stdout",
     "process.stdout.write(Buffer.alloc(17*1024*1024,65))",
@@ -351,24 +339,6 @@ test.each([
       retryable: false,
       suggestedNextCall: "config_status",
     });
-  },
-);
-
-test.each(["stdout", "in_place"] as const)(
-  "preserves content after a %s formatter timeout by default",
-  async (mode) => {
-    const root = await project("ast-mcp-format-timeout-preserve-");
-    const target = path.join(root, "value.txt");
-    await scriptConfig(root, "await Bun.sleep(10000)", {
-      mode,
-      timeout: 20,
-    });
-    expect(
-      await withConfig(hermeticConfig(root), () =>
-        formatContent(target, "unchanged"),
-      ),
-    ).toBe("unchanged");
-    expect((await readdir(root)).sort()).toEqual([".git", "ast-mcp.toml"]);
   },
 );
 

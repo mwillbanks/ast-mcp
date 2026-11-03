@@ -1,15 +1,22 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { clearConfigCache } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import { currentWorkspace } from "../../src/intelligence/workspace/context";
 import { configuredExecution } from "../../src/tools/configured";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 const folders: string[] = [];
 afterEach(async () => {
+  await configRegistry.close();
   clearConfigCache();
   await Promise.all(
     folders.splice(0).map((root) => rm(root, { recursive: true, force: true })),

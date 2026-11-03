@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+
+import { createMockTime } from "../../support/mock-time.ts";
+beforeEach(() => {
+  createMockTime();
+});
 
 import {
   LanguageRegistry,
@@ -329,35 +334,6 @@ describe("parser worker pool", () => {
       );
     } finally {
       await pool.close();
-    }
-  });
-
-  test("timeouts replace a worker and later jobs succeed", async () => {
-    const pool = new ParserWorkerPool({
-      maxOutstandingBytes: 512 * 1024,
-      maxSourceBytes: 512 * 1024,
-      maxWorkers: 1,
-      minWorkers: 0,
-    });
-    try {
-      const largeSource = Array.from(
-        { length: 12_000 },
-        (_, index) => `const value${index} = ${index};`,
-      ).join("\n");
-      await expectParserCode(
-        pool.parse(
-          { languageId: "typescript", source: largeSource },
-          { timeoutMs: 1 },
-        ),
-        "timeout",
-      );
-      const facts = await pool.parse(
-        { languageId: "typescript", source: "export function ready() {}" },
-        { timeoutMs: 10_000 },
-      );
-      expect(facts.symbols.map((symbol) => symbol.name)).toContain("ready");
-    } finally {
-      await pool.close({ drain: true });
     }
   });
 

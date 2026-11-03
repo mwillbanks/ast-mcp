@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,15 +15,28 @@ import {
   resolveConfig,
   type ResolvedConfig,
 } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import {
   Telemetry,
   filterTelemetryEvent,
   telemetryFailure,
 } from "../../src/runtime/telemetry";
 import { createServer } from "../../src/server";
+import { createMockTime, flushMicrotasks } from "../support/mock-time";
+
+let time: ReturnType<typeof createMockTime>;
+beforeEach(() => {
+  time = createMockTime();
+});
+function telemetryController(
+  options: ConstructorParameters<typeof Telemetry>[0] = {},
+) {
+  return new Telemetry({ yieldToEventLoop: async () => {}, ...options });
+}
 
 const roots: string[] = [];
 afterEach(async () => {
+  configRegistry.close();
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
   clearConfigCache();
@@ -54,7 +67,7 @@ async function fixture(
 }
 const policy = (enabled = true, globalEnabled = true) =>
   ({ telemetry: { enabled, globalEnabled } }) as ResolvedConfig;
-const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+const tick = flushMicrotasks;
 test("terminal close blocks delayed loader, startup policy, and transport continuations", async () => {
   for (const stage of ["loader", "startup", "global"] as const) {
     const fake = fakeSdk();
@@ -63,7 +76,7 @@ test("terminal close blocks delayed loader, startup policy, and transport contin
       resume = resolve;
     });
     let checks = 0;
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       shutdownMs: 1,
       globalEnabled: async () => {
         if (stage === "global" && ++checks === 1) await delay;
@@ -82,14 +95,16 @@ test("terminal close blocks delayed loader, startup policy, and transport contin
       telemetry.reportException(new Error("private fatal"), true);
     else await invoke(telemetry);
     await tick();
-    await telemetry.close();
+    const closing = telemetry.close();
+    await time.advanceBy(1);
+    await closing;
     resume();
     await tick();
     expect(fake.constructed).toBe(0);
     expect(fake.calls).toHaveLength(0);
   }
   const fake = fakeSdk();
-  const telemetry = new Telemetry({
+  const telemetry = telemetryController({
     globalEnabled: async () => true,
     loadSdk: fake.loadSdk,
   });
@@ -105,7 +120,7 @@ test("terminal close blocks delayed loader, startup policy, and transport contin
 test("anonymous sessions rotate at 23 hours and remain isolated between controllers", async () => {
   let now = 0;
   const sdk = fakeSdk();
-  const telemetry = new Telemetry({
+  const telemetry = telemetryController({
     now: () => now,
     globalEnabled: async () => true,
     loadSdk: sdk.loadSdk,
@@ -127,7 +142,7 @@ test("anonymous sessions rotate at 23 hours and remain isolated between controll
     /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
   const otherSdk = fakeSdk();
-  const other = new Telemetry({
+  const other = telemetryController({
     globalEnabled: async () => true,
     loadSdk: otherSdk.loadSdk,
   });
@@ -194,7 +209,7 @@ async function invoke(
 
 test("stalled tools emit one sanitized event before completion", async () => {
   const sdk = fakeSdk();
-  const telemetry = new Telemetry({
+  const telemetry = telemetryController({
     globalEnabled: async () => true,
     loadSdk: sdk.loadSdk,
     slowToolMs: 5,
@@ -209,7 +224,8 @@ test("stalled tools emit one sanitized event before completion", async () => {
     return "completed";
   });
   try {
-    await Bun.sleep(25);
+    expect(sdk.events).toHaveLength(0);
+    await time.advanceBy(25);
     await tick();
     expect(sdk.calls).toHaveLength(0);
     expect(sdk.events).toHaveLength(1);
@@ -221,7 +237,7 @@ test("stalled tools emit one sanitized event before completion", async () => {
     expect(event?.event).toBe("$mcp_tool_stalled");
     expect(event?.properties?.error_code).toBe("tool_stalled");
     expect(event?.properties?.outcome).toBe("operational_error");
-    await Bun.sleep(15);
+    await time.advanceBy(15);
     expect(sdk.events).toHaveLength(1);
   } finally {
     finish();
@@ -234,7 +250,7 @@ test("stalled tools emit one sanitized event before completion", async () => {
 test("stall watchdogs preserve opt-out and stop on close", async () => {
   for (const selected of [policy(false), policy(true, false), undefined]) {
     const sdk = fakeSdk();
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       globalEnabled: async () => true,
       loadSdk: sdk.loadSdk,
       slowToolMs: 5,
@@ -246,7 +262,7 @@ test("stall watchdogs preserve opt-out and stop on close", async () => {
         finish = resolve;
       });
     });
-    await Bun.sleep(15);
+    await time.advanceBy(15);
     finish();
     await operation;
     await telemetry.close();
@@ -254,7 +270,7 @@ test("stall watchdogs preserve opt-out and stop on close", async () => {
     expect(sdk.events).toHaveLength(0);
   }
   const sdk = fakeSdk();
-  const telemetry = new Telemetry({
+  const telemetry = telemetryController({
     globalEnabled: async () => true,
     loadSdk: sdk.loadSdk,
     slowToolMs: 10,
@@ -267,7 +283,7 @@ test("stall watchdogs preserve opt-out and stop on close", async () => {
     });
   });
   await telemetry.close();
-  await Bun.sleep(20);
+  await time.advanceBy(20);
   finish();
   await operation;
   expect(sdk.loaded).toBe(0);
@@ -339,7 +355,7 @@ describe("telemetry configuration", () => {
 
 test("committed deletions report cleanup outcomes without changing results or transmitting details", async () => {
   const sdk = fakeSdk();
-  const telemetry = new Telemetry({
+  const telemetry = telemetryController({
     loadSdk: sdk.loadSdk,
     globalEnabled: async () => true,
   });
@@ -393,7 +409,7 @@ describe("telemetry isolation and lifecycle", () => {
   test("disabled and unresolved policy never import SDK or send network", async () => {
     const sdk = fakeSdk();
     let network = 0;
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => true,
       fetch: async () => {
@@ -409,7 +425,7 @@ describe("telemetry isolation and lifecycle", () => {
     await telemetry.close();
     expect(sdk.loaded).toBe(0);
     expect(network).toBe(0);
-    const globalOff = new Telemetry({
+    const globalOff = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => false,
     });
@@ -419,7 +435,7 @@ describe("telemetry isolation and lifecycle", () => {
   });
   test("registered tools, expected errors, unknown names, and fatal events remain bounded", async () => {
     const sdk = fakeSdk();
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => true,
     });
@@ -480,7 +496,7 @@ describe("telemetry isolation and lifecycle", () => {
   });
   test("concurrent project scopes do not leak opt-out or sessions", async () => {
     const sdk = fakeSdk();
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => true,
     });
@@ -504,7 +520,7 @@ describe("telemetry isolation and lifecycle", () => {
         release = resolve;
       },
     );
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       maxPending: 1,
       globalEnabled: async () => true,
       loadSdk: () => pending,
@@ -514,7 +530,7 @@ describe("telemetry isolation and lifecycle", () => {
     release(await sdk.loadSdk());
     await telemetry.close();
     expect(sdk.calls).toHaveLength(1);
-    const broken = new Telemetry({
+    const broken = telemetryController({
       loadSdk: async () => {
         throw new Error("SDK unavailable");
       },
@@ -522,7 +538,7 @@ describe("telemetry isolation and lifecycle", () => {
     });
     expect(await invoke(broken)).toBe("preserved");
     await broken.close();
-    const rejecting = new Telemetry({
+    const rejecting = telemetryController({
       globalEnabled: async () => {
         throw new Error("config unavailable");
       },
@@ -534,7 +550,7 @@ describe("telemetry isolation and lifecycle", () => {
     for (const disabledAt of [2, 3, 4]) {
       const sdk = fakeSdk();
       let calls = 0;
-      const telemetry = new Telemetry({
+      const telemetry = telemetryController({
         loadSdk: sdk.loadSdk,
         globalEnabled: async () => ++calls < disabledAt,
       });
@@ -545,7 +561,7 @@ describe("telemetry isolation and lifecycle", () => {
   });
   test("hanging SDK shutdown respects deadline and shutdown rejection is isolated", async () => {
     for (const hanging of [true, false]) {
-      const telemetry = new Telemetry({
+      const telemetry = telemetryController({
         shutdownMs: 15,
         globalEnabled: async () => true,
         loadSdk: async () => () => ({
@@ -558,14 +574,14 @@ describe("telemetry isolation and lifecycle", () => {
         }),
       });
       await invoke(telemetry);
-      const start = performance.now();
-      await telemetry.close();
-      expect(performance.now() - start).toBeLessThan(200);
+      const closing = telemetry.close();
+      await time.advanceBy(15);
+      await closing;
     }
   });
   test("malicious throwable getters cannot replace original operation error", async () => {
     const sdk = fakeSdk();
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => true,
     });
@@ -688,7 +704,7 @@ describe("transmission allowlist", () => {
     const sdk = fakeSdk();
     let enabled = true;
     let networks = 0;
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       loadSdk: sdk.loadSdk,
       globalEnabled: async () => enabled,
       fetch: async () => {
@@ -752,9 +768,10 @@ describe("transmission allowlist", () => {
         }>;
       };
     }> = [];
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       globalEnabled: async () => true,
       loadSdk: async () => (token, options) => new PostHogMCP(token, options),
+      yieldToEventLoop: flushMicrotasks,
       fetch: async (url, options) => {
         packets.push({
           url: String(url),
@@ -853,7 +870,7 @@ describe("transmission allowlist", () => {
     const release = Promise.withResolvers<void>();
     let constructed = 0;
     let packets = 0;
-    const telemetry = new Telemetry({
+    const telemetry = telemetryController({
       globalEnabled: async () => true,
       shutdownMs: 10,
       loadSdk: async () => {
@@ -874,7 +891,9 @@ describe("transmission allowlist", () => {
       for (let index = 0; index < 3; index++)
         expect(await invoke(telemetry)).toBe("preserved");
       await loading.promise;
-      await telemetry.close();
+      const closing = telemetry.close();
+      await time.advanceBy(10);
+      await closing;
       expect(constructed).toBe(0);
       expect(packets).toBe(0);
     } finally {
@@ -886,24 +905,47 @@ describe("transmission allowlist", () => {
     expect(packets).toBe(0);
   });
   test("analytics outages do not fail tools or extend shutdown indefinitely", async () => {
-    const telemetry = new Telemetry({
+    const { PostHogMCP } = await import("@posthog/mcp");
+
+    const captured = Promise.withResolvers<void>();
+    const telemetry = telemetryController({
+      loadSdk: async () => (token, options) => {
+        const sdk = new PostHogMCP(token, options);
+        return {
+          captureToolCall: (
+            ...args: Parameters<typeof sdk.captureToolCall>
+          ) => {
+            sdk.captureToolCall(...args);
+            captured.resolve();
+          },
+          capture: sdk.capture.bind(sdk),
+          shutdown: sdk.shutdown.bind(sdk),
+        };
+      },
       globalEnabled: async () => true,
       requestTimeoutMs: 15,
       shutdownMs: 50,
+      yieldToEventLoop: () => time.sleep(0),
       fetch: async () => {
         throw new Error("offline");
       },
     });
     expect(await invoke(telemetry)).toBe("preserved");
-    const start = performance.now();
-    await telemetry.close();
-    expect(performance.now() - start).toBeLessThan(200);
+    await captured.promise;
+    await time.advanceBy(0);
+    const closing = telemetry.close();
+    await time.advanceBy(50);
+    await closing;
+    expect(time.pending()).toBe(0);
   });
 });
 
 test("real MCP tool discovery preserves schemas and disabled traffic stays offline", async () => {
   const sdk = fakeSdk();
-  const server = createServer({}, { loadSdk: sdk.loadSdk });
+  const server = createServer(
+    {},
+    { loadSdk: sdk.loadSdk, yieldToEventLoop: async () => {} },
+  );
   const client = new Client({
     name: "identifying-private-client",
     version: "private",

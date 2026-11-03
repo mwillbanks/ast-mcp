@@ -21,6 +21,7 @@ import {
   type ResolvedConfig,
 } from "../../src/config";
 import { ConfigRegistry } from "../../src/config/registry";
+import { createMockTime } from "../support/mock-time";
 
 async function fixture() {
   const root = await mkdtemp(
@@ -63,17 +64,58 @@ test("reloading changed selections preserves unrelated and unchanged snapshots",
   }
 });
 
+test("unexpected fingerprint failures reject access and queued reloads recover without poisoning other identities", async () => {
+  const { root, first, second } = await fixture();
+  const registry = new ConfigRegistry(60_000);
+  const base = { env: {}, home: path.join(root, "home") };
+  const options = { ...base, cwd: first };
+  const originalStat = fsPromises.stat;
+  const failure = new Error("injected fingerprint provider failure");
+  let failNextProbe = false;
+  const metadata = spyOn(fsPromises, "stat");
+  metadata.mockImplementation(((
+    ...args: Parameters<typeof fsPromises.stat>
+  ) => {
+    if (failNextProbe && String(args[0]) === path.join(first, ".git")) {
+      failNextProbe = false;
+      throw failure;
+    }
+    return Reflect.apply(originalStat, fsPromises, args);
+  }) as typeof fsPromises.stat);
+  try {
+    const initial = await registry.snapshot(options);
+    const unrelated = await registry.snapshot({ ...base, cwd: second });
+    // Ordinary filesystem rejections are handled as missing paths. Inject an
+    // unexpected synchronous provider fault to exercise rejected reload promises.
+    failNextProbe = true;
+    await expect(registry.reload()).rejects.toBe(failure);
+    expect(failNextProbe).toBeFalse();
+    await expect(registry.get(options)).rejects.toBe(failure);
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reload();
+    const recovered = await registry.snapshot(options);
+    expect(recovered.healthy).toBeTrue();
+    expect(recovered.key).toBe(initial.key);
+    expect(recovered.generation).toBeGreaterThan(initial.generation);
+    expect((await registry.get(options)).telemetry.enabled).toBeFalse();
+    expect(await registry.snapshot({ ...base, cwd: second })).toBe(unrelated);
+  } finally {
+    registry.close();
+    metadata.mockRestore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("explicit reload absorbs pending debounce and delayed duplicate notifications", async () => {
+  const time = createMockTime();
   const { root, first } = await fixture();
   const registry = new ConfigRegistry(60_000);
   const options = { cwd: first, env: {}, home: path.join(root, "home") };
-  const originalTimeout = globalThis.setTimeout;
-  const scheduled: Array<() => void> = [];
-  const timers = spyOn(globalThis, "setTimeout");
-  timers.mockImplementation(((callback: () => void, delay?: number) => {
-    if (delay === 60_000) scheduled.push(callback);
-    return originalTimeout(callback, delay);
-  }) as typeof setTimeout);
   try {
     await registry.snapshot(options);
     await writeFile(
@@ -81,18 +123,18 @@ test("explicit reload absorbs pending debounce and delayed duplicate notificatio
       "version = 2\n[telemetry]\nenabled = false\n",
     );
     await registry.reconcile();
-    expect(scheduled.length).toBeGreaterThan(0);
+    expect(time.pending()).toBeGreaterThan(0);
     await registry.reload();
     const fresh = await registry.snapshot(options);
     expect(fresh.config!.telemetry.enabled).toBeFalse();
-    for (const callback of scheduled) callback();
+    await time.advanceBy(60_000);
     expect(await registry.snapshot(options)).toBe(fresh);
     await registry.reconcile();
     await registry.reload();
     expect(await registry.snapshot(options)).toBe(fresh);
   } finally {
     registry.close();
-    timers.mockRestore();
+    time.dispose();
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -484,20 +526,13 @@ async function reconciledSnapshot(
   accept: (config: Readonly<ResolvedConfig>) => boolean = () => true,
 ) {
   await registry.reconcile();
-  const deadline = Date.now() + 2000;
-  while (Date.now() < deadline) {
-    const snapshot = await registry.snapshot(options);
-    if (
-      snapshot.generation > generation &&
-      snapshot.healthy &&
-      snapshot.config &&
-      accept(snapshot.config)
-    )
-      return snapshot;
-    await registry.reconcile();
-    await Bun.sleep(5);
-  }
-  throw new Error("Registry did not reconcile a changed selection input");
+  await registry.reload();
+  const snapshot = await registry.snapshot(options);
+  expect(snapshot.healthy, snapshot.error).toBeTrue();
+  expect(snapshot.generation).toBeGreaterThan(generation);
+  expect(snapshot.config).toBeDefined();
+  expect(accept(snapshot.config!)).toBeTrue();
+  return snapshot;
 }
 
 test("registry observes prospective Claude directory selection and later configuration creation", async () => {
@@ -599,6 +634,7 @@ test("registry reconciles newly created and removed project discovery boundaries
       (config) => config.sources.project === undefined,
     );
     expect(bounded.config!.sources.project).toBeUndefined();
+    expect(bounded.key).toBe(initial.key);
     await rm(boundary, { recursive: true });
     const reopened = await reconciledSnapshot(
       registry,
@@ -609,6 +645,28 @@ test("registry reconciles newly created and removed project discovery boundaries
     expect(reopened.config!.sources.project).toBe(
       initial.config!.sources.project,
     );
+    expect(reopened.key).toBe(initial.key);
+    expect(reopened.generation).toBeGreaterThan(bounded.generation);
+
+    const ownSource = path.join(child, "ast-mcp.toml");
+    await writeFile(ownSource, "version = 2\n[telemetry]\nenabled = false\n");
+    const created = await reconciledSnapshot(
+      registry,
+      options,
+      reopened.generation,
+      (config) => config.telemetry.enabled === false,
+    );
+    expect(created.key).toBe(initial.key);
+    expect(created.config!.sources.project).toBe(await realpath(ownSource));
+    await rm(ownSource);
+    const restored = await reconciledSnapshot(
+      registry,
+      options,
+      created.generation,
+      (config) => config.sources.project === initial.config!.sources.project,
+    );
+    expect(restored.key).toBe(initial.key);
+    expect(restored.generation).toBeGreaterThan(created.generation);
   } finally {
     registry.close();
     await rm(root, { recursive: true, force: true });
@@ -707,6 +765,7 @@ test("registry follows host directory type transitions with captured environment
 
 test("periodic reconciliation refreshes captured configuration without an explicit reconcile call", async () => {
   const { root, first } = await fixture();
+  const time = createMockTime();
   const registry = new ConfigRegistry(1, 5);
   const reconcile = spyOn(registry, "reconcile");
   const options = { cwd: first, env: {}, home: path.join(root, "home") };
@@ -716,24 +775,17 @@ test("periodic reconciliation refreshes captured configuration without an explic
       path.join(first, "ast-mcp.toml"),
       "version = 2\n[telemetry]\nenabled = false\n",
     );
-    const deadline = Date.now() + 2000;
-    let current = initial;
-    while (Date.now() < deadline) {
-      current = await registry.snapshot(options);
-      if (
-        current.generation > initial.generation &&
-        current.config?.telemetry.enabled === false &&
-        reconcile.mock.calls.length > 0
-      )
-        break;
-      await Bun.sleep(5);
-    }
+    await time.advanceBy(5);
+    await Promise.all(reconcile.mock.results.map((result) => result.value));
+    await time.advanceBy(1);
+    const current = await registry.snapshot(options);
     expect(reconcile).toHaveBeenCalled();
     expect(current.healthy).toBeTrue();
     expect(current.generation).toBeGreaterThan(initial.generation);
     expect(current.config!.telemetry.enabled).toBeFalse();
   } finally {
     registry.close();
+    time.dispose();
     reconcile.mockRestore();
     await rm(root, { recursive: true, force: true });
   }
@@ -779,7 +831,7 @@ test("registry evicts inactive identities and safely reloads an evicted configur
     );
     const replacement = await registry.snapshot({ ...base, cwd: first });
     expect(replacement.config).not.toBe(initial.config);
-    expect(replacement.generation).toBe(1);
+    expect(replacement.generation).toBeGreaterThan(initial.generation);
     expect(replacement.key).toBe(initial.key);
     expect(replacement.config!.telemetry.enabled).toBeFalse();
     expect(await registry.reload()).toHaveLength(1);
@@ -807,8 +859,7 @@ test("ordinary child mutations and Git directory activity preserve configuration
     const boundary = path.join(first, ".git");
     const verify = async () => {
       await registry.reconcile();
-      // Drain watcher-triggered reconciliation and its debounce window.
-      await Bun.sleep(20);
+      await registry.reload();
       for (const [index, option] of options.entries()) {
         const current = await registry.snapshot(option);
         expect(current.generation).toBe(initial[index]!.generation);
@@ -939,7 +990,7 @@ test("nonselected root identity changes refresh trust while child activity prese
     await writeFile(child, "ordinary");
     await utimes(second, new Date(1000), new Date(1000));
     await registry.reconcile();
-    await Bun.sleep(20);
+    await registry.reload();
     for (const [index, options] of selections.entries())
       expect((await registry.snapshot(options)).generation).toBe(
         initial[index]!.generation,
@@ -974,13 +1025,139 @@ test("nonselected root identity changes refresh trust while child activity prese
   }
 });
 
+test("registry housekeeping starts lazily and restarts after close without filesystem watchers", async () => {
+  const { root, first } = await fixture();
+  const time = createMockTime();
+  const registry = new ConfigRegistry(1, 100);
+  expect(time.pending()).toBe(0);
+  const watcher = spyOn(fs, "watch").mockImplementation(() => {
+    throw new Error("watcher unavailable");
+  });
+  const reconciliations = spyOn(registry, "reconcile");
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    expect(time.pending()).toBe(1);
+    registry.close();
+    registry.close();
+    expect(time.pending()).toBe(0);
+    const reopened = await registry.snapshot(options);
+    expect(reopened.generation).toBeGreaterThan(initial.generation);
+    expect(await registry.snapshot(options)).toBe(reopened);
+    expect(time.pending()).toBe(1);
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await time.advanceBy(100);
+    expect(reconciliations).toHaveBeenCalledTimes(1);
+    await Promise.all(
+      reconciliations.mock.results.map((result) => result.value),
+    );
+    expect(time.pending()).toBe(2);
+    await time.advanceBy(1);
+    const changed = await registry.snapshot(options);
+    expect(changed.healthy).toBeTrue();
+    expect(changed.generation).toBeGreaterThan(reopened.generation);
+    expect(changed.config!.telemetry.enabled).toBeFalse();
+    registry.close();
+    expect(time.pending()).toBe(0);
+  } finally {
+    registry.close();
+    reconciliations.mockRestore();
+    watcher.mockRestore();
+    try {
+      time.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("closing a registry isolates queued and in-flight notifications from later clocks", async () => {
+  const { root, first } = await fixture();
+  const time = createMockTime();
+  const registry = new ConfigRegistry(60_000);
+  const callbacks: Array<(event: string, filename: string) => void> = [];
+  let closedWatchers = 0;
+  const watcher = spyOn(fs, "watch").mockImplementation(((
+    _directory: string,
+    callback: (event: string, filename: string) => void,
+  ) => {
+    callbacks.push(callback);
+    return {
+      close() {
+        closedWatchers++;
+      },
+      unref() {},
+    };
+  }) as unknown as typeof fs.watch);
+  const originalStat = fsPromises.stat;
+  const entered = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  let pausedPath: string | undefined;
+  const metadata = spyOn(fsPromises, "stat").mockImplementation(((
+    ...args: Parameters<typeof fsPromises.stat>
+  ) => {
+    const result = Reflect.apply(originalStat, fsPromises, args);
+    if (String(args[0]) !== pausedPath) return result;
+    pausedPath = undefined;
+    entered.resolve();
+    return resume.promise.then(() => result);
+  }) as typeof fsPromises.stat);
+  const reconciliations = spyOn(registry, "reconcile");
+  let inFlight: Promise<void> | undefined;
+  try {
+    const snapshot = await registry.snapshot({
+      cwd: first,
+      env: {},
+      home: path.join(root, "home"),
+    });
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reconcile();
+    expect(time.pending()).toBe(2);
+    pausedPath = Object.keys(snapshot.fingerprints)[0]!;
+    inFlight = registry.reconcile();
+    await entered.promise;
+    registry.close();
+    expect(closedWatchers).toBe(callbacks.length);
+    expect(time.pending()).toBe(0);
+    const calls = reconciliations.mock.calls.length;
+    for (const notify of callbacks) notify("change", "ast-mcp.toml");
+    expect(reconciliations.mock.calls).toHaveLength(calls);
+    resume.resolve();
+    await inFlight;
+    expect(time.pending()).toBe(0);
+  } finally {
+    resume.resolve();
+    try {
+      await inFlight;
+    } finally {
+      registry.close();
+      reconciliations.mockRestore();
+      metadata.mockRestore();
+      watcher.mockRestore();
+      try {
+        time.dispose();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("watch events verify fingerprint changes before invalidating a configuration", async () => {
   const { root, first } = await fixture();
+  const time = createMockTime();
   const registry = new ConfigRegistry(1);
   const callbacks = new Map<
     string,
     (event: string, filename: string) => void
   >();
+  const reconciliations = spyOn(registry, "reconcile");
   const watcher = spyOn(fs, "watch");
   watcher.mockImplementation(((
     directory: string,
@@ -996,7 +1173,10 @@ test("watch events verify fingerprint changes before invalidating a configuratio
     expect(notify).toBeFunction();
     await writeFile(path.join(first, ".git", "ordinary-cache"), "cache");
     notify("change", ".git");
-    await Bun.sleep(20);
+    await Promise.all(
+      reconciliations.mock.results.map((result) => result.value),
+    );
+    await time.advanceBy(1);
     expect((await registry.snapshot(options)).generation).toBe(
       initial.generation,
     );
@@ -1005,18 +1185,18 @@ test("watch events verify fingerprint changes before invalidating a configuratio
       "version = 2\n[telemetry]\nenabled = false\n",
     );
     notify("change", "ast-mcp.toml");
-    const deadline = Date.now() + 2000;
-    let current = initial;
-    while (Date.now() < deadline) {
-      current = await registry.snapshot(options);
-      if (current.generation > initial.generation) break;
-      await Bun.sleep(5);
-    }
+    await Promise.all(
+      reconciliations.mock.results.map((result) => result.value),
+    );
+    await time.advanceBy(1);
+    const current = await registry.snapshot(options);
     expect(current.healthy).toBeTrue();
     expect(current.generation).toBeGreaterThan(initial.generation);
     expect(current.config!.telemetry.enabled).toBeFalse();
   } finally {
     registry.close();
+    time.dispose();
+    reconciliations.mockRestore();
     watcher.mockRestore();
     await rm(root, { recursive: true, force: true });
   }

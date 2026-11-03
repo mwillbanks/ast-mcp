@@ -6,7 +6,7 @@ import { PassThrough, Writable } from "node:stream";
 
 import { evaluateHook } from "../../src/hooks";
 import { BatchingStdioServerTransport } from "../../src/server/stdio";
-import { spawnHttpMcpProcess, spawnLiveProcess } from "../support/live-process";
+import { spawnHttpMcpProcess, spawnLiveProcess } from "./support/live-process";
 
 test("hook routes common nested shell and interpreter wrappers", () => {
   for (const command of [

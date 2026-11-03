@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { lstat, open, type FileHandle, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 
+import { createDeadline } from "../../runtime/deadline.ts";
 import { sha256, sha256Handle } from "../../runtime/hash.ts";
 import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
@@ -366,15 +367,11 @@ async function restoreMutationRecord(
   } = {},
 ): Promise<void> {
   const remaining = remainingRecoveryBudget(options.deadline);
-  if (remaining !== undefined) {
-    const deadlineSignal = AbortSignal.timeout(remaining);
-    options = {
-      ...options,
-      signal: options.signal
-        ? AbortSignal.any([options.signal, deadlineSignal])
-        : deadlineSignal,
-    };
-  }
+  using deadline =
+    remaining === undefined
+      ? undefined
+      : createDeadline(remaining, options.signal);
+  if (deadline) options = { ...options, signal: deadline.signal };
   for (const file of record.files) {
     await assertRecoveryPath(workspace, file.filePath);
     if (
@@ -800,6 +797,7 @@ export class LanceMutationLifecycle implements MutationLifecycle {
     if (!plan) throw new Error("mutation_operation_unknown");
     await this.options.fence?.();
     await this.journal.transition(operationId, "refreshing");
+    const parsers = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
     const timeout = new AbortController();
     const timeoutError = Object.assign(
       new Error("Mutation intelligence refresh timed out"),
@@ -816,7 +814,6 @@ export class LanceMutationLifecycle implements MutationLifecycle {
     const signal = this.options.signal
       ? AbortSignal.any([this.options.signal, timeout.signal])
       : timeout.signal;
-    const parsers = new ParserWorkerPool({ minWorkers: 0, maxWorkers: 1 });
     try {
       const result = await this.refresh({
         parse: (request, options) => parsers.parse(request, options),

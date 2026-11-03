@@ -38,18 +38,11 @@ test("delete reference preflight cancels a stalled stream without deleting targe
     abort.signal,
   );
   const failure = new Error("delete cancelled");
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       started.promise,
       operation.then(() => {
         throw new Error("Delete completed before reference read");
-      }),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("Reference read never started")),
-          2000,
-        );
       }),
     ]);
     abort.abort(failure);
@@ -57,7 +50,6 @@ test("delete reference preflight cancels a stalled stream without deleting targe
     expect(stream.destroyed).toBe(true);
     expect(await readFile(target, "utf8")).toBe("export const target = 1;");
   } finally {
-    clearTimeout(timeout);
     abort.abort(failure);
     stream.destroy();
     await operation.catch(() => undefined);

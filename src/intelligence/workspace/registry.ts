@@ -46,6 +46,7 @@ export interface WorkspaceExpectations {
 interface WorkspaceRecord {
   checkoutDevice: bigint;
   checkoutInode: bigint;
+  openingDirectory: string;
   storageOptions: StorageResolutionOptions;
   workspace: WorkspaceHandle;
 }
@@ -162,6 +163,10 @@ export class WorkspaceRegistry {
     return [...this.#workspaces.keys()];
   }
 
+  openingDirectory(workspaceId: string): string | undefined {
+    return this.#workspaces.get(workspaceId)?.openingDirectory;
+  }
+
   async list(): Promise<WorkspaceHandle[]> {
     return Promise.all(
       [...this.#workspaces.values()].map((record) => this.#revalidate(record)),
@@ -258,7 +263,8 @@ export class WorkspaceRegistry {
   }
 
   async open(options: WorkspaceOpenOptions): Promise<WorkspaceHandle> {
-    const directory = await canonicalDirectory(options.directory);
+    const openingDirectory = options.directory;
+    const directory = await canonicalDirectory(openingDirectory);
     const git = await discoverGitWorkspace(directory);
     if (git.isGit && git.checkoutRoot !== directory)
       throw new WorkspaceError(
@@ -324,6 +330,7 @@ export class WorkspaceRegistry {
     this.#workspaces.set(workspace.workspaceId, {
       checkoutDevice: BigInt(metadata.dev),
       checkoutInode: BigInt(metadata.ino),
+      openingDirectory,
       storageOptions: {
         env: options.env,
         home: options.home,

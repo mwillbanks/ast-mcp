@@ -1,0 +1,11 @@
+{
+  "title": "Tools",
+  "pages": [
+    "index",
+    "workspaces",
+    "files",
+    "configuration",
+    "code-intelligence",
+    "indexing"
+  ]
+}

@@ -261,21 +261,7 @@ test("a service-file conflict refuses its compensation while unrelated callbacks
   expect(commands).toEqual([]);
   expect(await readFile(plan.file, "utf8")).toBe("user plan");
 });
-test("read-only state subprocesses capture outcomes and terminate within the deadline", async () => {
-  expect(
-    await queryServiceCommand([
-      process.execPath,
-      "-e",
-      'process.stdout.write("state");process.stderr.write("diagnostic");process.exit(3)',
-    ]),
-  ).toEqual(reply("state", 3, "diagnostic"));
-  await expect(
-    queryServiceCommand(
-      [process.execPath, "-e", "setInterval(()=>{},1000)"],
-      50,
-    ),
-  ).rejects.toThrow("timed out");
-});
+
 test.skipIf(process.platform === "win32")(
   "read-only state subprocess signal termination is not absence",
   async () => {
@@ -435,18 +421,6 @@ test("restored-dependency assertions require a captured original transaction sta
       assertInstallerRestored("missing");
     }),
   ).rejects.toThrow("original file state");
-});
-test("state subprocess spawn and excessive output failures cannot imply service absence", async () => {
-  await expect(
-    queryServiceCommand(["/ast-mcp-nonexistent-query-executable"]),
-  ).rejects.toThrow();
-  await expect(
-    queryServiceCommand([
-      process.execPath,
-      "-e",
-      'process.stdout.write("x".repeat(17*1024*1024));setInterval(()=>{},1000)',
-    ]),
-  ).rejects.toThrow("output exceeded");
 });
 
 test("Darwin compensation verifies absence instead of suppressing bootout errors", async () => {

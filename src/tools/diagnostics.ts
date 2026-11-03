@@ -16,7 +16,10 @@ import {
 
 export default function registerDiagnosticTools(
   server: McpServer,
-  options: Pick<DiagnosticsOptions, "fetch" | "transport"> & {
+  options: Pick<
+    DiagnosticsOptions,
+    "configurationSnapshot" | "fetch" | "transport"
+  > & {
     requestScoped?: boolean;
   } = {},
 ) {

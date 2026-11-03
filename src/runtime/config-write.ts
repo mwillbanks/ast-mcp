@@ -11,9 +11,9 @@ import {
   updatePathTable,
   writeConfigSource,
 } from "../config/edit";
+import { configurationResolutionOptions } from "../config/identity";
 import { configRegistry } from "../config/registry";
 import type { CliOutputFormat } from "../config/schema-common";
-import { grantUnrestrictedFilesystem } from "./approval";
 import { withFileLocks } from "./locks";
 import { assertPolicy, evaluatePolicy, PathPolicyError } from "./path-policy";
 import {
@@ -349,20 +349,14 @@ async function commitConfigEdit(
   source: string,
   expectedSource: string,
   changed: string[],
-  grantFilesystem = false,
 ) {
   const current = await currentConfig();
+  const resolution = configurationResolutionOptions(current);
+  if (!resolution)
+    throw new Error("Configuration resolution context is unavailable");
   await writeConfigSource(filePath, source, expectedSource);
-  const snapshots = await configRegistry.reload();
-  const snapshot =
-    snapshots.find(
-      (item) =>
-        item.config?.projectRoot === current.projectRoot ||
-        item.config?.sources.project === filePath ||
-        item.config?.sources.global === filePath,
-    ) ?? (await configRegistry.snapshot({ cwd: current.projectRoot }));
-  if (grantFilesystem && snapshot.config)
-    grantUnrestrictedFilesystem(snapshot.config);
+  await configRegistry.reload();
+  const snapshot = await configRegistry.snapshot(resolution);
   return {
     changed,
     filePath,
@@ -408,7 +402,6 @@ async function editConfigCore(target: ConfigTarget, patch: ConfigCorePatch) {
     applyConfigCorePatch(loaded.source, patch),
     loaded.source,
     changed,
-    patch.safety?.filesystem === "unrestricted",
   );
 }
 

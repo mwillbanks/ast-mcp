@@ -1,20 +1,13 @@
 import { expect, test } from "bun:test";
-import { readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { install } from "../../src/installer";
 
 test("installer configures stable CLI subcommands for every local host", async () => {
-  const root = await os.tmpdir();
-  const folder = path.join(
-    root,
-    `ast-mcp-hot-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  );
-  const home = path.join(
-    root,
-    `ast-mcp-hot-home-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  );
+  const folder = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-hot-"));
+  const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-hot-home-"));
   await install({
     home,
     root: folder,
