@@ -15,6 +15,7 @@ import {
   resolveConfig,
   type ResolvedConfig,
 } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import {
   Telemetry,
   filterTelemetryEvent,
@@ -35,6 +36,7 @@ function telemetryController(
 
 const roots: string[] = [];
 afterEach(async () => {
+  configRegistry.close();
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
   clearConfigCache();

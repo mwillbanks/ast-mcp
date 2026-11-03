@@ -1,9 +1,20 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
+import { configRegistry } from "../../src/config/registry";
 import registerConfigurationTools from "../../src/tools/configuration";
 import type { ConfiguredExecution } from "../../src/tools/configured";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
+
+afterEach(async () => {
+  await configRegistry.close();
+});
+
 test("configuration status reuses bounded roots discovery even when the client advertises no roots", async () => {
   const handlers = new Map<
     string,

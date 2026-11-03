@@ -59,6 +59,7 @@ async function project(prefix: string, source?: string): Promise<string> {
 }
 
 afterEach(async () => {
+  await configRegistry.close();
   clearConfigCache();
   clearSessionApprovals();
   await Promise.all(

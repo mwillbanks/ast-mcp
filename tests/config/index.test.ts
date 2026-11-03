@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -13,11 +13,17 @@ import {
   globalConfigPath,
   resolveConfig,
 } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import { DEFAULT_EMBEDDING_MODEL } from "../../src/intelligence/retrieval/types.ts";
 import {
   configuredExecution,
   localExecution,
 } from "../../src/tools/configured";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 const created: string[] = [];
 
@@ -29,6 +35,7 @@ async function project(prefix: string) {
 }
 
 afterEach(async () => {
+  await configRegistry.close();
   clearConfigCache();
   await Promise.all(
     created

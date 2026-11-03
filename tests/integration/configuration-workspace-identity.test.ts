@@ -97,6 +97,7 @@ async function withRepository(
     try {
       process.chdir(originalCwd);
     } finally {
+      await configRegistry.close();
       await rm(parent, { recursive: true, force: true });
     }
   }
@@ -439,6 +440,7 @@ test("workspace execution and config_status retain lexical opening configuration
       try {
         process.chdir(originalCwd);
       } finally {
+        await configRegistry.close();
         await rm(parent, { recursive: true, force: true });
       }
     }

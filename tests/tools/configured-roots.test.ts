@@ -1,11 +1,22 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
+import { configRegistry } from "../../src/config/registry";
 import {
   configuredExecution,
   localExecution,
 } from "../../src/tools/configured";
+import { createMockTime, deferred } from "../support/mock-time";
+
+let time: ReturnType<typeof createMockTime>;
+beforeEach(() => {
+  time = createMockTime();
+});
+
+afterEach(async () => {
+  await configRegistry.close();
+});
 
 type Roots = { roots: Array<{ uri: string }> };
 
@@ -31,19 +42,27 @@ function context(signal: AbortSignal): ServerContext {
 
 test("client roots timeout fails closed and allows the next request to recover", async () => {
   let calls = 0;
+  const started = deferred<void>();
   let rootsSignal: AbortSignal | undefined;
   const execute = executor(async (...args) => {
     calls += 1;
     rootsSignal = (args[1] as { signal: AbortSignal }).signal;
-    if (calls === 1) return new Promise<Roots>(() => {});
+    if (calls === 1) {
+      started.resolve();
+      return new Promise<Roots>(() => {});
+    }
     return { roots: [{ uri: "file:///recovered" }] };
   });
   let dispatched = false;
-  await expect(
-    execute({}, async () => {
-      dispatched = true;
-    }),
-  ).rejects.toMatchObject({ code: "timeout", retryable: true });
+  const pending = execute({}, async () => {
+    dispatched = true;
+  }).catch((error: unknown) => error);
+  await started.promise;
+  await time.advanceBy(24);
+  expect(dispatched).toBe(false);
+  expect(rootsSignal?.aborted).toBe(false);
+  await time.advanceBy(1);
+  expect(await pending).toMatchObject({ code: "timeout", retryable: true });
   expect(dispatched).toBe(false);
   expect(rootsSignal?.aborted).toBe(true);
   expect(await execute.clientRoots!()).toEqual(["file:///recovered"]);

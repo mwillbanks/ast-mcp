@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeEach, expect, test } from "bun:test";
 import {
   mkdir,
   mkdtemp,
@@ -11,8 +11,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { withConfig } from "../../src/config";
+import { configRegistry } from "../../src/config/registry";
 import { sha256 } from "../../src/runtime/hash";
 import registerConfigurationTools from "../../src/tools/configuration";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 type ToolResult = {
   content: Array<{ text?: string; type: string }>;
@@ -247,6 +253,7 @@ test("configuration tools expose health, policy, and bounded document selectors"
       },
     });
   } finally {
+    await configRegistry.close();
     if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
     else process.env.XDG_CONFIG_HOME = previousXdg;
     if (previousAppData === undefined) delete process.env.APPDATA;

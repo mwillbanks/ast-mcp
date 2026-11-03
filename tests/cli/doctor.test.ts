@@ -1,13 +1,20 @@
-import { afterEach, expect, test } from "bun:test";
+import { beforeEach, afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { runCli } from "../../src/cli";
 import { parseDoctorArguments, runDoctorCli } from "../../src/cli/doctor";
+import { configRegistry } from "../../src/config/registry";
+import { createMockTime } from "../support/mock-time";
+
+beforeEach(() => {
+  createMockTime();
+});
 
 const created: string[] = [];
 afterEach(async () => {
+  await configRegistry.close();
   await Promise.all(
     created.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );

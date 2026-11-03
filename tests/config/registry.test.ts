@@ -1025,6 +1025,130 @@ test("nonselected root identity changes refresh trust while child activity prese
   }
 });
 
+test("registry housekeeping starts lazily and restarts after close without filesystem watchers", async () => {
+  const { root, first } = await fixture();
+  const time = createMockTime();
+  const registry = new ConfigRegistry(1, 100);
+  expect(time.pending()).toBe(0);
+  const watcher = spyOn(fs, "watch").mockImplementation(() => {
+    throw new Error("watcher unavailable");
+  });
+  const reconciliations = spyOn(registry, "reconcile");
+  const options = { cwd: first, env: {}, home: path.join(root, "home") };
+  try {
+    const initial = await registry.snapshot(options);
+    expect(time.pending()).toBe(1);
+    registry.close();
+    registry.close();
+    expect(time.pending()).toBe(0);
+    const reopened = await registry.snapshot(options);
+    expect(reopened.generation).toBeGreaterThan(initial.generation);
+    expect(await registry.snapshot(options)).toBe(reopened);
+    expect(time.pending()).toBe(1);
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await time.advanceBy(100);
+    expect(reconciliations).toHaveBeenCalledTimes(1);
+    await Promise.all(
+      reconciliations.mock.results.map((result) => result.value),
+    );
+    expect(time.pending()).toBe(2);
+    await time.advanceBy(1);
+    const changed = await registry.snapshot(options);
+    expect(changed.healthy).toBeTrue();
+    expect(changed.generation).toBeGreaterThan(reopened.generation);
+    expect(changed.config!.telemetry.enabled).toBeFalse();
+    registry.close();
+    expect(time.pending()).toBe(0);
+  } finally {
+    registry.close();
+    reconciliations.mockRestore();
+    watcher.mockRestore();
+    try {
+      time.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("closing a registry isolates queued and in-flight notifications from later clocks", async () => {
+  const { root, first } = await fixture();
+  const time = createMockTime();
+  const registry = new ConfigRegistry(60_000);
+  const callbacks: Array<(event: string, filename: string) => void> = [];
+  let closedWatchers = 0;
+  const watcher = spyOn(fs, "watch").mockImplementation(((
+    _directory: string,
+    callback: (event: string, filename: string) => void,
+  ) => {
+    callbacks.push(callback);
+    return {
+      close() {
+        closedWatchers++;
+      },
+      unref() {},
+    };
+  }) as unknown as typeof fs.watch);
+  const originalStat = fsPromises.stat;
+  const entered = Promise.withResolvers<void>();
+  const resume = Promise.withResolvers<void>();
+  let pausedPath: string | undefined;
+  const metadata = spyOn(fsPromises, "stat").mockImplementation(((
+    ...args: Parameters<typeof fsPromises.stat>
+  ) => {
+    const result = Reflect.apply(originalStat, fsPromises, args);
+    if (String(args[0]) !== pausedPath) return result;
+    pausedPath = undefined;
+    entered.resolve();
+    return resume.promise.then(() => result);
+  }) as typeof fsPromises.stat);
+  const reconciliations = spyOn(registry, "reconcile");
+  let inFlight: Promise<void> | undefined;
+  try {
+    const snapshot = await registry.snapshot({
+      cwd: first,
+      env: {},
+      home: path.join(root, "home"),
+    });
+    await writeFile(
+      path.join(first, "ast-mcp.toml"),
+      "version = 2\n[telemetry]\nenabled = false\n",
+    );
+    await registry.reconcile();
+    expect(time.pending()).toBe(2);
+    pausedPath = Object.keys(snapshot.fingerprints)[0]!;
+    inFlight = registry.reconcile();
+    await entered.promise;
+    registry.close();
+    expect(closedWatchers).toBe(callbacks.length);
+    expect(time.pending()).toBe(0);
+    const calls = reconciliations.mock.calls.length;
+    for (const notify of callbacks) notify("change", "ast-mcp.toml");
+    expect(reconciliations.mock.calls).toHaveLength(calls);
+    resume.resolve();
+    await inFlight;
+    expect(time.pending()).toBe(0);
+  } finally {
+    resume.resolve();
+    try {
+      await inFlight;
+    } finally {
+      registry.close();
+      reconciliations.mockRestore();
+      metadata.mockRestore();
+      watcher.mockRestore();
+      try {
+        time.dispose();
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
 test("watch events verify fingerprint changes before invalidating a configuration", async () => {
   const { root, first } = await fixture();
   const time = createMockTime();

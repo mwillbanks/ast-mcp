@@ -34,10 +34,10 @@ import { createServer } from "../../src/server";
 
 const directories: string[] = [];
 afterEach(async () => {
+  await configRegistry.close();
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true });
   clearConfigCache();
-  configRegistry.invalidate();
 });
 async function project(enabled = true) {
   const root = await mkdtemp(
@@ -433,7 +433,7 @@ for (const enabled of [true, false])
       if (previousAppData === undefined) delete process.env.APPDATA;
       else process.env.APPDATA = previousAppData;
       clearConfigCache();
-      configRegistry.invalidate();
+      await configRegistry.close();
     }
     const events = sink.packets.flatMap((packet) => packet.batch);
     if (!enabled) {

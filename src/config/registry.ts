@@ -175,15 +175,17 @@ async function stableResolution(entry: RegistryEntry) {
 export class ConfigRegistry {
   readonly #entries = new Map<string, RegistryEntry>();
   #generation = 0;
-  readonly #reconcileTimer: ReturnType<typeof setInterval>;
+  #reconcileTimer: ReturnType<typeof setInterval> | undefined;
   constructor(
     readonly debounceMs = 75,
     readonly reconcileMs = 30_000,
     readonly maxEntries = 128,
-  ) {
+  ) {}
+  #startReconciliation(): void {
+    if (this.#reconcileTimer !== undefined) return;
     this.#reconcileTimer = setInterval(
       () => void this.reconcile(),
-      reconcileMs,
+      this.reconcileMs,
     );
     this.#reconcileTimer.unref?.();
   }
@@ -206,6 +208,7 @@ export class ConfigRegistry {
   }
 
   #entry(key: string, options: ResolveConfigOptions): RegistryEntry {
+    this.#startReconciliation();
     const existing = this.#entries.get(key);
     if (existing) {
       this.#entries.delete(key);
@@ -262,7 +265,8 @@ export class ConfigRegistry {
   }
 
   close(): void {
-    clearInterval(this.#reconcileTimer);
+    if (this.#reconcileTimer !== undefined) clearInterval(this.#reconcileTimer);
+    this.#reconcileTimer = undefined;
     for (const entry of this.#entries.values()) {
       if (entry.reloadTimer) clearTimeout(entry.reloadTimer);
       for (const watcher of entry.watchers) watcher.close();

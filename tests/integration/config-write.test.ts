@@ -102,6 +102,7 @@ async function approveNext(operation: () => Promise<unknown>) {
 }
 
 afterEach(async () => {
+  await configRegistry.close();
   clearConfigCache();
   await Promise.all(
     created

@@ -200,6 +200,7 @@ test("unrestricted file access does not expand explicit intelligence paths witho
 
 const folders: string[] = [];
 afterEach(async () => {
+  await configRegistry.close();
   clearConfigCache();
   clearSessionApprovals();
   await Promise.all(
