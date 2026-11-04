@@ -278,6 +278,99 @@ async function terminateMcpProcess(
   };
 }
 
+function workspaceSelectionFailure(field: string, relationship: string): Error {
+  return new Error(
+    `MCP smoke did not select the requested workspace: ${field} ${relationship}`,
+  );
+}
+
+async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
+  try {
+    statSync(path.join(root, ".git"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return root;
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not inspect the selected checkout",
+    );
+  }
+  let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
+  try {
+    child = Bun.spawn(
+      ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: root,
+        env: { ...Bun.env, AST_MCP_PROJECT_ROOT: root, AST_MCP_ROOTS: root },
+        stderr: "ignore",
+        stdin: "ignore",
+        stdout: "pipe",
+      },
+    );
+  } catch {
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not derive the expected repository anchor",
+    );
+  }
+  const output = (async () => {
+    const reader = child.stdout.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return text + decoder.decode();
+        bytes += chunk.value.byteLength;
+        if (bytes > 128 * 1024) {
+          await reader.cancel();
+          throw new Error("Git workspace identity exceeded its output limit");
+        }
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+  try {
+    const [code, text] = await mcpDeadline(
+      Promise.all([child.exited, output]),
+      Math.max(1, timeoutMs),
+      () => {
+        throw new Error("Git workspace identity timed out");
+      },
+    );
+    const commonDirectory = text.trim();
+    if (
+      code !== 0 ||
+      !path.isAbsolute(commonDirectory) ||
+      /[\r\n]/.test(commonDirectory)
+    )
+      throw new Error("Git workspace identity was invalid");
+    const canonicalCommon = realpathSync.native(commonDirectory);
+    return path.basename(canonicalCommon) === ".git"
+      ? path.dirname(canonicalCommon)
+      : root;
+  } catch {
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not derive the expected repository anchor",
+    );
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    const exited = await mcpDeadline(
+      child.exited.then(() => true),
+      500,
+      () => false,
+    );
+    if (!exited)
+      throw workspaceSelectionFailure(
+        "canonicalRootAnchor",
+        "repository inspection did not terminate",
+      );
+  }
+}
+
 export async function smokeMcpStdio(
   binary: string,
   root: string,
@@ -435,17 +528,49 @@ export async function smokeMcpStdio(
       | undefined;
     const openedWorkspace = openedResult?.structuredContent?.data?.workspace;
     const expectedRoot = path.resolve(root);
-    const selectedWorkspace =
-      !opened.error &&
-      openedResult?.structuredContent?.ok === true &&
-      typeof openedWorkspace?.workspaceId === "string" &&
-      openedWorkspace.workspaceId.startsWith("workspace:v1:") &&
-      typeof openedWorkspace.checkoutRoot === "string" &&
-      sameNativePath(openedWorkspace.checkoutRoot, expectedRoot) &&
-      typeof openedWorkspace.canonicalRootAnchor === "string" &&
-      sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
-    if (!selectedWorkspace)
-      throw new Error("MCP smoke did not select the requested workspace");
+    if (opened.error || openedResult?.structuredContent?.ok !== true)
+      throw workspaceSelectionFailure("workspace_open", "did not succeed");
+    if (
+      typeof openedWorkspace?.workspaceId !== "string" ||
+      !openedWorkspace.workspaceId.startsWith("workspace:v1:")
+    )
+      throw workspaceSelectionFailure(
+        "workspaceId",
+        "expected a workspace identifier; observed missing or invalid value",
+      );
+    if (
+      typeof openedWorkspace.checkoutRoot !== "string" ||
+      !sameNativePath(openedWorkspace.checkoutRoot, expectedRoot)
+    )
+      throw workspaceSelectionFailure(
+        "checkoutRoot",
+        "expected selected checkout; observed " +
+          (typeof openedWorkspace.checkoutRoot === "string"
+            ? "different path"
+            : "missing or invalid value"),
+      );
+    const expectedAnchor = await expectedWorkspaceAnchor(
+      expectedRoot,
+      deadline - Date.now(),
+    );
+    if (
+      typeof openedWorkspace.canonicalRootAnchor !== "string" ||
+      !sameNativePath(openedWorkspace.canonicalRootAnchor, expectedAnchor)
+    )
+      throw workspaceSelectionFailure(
+        "canonicalRootAnchor",
+        "expected " +
+          (sameNativePath(expectedAnchor, expectedRoot)
+            ? "selected checkout"
+            : "shared repository anchor") +
+          "; observed " +
+          (typeof openedWorkspace.canonicalRootAnchor !== "string"
+            ? "missing or invalid value"
+            : sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot)
+              ? "selected checkout"
+              : "different path"),
+      );
+    const selectedWorkspace = true;
     const serverVersion = (
       initialize.result as { serverInfo?: { version?: unknown } }
     ).serverInfo?.version;
