@@ -77,21 +77,31 @@ function signalPosixProcessTree(
   try {
     process.kill(-processHandle.pid, signal);
   } catch {
-    processHandle.kill(signal);
+    if (processHandle.exitCode === null) processHandle.kill(signal);
   }
 }
 
+/**
+ * Preserve graceful shutdown unless forced.
+ * Opt in to POSIX group cleanup when inherited pipes outlive their leader.
+ * Never target a Windows PID after confirmed exit because its identity can change.
+ */
 export async function terminateProcessTree(
   processHandle: ManagedSubprocess,
   options: {
+    ensureDescendantsExit?: boolean;
     force?: boolean;
     graceMs?: number;
     platform?: NodeJS.Platform;
   } = {},
 ) {
-  if (processHandle.exitCode !== null && !options.force) return;
-  const graceMs = options.graceMs ?? 500;
   const platform = options.platform ?? process.platform;
+  if (
+    processHandle.exitCode !== null &&
+    (platform === "win32" || (!options.force && !options.ensureDescendantsExit))
+  )
+    return;
+  const graceMs = options.graceMs ?? 500;
   if (platform === "win32") {
     try {
       const taskkill = Bun.spawn(
@@ -101,19 +111,27 @@ export async function terminateProcessTree(
       const taskkillSettled = await settledWithin(taskkill, graceMs);
       if (!taskkillSettled && taskkill.exitCode === null) taskkill.kill();
     } catch {
-      processHandle.kill();
+      if (processHandle.exitCode === null) processHandle.kill();
     }
-    if (!(await settledWithin(processHandle, graceMs))) processHandle.kill();
+    if (
+      !(await settledWithin(processHandle, graceMs)) &&
+      processHandle.exitCode === null
+    )
+      processHandle.kill();
     await settledWithin(processHandle, graceMs);
     return;
   }
-  if (options.force) {
+  if (
+    options.force ||
+    (options.ensureDescendantsExit && processHandle.exitCode !== null)
+  ) {
     signalPosixProcessTree(processHandle, "SIGKILL");
     await settledWithin(processHandle, graceMs);
     return;
   }
   signalPosixProcessTree(processHandle, "SIGTERM");
-  if (await settledWithin(processHandle, graceMs)) return;
+  const stopped = await settledWithin(processHandle, graceMs);
+  if (stopped && !options.ensureDescendantsExit) return;
   signalPosixProcessTree(processHandle, "SIGKILL");
   await settledWithin(processHandle, graceMs);
 }

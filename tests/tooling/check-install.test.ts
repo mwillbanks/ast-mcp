@@ -231,6 +231,11 @@ test("optional diagnostic read and write failures propagate through the shared t
       }),
     };
     const spawn = spyOn(Bun, "spawn").mockImplementation(() => child as never);
+    const kill = spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("No mock process group"), {
+        code: "ESRCH",
+      });
+    });
     try {
       const pending = smokeMcpStdio(
         "fixture",
@@ -254,6 +259,7 @@ test("optional diagnostic read and write failures propagate through the shared t
             : "write failed";
       await expect(settleWithMockTime(time, pending)).rejects.toThrow(expected);
     } finally {
+      kill.mockRestore();
       spawn.mockRestore();
     }
   }

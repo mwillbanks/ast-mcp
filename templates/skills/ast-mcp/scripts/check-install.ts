@@ -219,12 +219,20 @@ async function mcpDeadline<T>(
   }
 }
 
+/**
+ * Stop the live MCP tree gracefully by default.
+ * Force mode kills POSIX descendants even when their group leader has exited.
+ * Windows cleanup requires a live leader because exited PIDs can be reused.
+ */
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
+  force = false,
 ) {
-  if (processHandle.exitCode !== null) return { exited: true, forced: false };
+  const platform = process.platform;
+  if (processHandle.exitCode !== null && (platform === "win32" || !force))
+    return { exited: true, forced: false };
   let forcedOnWindows = false;
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     try {
       const taskkill = Bun.spawn(
         ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
@@ -245,9 +253,10 @@ async function terminateMcpProcess(
     }
   } else {
     try {
-      process.kill(-processHandle.pid, "SIGTERM");
+      process.kill(-processHandle.pid, force ? "SIGKILL" : "SIGTERM");
     } catch {
-      processHandle.kill("SIGTERM");
+      if (processHandle.exitCode === null)
+        processHandle.kill(force ? "SIGKILL" : "SIGTERM");
     }
   }
   const stopped = await mcpDeadline(
@@ -256,7 +265,7 @@ async function terminateMcpProcess(
     () => false,
   );
   if (!stopped && processHandle.exitCode === null) {
-    if (process.platform !== "win32") {
+    if (platform !== "win32") {
       try {
         process.kill(-processHandle.pid, "SIGKILL");
       } catch {
@@ -278,6 +287,112 @@ async function terminateMcpProcess(
   };
 }
 
+/** Describe an identity mismatch without exposing checkout or Git paths. */
+function workspaceSelectionFailure(field: string, relationship: string): Error {
+  return new Error(
+    `MCP smoke did not select the requested workspace: ${field} ${relationship}`,
+  );
+}
+
+/** Derive the server-compatible anchor within the remaining smoke deadline. */
+async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
+  try {
+    statSync(path.join(root, ".git"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return root;
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not inspect the selected checkout",
+    );
+  }
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && !name.startsWith("GIT_"))
+      environment[name] = value;
+  }
+  environment.GIT_OPTIONAL_LOCKS = "0";
+  let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
+  try {
+    child = Bun.spawn(
+      [
+        "git",
+        "rev-parse",
+        "--is-inside-work-tree",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ],
+      {
+        cwd: root,
+        detached: process.platform !== "win32",
+        env: environment,
+        stderr: "ignore",
+        stdin: "ignore",
+        stdout: "pipe",
+      },
+    );
+  } catch {
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not derive the expected repository anchor",
+    );
+  }
+  const output = (async () => {
+    const reader = child.stdout.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return text + decoder.decode();
+        bytes += chunk.value.byteLength;
+        if (bytes > 128 * 1024) {
+          await reader.cancel();
+          throw new Error("Git workspace identity exceeded its output limit");
+        }
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })();
+  try {
+    const [code, text] = await mcpDeadline(
+      Promise.all([child.exited, output]),
+      Math.max(1, timeoutMs),
+      () => {
+        throw new Error("Git workspace identity timed out");
+      },
+    );
+    const [insideWorkTree, ...commonLines] = text.trim().split(/\r?\n/);
+    if (insideWorkTree !== "true") return root;
+    const commonDirectory = commonLines.join("\n");
+    if (
+      code !== 0 ||
+      !path.isAbsolute(commonDirectory) ||
+      /[\r\n]/.test(commonDirectory)
+    )
+      throw new Error("Git workspace identity was invalid");
+    const canonicalCommon = realpathSync.native(commonDirectory);
+    return path.basename(canonicalCommon) === ".git"
+      ? path.dirname(canonicalCommon)
+      : root;
+  } catch {
+    throw workspaceSelectionFailure(
+      "canonicalRootAnchor",
+      "could not derive the expected repository anchor",
+    );
+  } finally {
+    const termination = await terminateMcpProcess(child, true);
+    if (!termination.exited)
+      throw workspaceSelectionFailure(
+        "canonicalRootAnchor",
+        "repository inspection did not terminate",
+      );
+  }
+}
+
+/** Initialize MCP, verify tools and checkout identity, then reap owned processes. */
 export async function smokeMcpStdio(
   binary: string,
   root: string,
@@ -435,17 +550,49 @@ export async function smokeMcpStdio(
       | undefined;
     const openedWorkspace = openedResult?.structuredContent?.data?.workspace;
     const expectedRoot = path.resolve(root);
-    const selectedWorkspace =
-      !opened.error &&
-      openedResult?.structuredContent?.ok === true &&
-      typeof openedWorkspace?.workspaceId === "string" &&
-      openedWorkspace.workspaceId.startsWith("workspace:v1:") &&
-      typeof openedWorkspace.checkoutRoot === "string" &&
-      sameNativePath(openedWorkspace.checkoutRoot, expectedRoot) &&
-      typeof openedWorkspace.canonicalRootAnchor === "string" &&
-      sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot);
-    if (!selectedWorkspace)
-      throw new Error("MCP smoke did not select the requested workspace");
+    if (opened.error || openedResult?.structuredContent?.ok !== true)
+      throw workspaceSelectionFailure("workspace_open", "did not succeed");
+    if (
+      typeof openedWorkspace?.workspaceId !== "string" ||
+      !openedWorkspace.workspaceId.startsWith("workspace:v1:")
+    )
+      throw workspaceSelectionFailure(
+        "workspaceId",
+        "expected a workspace identifier; observed missing or invalid value",
+      );
+    if (
+      typeof openedWorkspace.checkoutRoot !== "string" ||
+      !sameNativePath(openedWorkspace.checkoutRoot, expectedRoot)
+    )
+      throw workspaceSelectionFailure(
+        "checkoutRoot",
+        "expected selected checkout; observed " +
+          (typeof openedWorkspace.checkoutRoot === "string"
+            ? "different path"
+            : "missing or invalid value"),
+      );
+    const expectedAnchor = await expectedWorkspaceAnchor(
+      expectedRoot,
+      deadline - Date.now(),
+    );
+    if (
+      typeof openedWorkspace.canonicalRootAnchor !== "string" ||
+      !sameNativePath(openedWorkspace.canonicalRootAnchor, expectedAnchor)
+    )
+      throw workspaceSelectionFailure(
+        "canonicalRootAnchor",
+        "expected " +
+          (sameNativePath(expectedAnchor, expectedRoot)
+            ? "selected checkout"
+            : "shared repository anchor") +
+          "; observed " +
+          (typeof openedWorkspace.canonicalRootAnchor !== "string"
+            ? "missing or invalid value"
+            : sameNativePath(openedWorkspace.canonicalRootAnchor, expectedRoot)
+              ? "selected checkout"
+              : "different path"),
+      );
+    const selectedWorkspace = true;
     const serverVersion = (
       initialize.result as { serverInfo?: { version?: unknown } }
     ).serverInfo?.version;
@@ -535,9 +682,14 @@ export async function smokeMcpStdio(
           `MCP smoke exited with code ${exitCode}${diagnostic ? `: ${diagnostic}` : ""}`,
         );
       }
+      if (process.exitCode !== null && globalThis.process.platform !== "win32")
+        await terminateMcpProcess(process, true);
     } catch (error) {
       shutdownError = error instanceof Error ? error : new Error(String(error));
-      await terminateMcpProcess(process).catch(() => undefined);
+      await terminateMcpProcess(
+        process,
+        globalThis.process.platform !== "win32",
+      ).catch(() => undefined);
     }
     await mcpDeadline(stderrDrain, 500, () => "");
   }
