@@ -143,7 +143,7 @@ export async function runGitRaw(
   );
   let termination: Promise<void> | undefined;
   const terminate = () => {
-    termination ??= terminateProcessTree(child, { graceMs: 250 });
+    termination ??= terminateProcessTree(child, { force: true, graceMs: 250 });
   };
   effectiveSignal?.addEventListener("abort", terminate, { once: true });
   deadline.signal.addEventListener("abort", terminate, { once: true });

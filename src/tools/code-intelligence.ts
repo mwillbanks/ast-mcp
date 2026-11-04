@@ -235,7 +235,7 @@ async function boundedGitInventory(
   let termination: Promise<void> | undefined;
   let exceeded: Error | undefined;
   const terminate = () => {
-    termination ??= terminateProcessTree(child, { graceMs: 250 });
+    termination ??= terminateProcessTree(child, { force: true, graceMs: 250 });
   };
   signal?.addEventListener("abort", terminate, { once: true });
   if (signal?.aborted) terminate();

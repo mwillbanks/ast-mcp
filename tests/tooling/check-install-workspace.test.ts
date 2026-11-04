@@ -13,6 +13,7 @@ afterEach(async () => {
   );
 });
 
+/** Create independent checkout paths without invoking Git in unit tests. */
 async function fixture() {
   const base = await mkdtemp(
     path.join(os.tmpdir(), "ast-mcp-workspace-check-"),
@@ -32,11 +33,17 @@ async function fixture() {
   return { base, main, linked, plain, common, separate };
 }
 
-function protocolChild(workspace: Record<string, unknown>, ok = true) {
+/** Correlate smoke responses and optionally gate workspace selection. */
+function protocolChild(
+  workspace: Record<string, unknown>,
+  ok = true,
+  phase?: { requested(): void; released: Promise<void> },
+) {
   let stream!: ReadableStreamDefaultController<Uint8Array>;
   return {
     exitCode: 0,
     exited: Promise.resolve(0),
+    pid: 54321,
     stdin: {
       write(line: string) {
         const request = JSON.parse(line);
@@ -59,11 +66,17 @@ function protocolChild(workspace: Record<string, unknown>, ok = true) {
                   ].map((name) => ({ name })),
                 }
               : { structuredContent: { ok, data: { workspace } } };
-        stream.enqueue(
-          new TextEncoder().encode(
-            JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n",
-          ),
-        );
+        const reply = () => {
+          stream.enqueue(
+            new TextEncoder().encode(
+              JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n",
+            ),
+          );
+        };
+        if (phase && request.method === "tools/call") {
+          phase.requested();
+          void phase.released.then(reply);
+        } else reply();
       },
       flush: async () => {},
       end() {},
@@ -81,19 +94,23 @@ function protocolChild(workspace: Record<string, unknown>, ok = true) {
   };
 }
 
-function gitChild(output: string, code = 0) {
+/** Model both Git discovery fields and an explicitly selected exit status. */
+function gitChild(output: string, code = 0, insideWorkTree = "true") {
   return {
     exitCode: code,
     exited: Promise.resolve(code),
     stdout: new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode(output));
+        controller.enqueue(
+          new TextEncoder().encode(insideWorkTree + "\n" + output),
+        );
         controller.close();
       },
     }),
   };
 }
 
+/** Build independent observed checkout and repository anchor identities. */
 function selected(checkoutRoot: unknown, canonicalRootAnchor: unknown) {
   return {
     checkoutRoot,
@@ -102,17 +119,37 @@ function selected(checkoutRoot: unknown, canonicalRootAnchor: unknown) {
   };
 }
 
+/** Drive the smoke with fake processes and explicit virtual-time phases. */
 async function smoke(
   root: string,
   workspace: Record<string, unknown>,
   git?: object | Error,
   ok = true,
   drive?: (time: ReturnType<typeof createMockTime>) => Promise<void>,
+  beforeGit?: (time: ReturnType<typeof createMockTime>) => Promise<void>,
 ) {
   const time = createMockTime();
   const started = deferred();
+  const requested = deferred();
+  const released = deferred();
+  const phase = beforeGit
+    ? { requested: () => requested.resolve(), released: released.promise }
+    : undefined;
+  const signal = spyOn(process, "kill").mockImplementation(() => {
+    throw Object.assign(new Error("No mock process group"), { code: "ESRCH" });
+  });
   const spawn = spyOn(Bun, "spawn")
-    .mockReturnValueOnce(protocolChild(workspace, ok) as never)
+    .mockImplementation(() => {
+      if (
+        git &&
+        !(git instanceof Error) &&
+        "kill" in git &&
+        typeof git.kill === "function"
+      )
+        git.kill("SIGKILL");
+      return gitChild("") as never;
+    })
+    .mockReturnValueOnce(protocolChild(workspace, ok, phase) as never)
     .mockImplementationOnce(() => {
       started.resolve();
       if (git instanceof Error) throw git;
@@ -122,13 +159,19 @@ async function smoke(
   try {
     const pending = smokeMcpStdio("fixture", root, 100);
     void pending.catch(() => {});
+    if (beforeGit) {
+      await requested.promise;
+      await beforeGit(time);
+      released.resolve();
+    }
     if (drive) {
       await started.promise;
       await drive(time);
     }
     const result = await pending;
-    return { result, calls: spawn.mock.calls };
+    return { result, calls: spawn.mock.calls, signals: signal.mock.calls };
   } finally {
+    signal.mockRestore();
     spawn.mockRestore();
     time.dispose();
   }
@@ -148,16 +191,71 @@ test("checker derives main and linked anchors while preserving non-Git roots", a
       common ? gitChild(common + "\n") : undefined,
     );
     expect(result.selectedWorkspace).toBeTrue();
-    expect(calls.length).toBe(common ? 2 : 1);
+    expect(calls.length).toBe(
+      common ? (process.platform === "win32" ? 3 : 2) : 1,
+    );
     if (common)
       expect(calls[1]?.[0]).toEqual([
         "git",
         "rev-parse",
+        "--is-inside-work-tree",
         "--path-format=absolute",
         "--git-common-dir",
       ]);
   }
 });
+
+test("checker preserves non-worktree probe semantics without trusting a forged anchor", async () => {
+  const paths = await fixture();
+  for (const [status, code] of [
+    ["false", 0],
+    ["", 128],
+  ] as const) {
+    const accepted = await smoke(
+      paths.linked,
+      selected(paths.linked, paths.linked),
+      gitChild(paths.common, code, status),
+    );
+    expect(accepted.result.selectedWorkspace).toBeTrue();
+    await expect(
+      smoke(
+        paths.linked,
+        selected(paths.linked, paths.main),
+        gitChild(paths.common, code, status),
+      ),
+    ).rejects.toThrow(
+      "canonicalRootAnchor expected selected checkout; observed different path",
+    );
+  }
+});
+
+test.skipIf(process.platform === "win32")(
+  "checker kills the owned Git group after its leader exits",
+  async () => {
+    const paths = await fixture();
+    const { result, calls, signals } = await smoke(
+      paths.linked,
+      selected(paths.linked, paths.main),
+      { ...gitChild(paths.common), pid: 12345 },
+    );
+    expect(result.selectedWorkspace).toBeTrue();
+    expect(signals).toContainEqual([-12345, "SIGKILL"]);
+    expect((calls[1] as unknown[])[1]).toMatchObject({ detached: true });
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "checker cleans the MCP group after successful leader shutdown",
+  async () => {
+    const paths = await fixture();
+    const { result, signals } = await smoke(
+      paths.plain,
+      selected(paths.plain, paths.plain),
+    );
+    expect(result.selectedWorkspace).toBeTrue();
+    expect(signals).toEqual([[-54321, "SIGKILL"]]);
+  },
+);
 
 test("checker isolates Git identity from ambient repository overrides", async () => {
   const paths = await fixture();
@@ -249,7 +347,7 @@ test("checker fails closed for unavailable and invalid Git identity", async () =
     gitChild("private Git error", 1),
     gitChild("relative/path\n"),
     gitChild(paths.common + "\n" + paths.separate),
-    gitChild("x".repeat(128 * 1024 + 1)),
+    gitChild(paths.common + "\n" + " ".repeat(128 * 1024 + 1)),
     gitChild(path.join(paths.base, "missing")),
   ]) {
     const message = await smoke(
@@ -266,7 +364,7 @@ test("checker fails closed for unavailable and invalid Git identity", async () =
   }
 });
 
-test("checker bounds and terminates stalled Git identity discovery", async () => {
+test("checker gives Git only the remaining smoke deadline", async () => {
   const paths = await fixture();
   const ended = deferred<number>();
   let output!: ReadableStreamDefaultController<Uint8Array>;
@@ -291,7 +389,12 @@ test("checker bounds and terminates stalled Git identity discovery", async () =>
         selected(paths.linked, paths.main),
         git,
         true,
-        (time) => time.advanceBy(100),
+        async (time) => {
+          await time.advanceBy(59);
+          expect(git.kill).not.toHaveBeenCalled();
+          await time.advanceBy(1);
+        },
+        (time) => time.advanceBy(40),
       ),
     ).rejects.toThrow("canonicalRootAnchor could not derive");
     expect(git.kill).toHaveBeenCalledWith("SIGKILL");

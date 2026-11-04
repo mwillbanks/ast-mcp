@@ -219,10 +219,16 @@ async function mcpDeadline<T>(
   }
 }
 
+/**
+ * Stop the live MCP tree gracefully by default.
+ * Force mode kills owned descendants even when their group leader has exited.
+ */
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
+  force = false,
 ) {
-  if (processHandle.exitCode !== null) return { exited: true, forced: false };
+  if (processHandle.exitCode !== null && !force)
+    return { exited: true, forced: false };
   let forcedOnWindows = false;
   if (process.platform === "win32") {
     try {
@@ -245,9 +251,10 @@ async function terminateMcpProcess(
     }
   } else {
     try {
-      process.kill(-processHandle.pid, "SIGTERM");
+      process.kill(-processHandle.pid, force ? "SIGKILL" : "SIGTERM");
     } catch {
-      processHandle.kill("SIGTERM");
+      if (processHandle.exitCode === null)
+        processHandle.kill(force ? "SIGKILL" : "SIGTERM");
     }
   }
   const stopped = await mcpDeadline(
@@ -278,12 +285,14 @@ async function terminateMcpProcess(
   };
 }
 
+/** Describe an identity mismatch without exposing checkout or Git paths. */
 function workspaceSelectionFailure(field: string, relationship: string): Error {
   return new Error(
     `MCP smoke did not select the requested workspace: ${field} ${relationship}`,
   );
 }
 
+/** Derive the server-compatible anchor within the remaining smoke deadline. */
 async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
   try {
     statSync(path.join(root, ".git"));
@@ -303,9 +312,16 @@ async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
   let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
     child = Bun.spawn(
-      ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      [
+        "git",
+        "rev-parse",
+        "--is-inside-work-tree",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ],
       {
         cwd: root,
+        detached: process.platform !== "win32",
         env: environment,
         stderr: "ignore",
         stdin: "ignore",
@@ -346,7 +362,9 @@ async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
         throw new Error("Git workspace identity timed out");
       },
     );
-    const commonDirectory = text.trim();
+    const [insideWorkTree, ...commonLines] = text.trim().split(/\r?\n/);
+    if (insideWorkTree !== "true") return root;
+    const commonDirectory = commonLines.join("\n");
     if (
       code !== 0 ||
       !path.isAbsolute(commonDirectory) ||
@@ -363,13 +381,8 @@ async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
       "could not derive the expected repository anchor",
     );
   } finally {
-    if (child.exitCode === null) child.kill("SIGKILL");
-    const exited = await mcpDeadline(
-      child.exited.then(() => true),
-      500,
-      () => false,
-    );
-    if (!exited)
+    const termination = await terminateMcpProcess(child, true);
+    if (!termination.exited)
       throw workspaceSelectionFailure(
         "canonicalRootAnchor",
         "repository inspection did not terminate",
@@ -377,6 +390,7 @@ async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
   }
 }
 
+/** Initialize MCP, verify tools and checkout identity, then reap owned processes. */
 export async function smokeMcpStdio(
   binary: string,
   root: string,
@@ -666,9 +680,14 @@ export async function smokeMcpStdio(
           `MCP smoke exited with code ${exitCode}${diagnostic ? `: ${diagnostic}` : ""}`,
         );
       }
+      if (process.exitCode !== null && globalThis.process.platform !== "win32")
+        await terminateMcpProcess(process, true);
     } catch (error) {
       shutdownError = error instanceof Error ? error : new Error(String(error));
-      await terminateMcpProcess(process).catch(() => undefined);
+      await terminateMcpProcess(
+        process,
+        globalThis.process.platform !== "win32",
+      ).catch(() => undefined);
     }
     await mcpDeadline(stderrDrain, 500, () => "");
   }

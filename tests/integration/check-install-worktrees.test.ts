@@ -1,20 +1,46 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
+
+import { withConfig } from "../../src/config";
 import { install } from "../../src/installer";
+import { withWorkspaceContext } from "../../src/intelligence/workspace/context";
+import {
+  runGitRaw,
+  withWorkspaceGitContext,
+} from "../../src/intelligence/workspace/git";
+import { WorkspaceRegistry } from "../../src/intelligence/workspace/registry";
+import registerNativeCodeIntelligenceTools from "../../src/tools/code-intelligence";
 import {
   checkInstall,
   smokeMcpStdio,
 } from "../../templates/skills/ast-mcp/scripts/check-install";
+import { hermeticConfig } from "../support/hermetic-config";
 import { removeTempDirectory } from "../support/temp-directory";
 import { spawnLiveProcess } from "./support/live-process";
 
 const cli = path.resolve(import.meta.dir, "../../bin/ast-mcp.ts");
 const selectedContent =
   "linked checkout\nsecond line remains outside the read\n";
+const workspaceConfig = `version = 2
+[workspace]
+roots = ["."]
+worktrees = "include"
+[telemetry]
+enabled = false
+[safety.hook]
+enabled = true
+[[paths]]
+id = "workspace"
+path = "."
+policies = { read = "allow", write = "allow", delete = "deny" }
+excludes = [".git/**"]
+`;
 const tools = [
   "graph_diff",
   "graph_explain",
@@ -27,6 +53,7 @@ const tools = [
   "workspace_status",
 ];
 
+/** Run fixture Git independently of inherited repository overrides. */
 async function git(directory: string, args: string[]) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
@@ -39,6 +66,7 @@ async function git(directory: string, args: string[]) {
   }
 }
 
+/** Expose the source CLI through a package-manager alias without registry I/O. */
 async function alias(directory: string) {
   await mkdir(directory, { recursive: true });
   const script = path.join(directory, "ast-mcp-fixture.ts");
@@ -59,8 +87,10 @@ await import(${JSON.stringify(cli)});
       : `#!/usr/bin/env bun\nawait import(${JSON.stringify(script)});\n`,
   );
   await chmod(executable, 0o755);
+  return executable;
 }
 
+/** Own a configured repository and two detached checkouts for each test. */
 async function withWorktree(
   run: (fixture: {
     home: string;
@@ -79,23 +109,7 @@ async function withWorktree(
     const home = path.join(owned, "home");
     await mkdir(repository);
     await mkdir(home);
-    await writeFile(
-      path.join(repository, "ast-mcp.toml"),
-      `version = 2
-[workspace]
-roots = ["."]
-worktrees = "include"
-[telemetry]
-enabled = false
-[safety.hook]
-enabled = true
-[[paths]]
-id = "workspace"
-path = "."
-policies = { read = "allow", write = "allow", delete = "deny" }
-excludes = [".git/**"]
-`,
-    );
+    await writeFile(path.join(repository, "ast-mcp.toml"), workspaceConfig);
     await writeFile(path.join(repository, "value.txt"), "main checkout\n");
     await git(repository, ["init", "-q"]);
     await git(repository, ["add", "ast-mcp.toml", "value.txt"]);
@@ -121,6 +135,7 @@ excludes = [".git/**"]
   }
 }
 
+/** Verify public workspace identity and bounded file access through a real server. */
 async function readSelectedCheckout(repository: string, worktree: string) {
   const live = spawnLiveProcess(process.execPath, [cli, "mcp"], {
     cwd: worktree,
@@ -131,6 +146,7 @@ async function readSelectedCheckout(repository: string, worktree: string) {
     },
   });
   let id = 0;
+  /** Correlate each request with its next protocol response. */
   async function request(method: string, params: unknown = {}) {
     const requestId = ++id;
     live.process.stdin.write(
@@ -141,6 +157,7 @@ async function readSelectedCheckout(repository: string, worktree: string) {
     expect(response.error).toBeUndefined();
     return response.result;
   }
+  /** Reject protocol failures before inspecting a public tool result. */
   async function tool<T>(name: string, args: unknown): Promise<T> {
     const result = await request("tools/call", { name, arguments: args });
     expect(result.isError, JSON.stringify(result.content)).not.toBeTrue();
@@ -169,9 +186,6 @@ async function readSelectedCheckout(repository: string, worktree: string) {
     }>("workspace_open", { directory: worktree });
     expect(opened.workspace.checkoutRoot).toBe(worktree);
     expect(opened.workspace.canonicalRootAnchor).toBe(repository);
-    expect(opened.workspace.checkoutRoot).not.toBe(
-      opened.workspace.canonicalRootAnchor,
-    );
     const workspaceId = opened.workspace.workspaceId;
     const read = await tool<{
       files: Array<{ content: string; hasMore: boolean }>;
@@ -202,7 +216,12 @@ async function readSelectedCheckout(repository: string, worktree: string) {
   }
 }
 
-function forgedServer(checkoutRoot: string, canonicalRootAnchor: string) {
+/** Serve controlled workspace identities without changing the real server. */
+function forgedServer(
+  checkoutRoot: string,
+  canonicalRootAnchor: string,
+  descendantScript?: string,
+) {
   const workspace = {
     checkoutRoot,
     canonicalRootAnchor,
@@ -210,6 +229,7 @@ function forgedServer(checkoutRoot: string, canonicalRootAnchor: string) {
   };
   return `const workspace = ${JSON.stringify(workspace)};
 const tools = ${JSON.stringify(tools)}.map(name => ({ name }));
+const descendantScript = ${JSON.stringify(descendantScript ?? null)};
 let buffered = "";
 for await (const chunk of Bun.stdin.stream()) {
   buffered += new TextDecoder().decode(chunk);
@@ -225,7 +245,17 @@ for await (const chunk of Bun.stdin.stream()) {
       : request.method === "tools/list"
         ? { tools }
         : { structuredContent: { ok: true, data: { workspace } } };
+    if (descendantScript && request.method === "tools/call") {
+      const ready = Promise.withResolvers();
+      const child = Bun.spawn([process.execPath, descendantScript], {
+        stdin: "ignore", stdout: "inherit", stderr: "inherit",
+        ipc(message) { if (message === "ready") ready.resolve(); },
+      });
+      child.unref();
+      await ready.promise;
+    }
     console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }));
+    if (descendantScript && request.method === "tools/call") process.exit(0);
   }
 }
 `;
@@ -239,8 +269,10 @@ test("managed Codex checks ignore unrelated Git environment and read linked chec
     const original = {
       GIT_DIR: process.env.GIT_DIR,
       GIT_COMMON_DIR: process.env.GIT_COMMON_DIR,
+      CODEX_HOME: process.env.CODEX_HOME,
     };
     try {
+      process.env.CODEX_HOME = path.join(home, ".codex");
       process.env.GIT_DIR = path.join(unrelated, ".git");
       process.env.GIT_COMMON_DIR = path.join(unrelated, ".git");
       await readSelectedCheckout(repository, worktree);
@@ -285,3 +317,226 @@ test("linked checkout smoke rejects a sibling with the shared anchor and a forge
     }
   });
 }, 30_000);
+
+test("bare Git pointer uses the selected directory as its workspace anchor", async () => {
+  const owned = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-bare-pointer-")),
+  );
+  try {
+    const parent = path.join(owned, "bare-parent");
+    const checkout = path.join(owned, "checkout");
+    await mkdir(parent);
+    await mkdir(checkout);
+    await git(parent, ["init", "--bare", "-q", ".git"]);
+    await writeFile(
+      path.join(checkout, ".git"),
+      `gitdir: ${path.join(parent, ".git")}\n`,
+    );
+    await writeFile(path.join(checkout, "ast-mcp.toml"), workspaceConfig);
+    await writeFile(path.join(checkout, "value.txt"), selectedContent);
+    const executable = await alias(path.join(checkout, "node_modules/.bin"));
+    await readSelectedCheckout(checkout, checkout);
+    expect(
+      (await smokeMcpStdio(executable, checkout)).selectedWorkspace,
+    ).toBeTrue();
+  } finally {
+    await removeTempDirectory(owned);
+  }
+}, 30_000);
+
+/** Bound readiness and teardown events without polling or elapsed-time assertions. */
+async function boundedProcessEvent<T>(
+  pending: Promise<T>,
+  description: string,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(description)), 5_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Prepare indexed public map execution before replacing the fixture Git binary. */
+async function nativeInventory(root: string, signal: AbortSignal) {
+  await writeFile(path.join(root, "value.ts"), "export const value = 1;\n");
+  await git(root, ["init", "-q"]);
+  await git(root, ["add", "value.ts"]);
+  const workspace = await new WorkspaceRegistry().open({
+    configurationGeneration: 1,
+    directory: root,
+    revision: { kind: "index" },
+  });
+  const handlers = new Map<
+    string,
+    (input: Record<string, unknown>, context: ServerContext) => Promise<unknown>
+  >();
+  registerNativeCodeIntelligenceTools(
+    {
+      /** Capture the public handler without starting another MCP transport. */
+      registerTool(name: string, _definition: unknown, handler: never) {
+        handlers.set(name, handler);
+      },
+    } as unknown as McpServer,
+    async (_args, operation) => withConfig(hermeticConfig(root), operation),
+  );
+  return () =>
+    withWorkspaceContext(workspace, () =>
+      handlers.get("map")!({ root, glob: "**/*.ts", timeout_ms: 10_000 }, {
+        mcpReq: { signal },
+      } as ServerContext),
+    );
+}
+
+test
+  .skipIf(process.platform === "win32")
+  .each(["checker-git", "source-git", "mcp", "native"] as const)(
+  "%s cleanup terminates descendants after the launcher exits",
+  async (mode) => {
+    const owned = await realpath(
+      await mkdtemp(path.join(os.tmpdir(), "ast-mcp-check-git-child-")),
+    );
+    const originalPath = process.env.PATH;
+    const ready = Promise.withResolvers<number>();
+    const closed = Promise.withResolvers<void>();
+    let connection: Socket | undefined;
+    let childPid: number | undefined;
+    let pending: Promise<unknown> | undefined;
+    const server = createServer((socket) => {
+      connection = socket;
+      let buffered = "";
+      socket.on("data", (chunk) => {
+        buffered += chunk.toString();
+        if (!buffered.includes("\n")) return;
+        const pid = Number(buffered.trim());
+        if (!Number.isSafeInteger(pid) || pid <= 0) {
+          ready.reject(new Error("Invalid descendant PID"));
+          return;
+        }
+        childPid = pid;
+        ready.resolve(pid);
+      });
+      socket.on("close", () => closed.resolve());
+    });
+    try {
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Readiness server has no TCP address");
+      const bin = path.join(owned, "bin");
+      const root = path.join(owned, "checkout");
+      await mkdir(bin);
+      await mkdir(root);
+      const abort = new AbortController();
+      const native =
+        mode === "native"
+          ? await nativeInventory(root, abort.signal)
+          : undefined;
+      if (mode !== "mcp" && mode !== "native")
+        await mkdir(path.join(root, ".git"));
+      const childScript = path.join(owned, "child.ts");
+      await writeFile(
+        childScript,
+        `import { connect } from "node:net";
+const socket = connect(${address.port}, "127.0.0.1", () => {
+  socket.write(String(process.pid) + "\\n");
+  process.send?.("ready");
+});
+`,
+      );
+      const launcher = path.join(bin, "git");
+      await writeFile(
+        launcher,
+        `#!/usr/bin/env bun
+Bun.spawn([process.execPath, ${JSON.stringify(childScript)}], {
+  stdin: "ignore", stdout: "inherit", stderr: "inherit",
+}).unref();
+process.exit(0);
+`,
+      );
+      await chmod(launcher, 0o755);
+      process.env.PATH = `${bin}${path.delimiter}${originalPath ?? ""}`;
+      const operation =
+        mode === "native"
+          ? native!()
+          : mode === "source-git"
+            ? withWorkspaceGitContext({ timeoutMs: 2_000 }, () =>
+                runGitRaw(root, ["rev-parse", "--is-inside-work-tree"]),
+              )
+            : smokeMcpStdio(process.execPath, root, 2_000, [
+                "-e",
+                forgedServer(
+                  root,
+                  root,
+                  mode === "mcp" ? childScript : undefined,
+                ),
+              ]);
+      pending = operation.then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      await boundedProcessEvent(ready.promise, "Descendant did not start");
+      if (mode === "native") abort.abort(new Error("caller cancelled"));
+      const outcome = await boundedProcessEvent(
+        pending,
+        "Operation did not settle after its deadline",
+      );
+      if (mode === "mcp")
+        expect(outcome).toMatchObject({
+          result: { initialized: true, selectedWorkspace: true },
+        });
+      else if (mode === "native")
+        expect(outcome).toMatchObject({
+          result: {
+            isError: true,
+            structuredContent: { error: { code: "aborted" } },
+          },
+        });
+      else
+        expect(outcome).toMatchObject({
+          error: {
+            message: expect.stringContaining(
+              mode === "source-git"
+                ? "Git operation deadline expired"
+                : "canonicalRootAnchor",
+            ),
+          },
+        });
+      await boundedProcessEvent(closed.promise, "Descendant survived cleanup");
+      const inspection = spawnLiveProcess("ps", [
+        "-p",
+        String(childPid),
+        "-o",
+        "stat=",
+      ]);
+      try {
+        const exitCode = await inspection.waitForExit();
+        if (exitCode === 0)
+          expect(inspection.diagnostics()).toMatch(/stdout:\s*Z/u);
+        else expect(exitCode).toBe(1);
+      } finally {
+        await inspection.stop();
+      }
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+      connection?.destroy();
+      await pending;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await removeTempDirectory(owned);
+    }
+  },
+  15_000,
+);

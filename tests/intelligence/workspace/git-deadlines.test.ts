@@ -1,6 +1,6 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 
-import { createMockTime } from "../../support/mock-time.ts";
+import { createMockTime, deferred } from "../../support/mock-time.ts";
 beforeEach(() => {
   createMockTime();
 });
@@ -29,6 +29,82 @@ test("an expired Git context rejects before spawning a process", async () => {
     spawn.mockRestore();
   }
 });
+
+test.each(["abort", "overflow"] as const)(
+  "Git %s reaps descendants after its process leader exits",
+  async (mode) => {
+    const reading = deferred();
+    const controller = new AbortController();
+    const reason = new Error("Git caller cancelled");
+    let stdout!: ReadableStreamDefaultController<Uint8Array>;
+    let stderr!: ReadableStreamDefaultController<Uint8Array>;
+    const child = {
+      exitCode: 0,
+      exited: Promise.resolve(0),
+      pid: 12345,
+      kill() {},
+      stdout: new ReadableStream<Uint8Array>({
+        start(output) {
+          stdout = output;
+        },
+        pull() {
+          reading.resolve();
+        },
+      }),
+      stderr: new ReadableStream<Uint8Array>({
+        start(output) {
+          stderr = output;
+        },
+      }),
+    };
+    const close = () => {
+      stdout.close();
+      stderr.close();
+    };
+    const spawn = spyOn(Bun, "spawn")
+      .mockReturnValueOnce(child as never)
+      .mockImplementation(() => {
+        close();
+        return { exitCode: 0, exited: Promise.resolve(0) } as never;
+      });
+    const kill = spyOn(process, "kill").mockImplementation(() => {
+      close();
+      return true;
+    });
+    try {
+      const pending = runGitRaw(
+        process.cwd(),
+        ["status"],
+        controller.signal,
+        undefined,
+        1,
+      );
+      void pending.catch(() => {});
+      await reading.promise;
+      if (mode === "abort") {
+        controller.abort(reason);
+        await expect(pending).rejects.toBe(reason);
+      } else {
+        stdout.enqueue(new Uint8Array(2));
+        await expect(pending).rejects.toMatchObject({
+          code: "git_output_limit_exceeded",
+        });
+      }
+      if (process.platform === "win32")
+        expect(spawn.mock.calls[1]?.[0]).toEqual([
+          "taskkill.exe",
+          "/PID",
+          "12345",
+          "/T",
+          "/F",
+        ]);
+      else expect(kill).toHaveBeenCalledWith(-12345, "SIGKILL");
+    } finally {
+      kill.mockRestore();
+      spawn.mockRestore();
+    }
+  },
+);
 
 test("persistent guard databases do not change workspace state or overlays", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-guard-state-"));

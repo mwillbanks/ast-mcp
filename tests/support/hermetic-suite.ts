@@ -8,6 +8,8 @@ const isolatedHome = path.join(os.tmpdir(), `ast-mcp-test-home-${process.pid}`);
 mkdirSync(path.join(isolatedHome, "bin"), { recursive: true });
 process.env.HOME = isolatedHome;
 process.env.USERPROFILE = isolatedHome;
+// Let explicit fixture homes own global Codex installations.
+delete process.env.CODEX_HOME;
 process.env.XDG_CONFIG_HOME = path.join(isolatedHome, ".config");
 process.env.XDG_CACHE_HOME = path.join(isolatedHome, "cache");
 process.env.APPDATA = path.join(isolatedHome, ".config");
