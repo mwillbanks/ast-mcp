@@ -231,25 +231,41 @@ for await (const chunk of Bun.stdin.stream()) {
 `;
 }
 
-test("managed local and global Codex checks accept a linked checkout and read its own bytes", async () => {
+test("managed Codex checks ignore unrelated Git environment and read linked checkout bytes", async () => {
   await withWorktree(async ({ home, repository, worktree }) => {
-    await readSelectedCheckout(repository, worktree);
-    for (const scope of ["local", "global"] as const) {
-      await install({ home, root: worktree, scope, targets: ["codex"] });
-      const result = await checkInstall(
-        ["--scope", scope, "--target", "codex", "--root", worktree],
-        home,
-        {
-          fetch: (async () =>
-            Response.json({ version: "0.7.1" })) as unknown as typeof fetch,
-        },
-      );
-      expect(result).toMatchObject({
-        installed: true,
-        checks: { mcp: true },
-        smoke: { initialized: true, selectedWorkspace: true },
-        smokeError: null,
-      });
+    const unrelated = path.join(path.dirname(repository), "unrelated");
+    await mkdir(unrelated);
+    await git(unrelated, ["init", "-q"]);
+    const original = {
+      GIT_DIR: process.env.GIT_DIR,
+      GIT_COMMON_DIR: process.env.GIT_COMMON_DIR,
+    };
+    try {
+      process.env.GIT_DIR = path.join(unrelated, ".git");
+      process.env.GIT_COMMON_DIR = path.join(unrelated, ".git");
+      await readSelectedCheckout(repository, worktree);
+      for (const scope of ["local", "global"] as const) {
+        await install({ home, root: worktree, scope, targets: ["codex"] });
+        const result = await checkInstall(
+          ["--scope", scope, "--target", "codex", "--root", worktree],
+          home,
+          {
+            fetch: (async () =>
+              Response.json({ version: "0.7.1" })) as unknown as typeof fetch,
+          },
+        );
+        expect(result).toMatchObject({
+          installed: true,
+          checks: { mcp: true },
+          smoke: { initialized: true, selectedWorkspace: true },
+          smokeError: null,
+        });
+      }
+    } finally {
+      for (const [name, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }
   });
 }, 30_000);

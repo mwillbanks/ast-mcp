@@ -159,6 +159,45 @@ test("checker derives main and linked anchors while preserving non-Git roots", a
   }
 });
 
+test("checker isolates Git identity from ambient repository overrides", async () => {
+  const paths = await fixture();
+  const overrides = {
+    GIT_DIR: paths.separate,
+    GIT_COMMON_DIR: paths.separate,
+    GIT_WORK_TREE: paths.main,
+    GIT_CONFIG_GLOBAL: path.join(paths.base, "private-config"),
+    GIT_OPTIONAL_LOCKS: "1",
+    GIT_CUSTOM_OVERRIDE: "private",
+    AST_MCP_CHECKER_ENV_PROOF: "preserved",
+  };
+  const original = Object.fromEntries(
+    Object.keys(overrides).map((name) => [name, process.env[name]]),
+  );
+  try {
+    Object.assign(process.env, overrides);
+    const { result, calls } = await smoke(
+      paths.linked,
+      selected(paths.linked, paths.main),
+      gitChild(paths.common + "\n"),
+    );
+    const options = (calls[1] as unknown[])[1] as {
+      env: Record<string, string>;
+    };
+    expect(result.selectedWorkspace).toBeTrue();
+    expect(
+      Object.keys(options.env).filter((name) => name.startsWith("GIT_")),
+    ).toEqual(["GIT_OPTIONAL_LOCKS"]);
+    expect(options.env.GIT_OPTIONAL_LOCKS).toBe("0");
+    expect(options.env.AST_MCP_CHECKER_ENV_PROOF).toBe("preserved");
+    expect(process.env.GIT_OPTIONAL_LOCKS).toBe("1");
+  } finally {
+    for (const [name, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test("checker rejects checkout substitution even when the shared anchor is correct", async () => {
   const paths = await fixture();
   const message = await smoke(

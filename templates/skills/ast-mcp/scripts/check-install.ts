@@ -294,13 +294,19 @@ async function expectedWorkspaceAnchor(root: string, timeoutMs: number) {
       "could not inspect the selected checkout",
     );
   }
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && !name.startsWith("GIT_"))
+      environment[name] = value;
+  }
+  environment.GIT_OPTIONAL_LOCKS = "0";
   let child: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
     child = Bun.spawn(
       ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
       {
         cwd: root,
-        env: { ...Bun.env, AST_MCP_PROJECT_ROOT: root, AST_MCP_ROOTS: root },
+        env: environment,
         stderr: "ignore",
         stdin: "ignore",
         stdout: "pipe",
