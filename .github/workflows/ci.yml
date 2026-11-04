@@ -372,10 +372,14 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      checks: read
     steps:
       - uses: actions/github-script@v9
         env:
           RESULTS: ${{ toJSON(needs) }}
+          GITHUB_JOB_NAME: ${{ format('{0} CI acceptance [PR {1}; base {2}; website {3}]', needs.changes.outputs.package != 'true' && 'No package' || needs.changes.outputs.full == 'true' && 'Full' || 'Selected', github.event.pull_request.number || 0, github.event.pull_request.base.sha || github.sha, needs.changes.outputs.website == 'true' && 'true' || 'false') }}
         with:
           script: |
             const results = JSON.parse(process.env.RESULTS);
@@ -386,14 +390,14 @@ jobs:
                 failures.push(flag + " must be an exact boolean string");
               }
             }
-            if (results.changes?.result !== "success") failures.push("Change selection did not succeed");
+            if (results.changes?.result !== "success") failures.push("changes: expected success; actual " + (results.changes?.result ?? "missing"));
             const packageExpected = outputs.package === "true" ? "success" : "skipped";
             for (const key of ["package-static", "package-coverage", "package-platform-tests"]) {
-              if (results[key]?.result !== packageExpected) failures.push(key + " did not cover its requested scope");
+              if (results[key]?.result !== packageExpected) failures.push(key + ": expected " + packageExpected + "; actual " + (results[key]?.result ?? "missing"));
             }
             for (const [key, flag] of [["package-consumers", "consumers"], ["package-native", "native"], ["website", "website"]]) {
               const expected = outputs[flag] === "true" ? "success" : "skipped";
-              if (results[key]?.result !== expected) failures.push(key + " did not cover its requested scope");
+              if (results[key]?.result !== expected) failures.push(key + ": expected " + expected + "; actual " + (results[key]?.result ?? "missing"));
             }
             if (outputs.full === "true") {
               for (const flag of ["package", "coverage", "consumers", "native"]) {
@@ -435,6 +439,31 @@ jobs:
               }
             }
             if (failures.length) {
+              // Surface the originating matrix job and runner annotations.
+              // Metadata failures must never hide the original qualification failure.
+              try {
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                  ...context.repo, run_id: context.runId,
+                  attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT), per_page: 100
+                });
+                for (const job of jobs) {
+                  if (job.name === process.env.GITHUB_JOB_NAME || job.conclusion === "success" || job.conclusion === "skipped") continue;
+                  const steps = (job.steps ?? []).filter(step => step.conclusion && !["success", "skipped"].includes(step.conclusion));
+                  failures.push(job.name + ": status " + job.status + "; conclusion " + (job.conclusion ?? "pending") +
+                    "; runner " + (job.runner_name || "not assigned") + "; " + job.html_url);
+                  for (const step of steps) failures.push("  Step " + step.name + ": " + step.conclusion);
+                  try {
+                    const annotations = await github.paginate(github.rest.checks.listAnnotations, {
+                      ...context.repo, check_run_id: job.id, per_page: 100
+                    });
+                    for (const annotation of annotations) failures.push("  " + annotation.annotation_level + ": " + annotation.message);
+                  } catch (error) {
+                    failures.push("  Runner annotations unavailable: " + error.message);
+                  }
+                }
+              } catch (error) {
+                failures.push("Upstream job diagnostics unavailable: " + error.message);
+              }
               core.setFailed(failures.join("\n"));
               await core.summary.addRaw("CI qualification failed.\n\n" + failures.join("\n")).write();
               return;
@@ -457,7 +486,7 @@ jobs:
         website,
         ci-acceptance,
       ]
-    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.ci-acceptance.result == 'success' && needs.package-static.result == 'success' && needs.package-consumers.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip release]') || (github.event_name == 'workflow_dispatch' && inputs.recovery_tag != '')) && needs.changes.outputs.release == 'true' && needs.ci-acceptance.result == 'success' && needs.package-static.result == 'success' && needs.package-consumers.result == 'success' && needs.package-coverage.result == 'success' && needs.package-platform-tests.result == 'success' && needs.package-native.result == 'success' && (needs.website.result == 'success' || needs.website.result == 'skipped') }}
     uses: ./.github/workflows/release.yml
     with:
       recovery_tag: ${{ inputs.recovery_tag }}

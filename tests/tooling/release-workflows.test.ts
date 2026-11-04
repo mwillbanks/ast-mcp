@@ -187,7 +187,15 @@ appendFileSync(process.env.AST_MCP_FIXTURE_TEST_MARKER!, ${JSON.stringify(name)}
       website: { result: outputs.website === "true" ? "success" : "skipped" },
     };
   }
-  async function execute(value: Results) {
+  async function execute(
+    value: Results,
+    diagnostics: {
+      jobs?: unknown[];
+      annotations?: unknown[];
+      jobsError?: boolean;
+      annotationsError?: boolean;
+    } = {},
+  ) {
     const script = job(ci, "ci-acceptance").steps?.[0]?.with?.script;
     if (typeof script !== "string")
       throw new Error("Missing acceptance JavaScript");
@@ -208,10 +216,142 @@ appendFileSync(process.env.AST_MCP_FIXTURE_TEST_MARKER!, ${JSON.stringify(name)}
     await new Function(
       "core",
       "process",
+      "github",
+      "context",
       "return (async () => {\n" + script + "\n})();",
-    )(core, { env: { RESULTS: JSON.stringify(value) } });
+    )(
+      core,
+      {
+        env: {
+          RESULTS: JSON.stringify(value),
+          GITHUB_RUN_ATTEMPT: "2",
+          GITHUB_JOB_NAME: "Full CI acceptance",
+        },
+      },
+      {
+        rest: {
+          actions: { listJobsForWorkflowRunAttempt: "jobs" },
+          checks: { listAnnotations: "annotations" },
+        },
+        paginate: async (
+          endpoint: string,
+          parameters: Record<string, unknown>,
+        ) => {
+          expect(parameters).toMatchObject({
+            owner: "owner",
+            repo: "repo",
+            per_page: 100,
+          });
+          if (endpoint === "jobs") {
+            expect(parameters).toMatchObject({ run_id: 42, attempt_number: 2 });
+            if (diagnostics.jobsError) throw new Error("jobs API unavailable");
+            return diagnostics.jobs ?? [];
+          }
+          expect(parameters.check_run_id).toBe(123);
+          if (diagnostics.annotationsError)
+            throw new Error("annotations API unavailable");
+          return diagnostics.annotations ?? [];
+        },
+      },
+      { repo: { owner: "owner", repo: "repo" }, runId: 42 },
+    );
     return { failures, summaries };
   }
+  test.each(["abandoned", "cancelled", "failure", "skipped", "missing"])(
+    "acceptance reports expected and actual native status: %s",
+    async (actual) => {
+      const value = results();
+      if (actual === "missing") delete value["package-native"];
+      else value["package-native"]!.result = actual;
+      const outcome = await execute(value);
+      expect(outcome.failures.join("\n")).toContain(
+        "package-native: expected success; actual " + actual,
+      );
+    },
+  );
+  test("acceptance reports the originating matrix job and capacity annotation", async () => {
+    const value = results();
+    value["package-native"]!.result = "abandoned";
+    const outcome = await execute(value, {
+      jobs: [
+        {
+          id: 123,
+          name: "Native package qualification (macos-latest)",
+          status: "completed",
+          conclusion: "cancelled",
+          runner_name: "",
+          html_url: "https://github.com/owner/repo/actions/runs/42/job/123",
+          steps: [],
+        },
+        { name: "Full CI acceptance", conclusion: null },
+        { name: "Linux", conclusion: "success" },
+        { name: "Release", conclusion: "skipped" },
+      ],
+      annotations: [
+        {
+          annotation_level: "failure",
+          message:
+            "The job was not acquired by Runner of type hosted even after multiple attempts",
+        },
+        {
+          annotation_level: "notice",
+          message:
+            "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.",
+        },
+      ],
+    });
+    const report = outcome.failures.join("\n");
+    expect(report).toContain(
+      "package-native: expected success; actual abandoned",
+    );
+    expect(report).toContain(
+      "Native package qualification (macos-latest): status completed; conclusion cancelled; runner not assigned",
+    );
+    expect(report).toContain(
+      "https://github.com/owner/repo/actions/runs/42/job/123",
+    );
+    expect(report).toContain(
+      "The job was not acquired by Runner of type hosted",
+    );
+    expect(report).toContain("Due to capacity constraints");
+    expect(report).not.toContain("Full CI acceptance:");
+    expect(outcome.summaries[0]).toContain(report);
+  });
+  test("acceptance reports failed steps and preserves failures when metadata APIs fail", async () => {
+    const value = results();
+    value["package-native"]!.result = "failure";
+    const failedJob = {
+      id: 123,
+      name: "Native Windows",
+      status: "completed",
+      conclusion: "failure",
+      runner_name: "hosted-1",
+      html_url: "job-link",
+      steps: [
+        { name: "Install", conclusion: "success" },
+        { name: "Qualify native dependencies", conclusion: "failure" },
+        { name: "Handshake", conclusion: "skipped" },
+      ],
+    };
+    const stepFailure = await execute(value, {
+      jobs: [failedJob],
+      annotationsError: true,
+    });
+    expect(stepFailure.failures[0]).toContain(
+      "Step Qualify native dependencies: failure",
+    );
+    expect(stepFailure.failures[0]).toContain(
+      "Runner annotations unavailable: annotations API unavailable",
+    );
+    expect(stepFailure.failures[0]).not.toContain("Step Install");
+    const unavailable = await execute(value, { jobsError: true });
+    expect(unavailable.failures[0]).toContain(
+      "package-native: expected success; actual failure",
+    );
+    expect(unavailable.failures[0]).toContain(
+      "Upstream job diagnostics unavailable: jobs API unavailable",
+    );
+  });
   test("only exact supported full matrices and successful gates report full completion", async () => {
     const outputs = fullOutputs();
     // Matrix order is immaterial, but every supported combination is required.
@@ -513,6 +653,102 @@ describe("release workflow contracts", () => {
       "results[key]?.result !== expected",
     );
     expect(job(ci, "release").needs).toContain("ci-acceptance");
+  });
+  test("release can be suppressed on a main push without skipping qualification", () => {
+    expect(job(ci, "release").if).toContain(
+      "!contains(github.event.head_commit.message, '[skip release]')",
+    );
+    for (const name of ["package-static", "package-native", "ci-acceptance"]) {
+      expect(job(ci, name).if).not.toContain("[skip release]");
+    }
+  });
+  test("capacity retry uses trusted workflow code and narrowly scoped permissions", async () => {
+    const retry = await workflow("ci-capacity-retry");
+    expect(retry.on).toEqual({
+      workflow_run: { workflows: ["CI"], types: ["completed"] },
+    });
+    expect(retry.permissions).toEqual({});
+    const handler = job(retry, "retry");
+    expect(handler.permissions).toEqual({
+      actions: "write",
+      checks: "read",
+      contents: "read",
+    });
+    const checkout = handler.steps?.find((step) =>
+      step.uses?.startsWith("actions/checkout@"),
+    );
+    expect(checkout?.with).toEqual({
+      ref: "${{ github.workflow_sha }}",
+      "persist-credentials": false,
+    });
+    expect(
+      handler.steps?.some((step) =>
+        /download-artifact|bun ci|bun install/.test(
+          step.uses ?? step.run ?? "",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      handler.steps?.find(
+        (step) => step.run === "bun scripts/testing/ci-capacity-retry.ts",
+      )?.env?.GITHUB_TOKEN,
+    ).toBe("${{ github.token }}");
+    expect(job(ci, "ci-acceptance").permissions).toEqual({
+      actions: "read",
+      checks: "read",
+    });
+  });
+  test("release condition suppresses marked pushes and preserves recovery and qualification", () => {
+    const expression = job(ci, "release").if!.replace(
+      /needs\.([a-z]+(?:-[a-z]+)+)/g,
+      'needs["$1"]',
+    );
+    const evaluate = new Function(
+      "github",
+      "inputs",
+      "needs",
+      "always",
+      "contains",
+      "return (" + expression.slice(3, -2) + ");",
+    );
+    const needs: Record<string, unknown> = Object.fromEntries(
+      [
+        "package-static",
+        "package-consumers",
+        "package-coverage",
+        "package-platform-tests",
+        "package-native",
+        "ci-acceptance",
+        "website",
+      ].map((name) => [name, { result: "success" }]),
+    );
+    needs.changes = { outputs: { release: "true" } };
+    const github = {
+      ref: "refs/heads/main",
+      event_name: "push",
+      event: { head_commit: { message: "ci: improve diagnostics" } },
+    };
+    const inputs = { recovery_tag: "" };
+    const check = () =>
+      evaluate(
+        github,
+        inputs,
+        needs,
+        () => true,
+        (text: string, value: string) =>
+          text.toLowerCase().includes(value.toLowerCase()),
+      );
+    expect(check()).toBe(true);
+    github.event.head_commit.message += " [skip release]";
+    expect(check()).toBe(false);
+    github.event_name = "workflow_dispatch";
+    inputs.recovery_tag = "ast-mcp-v0.7.1";
+    expect(check()).toBe(true);
+    needs["package-native"] = { result: "failure" };
+    expect(check()).toBe(false);
+    needs["package-native"] = { result: "success" };
+    github.event_name = "pull_request";
+    expect(check()).toBe(false);
   });
   test("release recovery uses the registered CI workflow", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
