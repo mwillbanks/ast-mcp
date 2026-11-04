@@ -156,11 +156,36 @@ test("forced process termination still skips the grace period", async () => {
   }
 });
 
-test("Windows descendant cleanup does not kill an exited native PID after taskkill failure", async () => {
+test("Windows cleanup never targets an already exited leader PID", async () => {
   const time = createMockTime();
   const child = controlledProcess(0);
   const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
     throw new Error("No mock taskkill process");
+  });
+  try {
+    for (const options of [{ force: true }, { ensureDescendantsExit: true }]) {
+      await terminateProcessTree(child.handle, {
+        ...options,
+        graceMs: 250,
+        platform: "win32",
+      });
+    }
+    expect(spawn).not.toHaveBeenCalled();
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(time.pending()).toBe(0);
+  } finally {
+    child.kill.mockRestore();
+    spawn.mockRestore();
+    time.dispose();
+  }
+});
+
+test("Windows taskkill failure never falls back after its leader exits", async () => {
+  const time = createMockTime();
+  const child = controlledProcess();
+  const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+    child.finish(0);
+    throw new Error("Mock taskkill raced with leader exit");
   });
   try {
     await terminateProcessTree(child.handle, {
@@ -178,6 +203,7 @@ test("Windows descendant cleanup does not kill an exited native PID after taskki
     expect(child.kill).not.toHaveBeenCalled();
     expect(time.pending()).toBe(0);
   } finally {
+    child.finish(0);
     child.kill.mockRestore();
     spawn.mockRestore();
     time.dispose();

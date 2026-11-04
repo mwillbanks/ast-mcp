@@ -221,16 +221,18 @@ async function mcpDeadline<T>(
 
 /**
  * Stop the live MCP tree gracefully by default.
- * Force mode kills owned descendants even when their group leader has exited.
+ * Force mode kills POSIX descendants even when their group leader has exited.
+ * Windows cleanup requires a live leader because exited PIDs can be reused.
  */
 async function terminateMcpProcess(
   processHandle: ReturnType<typeof Bun.spawn>,
   force = false,
 ) {
-  if (processHandle.exitCode !== null && !force)
+  const platform = process.platform;
+  if (processHandle.exitCode !== null && (platform === "win32" || !force))
     return { exited: true, forced: false };
   let forcedOnWindows = false;
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     try {
       const taskkill = Bun.spawn(
         ["taskkill.exe", "/PID", String(processHandle.pid), "/T", "/F"],
@@ -263,7 +265,7 @@ async function terminateMcpProcess(
     () => false,
   );
   if (!stopped && processHandle.exitCode === null) {
-    if (process.platform !== "win32") {
+    if (platform !== "win32") {
       try {
         process.kill(-processHandle.pid, "SIGKILL");
       } catch {

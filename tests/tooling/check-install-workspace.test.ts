@@ -191,9 +191,7 @@ test("checker derives main and linked anchors while preserving non-Git roots", a
       common ? gitChild(common + "\n") : undefined,
     );
     expect(result.selectedWorkspace).toBeTrue();
-    expect(calls.length).toBe(
-      common ? (process.platform === "win32" ? 3 : 2) : 1,
-    );
+    expect(calls.length).toBe(common ? 2 : 1);
     if (common)
       expect(calls[1]?.[0]).toEqual([
         "git",

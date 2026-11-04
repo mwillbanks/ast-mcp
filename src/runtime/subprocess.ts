@@ -83,7 +83,8 @@ function signalPosixProcessTree(
 
 /**
  * Preserve graceful shutdown unless forced.
- * Opt in to descendant cleanup when inherited pipes can outlive their leader.
+ * Opt in to POSIX group cleanup when inherited pipes outlive their leader.
+ * Never target a Windows PID after confirmed exit because its identity can change.
  */
 export async function terminateProcessTree(
   processHandle: ManagedSubprocess,
@@ -94,14 +95,13 @@ export async function terminateProcessTree(
     platform?: NodeJS.Platform;
   } = {},
 ) {
+  const platform = options.platform ?? process.platform;
   if (
     processHandle.exitCode !== null &&
-    !options.force &&
-    !options.ensureDescendantsExit
+    (platform === "win32" || (!options.force && !options.ensureDescendantsExit))
   )
     return;
   const graceMs = options.graceMs ?? 500;
-  const platform = options.platform ?? process.platform;
   if (platform === "win32") {
     try {
       const taskkill = Bun.spawn(
