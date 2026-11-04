@@ -103,6 +103,14 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 - Use Conventional Commits so release-please can determine the next version and changelog.
 - Do not commit generated `dist/`, `website/.output/`, or dependency directories.
 
+## CI runner capacity recovery
+
+CI acceptance reports the expected and actual gate result, affected matrix jobs, failed steps, runner assignment, and GitHub annotations. Missing diagnostic metadata cannot turn a failed gate into success.
+
+The capacity recovery workflow runs trusted default-branch code after CI completes. It retries failed jobs only when GitHub confirms hosted runner assignment failed and no independent job failed. It permits three retries after the initial attempt; manual attempts also consume this budget. Test failures and ordinary cancellations require investigation. Each recovery decision appears in the recovery workflow summary. The workflow becomes active after it reaches the default branch.
+
+To merge without starting release automation, include `[skip release]` in the resulting main commit message. This marker suppresses the release job while preserving all CI qualification. Explicit release recovery dispatches remain available.
+
 ## Releases
 
 Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the pinned Bun formatter and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release and builds one package archive. Clean Bun and npm production installations qualify those exact bytes on macOS ARM64, Linux ARM64 GNU, Linux x64, and Windows x64. ARM64 consumers also test the Bun 1.4.3 runtime minimum. Archive checksum verification and all consumer jobs must pass before npm publication with provenance. The publish job downloads the qualified archive and does not rebuild it.

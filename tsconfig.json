@@ -31,6 +31,7 @@
     "scripts/testing/test-shard.ts",
     "scripts/testing/test-durations.ts",
     "scripts/testing/ci-selection.ts",
+    "scripts/testing/ci-capacity-retry.ts",
     "scripts/testing/host-smoke.ts",
     "templates/skills/ast-mcp/scripts/**/*"
   ]
