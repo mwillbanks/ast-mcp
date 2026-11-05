@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.1...ast-mcp-v0.7.2) (2026-11-05)
+
+### 🐛 Fixes
+
+- **72:** validate worktrees and clean up Git trees ([#73](https://github.com/mwillbanks/ast-mcp/issues/73)) ([f441794](https://github.com/mwillbanks/ast-mcp/commit/f441794d35ab544ac30bc7f418c46d58c03885d3))
+
+### 🚦 Automation
+
+- retry runner capacity failures [skip release] ([eeb12c9](https://github.com/mwillbanks/ast-mcp/commit/eeb12c9434d9cf355fc573577f3bda99b24f703b))
+
 ## [0.7.1](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.0...ast-mcp-v0.7.1) (2026-11-03)
 
 ### 🐛 Fixes
