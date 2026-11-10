@@ -469,6 +469,27 @@ export async function worker(
           });
         })()
       : undefined;
+    const journalPath =
+      workspace && operation !== "recovery"
+        ? await (async () => {
+            const { mutationTransactionLockPath } =
+              await import("../../src/intelligence/mutation/service.ts");
+            const { privateMutationJournalLocation } =
+              await import("../../src/intelligence/mutation/private-journal.ts");
+            const transactionPath = await mutationTransactionLockPath(root);
+            const { storagePath } = await privateMutationJournalLocation(
+              transactionPath,
+              workspace.storageDomain.domainId,
+            );
+            cleanup.push(async () => {
+              for (const suffix of ["", "-journal", "-wal", "-shm"])
+                await rm(storagePath + suffix, { force: true });
+              for (const suffix of [".refresh.json", ".refresh.json.tmp"])
+                await rm(transactionPath + suffix, { force: true });
+            });
+            return storagePath;
+          })()
+        : undefined;
     const inWorkspace = <T>(run: () => Promise<T>) =>
       workspace ? withWorkspaceContext(workspace, run) : run();
     const capture = async () => {
@@ -647,44 +668,60 @@ export async function worker(
       )
         throw new Error("independent_recovery_hash_mismatch");
       if (workspace && operation !== "soak") {
-        const { LanceIntelligenceStore } =
-          await import("../../src/intelligence/storage/store.ts");
-        const store = await LanceIntelligenceStore.open(
-          workspace.storageDomain,
-        );
-        try {
-          const rows = await store.rows("jobs");
-          const journalStates = rows.map((row) => {
-            if (typeof row.payload_json !== "string")
-              throw new Error("invalid_journal_payload");
-            return (JSON.parse(row.payload_json) as { state: string }).state;
-          });
-          if (
-            !journalStates.length ||
-            journalStates.some(
-              (state) =>
-                !["succeeded", "rolled-back", "recovered"].includes(state),
-            )
-          )
-            throw new Error("journal_not_terminal");
-          const { ensurePrivateLockDirectory, systemAccount } =
-            await import("../../src/runtime/private-lock-directory.ts");
-          const directory = path.join(
-            await ensurePrivateLockDirectory(await systemAccount()),
-            "snapshots",
-            snapshotNamespace(workspace),
+        const payloads = await (async () => {
+          if (journalPath) {
+            const { Database } = await import("bun:sqlite");
+            const database = new Database(journalPath, { readonly: true });
+            try {
+              return database
+                .query<{ payload: string }, []>(
+                  "SELECT payload FROM mutation_records",
+                )
+                .all()
+                .map(({ payload }) => payload);
+            } finally {
+              database.close();
+            }
+          }
+          const { LanceIntelligenceStore } =
+            await import("../../src/intelligence/storage/store.ts");
+          const store = await LanceIntelligenceStore.open(
+            workspace.storageDomain,
           );
-          const snapshotDirectories = (
-            await readdir(directory).catch((failure: NodeJS.ErrnoException) => {
-              if (failure.code === "ENOENT") return [];
-              throw failure;
-            })
-          ).length;
-          if (snapshotDirectories) throw new Error("snapshot_cleanup_failed");
-          durableValidation = { journalStates, snapshotDirectories };
-        } finally {
-          await store.shutdownCoordinator();
-        }
+          try {
+            return (await store.rows("jobs")).map((row) => row.payload_json);
+          } finally {
+            await store.shutdownCoordinator();
+          }
+        })();
+        const journalStates = payloads.map((payload) => {
+          if (typeof payload !== "string")
+            throw new Error("invalid_journal_payload");
+          return (JSON.parse(payload) as { state: string }).state;
+        });
+        if (
+          !journalStates.length ||
+          journalStates.some(
+            (state) =>
+              !["succeeded", "rolled-back", "recovered"].includes(state),
+          )
+        )
+          throw new Error("journal_not_terminal");
+        const { ensurePrivateLockDirectory, systemAccount } =
+          await import("../../src/runtime/private-lock-directory.ts");
+        const directory = path.join(
+          await ensurePrivateLockDirectory(await systemAccount()),
+          "snapshots",
+          snapshotNamespace(workspace),
+        );
+        const snapshotDirectories = (
+          await readdir(directory).catch((failure: NodeJS.ErrnoException) => {
+            if (failure.code === "ENOENT") return [];
+            throw failure;
+          })
+        ).length;
+        if (snapshotDirectories) throw new Error("snapshot_cleanup_failed");
+        durableValidation = { journalStates, snapshotDirectories };
       }
     } catch (failure) {
       if (!durationMs) durationMs = performance.now() - start;
