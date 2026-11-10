@@ -24,6 +24,7 @@ import {
   createStorageDomainId,
   createWorkspaceId,
 } from "../../../src/intelligence/contracts/index.ts";
+import * as deferredRefresh from "../../../src/intelligence/mutation/experimental-deferred-refresh.ts";
 import { refreshMutationIntelligence } from "../../../src/intelligence/mutation/freshness.ts";
 import {
   activeMutationLifecycle,
@@ -2016,7 +2017,7 @@ describe("mutation recovery edges", () => {
     }
   });
 
-  test("retains freshness when an indexed workspace identity changes", async () => {
+  test("schedules freshness when an indexed workspace identity changes", async () => {
     const root = await temporary();
     await git(root, "init");
     await git(root, "config", "user.email", "test@example.com");
@@ -2050,28 +2051,44 @@ describe("mutation recovery edges", () => {
     });
     expect(reopened.workspaceId).not.toBe(workspace.workspaceId);
     expect(reopened.dirtyOverlayId).not.toBe(workspace.dirtyOverlayId);
-    await withWorkspaceContext(reopened, () =>
-      withLanceMutationLifecycle(async () => {
-        const lifecycle = activeMutationLifecycle() as LanceMutationLifecycle;
-        const operationId = mutationOperationId({
-          files: [],
-          nonce: "indexed",
-          storageDomainId: reopened.storageDomain.domainId,
-          workspaceId: reopened.workspaceId,
-        });
-        await lifecycle.begin({
-          files: [],
-          operationId,
-          tool: "file_patch",
-          workspace: reopened,
-        });
-        await writeFile(filePath, "export const updated = true;");
-        const result = await lifecycle.complete(operationId, []);
-        expect(result.generationId).not.toBeNull();
-        expect(result.generationId).not.toBe(initialGeneration);
-        expect(result.parsedFiles).toEqual(["value.ts"]);
-      }),
-    );
+    expect(initialGeneration).not.toBeNull();
+    const schedule = spyOn(
+      deferredRefresh,
+      "scheduleMutationRefresh",
+    ).mockImplementation(() => undefined);
+    try {
+      await withWorkspaceContext(reopened, () =>
+        withLanceMutationLifecycle(async () => {
+          const lifecycle = activeMutationLifecycle() as LanceMutationLifecycle;
+          const operationId = mutationOperationId({
+            files: [],
+            nonce: "indexed",
+            storageDomainId: reopened.storageDomain.domainId,
+            workspaceId: reopened.workspaceId,
+          });
+          await lifecycle.begin({
+            files: [],
+            operationId,
+            tool: "file_patch",
+            workspace: reopened,
+          });
+          await writeFile(filePath, "export const updated = true;");
+          const result = await lifecycle.complete(operationId, []);
+          expect(result).toMatchObject({
+            generationId: null,
+            parsedFiles: [],
+            refreshPending: true,
+          });
+        }),
+      );
+      expect(schedule).toHaveBeenCalledTimes(1);
+      expect(schedule.mock.calls[0]?.[1]).toMatchObject({
+        inFlight: false,
+        journal: "sqlite-v1",
+      });
+    } finally {
+      schedule.mockRestore();
+    }
     expect(await git(root, "status", "--porcelain")).not.toContain(
       "ast-mcp-transaction",
     );

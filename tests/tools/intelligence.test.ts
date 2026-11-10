@@ -30,7 +30,10 @@ const workspace = {
   checkoutRoot: "/worktrees/feature",
   dirtyOverlayId: null,
   repositoryId: identity("repository", "a"),
-  selectedRevision: { revisionId: identity("revision", "b") },
+  selectedRevision: {
+    revisionId: identity("revision", "b"),
+    selector: { kind: "index" },
+  },
   storageDomain: { domainId: identity("storage-domain", "c") },
   workspaceId: identity("workspace", "d"),
 } as unknown as WorkspaceHandle;
@@ -170,7 +173,12 @@ test.each([100, 1])(
         (error) => error,
       );
     try {
-      await entered.promise;
+      await Promise.race([
+        entered.promise,
+        query.then((error) => {
+          throw error;
+        }),
+      ]);
       await time.advanceBy(maxMilliseconds);
       expect(await query).toMatchObject({ code: "graph_budget_exhausted" });
       expect(shutdown).toBe(1);

@@ -26,9 +26,11 @@ export interface FileLockOptions {
   leaseMs?: number;
   now?: () => number;
   ownerId?: string;
+  onReleaseError?: (error: unknown) => void;
   pollMs?: number;
   signal?: AbortSignal;
   sharedDatabasePath?: string;
+  tryOnly?: boolean;
 }
 
 export interface FileLockLease {
@@ -57,10 +59,12 @@ const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_POLL_MS = 10;
 const ORPHAN_ARTIFACT_GRACE_MS = 60_000;
 const ORPHAN_CLEANUP_LIMIT = 32;
+const PRIVATE_SWEEP_CACHE_LIMIT = 256;
+const privateSweeps = new Map<string, number>();
 const queues = new Map<string, Promise<void>>();
 
 function lockError(
-  code: "lock_aborted" | "lock_deadline" | "lock_fenced",
+  code: "lock_aborted" | "lock_busy" | "lock_deadline" | "lock_fenced",
   message: string,
   retryable: boolean,
 ): Error {
@@ -487,6 +491,27 @@ async function cleanupOrphanArtifacts(lock: string): Promise<void> {
   }
 }
 
+/** Called under the transaction guard. Active lease recovery is separate. */
+async function maintainOrphanArtifacts(
+  lock: string,
+  privateDirectory: boolean,
+): Promise<void> {
+  const sweptAt = privateDirectory ? privateSweeps.get(lock) : undefined;
+  const now = Date.now();
+  if (
+    sweptAt !== undefined &&
+    now >= sweptAt &&
+    now - sweptAt < ORPHAN_ARTIFACT_GRACE_MS
+  )
+    return;
+  await cleanupOrphanArtifacts(lock);
+  if (!privateDirectory) return;
+  privateSweeps.delete(lock);
+  if (privateSweeps.size >= PRIVATE_SWEEP_CACHE_LIMIT)
+    privateSweeps.delete(privateSweeps.keys().next().value!);
+  privateSweeps.set(lock, Date.now());
+}
+
 async function recoverInitializing(
   lock: string,
   initializingSince: number,
@@ -598,14 +623,11 @@ export async function acquireFileLock(
   );
   const directory = await ensureMutationLockDirectory(account);
   const lock = await mutationLockPath(canonical);
+  const sharedDatabasePath =
+    options.sharedDatabasePath ?? (await mutationSharedDatabasePath(canonical));
   const transaction = await acquireTransactionLock(
     path.join(directory, `file-${sha256(identity)}.sqlite`),
-    {
-      ...options,
-      sharedDatabasePath:
-        options.sharedDatabasePath ??
-        (await mutationSharedDatabasePath(canonical)),
-    },
+    { ...options, sharedDatabasePath },
   );
   try {
     const now = options.now ?? Date.now;
@@ -614,7 +636,8 @@ export async function acquireFileLock(
     const ownerId = options.ownerId ?? `${process.pid}:${randomUUID()}`;
     let epoch = 1;
     let malformedSince: number | null = null;
-    await cleanupOrphanArtifacts(lock);
+    if (!options.tryOnly)
+      await maintainOrphanArtifacts(lock, path.dirname(lock) === directory);
     while (true) {
       const timestamp = now();
       assertWaiting(options, timestamp);
@@ -732,6 +755,12 @@ export async function acquireFileLock(
         } catch (readError) {
           const code = (readError as { code?: string }).code;
           if (
+            options.tryOnly &&
+            (code === "lock_record_initializing" ||
+              code === "lock_record_malformed")
+          )
+            throw lockError("lock_busy", "File lock is already held", true);
+          if (
             (code === "lock_record_initializing" ||
               code === "lock_record_malformed") &&
             malformedSince === null
@@ -772,6 +801,8 @@ export async function acquireFileLock(
           epoch = recoveredEpoch;
           continue;
         }
+        if (options.tryOnly)
+          throw lockError("lock_busy", "File lock is already held", true);
         await delay(pollMs, options);
       }
     }
@@ -786,14 +817,21 @@ async function withQueue<Result>(
   options: FileLockOptions,
   operation: () => Promise<Result>,
 ): Promise<Result> {
-  const previous = queues.get(filePath) ?? Promise.resolve();
-  let releaseQueue!: () => void;
-  const current = new Promise<void>((resolve) => {
-    releaseQueue = resolve;
-  });
-  const queued = previous.then(() => current);
+  const previous = queues.get(filePath);
+  if (options.tryOnly && previous) {
+    assertWaiting(options, (options.now ?? Date.now)());
+    throw lockError("lock_busy", "File lock is already held", true);
+  }
+  const current = Promise.withResolvers<void>();
+  const queued = previous
+    ? previous.then(() => current.promise)
+    : current.promise;
   queues.set(filePath, queued);
   try {
+    if (!previous) {
+      assertWaiting(options, (options.now ?? Date.now)());
+      return await operation();
+    }
     while (true) {
       assertWaiting(options, (options.now ?? Date.now)());
       const waiting = new AbortController();
@@ -814,7 +852,7 @@ async function withQueue<Result>(
     }
     return await operation();
   } finally {
-    releaseQueue();
+    current.resolve();
     // A cancelled waiter must retain the preceding owner's queue lifetime.
     void queued.then(() => {
       if (queues.get(filePath) === queued) queues.delete(filePath);
@@ -863,7 +901,12 @@ async function withFencedFileLockDiscovery<Result>(
       return await operation(lease);
     } finally {
       clearInterval(heartbeat);
-      await lease.release();
+      const release = () =>
+        lease.release().catch((error: unknown) => {
+          if (!options.onReleaseError) throw error;
+          options.onReleaseError(error);
+        });
+      await release();
     }
   });
 }

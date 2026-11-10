@@ -36,6 +36,15 @@ Use the discovered schema for nested provider, embedding, storage, and formatter
 Do not invent settings or transfer fields from tool requests into configuration.
 Load [installation.md](installation.md) for migration and invalid-configuration recovery.
 
+## Native language packs
+
+Version 2 accepts `[language_packs]` and `[language_packs.versions]`.
+The default `scope = "user"` uses AST-MCP's private user store.
+The optional `scope = "project"` uses `.ast-mcp/language-packs` with a host grant.
+The catalog pins Python and Go to `"0.0.6"` and SQL to `"0.0.8"`.
+Explicit installs use [the package manager](cli.md#native-language-packs).
+Only the host can authorize first-use downloads during MCP startup.
+
 ## Optional SQL defaults
 
 `config_core.files.patch.sql` accepts optional `policy`, `dialect`, `version`, and `variant` fields. Policies are `advisory`, `required`, and `skip`. Set only dialect/version/variant to describe a default selection; that alone does not request a parser. The default advisory policy with no per-file SQL options makes no validator call. Setting `required` opts in and requires a compatible selected dialect for each SQL patch.

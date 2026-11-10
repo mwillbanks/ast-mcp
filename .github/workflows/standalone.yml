@@ -1,0 +1,111 @@
+name: Standalone executables
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/standalone.yml'
+      - '.github/workflows/release.yml'
+      - 'bin/**'
+      - 'scripts/build/**'
+      - 'src/**'
+      - 'templates/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'bunfig.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install locked build and target dependencies
+        run: bun ci --os='*' --cpu='*' --libc='*'
+      - name: Compile ESM bytecode and archive runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in bun-darwin-arm64 bun-linux-arm64 bun-linux-x64 bun-linux-arm64-musl bun-linux-x64-musl bun-windows-x64; do
+            build="$RUNNER_TEMP/build-$target"
+            assets="$RUNNER_TEMP/standalone-$target"
+            mkdir "$assets"
+            bun run build --standalone "$build" --target "$target"
+            executable=ast-mcp-bytecode
+            if [[ "$target" == bun-windows-* ]]; then executable+=.exe; fi
+            archive="ast-mcp-${target#bun-}.tar.gz"
+            COPYFILE_DISABLE=1 tar -czf "$assets/$archive" -C "$build" "$executable" runtime
+            (cd "$assets" && shasum -a 256 "$archive" > "$archive.sha256")
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: standalone-release-matrix
+          path: ${{ runner.temp }}/standalone-*/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  qualify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, os: macos-15 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64-musl, os: ubuntu-24.04-arm, musl: true, gcompat: gcompat }
+          - { target: linux-x64-musl, os: ubuntu-24.04, musl: true }
+          - { target: windows-x64, os: windows-2025 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun ci --ignore-scripts
+      - uses: actions/download-artifact@v8
+        with:
+          name: standalone-release-matrix
+          path: ${{ runner.temp }}/standalone-matrix
+      - name: Verify and extract the target archive
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          archive="ast-mcp-$TARGET.tar.gz"
+          cd "$RUNNER_TEMP/standalone-matrix/standalone-bun-$TARGET"
+          bun -e 'const archive = Bun.argv[1]; const checksum = (await Bun.file(archive + ".sha256").text()).split(/\s+/)[0]; const hash = new Bun.CryptoHasher("sha256"); for await (const chunk of Bun.file(archive).stream()) hash.update(chunk); if (hash.digest("hex") !== checksum) throw new Error("Standalone archive checksum mismatch");' "$archive"
+          mkdir "$RUNNER_TEMP/standalone"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/standalone"
+      - name: Qualify the standalone executable
+        if: ${{ !matrix.musl }}
+        shell: bash
+        run: bun scripts/build/qualify-standalone.ts "$RUNNER_TEMP/standalone" --bytecode-only --with-pm
+      - name: Qualify the standalone executable on Alpine
+        if: matrix.musl
+        shell: bash
+        env:
+          EXTRA_APK: ${{ matrix.gcompat }}
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/standalone:/artifact:ro" -w /repo \
+            -e EXTRA_APK oven/bun:"$(bun --version)"-alpine \
+            sh -ec 'apk add --no-cache git $EXTRA_APK && bun scripts/build/qualify-standalone.ts /artifact --bytecode-only --with-pm'

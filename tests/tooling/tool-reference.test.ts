@@ -58,7 +58,15 @@ test("canonical pages cover each registration once and every example satisfies i
         (match) => match[1],
       ),
     ).toEqual([...page.matchAll(/^## (\w+)$/gm)].map((match) => match[1]));
-  expect(actual).toHaveLength(43);
+  expect(actual).toHaveLength(44);
+  expect(
+    actual.find((tool) => tool.name === "read_symbols")?.inputSchema,
+  ).toMatchObject({
+    properties: {
+      symbols: { items: { maxLength: 256 }, maxItems: 100, minItems: 1 },
+    },
+    required: ["symbols"],
+  });
   expect(
     actual.find((tool) => tool.name === "map")?.inputSchema,
   ).toHaveProperty("properties.detail");

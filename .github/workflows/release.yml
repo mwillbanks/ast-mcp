@@ -175,6 +175,52 @@ jobs:
     with:
       artifact_name: release-candidate
 
+  standalone:
+    needs: release
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/standalone.yml
+    with:
+      ref: ${{ needs.release.outputs.tag_name }}
+
+  publish-standalone:
+    needs: [release, validate, standalone]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: standalone-release-matrix
+          path: standalone-matrix
+      - name: Verify and attach qualified standalone archives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^ast-mcp-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
+          for target in darwin-arm64 linux-arm64 linux-x64 linux-arm64-musl linux-x64-musl windows-x64; do
+            archive="ast-mcp-$target.tar.gz"
+            (
+              cd "standalone-matrix/standalone-bun-$target"
+              sha256sum --check --strict "$archive.sha256"
+              for asset in "$archive" "$archive.sha256"; do
+                existing=$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$release")
+                if [[ -n "$existing" ]]; then
+                  read -r digest _ < <(sha256sum "$asset")
+                  test "$existing" = "sha256:$digest"
+                else
+                  gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
+                fi
+              done
+            )
+          done
+
   publish:
     needs: [release, validate, build, consumers]
     if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' && needs.consumers.result == 'success' }}

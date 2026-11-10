@@ -17,6 +17,11 @@ function orderedMatches(
   registry: LanguageRegistry,
 ): { matches: StructuralMatch[]; nodes: SgNode[] } {
   const grammar = registry.get(languageId);
+  if (!registry.parserAvailable(languageId)) {
+    throw new TypeError(
+      `Parser is unavailable in this language profile: ${languageId}`,
+    );
+  }
   registry.registerDynamicGrammars();
   const root = parse(grammar.astGrepLanguage, source).root();
   const coordinates = new SourceCoordinateIndex(source);
@@ -88,6 +93,11 @@ export function rewriteStructuralMatches(
   registry: LanguageRegistry = defaultLanguageRegistry,
 ): StructuralRewriteCandidate {
   const grammar = registry.get(languageId);
+  if (!registry.parserAvailable(languageId)) {
+    throw new TypeError(
+      `Parser is unavailable in this language profile: ${languageId}`,
+    );
+  }
   registry.registerDynamicGrammars();
   const root = parse(grammar.astGrepLanguage, source).root();
   const coordinates = new SourceCoordinateIndex(source);

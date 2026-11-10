@@ -389,6 +389,7 @@ export async function computeNative(
   root: string,
   aliases: CompilerAlias[],
   signal?: AbortSignal,
+  scanExhaustive?: boolean,
 ) {
   if (name === "squeeze") {
     throwIfAborted(signal);
@@ -434,6 +435,83 @@ export async function computeNative(
         result.truncated ||
         files.some((file) => file.facts.symbols.length > memberLimit),
     };
+  }
+  if (name === "read_symbols") {
+    const requested = input.symbols ?? [];
+    const incomplete =
+      scanExhaustive === undefined
+        ? files.some((file) => file.facts.partial)
+        : !scanExhaustive;
+    const definitions = files.flatMap((file) => {
+      throwIfAborted(signal);
+      return symbolView(file, root, true);
+    });
+    const budget = input.budget ?? 100_000;
+    const result = {
+      items: [] as unknown[],
+      schema,
+      total: requested.length,
+      truncated: incomplete,
+    };
+    let remainingBytes = budget - Buffer.byteLength(JSON.stringify(result));
+    for (const symbol of requested) {
+      throwIfAborted(signal);
+      const itemInput = {
+        ...input,
+        budget: Math.max(0, Math.floor(remainingBytes / 2)),
+      };
+      const definition = bounded(
+        definitions.filter(
+          (item) => item.name === symbol || item.qualifiedName === symbol,
+        ),
+        itemInput,
+      );
+      const callers = bounded(
+        tracedCalls(files, root, symbol, "in", 1, false, signal),
+        itemInput,
+      );
+      const status =
+        definition.truncated || callers.truncated
+          ? "truncated"
+          : incomplete
+            ? "incomplete"
+            : definition.total
+              ? "found"
+              : "missing";
+      const item = { symbol, definition, callers, status };
+      const bytes =
+        Buffer.byteLength(JSON.stringify(item)) +
+        Number(result.items.length > 0);
+      if (bytes > remainingBytes) break;
+      remainingBytes -= bytes;
+      result.items.push(item);
+      if (status === "truncated") result.truncated = true;
+    }
+    if (result.items.length === requested.length) return result;
+
+    // Retain an ordered outcome even when its definition and callers cannot fit.
+    const compactItems: unknown[] = requested.map((symbol) => ({
+      symbol,
+      status: "truncated",
+    }));
+    const compact = { ...result, items: compactItems, truncated: true };
+    let extraBytes = budget - Buffer.byteLength(JSON.stringify(compact));
+    if (extraBytes < 0) {
+      throw Object.assign(
+        new Error("read_symbols budget cannot fit all requested outcomes"),
+        { code: "intelligence_budget_exceeded", retryable: true },
+      );
+    }
+    for (const [index, item] of result.items.entries()) {
+      throwIfAborted(signal);
+      const extra =
+        Buffer.byteLength(JSON.stringify(item)) -
+        Buffer.byteLength(JSON.stringify(compactItems[index]));
+      if (extra > extraBytes) break;
+      compactItems[index] = item;
+      extraBytes -= extra;
+    }
+    return compact;
   }
   if (name === "show") {
     const targets = new Set(

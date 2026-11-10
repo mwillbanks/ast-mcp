@@ -16,6 +16,7 @@ Do not download an executable through an implicit package runner.
 | `update`    | Refresh managed host configuration without upgrading the package.                  |
 | `uninstall` | Remove managed host configuration while preserving shared files and manual skills. |
 | `mcp`       | Serve stdio or Streamable HTTP.                                                    |
+| `pm`        | List, install, or inspect trusted native language packs.                           |
 | `skills`    | Export or update a selected manual skill directory.                                |
 | `hook`      | Run the filesystem guard with host hook JSON on stdin.                             |
 | `help`      | Display root help or help for a command.                                           |
@@ -67,10 +68,21 @@ Use `--transport http` for Streamable HTTP.
 The optional `--host` and `--port` override layered HTTP configuration.
 Keep server diagnostics on stderr.
 The host owns process startup and reconnection.
+The host can pass `--allow-project-language-packs` for project storage and `--allow-language-pack-downloads` for first-use downloads.
 
 `ast-mcp hook` reads one hook input from stdin.
 It accepts no operational arguments.
 Do not launch the hook as a substitute for MCP file operations.
+
+## Native language packs
+
+Use `ast-mcp pm list` to show the trusted packs and their status.
+Use `ast-mcp pm install <python|go|sql>` for an explicit install.
+For example, run `ast-mcp pm install python`.
+Pass `--offline` to require verified cached assets.
+Use `ast-mcp pm doctor` to inspect integrity and compatibility.
+The package manager disables dependency scripts and uses an AST-MCP-owned store.
+Load [configuration.md](configuration.md#native-language-packs) for storage and version pins.
 
 ## Manual skills
 

@@ -6,6 +6,12 @@ export function createLanguageLoader<T>(
   let initialized: Promise<void> | undefined;
   const languages = new Map<string, Promise<T>>();
   return async (id) => {
+    if (process.env.AST_MCP_EXPERIMENT_NATIVE_ONLY === "1") {
+      const message =
+        "WASM parser activation is disabled in native-only experiments";
+      process.stderr.write(message + "\n");
+      throw new Error(message);
+    }
     initialized ??= Promise.resolve().then(initialize);
     const initializing = initialized;
     try {

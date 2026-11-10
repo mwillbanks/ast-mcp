@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { sqlAssistanceOptionsSchema } from "../runtime/sql-options-schema";
+import { languagePacksSchema } from "./language-packs";
 import {
   cliSchema,
   createFormatterSchema,
@@ -163,6 +164,7 @@ export const fileV2Schema = z
       .optional(),
     http: httpSchema.optional(),
     intelligence: intelligenceSchema.optional(),
+    language_packs: languagePacksSchema.optional(),
     mcp: z
       .object({
         configuration: z

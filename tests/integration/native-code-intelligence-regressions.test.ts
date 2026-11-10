@@ -247,6 +247,69 @@ test("direct tools analyze catalog languages and resolve dependency scope", asyn
   }
 });
 
+test("public bounded symbol reads preserve ordered outcomes after a source change", async () => {
+  const { client, root } = await fixture();
+  const file = path.join(root, "symbols.ts");
+  const read = () =>
+    client.callTool({
+      arguments: { file, symbols: ["target", "missing", "target"] },
+      name: "read_symbols",
+    });
+  try {
+    const tools = await client.listTools();
+    expect(tools.tools.map(({ name }) => name)).toContain("read_symbols");
+    await writeFile(
+      file,
+      "export function target() { return 1; }\nexport function entry() { return target(); }\n",
+    );
+    const initial = await read();
+    const found = expect.objectContaining({
+      callers: {
+        items: [expect.objectContaining({ caller: "entry" })],
+        total: 1,
+        truncated: false,
+      },
+      definition: {
+        items: [
+          expect.objectContaining({
+            source: expect.stringContaining("return 1;"),
+          }),
+        ],
+        total: 1,
+        truncated: false,
+      },
+      status: "found",
+      symbol: "target",
+    });
+    const missing = expect.objectContaining({
+      status: "missing",
+      symbol: "missing",
+    });
+    expect(initial.structuredContent).toMatchObject({
+      data: {
+        items: [found, missing, found],
+        schema: "ast-mcp.read_symbols.v1",
+      },
+      ok: true,
+    });
+    expect((await read()).structuredContent).toEqual(initial.structuredContent);
+
+    await writeFile(file, "export function missing() { return 2; }\n");
+    expect((await read()).structuredContent).toMatchObject({
+      data: {
+        items: [
+          { status: "missing", symbol: "target" },
+          { status: "found", symbol: "missing" },
+          { status: "missing", symbol: "target" },
+        ],
+      },
+      ok: true,
+    });
+  } finally {
+    await client.close();
+  }
+});
+
 test("direct tools bound cycles and UTF-8 payloads deterministically", async () => {
   const { client, workspaceId } = await fixture();
   try {

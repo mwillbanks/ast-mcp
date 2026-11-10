@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { currentConfig, type ResolvedConfig } from "../config";
 import {
+  defaultLanguageRegistry,
   ParserError,
   type ParserLanguageId,
   type ParserWorkerPool,
@@ -51,6 +52,17 @@ const documentExtensions = new Set([
   ".yml",
 ]);
 const astPatchDocumentExtensions = new Set([".json", ".yaml", ".yml"]);
+
+export function sourceParserPackOmitted(
+  filePath: string,
+  language = detectAstLanguage(filePath),
+): boolean {
+  return (
+    language !== undefined &&
+    !documentExtensions.has(path.extname(filePath).toLowerCase()) &&
+    defaultLanguageRegistry.parserPackOmitted(language)
+  );
+}
 
 function configuredMethods(config: ResolvedConfig) {
   return {
@@ -233,16 +245,19 @@ export async function inspectFileCapabilities(
     language,
     state.status,
   );
+  const patch = sourceParserPackOmitted(filePath, language)
+    ? []
+    : intrinsic.patch;
   return {
     effective: {
       aiderMatchers: configured.aiderMatchers,
-      patch: intersection(intrinsic.patch, configured.patch),
+      patch: intersection(patch, configured.patch),
       read: intersection(intrinsic.read, configured.read),
     },
     filePath,
     generation: config.generation,
     intrinsic: {
-      patch: intrinsic.patch,
+      patch,
       read: intrinsic.read,
       search: intrinsic.astRead ? ["ast"] : [],
     },

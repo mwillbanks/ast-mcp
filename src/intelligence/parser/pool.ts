@@ -1,6 +1,17 @@
 import { availableParallelism } from "node:os";
 
+import { currentConfig, type ResolvedConfig } from "../../config";
+import { currentWorkspace } from "../workspace/index.ts";
 import { sha256 } from "./coordinates.ts";
+import {
+  isNativePackLanguage,
+  type NativeGrammarSet,
+  nativeGrammarSet,
+} from "./native-pack-selection.ts";
+import {
+  createNativeProcessTransport,
+  isEmbeddedBunExecutable,
+} from "./native-process.ts";
 import {
   type DynamicGrammarManifest,
   snapshotDynamicGrammarManifest,
@@ -25,6 +36,7 @@ export interface ParserPoolOptions {
   maxSourceBytes?: number;
   maxWorkers?: number;
   minWorkers?: number;
+  nativePackContext?: { config: ResolvedConfig; checkoutRoot: string };
   queueLimit?: number;
   workerFactory?: ParserWorkerFactory;
   workerUrl?: string;
@@ -54,7 +66,9 @@ type WorkerResponse = WorkerReadyResponse | WorkerResultResponse;
 interface QueuedJob {
   abortHandler?: () => void;
   bytes: number;
+  cacheKey?: string;
   id: number;
+  packs?: NativeGrammarSet;
   reject: (error: ParserError) => void;
   request: ParseSourceRequest;
   resolve: (facts: SyntaxFacts) => void;
@@ -63,6 +77,7 @@ interface QueuedJob {
 }
 
 interface WorkerSlot {
+  grammar?: string;
   jobId: number | null;
   ready: boolean;
   worker: Worker;
@@ -108,6 +123,8 @@ export class ParserWorkerPool {
   readonly #workers: WorkerSlot[] = [];
   readonly #retirements = new Set<Promise<void>>();
   readonly #workerFactory: ParserWorkerFactory;
+  readonly #usesDefaultTransport: boolean;
+  readonly #nativePackContext?: ParserPoolOptions["nativePackContext"];
   readonly #workerUrl: string;
   readonly #pending: QueuedJob[] = [];
   readonly #jobs = new Map<number, QueuedJob>();
@@ -139,6 +156,8 @@ export class ParserWorkerPool {
       ? snapshotDynamicGrammarManifest(options.dynamicGrammarManifest)
       : undefined;
     this.#workerFactory = options.workerFactory ?? createParserTransport;
+    this.#usesDefaultTransport = options.workerFactory === undefined;
+    this.#nativePackContext = options.nativePackContext;
     this.#workerUrl =
       options.workerUrl ?? new URL("./worker.ts", import.meta.url).href;
     if (
@@ -249,21 +268,23 @@ export class ParserWorkerPool {
       );
     }
 
-    const cacheKey = this.#cacheKey(request);
-    const cached = this.#parseCache.get(cacheKey);
-    if (cached) {
-      this.#parseCache.delete(cacheKey);
-      this.#parseCache.set(cacheKey, cached);
-      this.#cacheHits += 1;
-      return Promise.resolve(structuredClone(cached.facts));
+    const checkoutRoot =
+      this.#usesDefaultTransport && isNativePackLanguage(request.languageId)
+        ? (this.#nativePackContext?.checkoutRoot ??
+          currentWorkspace()?.checkoutRoot)
+        : undefined;
+    const cacheKey = checkoutRoot ? undefined : this.#cacheKey(request);
+    if (cacheKey) {
+      const hit = this.#lookupCache(cacheKey);
+      if (hit) return Promise.resolve(hit);
     }
-    this.#cacheMisses += 1;
 
     return new Promise<SyntaxFacts>((resolve, reject) => {
       const id = this.#nextJobId;
       this.#nextJobId += 1;
       const job: QueuedJob = {
         bytes,
+        cacheKey,
         id,
         reject,
         request,
@@ -290,8 +311,47 @@ export class ParserWorkerPool {
       this.#jobs.set(id, job);
       this.#pending.push(job);
       this.#outstandingBytes += bytes;
-      this.#dispatch();
+      if (checkoutRoot) {
+        void this.#selectPacks(job, checkoutRoot);
+      } else {
+        this.#dispatch();
+      }
     });
+  }
+
+  async #selectPacks(job: QueuedJob, checkoutRoot: string): Promise<void> {
+    try {
+      const config = this.#nativePackContext?.config ?? (await currentConfig());
+      if (!this.#jobs.has(job.id)) return;
+      job.packs = await nativeGrammarSet(
+        [job.request.languageId],
+        config,
+        checkoutRoot,
+        {
+          signal: job.signal,
+        },
+      );
+      if (!this.#jobs.has(job.id)) return;
+      job.cacheKey = this.#cacheKey(job.request, job.packs?.identity);
+      const hit = this.#lookupCache(job.cacheKey);
+      if (hit) {
+        this.#pending.splice(this.#pending.indexOf(job), 1);
+        this.#forget(job);
+        job.resolve(hit);
+        this.#afterSettlement();
+      } else {
+        this.#dispatch();
+      }
+    } catch (error) {
+      this.#cancel(
+        job.id,
+        parserError(
+          "worker-error",
+          error instanceof Error ? error.message : String(error),
+          false,
+        ),
+      );
+    }
   }
 
   async close(options: { drain?: boolean } = {}): Promise<void> {
@@ -341,10 +401,19 @@ export class ParserWorkerPool {
     }
   }
 
-  #spawnWorker(): WorkerSlot | undefined {
+  #spawnWorker(packs?: NativeGrammarSet): WorkerSlot | undefined {
     try {
-      const worker = this.#workerFactory(this.#workerUrl);
-      const slot: WorkerSlot = { jobId: null, ready: false, worker };
+      const worker =
+        packs || (this.#usesDefaultTransport && isEmbeddedBunExecutable())
+          ? createNativeProcessTransport(new URL(this.#workerUrl), "parser")
+          : this.#workerFactory(this.#workerUrl);
+      worker.unref?.();
+      const slot: WorkerSlot = {
+        grammar: packs?.identity,
+        jobId: null,
+        ready: false,
+        worker,
+      };
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         this.#handleMessage(slot, event.data);
       };
@@ -357,13 +426,27 @@ export class ParserWorkerPool {
       this.#workers.push(slot);
       worker.postMessage({
         manifest: this.#dynamicGrammarManifest,
+        ...(packs ? { packs } : {}),
         type: "initialize",
       });
       return slot;
     } catch (error) {
-      this.#failAll(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (packs) this.#failGrammarJobs(packs.identity, message);
+      else this.#failAll(message);
       return undefined;
     }
+  }
+
+  #failGrammarJobs(grammar: string, message: string): void {
+    for (const job of this.#pending.filter(
+      (job) => job.packs?.identity === grammar,
+    )) {
+      this.#pending.splice(this.#pending.indexOf(job), 1);
+      this.#forget(job);
+      job.reject(parserError("worker-error", message, false));
+    }
+    this.#afterSettlement();
   }
 
   #failAll(message: string): void {
@@ -377,18 +460,37 @@ export class ParserWorkerPool {
 
   #dispatch(): void {
     if (this.#state === "closed") return;
-    while (
-      this.#pending.length >
-        this.#workers.filter((slot) => slot.ready && slot.jobId === null)
-          .length &&
-      this.#workers.length + this.#retirements.size < this.#maxWorkers
-    ) {
-      if (!this.#spawnWorker()) return;
-    }
-    for (const slot of this.#workers) {
-      if (!slot.ready || slot.jobId !== null) continue;
-      const job = this.#pending.shift();
-      if (!job) break;
+    while (true) {
+      const job = this.#pending[0];
+      if (!job?.cacheKey) return;
+      const grammar = job.packs?.identity;
+      const slot = this.#workers.find(
+        (worker) =>
+          worker.grammar === grammar && worker.ready && worker.jobId === null,
+      );
+      if (!slot) {
+        const initializing = this.#workers.some(
+          (worker) => worker.grammar === grammar && !worker.ready,
+        );
+        if (!initializing) {
+          if (
+            this.#workers.length + this.#retirements.size <
+            this.#maxWorkers
+          ) {
+            this.#spawnWorker(job.packs);
+          } else {
+            const incompatible = this.#workers.find(
+              (worker) =>
+                worker.grammar !== grammar &&
+                worker.ready &&
+                worker.jobId === null,
+            );
+            if (incompatible) this.#removeWorker(incompatible);
+          }
+        }
+        return;
+      }
+      this.#pending.shift();
       slot.jobId = job.id;
       try {
         slot.worker.postMessage({
@@ -434,7 +536,7 @@ export class ParserWorkerPool {
     }
     this.#forget(job);
     if (response.ok && response.facts) {
-      this.#cacheResult(this.#cacheKey(job.request), response.facts);
+      this.#cacheResult(job.cacheKey!, response.facts);
       job.resolve(structuredClone(response.facts));
     } else {
       job.reject(
@@ -456,7 +558,8 @@ export class ParserWorkerPool {
     const failedDuringInitialization = !slot.ready;
     this.#removeWorker(slot);
     if (failedDuringInitialization) {
-      this.#failAll(message);
+      if (slot.grammar) this.#failGrammarJobs(slot.grammar, message);
+      else this.#failAll(message);
       return;
     }
     if (jobId !== null) {
@@ -513,6 +616,7 @@ export class ParserWorkerPool {
         (this.#state === "open" && this.#workers.length < this.#minWorkers))
     ) {
       while (
+        this.#pending.length === 0 &&
         this.#workers.length + this.#retirements.size < this.#minWorkers &&
         this.#workers.length + this.#retirements.size < this.#maxWorkers
       ) {
@@ -525,7 +629,18 @@ export class ParserWorkerPool {
     }
   }
 
-  #cacheKey(request: ParseSourceRequest): string {
+  #lookupCache(key: string): SyntaxFacts | undefined {
+    const cached = this.#parseCache.get(key);
+    if (cached) {
+      this.#parseCache.delete(key);
+      this.#parseCache.set(key, cached);
+      this.#cacheHits += 1;
+      return structuredClone(cached.facts);
+    }
+    this.#cacheMisses += 1;
+  }
+
+  #cacheKey(request: ParseSourceRequest, nativeGrammar?: string): string {
     return sha256(
       JSON.stringify({
         extractorVersion: request.extractorVersion ?? null,
@@ -533,6 +648,7 @@ export class ParserWorkerPool {
           this.#dynamicGrammarManifest?.fingerprint ?? "native",
         grammarVersion: request.grammarVersion ?? null,
         languageId: request.languageId,
+        nativeGrammar,
         maxNodes: Math.min(
           request.maxNodes ?? this.#maxNodesPerJob,
           this.#maxNodesPerJob,

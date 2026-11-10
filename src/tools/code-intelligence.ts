@@ -10,9 +10,21 @@ import {
   toolSuccess,
 } from "../helpers/mcp-schema";
 import {
+  assertPublishedMutationGeneration,
+  withFreshMutationRead,
+} from "../intelligence/mutation/service.ts";
+import {
   LANGUAGE_CAPABILITY_CATALOG,
   type ParserLanguageId,
 } from "../intelligence/parser/index.ts";
+import {
+  type NativeGrammarSet,
+  nativeGrammarSet,
+} from "../intelligence/parser/native-pack-selection.ts";
+import {
+  createNativeProcessTransport,
+  isEmbeddedBunExecutable,
+} from "../intelligence/parser/native-process.ts";
 import { LanceIntelligenceStore } from "../intelligence/storage/index.ts";
 import {
   currentWorkspace,
@@ -24,6 +36,12 @@ import { assertReadableTree } from "../runtime/path-policy";
 import { resolveIntelligencePath } from "../runtime/paths";
 import { terminateProcessTree } from "../runtime/subprocess";
 import { isTransactionLockArtifact } from "../runtime/transaction-lock";
+import {
+  acquireWorker,
+  parseCacheKey,
+  parsedFacts,
+  releaseWorker,
+} from "./code-intelligence-cache.ts";
 import type { CompilerAlias, NativeFile } from "./code-intelligence-compute.ts";
 import type { CpuJob, CpuReply } from "./code-intelligence-worker.ts";
 import { type ConfiguredExecution, localExecution } from "./configured";
@@ -32,6 +50,7 @@ const TOOL_NAMES = [
   "map",
   "digest",
   "show",
+  "read_symbols",
   "implements",
   "surface",
   "deps",
@@ -106,6 +125,7 @@ function schemaFor(name: ToolName) {
     map: ["detail", "max_members"],
     digest: ["detail", "max_members"],
     show: ["symbols", "target", "detail"],
+    read_symbols: ["symbols"],
     surface: [],
     implements: ["target"],
     deps: ["hide_ambiguous", "hide_external"],
@@ -140,9 +160,18 @@ function schemaFor(name: ToolName) {
   const mask = Object.fromEntries(fields.map((field) => [field, true])) as {
     [K in keyof ToolInput]: true;
   };
-  return inputSchema.pick(mask).superRefine((input, context) => {
+  const shape = inputSchema.pick(mask).shape;
+  const schema = z.strictObject(
+    name === "read_symbols"
+      ? {
+          ...shape,
+          symbols: z.array(z.string().min(1).max(256)).min(1).max(100),
+        }
+      : shape,
+  );
+  return schema.superRefine((input, context) => {
     const requireOne = (keys: (keyof ToolInput)[]) => {
-      if (!keys.some((key) => input[key] !== undefined))
+      if (!keys.some((key) => (input as ToolInput)[key] !== undefined))
         context.addIssue({
           code: "custom",
           message: `${name} requires ${keys.join(" or ")}; narrow scans with paths or glob`,
@@ -163,6 +192,7 @@ function schemaFor(name: ToolName) {
     if (["deps", "reverse_deps"].includes(name)) requireOne(["file", "path"]);
     if (["search", "find_related"].includes(name))
       requireOne(["query", "target", "path"]);
+    if (name === "read_symbols") requireOne(["paths", "file", "path", "glob"]);
     if (name === "run") requireOne(["pattern"]);
     if (name === "squeeze") requireOne(["text", "query"]);
   });
@@ -181,6 +211,8 @@ function toolDescription(name: (typeof TOOL_NAMES)[number]): string {
     impact: "Returns callers, callees, dependents, and tests for a symbol.",
     implements: "Returns native inheritance and implementation relationships.",
     map: "Returns native AST symbols, imports, and diagnostics by file.",
+    read_symbols:
+      "Returns definitions and direct callers in request order. Incomplete scans cannot establish missing symbols. If details do not fit, returns compact truncated outcomes or rejects a budget that cannot fit all outcomes.",
     reverse_deps: "Returns native reverse import dependencies for a file.",
     run: "Finds native structural AST matches and previews rewrites; write=true is disabled; commit through file_patch.",
     search: "Searches native AST symbols and source text.",
@@ -321,12 +353,16 @@ async function revisionFilePaths(
   return files.sort();
 }
 
-function requestedRelativePaths(input: ToolInput, root: string): string[] {
+function explicitPaths(input: ToolInput): string[] {
   return [
     ...(input.paths ?? []),
     ...(input.file ? [input.file] : []),
     ...(input.path ? [input.path] : []),
-  ].map((value) => {
+  ];
+}
+
+function requestedRelativePaths(input: ToolInput, root: string): string[] {
+  return explicitPaths(input).map((value) => {
     const absolute = path.resolve(root, value);
     const relativePath = relative(root, absolute);
     if (
@@ -389,11 +425,7 @@ async function requestedFiles(
     throwIfAborted(signal);
     return selectedRevisionPaths(input, root, workspace, repositoryPaths);
   }
-  const explicit = [
-    ...(input.paths ?? []),
-    ...(input.file ? [input.file] : []),
-    ...(input.path ? [input.path] : []),
-  ];
+  const explicit = explicitPaths(input);
   if (explicit.length) {
     const files: string[] = [];
     for (const value of explicit) {
@@ -557,6 +589,10 @@ async function loadFiles(
   cpu: RequestCpu,
 ): Promise<{ files: NativeFile[]; root: string; scan: ScanCoverage }> {
   throwIfAborted(signal);
+  const explicit = explicitPaths(input);
+  const exactCandidate = !input.glob && explicit.length === 1;
+  // Start a dedicated worker during inventory for known broad scans.
+  if (!exactCandidate) cpu.start();
   const root = await requestRoot(input);
   const selected = await requestedFiles(input, root, signal);
   throwIfAborted(signal);
@@ -596,16 +632,25 @@ async function loadFiles(
     sourceBytes: [],
     parsedFacts: [],
   };
-  const explicit = [
-    ...(input.paths ?? []),
-    ...(input.file ? [input.file] : []),
-    ...(input.path ? [input.path] : []),
-  ];
   const exactFile =
-    !input.glob &&
+    exactCandidate &&
     selected.length === 1 &&
-    explicit.length === 1 &&
     path.resolve(root, explicit[0] as string) === selected[0];
+  const cacheScope = exactFile
+    ? JSON.stringify([
+        workspace?.checkoutRoot ?? config.projectRoot,
+        workspace?.selectedRevision.revisionId ?? null,
+        config.generation,
+      ])
+    : undefined;
+  const packs = await nativeGrammarSet(
+    selectedEligible.map((item) => item.language),
+    config,
+    workspace?.checkoutRoot ?? config.projectRoot,
+    { allowDownload: true, signal },
+  );
+  if (packs) cpu.useNativePacks(packs);
+  if (exactFile) cpu.enableReuse();
   let sourceBytes = 0;
   for (const [index, item] of selectedEligible.entries()) {
     throwIfAborted(signal);
@@ -628,11 +673,7 @@ async function loadFiles(
       sourceBytes += Buffer.byteLength(source);
       throwIfAborted(signal);
       budgetReason = "parsedFacts";
-      const facts = await cpu.run<NativeFile["facts"]>({
-        kind: "parse",
-        languageId: item.language,
-        source,
-      });
+      const facts = await cpu.parse(item.language, source, cacheScope);
       files.push({ facts, path: item.path, source });
       // The parser's node cap also produces incomplete facts.
       if (facts.partial)
@@ -700,25 +741,27 @@ async function loadFiles(
 
 async function generationFor(
   workspace: WorkspaceHandle | undefined,
-): Promise<string | null> {
-  if (!workspace) return null;
+): Promise<{ generation: string | null; indexRefreshPending?: true }> {
+  if (!workspace) return { generation: null };
   try {
-    const store = await LanceIntelligenceStore.open(workspace.storageDomain, {
-      access: "read-only",
+    return await withFreshMutationRead(workspace, async (expected) => {
+      const store = await LanceIntelligenceStore.open(workspace.storageDomain, {
+        access: "read-only",
+      });
+      try {
+        const latest = await store.latestGeneration(workspace.workspaceId, {
+          timeoutMs: 1_000,
+        });
+        assertPublishedMutationGeneration(expected, latest?.generationId);
+        return { generation: latest?.generationId ?? null };
+      } finally {
+        await store.shutdownCoordinator();
+      }
     });
-    try {
-      return (
-        (
-          await store.latestGeneration(workspace.workspaceId, {
-            timeoutMs: 1_000,
-          })
-        )?.generationId ?? null
-      );
-    } finally {
-      await store.shutdownCoordinator();
-    }
-  } catch {
-    return null;
+  } catch (error) {
+    return (error as { code?: string })?.code === "intelligence_refresh_pending"
+      ? { generation: null, indexRefreshPending: true }
+      : { generation: null };
   }
 }
 
@@ -808,7 +851,7 @@ async function withScopeMetadata(
     ...payload,
     exhaustive:
       scan.exhaustive && resultOmissions === 0 && payload.truncated !== true,
-    generation: await generationFor(workspace),
+    ...(await generationFor(workspace)),
     repository: workspace?.repositoryId ?? null,
     revision: workspace?.selectedRevision.revisionId ?? null,
     scan: compactScan(scan),
@@ -928,23 +971,94 @@ async function withAbort<T>(
 }
 
 class RequestCpu {
-  readonly worker = new Worker(
-    new URL("./code-intelligence-worker.ts", import.meta.url).href,
-    { type: "module" },
-  );
-  readonly signal: AbortSignal;
+  #worker?: Worker;
+  #packs?: NativeGrammarSet;
+  #reuse = false;
+  #healthy = true;
   transferredBytes = 0;
-  readonly abort = () => this.worker.terminate();
-  constructor(signal: AbortSignal) {
-    this.signal = signal;
+
+  readonly abort = () => {
+    this.#healthy = false;
+    this.#worker?.terminate();
+  };
+
+  readonly fail = () => {
+    this.#healthy = false;
+  };
+
+  constructor(readonly signal: AbortSignal) {
     signal.addEventListener("abort", this.abort, { once: true });
   }
+
+  enableReuse() {
+    this.#reuse = true;
+  }
+
+  useNativePacks(packs: NativeGrammarSet) {
+    this.#worker?.terminate();
+    this.#worker = undefined;
+    this.#packs = packs;
+  }
+
+  start(): Worker {
+    if (!this.#worker) {
+      const workerUrl = new URL(
+        "./code-intelligence-worker.ts",
+        import.meta.url,
+      );
+      const spawn = () =>
+        this.#packs || isEmbeddedBunExecutable()
+          ? createNativeProcessTransport(workerUrl, "code-intelligence")
+          : new Worker(workerUrl.href, { type: "module" });
+      this.#worker = this.#reuse
+        ? acquireWorker(spawn, this.#packs?.identity)
+        : spawn();
+      this.#worker.addEventListener("error", this.fail);
+    }
+    return this.#worker;
+  }
+
+  async parse(
+    languageId: ParserLanguageId,
+    source: string,
+    cacheScope?: string,
+  ): Promise<NativeFile["facts"]> {
+    throwIfAborted(this.signal);
+    const key =
+      cacheScope === undefined
+        ? undefined
+        : parseCacheKey(
+            this.#packs
+              ? JSON.stringify([cacheScope, this.#packs.identity])
+              : cacheScope,
+            languageId,
+            source,
+          );
+    const hit = key === undefined ? undefined : parsedFacts.get(key);
+    if (hit) {
+      if (hit.transferredBytes > MAX_REQUEST_BYTES - this.transferredBytes)
+        throw capacityError("Parsed data exceeds the request byte limit");
+      this.transferredBytes += hit.transferredBytes;
+      return JSON.parse(hit.payload.toString()) as NativeFile["facts"];
+    }
+    const before = this.transferredBytes;
+    const value = await this.run<NativeFile["facts"]>({
+      kind: "parse",
+      languageId,
+      source,
+    });
+    if (key !== undefined)
+      parsedFacts.set(key, value, this.transferredBytes - before);
+    return value;
+  }
+
   async run<T>(job: CpuJob): Promise<T> {
     throwIfAborted(this.signal);
+    const worker = this.start();
     return new Promise<T>((resolve, reject) => {
       const cleanup = () => {
-        this.worker.removeEventListener("message", message);
-        this.worker.removeEventListener("error", failed);
+        worker.removeEventListener("message", message);
+        worker.removeEventListener("error", failed);
         this.signal.removeEventListener("abort", aborted);
       };
       const message = (event: MessageEvent<CpuReply>) => {
@@ -973,20 +1087,21 @@ class RequestCpu {
       };
       const aborted = () => {
         cleanup();
-        this.worker.terminate();
         reject(abortError(this.signal));
       };
-      this.worker.addEventListener("message", message);
-      this.worker.addEventListener("error", failed);
+      worker.addEventListener("message", message);
+      worker.addEventListener("error", failed);
       this.signal.addEventListener("abort", aborted, { once: true });
       try {
-        this.worker.postMessage(
+        const boundedJob =
           job.kind === "parse"
             ? {
                 ...job,
                 maxReplyBytes: MAX_REQUEST_BYTES - this.transferredBytes,
               }
-            : job,
+            : job;
+        worker.postMessage(
+          this.#packs ? { ...boundedJob, packs: this.#packs } : boundedJob,
         );
       } catch (error) {
         cleanup();
@@ -996,7 +1111,11 @@ class RequestCpu {
   }
   close() {
     this.signal.removeEventListener("abort", this.abort);
-    this.worker.terminate();
+    if (!this.#worker) return;
+    this.#worker.removeEventListener("error", this.fail);
+    if (this.#reuse && this.#healthy && !this.signal.aborted)
+      releaseWorker(this.#worker, this.#packs?.identity);
+    else this.#worker.terminate();
   }
 }
 
@@ -1067,6 +1186,7 @@ async function executeNative(
           files,
           root,
           aliases,
+          scanExhaustive: scan.exhaustive,
         });
       })(),
       signal,

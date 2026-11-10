@@ -16,6 +16,7 @@ Do not transfer options between tools.
 | `map`               | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `detail?`, `max_members?`                                    | Inspect source structure.                                         |
 | `digest`            | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `detail?`, `max_members?`                                    | Summarize a bounded project.                                      |
 | `show`              | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `symbols?`, `target?`, `detail?`                             | Read exact symbols.                                               |
+| `read_symbols`      | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `symbols`                                                    | Read ordered definitions and direct callers.                      |
 | `implements`        | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `target?`                                                    | Find implementations.                                             |
 | `surface`           | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`                                                               | Inspect exported APIs.                                            |
 | `deps`              | `paths?`, `file?`, `path?`, `root?`, `glob?`, `lang?`, `languages?`, `scan_limit?`, `budget?`, `limit?`, `top_k?`, `timeout_ms?`, `workspaceId?`, `hide_ambiguous?`, `hide_external?`                          | Inspect outgoing imports.                                         |
@@ -44,14 +45,14 @@ Do not transfer options between tools.
 | `file_chattr`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Change file metadata.                                             |
 | `file_delete`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Delete guarded files.                                             |
 | `file_rename`       | `files`, `revision?`, `workspaceId?`                                                                                                                                                                           | Move guarded files without replacement.                           |
-| `graph_query`       | `workspaceId`, `budget?`, `cursor?`, `direction?`, `edgeKinds?`, `operation?`, `resolutionStatuses?`, `startNodeIds`                                                                                           | Traverse or inspect indexed graphs.                               |
-| `graph_path`        | `workspaceId`, `budget?`, `direction?`, `edgeKinds?`, `resolutionStatuses?`, `sourceNodeId`, `targetNodeId`                                                                                                    | Find an indexed path.                                             |
-| `graph_explain`     | `workspaceId`, `budget?`, `cursor?`, `nodeId`, `pageSize?`                                                                                                                                                     | Explain an indexed entity.                                        |
+| `graph_query`       | `workspaceId`, `budget?`, `cursor?`, `direction?`, `edgeKinds?`, `operation?`, `resolutionStatuses?`, `startNodeIds`, `strictRead?`                                                                            | Traverse or inspect indexed graphs.                               |
+| `graph_path`        | `workspaceId`, `budget?`, `direction?`, `edgeKinds?`, `resolutionStatuses?`, `sourceNodeId`, `targetNodeId`, `strictRead?`                                                                                     | Find an indexed path.                                             |
+| `graph_explain`     | `workspaceId`, `budget?`, `cursor?`, `nodeId`, `pageSize?`, `strictRead?`                                                                                                                                      | Explain an indexed entity.                                        |
 | `graph_diff`        | `base`, `budget?`, `cursor?`, `federation?`, `pageSize?`, `target`                                                                                                                                             | Compare published generations.                                    |
-| `retrieve`          | `workspaceId`, `budget?`, `deniedPaths?`, `exactSymbols?`, `includedPaths?`, `intent?`, `languages?`, `query`, `semantic?`                                                                                     | Retrieve scoped evidence.                                         |
-| `generate`          | `workspaceId`, `allowedCorpusArtifactIds`, `budget?`, `evidence`, `prompt`                                                                                                                                     | Generate an answer from explicit evidence.                        |
-| `index`             | `workspaceId`, `action?`, `collection?`                                                                                                                                                                        | Maintain the workspace index.                                     |
-| `index_status`      | `workspaceId`, `maxRowsPerTable?`, `timeoutMs?`                                                                                                                                                                | Read index status.                                                |
+| `retrieve`          | `workspaceId`, `budget?`, `deniedPaths?`, `exactSymbols?`, `includedPaths?`, `intent?`, `languages?`, `query`, `semantic?`, `strictRead?`                                                                      | Retrieve scoped evidence.                                         |
+| `generate`          | `workspaceId`, `allowedCorpusArtifactIds`, `budget?`, `evidence`, `prompt`, `strictRead?`                                                                                                                      | Generate an answer from explicit evidence.                        |
+| `index`             | `workspaceId`, `action?`, `collection?`, `strictRead?`                                                                                                                                                         | Maintain the workspace index.                                     |
+| `index_status`      | `workspaceId`, `maxRowsPerTable?`, `timeoutMs?`, `strictRead?`                                                                                                                                                 | Read index status.                                                |
 
 ## File inputs and limits
 
@@ -102,6 +103,9 @@ All these numeric bounds require positive integers.
 `detail` accepts `names`, `signatures`, or `full`.
 `max_members` accepts 0–10,000. `depth` accepts 1–32.
 `symbols` accepts at most 100 entries.
+`read_symbols` requires at least one symbol and an explicit file, path, paths, or glob.
+Each requested symbol can contain up to 256 characters.
+The tool preserves input order and duplicates. Read the outcome status before treating a missing definition as definitive.
 `direct`, `hide_external`, and `hide_ambiguous` are booleans.
 
 `callers`, `callees`, `trace`, `impact`, `context`, and `implements` require `target`.
@@ -148,6 +152,9 @@ Deletion count accepts 1–100,000; grace accepts 0–86,400 seconds.
 `index_status.maxRowsPerTable` accepts 1–100,000; `timeoutMs` accepts 1–120,000.
 
 `retrieve.query` is required and accepts 1–1,000,000 characters.
+
+Indexed reads can return a retained generation while a refresh is pending.
+Set `strictRead: true` to wait for a current generation within the request deadline.
 Optional filters are `deniedPaths`, `includedPaths`, `exactSymbols`, and `languages`.
 Paths are repository-relative.
 `intent` accepts `implementation`, `behavior`, or `documentation`.

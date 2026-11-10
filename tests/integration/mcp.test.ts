@@ -26,6 +26,7 @@ const NATIVE_CODE_TOOLS = [
   "impact",
   "implements",
   "map",
+  "read_symbols",
   "reverse_deps",
   "run",
   "search",

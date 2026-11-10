@@ -806,6 +806,13 @@ export function authorizeRequestedDecision(
   decision: PolicyDecision,
   generation: number,
 ): boolean {
+  return authorizeDecision(decision, generation);
+}
+
+function authorizeDecision(
+  decision: PolicyDecision,
+  generation: number,
+): boolean {
   const scope = activeApproval.getStore();
   if (!scope?.context || !scope.server) return false;
   if (scope.requestScoped) {

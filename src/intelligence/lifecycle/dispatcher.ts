@@ -326,7 +326,12 @@ export class IntelligenceSourceDispatcher {
     const systems = systemsLanguageAdapters.find((adapter) =>
       matchingExtension(filePath, adapter.extensions),
     );
-    if (systems) {
+    // The guarded write replay uses native structural facts for these two
+    // languages, including when the checkout already has an index.
+    const useNativeSystemsGrammar =
+      process.env.AST_MCP_EXPERIMENT_NATIVE_ONLY === "1" &&
+      (systems?.languageId === "go" || systems?.languageId === "rust");
+    if (systems && !useNativeSystemsGrammar) {
       return {
         facts: await systems.analyze({
           languageId: systems.languageId,

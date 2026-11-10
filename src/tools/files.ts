@@ -283,6 +283,9 @@ export default function registerFileTools(
       title: "Patch Files Through the Enforced State Machine",
     },
     async ({ files, revision, workspaceId }, context) => {
+      const preview = Object.values(files).every(
+        (file) => file.preview === true,
+      );
       try {
         return toolSuccess(
           await execute(
@@ -290,9 +293,7 @@ export default function registerFileTools(
             (signal) =>
               withLanceMutationLifecycle(() => patchFiles(files, { signal }), {
                 signal,
-                preview: Object.values(files).every(
-                  (file) => file.preview === true,
-                ),
+                preview,
               }),
             context,
             "file_patch",

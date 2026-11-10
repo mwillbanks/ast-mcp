@@ -2,6 +2,8 @@ import {
   parseSource,
   type ParserLanguageId,
 } from "../intelligence/parser/index.ts";
+import type { NativeGrammarSet } from "../intelligence/parser/native-pack-selection.ts";
+import { initializeNativePackRegistry } from "../intelligence/parser/registry.ts";
 import {
   computeNative,
   type CompilerAlias,
@@ -23,6 +25,7 @@ export type CpuJob =
       files: NativeFile[];
       root: string;
       aliases: CompilerAlias[];
+      scanExhaustive?: boolean;
     };
 export type CpuReply =
   | { ok: true; value: unknown; bytes: number }
@@ -31,8 +34,17 @@ const scope = globalThis as unknown as {
   onmessage: (event: MessageEvent<CpuJob>) => Promise<void>;
   postMessage(reply: CpuReply): void;
 };
-scope.onmessage = async ({ data }) => {
+type NativeCpuJob = CpuJob & { packs?: NativeGrammarSet };
+let grammarIdentity: string | undefined;
+
+async function execute(data: NativeCpuJob, reply: (value: CpuReply) => void) {
   try {
+    if (data.packs && grammarIdentity === undefined) {
+      await initializeNativePackRegistry(data.packs);
+      grammarIdentity = data.packs.identity;
+    }
+    if (data.packs?.identity !== grammarIdentity)
+      throw new TypeError("Native code intelligence grammar set changed");
     const value =
       data.kind === "compiler-config"
         ? Bun.JSONC.parse(data.source)
@@ -48,6 +60,8 @@ scope.onmessage = async ({ data }) => {
               data.files,
               data.root,
               data.aliases,
+              undefined,
+              data.scanExhaustive,
             );
     const bytes = Buffer.byteLength(JSON.stringify(value));
     const maxBytes =
@@ -61,14 +75,14 @@ scope.onmessage = async ({ data }) => {
         ),
         { code: "intelligence_budget_exceeded", retryable: true },
       );
-    scope.postMessage({ ok: true, value, bytes });
+    reply({ ok: true, value, bytes });
   } catch (error) {
     const typed = error as {
       code?: string;
       message?: string;
       retryable?: boolean;
     };
-    scope.postMessage({
+    reply({
       ok: false,
       error: {
         code: typed.code ?? "worker_error",
@@ -77,4 +91,13 @@ scope.onmessage = async ({ data }) => {
       },
     });
   }
-};
+}
+
+if (typeof process.send === "function") {
+  process.on("message", (message) => {
+    void execute(message as NativeCpuJob, (reply) => process.send?.(reply));
+  });
+} else {
+  scope.onmessage = ({ data }) =>
+    execute(data, (reply) => scope.postMessage(reply));
+}

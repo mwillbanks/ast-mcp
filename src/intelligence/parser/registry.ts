@@ -12,8 +12,9 @@ import { sha256 } from "./coordinates.ts";
 import {
   LANGUAGE_CAPABILITY_CATALOG,
   type LanguageCatalogEntry,
-  PINNED_GRAMMAR_REGISTRATIONS,
+  pinnedGrammarRegistration,
 } from "./language-catalog.ts";
+import type { NativeGrammarSet } from "./native-pack-selection.ts";
 import type { ParserLanguageId } from "./types.ts";
 
 export const DEFAULT_EXTRACTOR_VERSION = "ast-mcp.ts-js.v1";
@@ -158,21 +159,65 @@ const supported = (
 
 export class LanguageRegistry {
   readonly #dynamicRegistrar: typeof registerDynamicLanguage;
+  readonly #packagedLanguages?: readonly ParserLanguageId[];
   readonly #grammars = new Map<ParserLanguageId, GrammarDescriptor>(
     CATALOG_GRAMMARS.map((grammar) => [grammar.languageId, grammar]),
   );
-  readonly #implementations = new Map<ParserLanguageId, LanguageImplementation>(
-    LANGUAGE_CAPABILITY_CATALOG.map((entry) => [
-      entry.languageId,
-      implementationFor(entry),
-    ]),
-  );
+  readonly #implementations: Map<ParserLanguageId, LanguageImplementation>;
   #dynamicRegistered = false;
 
   constructor(
     dynamicRegistrar: typeof registerDynamicLanguage = registerDynamicLanguage,
+    packagedLanguages?: readonly ParserLanguageId[],
+    private readonly nativeGrammarSet?: NativeGrammarSet,
   ) {
     this.#dynamicRegistrar = dynamicRegistrar;
+    this.#packagedLanguages = packagedLanguages?.slice();
+    if (nativeGrammarSet) {
+      for (const grammar of CATALOG_GRAMMARS) {
+        const pack = nativeGrammarSet.assets[grammar.languageId];
+        if (!pack) continue;
+        this.#grammars.set(grammar.languageId, {
+          ...grammar,
+          grammarFingerprint: fingerprint([
+            grammar.grammarFingerprint,
+            pack.sha256,
+            pack.version,
+          ]),
+          grammarVersion: `@ast-grep/lang-${grammar.languageId}@${pack.version}`,
+        });
+      }
+    }
+    this.#implementations = new Map(
+      LANGUAGE_CAPABILITY_CATALOG.map((entry) => [
+        entry.languageId,
+        this.#packagedLanguages !== undefined &&
+        entry.packaged &&
+        !this.#packagedLanguages.includes(entry.languageId)
+          ? {
+              ...implementationFor(entry),
+              match: false,
+              parse: false,
+              rewrite: false,
+              structuralRead: false,
+              symbolExtraction: false,
+            }
+          : implementationFor(entry),
+      ]),
+    );
+  }
+
+  parserAvailable(languageId: ParserLanguageId): boolean {
+    return this.#implementations.get(languageId)?.parse ?? false;
+  }
+
+  parserPackOmitted(languageId: string): boolean {
+    const implementation = this.#implementations.get(
+      languageId as ParserLanguageId,
+    );
+    return (
+      this.#packagedLanguages !== undefined && implementation?.parse === false
+    );
   }
 
   get(languageId: ParserLanguageId): GrammarDescriptor {
@@ -196,7 +241,12 @@ export class LanguageRegistry {
       extractor: DEFAULT_EXTRACTOR_VERSION,
       languageId,
     });
-    const parseClaim = supported("ast-grep", grammar.grammarFingerprint);
+    const structuralClaim = (available: boolean) =>
+      available
+        ? supported("ast-grep", grammar.grammarFingerprint)
+        : unsupported(
+            "The selected language profile does not load this parser",
+          );
     const extractionClaim = implementation.symbolExtraction
       ? supported("custom", extractionFingerprint)
       : unsupported("This adapter does not extract code symbols");
@@ -219,11 +269,11 @@ export class LanguageRegistry {
         "Inheritance resolution requires an environment-specific resolver",
       ),
       languageId,
-      match: parseClaim,
-      parse: parseClaim,
-      rewrite: parseClaim,
+      match: structuralClaim(implementation.match),
+      parse: structuralClaim(implementation.parse),
+      rewrite: structuralClaim(implementation.rewrite),
       schemaVersion: INTELLIGENCE_SCHEMA_VERSION,
-      structuralRead: parseClaim,
+      structuralRead: structuralClaim(implementation.structuralRead),
       structuredParser: { mode: "none" },
       symbolExtraction: extractionClaim,
     });
@@ -378,7 +428,22 @@ export class LanguageRegistry {
         metaVarChar?: string;
         expandoChar?: string;
       }
-    > = { ...PINNED_GRAMMAR_REGISTRATIONS };
+    > = {};
+    for (const entry of LANGUAGE_CAPABILITY_CATALOG) {
+      if (!entry.packaged || !this.parserAvailable(entry.languageId)) continue;
+      const language = entry.languageId;
+      const pack = this.nativeGrammarSet?.assets[language];
+      if (pack) {
+        registrations[language] = {
+          expandoChar: pack.expandoChar,
+          extensions: entry.extensions.map((extension) => extension.slice(1)),
+          languageSymbol: pack.languageSymbol,
+          libraryPath: pack.libraryPath,
+        };
+      } else {
+        registrations[language] = pinnedGrammarRegistration(language);
+      }
+    }
     for (const grammar of this.#grammars.values()) {
       if (!grammar.dynamicAsset) continue;
       registrations[grammar.astGrepLanguage] = {
@@ -465,4 +530,26 @@ export async function validateGrammarAsset(
   }
 }
 
-export const defaultLanguageRegistry = new LanguageRegistry();
+export let defaultLanguageRegistry = new LanguageRegistry();
+
+/** Only the IPC child can replace its local default registry before processing. */
+export async function initializeNativePackRegistry(
+  packs: NativeGrammarSet,
+  manifest?: DynamicGrammarManifest,
+): Promise<LanguageRegistry> {
+  if (typeof process.send !== "function")
+    throw new TypeError(
+      "Native pack registration requires an isolated process",
+    );
+  const { verifyNativePackAsset } =
+    await import("../../language-packs/index.ts");
+  for (const [language, asset] of Object.entries(packs.assets)) {
+    if (!verifyNativePackAsset(language, asset))
+      throw new TypeError(`Native pack verification failed for ${language}`);
+  }
+  const registry = new LanguageRegistry(undefined, undefined, packs);
+  if (manifest) await registry.loadDynamicManifest(manifest);
+  registry.registerDynamicGrammars();
+  defaultLanguageRegistry = registry;
+  return registry;
+}

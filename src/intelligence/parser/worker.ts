@@ -1,7 +1,12 @@
 import { parentPort } from "node:worker_threads";
 
+import type { NativeGrammarSet } from "./native-pack-selection.ts";
 import { parseSource } from "./parser.ts";
-import { type DynamicGrammarManifest, LanguageRegistry } from "./registry.ts";
+import {
+  type DynamicGrammarManifest,
+  initializeNativePackRegistry,
+  LanguageRegistry,
+} from "./registry.ts";
 import {
   ParserError,
   type ParseSourceRequest,
@@ -11,6 +16,7 @@ import {
 
 interface InitializeWorkerRequest {
   manifest?: DynamicGrammarManifest;
+  packs?: NativeGrammarSet;
   type: "initialize";
 }
 
@@ -53,16 +59,18 @@ interface ParserWorkerScope {
 
 const workerScope: ParserWorkerScope = {
   onmessage: null,
-  postMessage: (message) => parentPort?.postMessage(message),
-};
-parentPort?.on(
-  "message",
-  (data: InitializeWorkerRequest | ParseWorkerRequest) => {
-    void workerScope.onmessage?.({ data } as MessageEvent<
-      InitializeWorkerRequest | ParseWorkerRequest
-    >);
+  postMessage: (message) => {
+    if (parentPort) parentPort.postMessage(message);
+    else process.send?.(message);
   },
-);
+};
+const dispatch = (data: InitializeWorkerRequest | ParseWorkerRequest) => {
+  void workerScope.onmessage?.({ data } as MessageEvent<
+    InitializeWorkerRequest | ParseWorkerRequest
+  >);
+};
+if (parentPort) parentPort.on("message", dispatch);
+else if (typeof process.send === "function") process.on("message", dispatch);
 let registry: LanguageRegistry | null = null;
 
 function serializeError(error: unknown): SerializedParserError {
@@ -81,12 +89,20 @@ workerScope.onmessage = async (
   const message = event.data;
   if (message.type === "initialize") {
     try {
-      const initialized = new LanguageRegistry();
-      if (message.manifest) {
-        await initialized.loadDynamicManifest(message.manifest);
+      if (registry) throw new TypeError("Parser worker is already initialized");
+      if (message.packs) {
+        registry = await initializeNativePackRegistry(
+          message.packs,
+          message.manifest,
+        );
+      } else {
+        const initialized = new LanguageRegistry();
+        if (message.manifest) {
+          await initialized.loadDynamicManifest(message.manifest);
+        }
+        initialized.registerDynamicGrammars();
+        registry = initialized;
       }
-      initialized.registerDynamicGrammars();
-      registry = initialized;
       workerScope.postMessage({ ok: true, type: "ready" });
     } catch (error) {
       workerScope.postMessage({

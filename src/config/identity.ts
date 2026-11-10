@@ -7,6 +7,7 @@ import {
   canonicalPathWithin,
 } from "../runtime/path-utils";
 import type { ResolveConfigOptions, ResolvedConfig } from "./index";
+import { languagePackHostPolicy } from "./language-packs";
 
 const resolutionOptions = new WeakMap<
   Readonly<ResolvedConfig>,
@@ -69,6 +70,9 @@ export function captureResolutionOptions(
     launchCwd,
     env,
     home: path.resolve(launchCwd, options.home ?? os.homedir()),
+    languagePackHost: {
+      ...(options.languagePackHost ?? languagePackHostPolicy()),
+    },
     platform: options.platform ?? process.platform,
     clientRoots: options.clientRoots?.map((value) =>
       path.resolve(
@@ -160,6 +164,7 @@ export function configurationResolutionKey(
     env,
     home: canonicalizePathSync(captured.home!),
     globalConfiguration: path.resolve(globalConfigPath(captured)),
+    languagePackHost: captured.languagePackHost,
     platform: captured.platform,
     selectedRoots: selected.map(canonicalizePathSync),
     // Lexical roots determine prospective ancestor walks and relative policy
