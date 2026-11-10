@@ -50,11 +50,11 @@ A stale hash, ambiguous match, capped preview, unsupported route, or lost MCP co
 
 ## Distribution
 
-Bun is required. The package publishes one Bun-bundled `ast-mcp` CLI with `install`, `update`, `uninstall`, `hook`, `mcp`, and `skills` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence remains available for the installation lifetime.
+The regular package requires Bun. Its `ast-mcp` CLI includes `install`, `update`, `uninstall`, `hook`, `mcp`, `pm`, and `skills` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence remains available for the installation lifetime.
 
 Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Formatting is optional and uses explicitly configured external commands; ast-mcp does not download formatters during file operations. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
 
-GitHub Releases provides ESM bytecode executables for macOS arm64, Linux arm64 and x64 (glibc and musl), and Windows x64. Extract the matching archive and keep its `runtime/` directory beside the executable. Alpine arm64 requires `gcompat` for the bundled Markdown parser. Use the regular Bun package when no standalone archive matches your platform.
+GitHub Releases provides executables with embedded Bun and ESM bytecode for macOS arm64, Linux arm64 and x64 (glibc and musl), and Windows x64. Extract the matching archive and keep its `runtime/` directory beside the executable. Alpine arm64 requires `gcompat` for the bundled Markdown parser. Use the regular Bun package when no standalone archive matches your platform.
 
 ## Install
 
