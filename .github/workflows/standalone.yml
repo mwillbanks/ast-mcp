@@ -8,15 +8,15 @@ on:
         type: string
   pull_request:
     paths:
-      - '.github/workflows/standalone.yml'
-      - '.github/workflows/release.yml'
-      - 'bin/**'
-      - 'scripts/build/**'
-      - 'src/**'
-      - 'templates/**'
-      - 'package.json'
-      - 'bun.lock'
-      - 'bunfig.toml'
+      - ".github/workflows/standalone.yml"
+      - ".github/workflows/release.yml"
+      - "bin/**"
+      - "scripts/build/**"
+      - "src/**"
+      - "templates/**"
+      - "package.json"
+      - "bun.lock"
+      - "bunfig.toml"
 
 permissions:
   contents: read
@@ -67,7 +67,12 @@ jobs:
           - { target: darwin-arm64, os: macos-15 }
           - { target: linux-arm64, os: ubuntu-24.04-arm }
           - { target: linux-x64, os: ubuntu-24.04 }
-          - { target: linux-arm64-musl, os: ubuntu-24.04-arm, musl: true, gcompat: gcompat }
+          - {
+              target: linux-arm64-musl,
+              os: ubuntu-24.04-arm,
+              musl: true,
+              gcompat: gcompat,
+            }
           - { target: linux-x64-musl, os: ubuntu-24.04, musl: true }
           - { target: windows-x64, os: windows-2025 }
     runs-on: ${{ matrix.os }}
