@@ -1,7 +1,8 @@
 {
   "author": "Mike Willbanks",
   "bin": {
-    "ast-mcp": "dist/ast-mcp.js"
+    "ast-mcp": "dist/ast-mcp-launch.cjs",
+    "ast-mcp-bun": "dist/ast-mcp.js"
   },
   "bugs": {
     "url": "https://github.com/mwillbanks/ast-mcp/issues"

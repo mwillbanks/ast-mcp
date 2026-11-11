@@ -17,6 +17,40 @@ html {
   scrollbar-gutter: stable;
 }
 
+.docs-mermaid {
+  margin-block: 1.5rem;
+  padding: clamp(0.75rem, 3vw, 1.5rem);
+  border: 1px solid var(--color-fd-border);
+  border-radius: 1rem;
+  background:
+    radial-gradient(
+      ellipse at top left,
+      rgb(77 131 252 / 0.14),
+      transparent 65%
+    ),
+    var(--color-fd-card);
+  box-shadow: 0 0.6rem 1.8rem rgb(20 46 100 / 0.09);
+}
+
+.docs-mermaid-graphic,
+.docs-mermaid pre {
+  overflow-x: auto;
+}
+
+.docs-mermaid-graphic svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 28rem;
+  margin-inline: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-mermaid * {
+    animation: none !important;
+  }
+}
+
 body {
   font-family: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   background-image:

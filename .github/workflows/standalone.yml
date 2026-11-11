@@ -6,6 +6,16 @@ on:
       ref:
         required: true
         type: string
+      native_npm:
+        description: Qualify npm packages for a release with native npm packaging
+        default: true
+        type: boolean
+      package_artifact_name:
+        description: Exact main npm package artifact from the release build
+        type: string
+      registry_version:
+        description: Verify this published version instead of building candidate archives
+        type: string
   pull_request:
     paths:
       - ".github/workflows/standalone.yml"
@@ -23,6 +33,7 @@ permissions:
 
 jobs:
   build:
+    if: inputs.registry_version == ''
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -37,6 +48,8 @@ jobs:
         run: bun ci --os='*' --cpu='*' --libc='*'
       - name: Compile ESM bytecode and archive runtime assets
         shell: bash
+        env:
+          NATIVE_NPM: ${{ github.event_name == 'pull_request' || inputs.native_npm }}
         run: |
           set -euo pipefail
           for target in bun-darwin-arm64 bun-linux-arm64 bun-linux-x64 bun-linux-arm64-musl bun-linux-x64-musl bun-windows-x64; do
@@ -44,12 +57,24 @@ jobs:
             assets="$RUNNER_TEMP/standalone-$target"
             mkdir "$assets"
             bun run build --standalone "$build" --target "$target"
+            if [[ "$NATIVE_NPM" == true && "$target" == bun-linux-arm64 ]]; then
+              # The pinned GNU arm64 addon includes a large static symbol table.
+              "$(brew --prefix llvm@18)/bin/llvm-strip" --strip-unneeded \
+                "$build/runtime/node_modules/@lancedb/lancedb-linux-arm64-gnu/lancedb.linux-arm64-gnu.node"
+            fi
             executable=ast-mcp-bytecode
             if [[ "$target" == bun-windows-* ]]; then executable+=.exe; fi
             archive="ast-mcp-${target#bun-}.tar.gz"
             COPYFILE_DISABLE=1 tar -czf "$assets/$archive" -C "$build" "$executable" runtime
             (cd "$assets" && shasum -a 256 "$archive" > "$archive.sha256")
+            if [[ "$NATIVE_NPM" == true ]]; then
+              bun scripts/build/pack-npm.ts platform "$assets/ast-mcp-npm-${target#bun-}.tgz" "${target#bun-}" "$assets/$archive"
+            fi
           done
+      - name: Pack main package for pull request qualification
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: bun scripts/build/pack-npm.ts root "$RUNNER_TEMP/native-npm-pr-root/ast-mcp.tgz"
       - uses: actions/upload-artifact@v7
         with:
           name: standalone-release-matrix
@@ -57,9 +82,17 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+      - uses: actions/upload-artifact@v7
+        if: github.event_name == 'pull_request'
+        with:
+          name: native-npm-pr-root
+          path: ${{ runner.temp }}/native-npm-pr-root/*
+          if-no-files-found: error
+          retention-days: 7
 
   qualify:
     needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || inputs.registry_version != '') }}
     strategy:
       fail-fast: false
       matrix:
@@ -87,10 +120,12 @@ jobs:
           bun-version-file: package.json
       - run: bun ci --ignore-scripts
       - uses: actions/download-artifact@v8
+        if: inputs.registry_version == ''
         with:
           name: standalone-release-matrix
           path: ${{ runner.temp }}/standalone-matrix
       - name: Verify and extract the target archive
+        if: inputs.registry_version == ''
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
@@ -103,11 +138,11 @@ jobs:
           cd "$RUNNER_TEMP/standalone"
           tar -xzf "../standalone-matrix/standalone-bun-$TARGET/$archive"
       - name: Qualify the standalone executable
-        if: ${{ !matrix.musl }}
+        if: ${{ !matrix.musl && inputs.registry_version == '' }}
         shell: bash
         run: bun scripts/build/qualify-standalone.ts "$RUNNER_TEMP/standalone" --bytecode-only --with-pm
       - name: Qualify the standalone executable on Alpine
-        if: matrix.musl
+        if: matrix.musl && inputs.registry_version == ''
         shell: bash
         env:
           EXTRA_APK: ${{ matrix.gcompat }}
@@ -115,3 +150,45 @@ jobs:
           docker run --rm -v "$PWD:/repo:ro" -v "$RUNNER_TEMP/standalone:/artifact:ro" -w /repo \
             -e EXTRA_APK oven/bun:"$(bun --version)"-alpine \
             sh -ec 'apk add --no-cache git $EXTRA_APK && bun scripts/build/qualify-standalone.ts /artifact --bytecode-only --with-pm'
+      - uses: actions/download-artifact@v8
+        if: inputs.registry_version == '' && (github.event_name == 'pull_request' || inputs.native_npm)
+        with:
+          name: ${{ inputs.package_artifact_name || 'native-npm-pr-root' }}
+          path: ${{ runner.temp }}/npm-candidate
+      - uses: actions/setup-node@v7
+        if: ${{ !matrix.musl && (github.event_name == 'pull_request' || inputs.native_npm) }}
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Qualify scripts-disabled npm installs without Bun
+        if: ${{ !matrix.musl && (github.event_name == 'pull_request' || inputs.native_npm) }}
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          REGISTRY_VERSION: ${{ inputs.registry_version }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$REGISTRY_VERSION" ]]; then
+            bun scripts/build/qualify-npm.ts registry "$TARGET" "$REGISTRY_VERSION"
+          else
+            bun scripts/build/qualify-npm.ts candidate "$TARGET" "$RUNNER_TEMP/npm-candidate/ast-mcp.tgz" "$RUNNER_TEMP/standalone-matrix"
+          fi
+      - name: Qualify scripts-disabled npm installs on Alpine without Bun
+        if: matrix.musl && (github.event_name == 'pull_request' || inputs.native_npm)
+        shell: bash
+        env:
+          EXTRA_APK: ${{ matrix.gcompat }}
+          TARGET: ${{ matrix.target }}
+          REGISTRY_VERSION: ${{ inputs.registry_version }}
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo:ro" -v "$RUNNER_TEMP:/artifacts:ro" -w /repo \
+            -e EXTRA_APK -e TARGET -e REGISTRY_VERSION oven/bun:"$(bun --version)"-alpine \
+            sh -ec '
+              apk add --no-cache git nodejs npm $EXTRA_APK
+              if [ -n "$REGISTRY_VERSION" ]; then
+                bun scripts/build/qualify-npm.ts registry "$TARGET" "$REGISTRY_VERSION"
+              else
+                bun scripts/build/qualify-npm.ts candidate "$TARGET" /artifacts/npm-candidate/ast-mcp.tgz /artifacts/standalone-matrix
+              fi
+            '

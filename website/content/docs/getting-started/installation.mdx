@@ -4,7 +4,7 @@ description: Install the MCP server, best-effort routing hooks, and host configu
 icon: Download
 ---
 
-Bun is required. The package pins its native intelligence dependencies. Runtime formatting is disabled by default and uses only formatters that you install and configure.
+AST-MCP ships compiled executables with embedded Bun for six targets. The regular bundle uses a separate Bun installation as a fallback. Runtime formatting is disabled by default and uses only formatters you install and configure.
 
 ## From a package registry
 
@@ -14,7 +14,11 @@ Install ast-mcp into a repository so its native intelligence dependencies remain
 npm install --save-dev @mwillbanks/ast-mcp
 ```
 
-No formatter installation or trust step is required. To enable formatting, install a formatter separately and follow the [optional formatting guide](/docs/guides/formatting).
+For a persistent global install, run `npm install -g @mwillbanks/ast-mcp`.
+
+Available since NEXT_RELEASE, npm selects the matching compiled executable automatically. Installation works with `--ignore-scripts`. The installed `ast-mcp` command uses Node to locate and start the executable. The executable embeds Bun and runs without npm. Use `ast-mcp-bun` to run the fallback bundle directly with Bun on `PATH`. Compiled installations download the executable and its native runtime assets in addition to the regular package.
+
+To enable formatting, install a formatter separately and follow the [optional formatting guide](/docs/guides/formatting).
 
 Run the repository-local executable to install host entries for the project package:
 
@@ -28,13 +32,15 @@ This installs stdio definitions by default. To install Streamable HTTP definitio
 
 npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. ast-mcp never downloads formatter binaries during file operations.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Local stdio definitions use absolute Bun runtime and CLI entry paths, pass `mcp`, and set the project directory as `cwd`; global definitions use a recognized Bun, npm, pnpm, or Yarn global-bin alias. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration. Clients that support MCP Skills can discover the canonical skill from the server. Unsupported clients can use `ast-mcp skills export <destination>`; see the [skills guide](/docs/guides/skills).
+Targets are `codex`, `claude`, `copilot`, or `all`. Stdio definitions pass `mcp`. A local definition sets the project directory as `cwd`. The installer selects the launch path for the compiled executable or the Bun package. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration. Clients that support MCP Skills can discover the canonical skill from the server. Unsupported clients can use `ast-mcp skills export <destination>`; see the [skills guide](/docs/guides/skills).
 
 ## Platform support
 
-The native Bun implementation supports macOS, Linux, and Windows without a Rust or Cargo prerequisite.
+Compiled npm targets are macOS arm64, Windows x64, and Linux arm64 and x64 with glibc or musl. Alpine arm64 requires `gcompat` for the bundled Markdown parser. Other targets can use the Bun bundle where Bun and the native dependencies are supported.
 
 Optional native parser or embedding artifacts report explicit capability errors when a platform package is unavailable.
+
+For a standalone install outside npm, download the matching [GitHub release archive](https://github.com/mwillbanks/ast-mcp/releases/latest) and keep `runtime/` next to the executable.
 
 ## From a source checkout
 

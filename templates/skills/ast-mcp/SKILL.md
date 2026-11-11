@@ -48,7 +48,7 @@ Keep Codex-specific recovery separate from Claude, Claude Desktop, Grok, Copilot
 1. Start unfamiliar work with `digest`. Use `map` for file structure and `show` for symbols.
 2. Use `search` or `find_related` for discovery, and `context` for nearby calls.
 3. Use `impact` before shared API changes. Use callers, dependencies, and graph tools to check affected code.
-4. Batch independent reads when schemas permit. Keep overlapping writes and dependent operations sequential.
+4. Batch independent reads when schemas permit. Use `read_symbols` for several exact definitions and callers in one bounded request. Keep overlapping writes and dependent operations sequential.
 5. Keep native intelligence requests within one project root. Use absolute paths for linked worktrees.
 6. Use `file_read` with explicit `mode` when intent matters.
 7. Use source `symbols`, structured-document `selectors`, or bounded text ranges.

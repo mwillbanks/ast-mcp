@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
+      "skip-changelog": true,
       "pull-request-title-pattern": "chore: release ast-mcp ${version}",
       "pull-request-header": "🚀 Release candidate",
       "pull-request-footer": "📦 Merge after validation to publish ast-mcp through the trusted release workflow.",

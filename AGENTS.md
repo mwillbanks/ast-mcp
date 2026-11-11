@@ -48,6 +48,13 @@ If references are unavailable, inspect installed `ast-mcp --help` and host diagn
 
 <!-- ast-mcp:end -->
 
+## User-facing documentation and release notes
+
+- Update the relevant user guide or reference when public behavior changes.
+- Add a user-facing note to `website/content/release-drafts/NEXT_RELEASE.mdx` and a concise entry under `## NEXT_RELEASE` in `CHANGELOG.md`.
+- Mark version-dependent behavior with `Available since`, `Deprecated since`, or `Removed since` and the applicable release version. Use `NEXT_RELEASE` for unreleased changes.
+- Keep release notes in Markdown-compatible MDX. Use Mermaid fences for diagrams and pair benchmark charts with data tables.
+
 ## Local validation and failure analysis
 
 Follow the local-first workflow in `CONTRIBUTING.md`. Run affected checks and independent review. Freeze source, then run `bun run check:coverage` before pushing. Source changes invalidate downstream validation. Use CI for independent confirmation. When a defect appears, audit related paths for the same failure class and add executable boundary contracts before another push.

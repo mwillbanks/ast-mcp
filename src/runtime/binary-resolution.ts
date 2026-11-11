@@ -1,4 +1,5 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
@@ -69,6 +70,83 @@ export function isExecutable(
   } catch {
     return false;
   }
+}
+
+export function npmNativeBinaries(
+  alias: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string[] {
+  const directory = path.dirname(alias);
+  const modules =
+    path.basename(directory) === ".bin"
+      ? path.dirname(directory)
+      : path.join(directory, "node_modules");
+  const roots = new Set([path.join(modules, "@mwillbanks", "ast-mcp")]);
+  try {
+    const entry = realpathSync(alias);
+    if (path.basename(entry) === "ast-mcp-launch.cjs")
+      roots.add(path.dirname(path.dirname(entry)));
+  } catch {
+    // The npm shim can be absent while checking a previous installation.
+  }
+  const names =
+    platform === "win32"
+      ? [`windows-${arch}`]
+      : [
+          `${platform}-${arch}`,
+          ...(platform === "linux" ? [`linux-${arch}-musl`] : []),
+        ];
+  const binaries = new Set<string>();
+  for (const root of roots) {
+    const packageManifest = path.join(root, "package.json");
+    try {
+      const requireInstalled = createRequire(packageManifest);
+      const installed = requireInstalled(packageManifest) as {
+        name?: string;
+        optionalDependencies?: Record<string, string>;
+        version?: string;
+      };
+      if (installed.name !== "@mwillbanks/ast-mcp") continue;
+      for (const target of names) {
+        const name = `@mwillbanks/ast-mcp-${target}`;
+        if (
+          !installed.version ||
+          installed.optionalDependencies?.[name] !== installed.version
+        )
+          continue;
+        try {
+          const manifest = realpathSync(
+            requireInstalled.resolve(`${name}/package.json`),
+          );
+          // Versioned pnpm or Yarn paths can change on every upgrade.
+          // Those managers retain their existing stable bin aliases.
+          if (
+            manifest
+              .split(path.sep)
+              .some((segment) => segment === ".pnpm" || segment === ".yarn")
+          )
+            continue;
+          const native = requireInstalled(manifest) as {
+            name?: string;
+            version?: string;
+          };
+          if (native.name !== name || native.version !== installed.version)
+            continue;
+          const executable = path.join(
+            path.dirname(manifest),
+            platform === "win32" ? "ast-mcp-bytecode.exe" : "ast-mcp-bytecode",
+          );
+          if (isExecutable(executable, platform)) binaries.add(executable);
+        } catch {
+          // An optional package for another libc need not be installed.
+        }
+      }
+    } catch {
+      // Other managers can expose an alias without npm package metadata.
+    }
+  }
+  return [...binaries];
 }
 
 function commandOutput(command: string, args: string[]) {

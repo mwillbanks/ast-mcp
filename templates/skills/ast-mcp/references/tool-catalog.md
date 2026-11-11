@@ -155,6 +155,9 @@ Deletion count accepts 1–100,000; grace accepts 0–86,400 seconds.
 
 Indexed reads can return a retained generation while a refresh is pending.
 Set `strictRead: true` to wait for a current generation within the request deadline.
+The default is `false` and marks retained results stale.
+Waiting can raise latency or return `intelligence_refresh_pending` during sustained writes.
+Use direct source inspection when the task needs the current bytes.
 Optional filters are `deniedPaths`, `includedPaths`, `exactSymbols`, and `languages`.
 Paths are repository-relative.
 `intent` accepts `implementation`, `behavior`, or `documentation`.

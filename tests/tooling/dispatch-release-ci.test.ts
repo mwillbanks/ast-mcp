@@ -6,12 +6,28 @@ import {
   formatReleaseChangelog,
   runReleaseCi,
 } from "../../scripts/release/dispatch-release-ci";
+import {
+  releaseChangelog,
+  releaseDraft,
+  releaseManifest,
+  releasePage,
+  prepareReleaseContent,
+} from "../../scripts/release/prepare-release-content.ts";
+import {
+  releaseNotesCommand,
+  renderReleaseNotes,
+} from "../../scripts/release/render-release-notes.ts";
 
 const repository = "mwillbanks/ast-mcp";
+const version = "0.9.0";
+const page = releasePage(version);
+const authoredNotes = "---\ntitle: NEXT_RELEASE\n---\n\nRelease notes.\n";
+const versionedNotes = authoredNotes.replace("NEXT_RELEASE", version);
+const draftChangelog = "# Changelog\n\n## NEXT_RELEASE\n\n- entry\n";
 const sha = "a".repeat(40);
 const normalizedSha = "b".repeat(40);
-const formatted = "# Changelog\n\n- entry\n";
-const unformatted = "# Changelog\n\n\n* entry\n";
+const formatted = draftChangelog.replace("NEXT_RELEASE", version);
+const unformatted = "# Changelog\n\n## 0.9.0\n\n\n* entry\n";
 type Api = Parameters<typeof dispatchReleaseCi>[2];
 function releasePr(headSha = sha) {
   return {
@@ -37,11 +53,16 @@ function harness(pr = releasePr(), initial = formatted) {
       reads.push(number);
       return structuredClone(pr);
     },
-    changelog: async (commit) => {
+    releaseFiles: async (commit) => {
       contents.push(commit);
-      return content;
+      return new Map([
+        [releaseChangelog, content],
+        [releaseManifest, JSON.stringify({ ".": version })],
+        [page, versionedNotes],
+      ]);
     },
-    commitChangelog: async (ref, expected, next) => {
+    commitReleaseFiles: async (ref, expected, changes) => {
+      const next = changes.additions.get(releaseChangelog)!;
       commits.push([ref, expected, next]);
       expect(pr.head.sha).toBe(expected);
       pr.head.sha = normalizedSha;
@@ -215,8 +236,8 @@ describe("release PR normalization and dispatch", () => {
         throw new Error("operation unavailable");
       };
       if (operation === "lookup") h.api.pullRequest = failure;
-      if (operation === "changelog") h.api.changelog = failure;
-      if (operation === "commit") h.api.commitChangelog = failure;
+      if (operation === "changelog") h.api.releaseFiles = failure;
+      if (operation === "commit") h.api.commitReleaseFiles = failure;
       if (operation === "dispatch") h.api.dispatch = failure;
       await expect(h.run(undefined, async () => formatted)).rejects.toThrow(
         "operation unavailable",
@@ -264,8 +285,8 @@ describe("release PR normalization and dispatch", () => {
   );
   test("rejects branch movement after the normalization commit", async () => {
     const h = harness(releasePr(), unformatted);
-    const commit = h.api.commitChangelog;
-    h.api.commitChangelog = async (...args) => {
+    const commit = h.api.commitReleaseFiles;
+    h.api.commitReleaseFiles = async (...args) => {
       const result = await commit(...args);
       h.pr.head.sha = "c".repeat(40);
       return result;
@@ -279,7 +300,7 @@ describe("release PR normalization and dispatch", () => {
     "rejects malformed resulting commit %j",
     async (oid) => {
       const h = harness(releasePr(), unformatted);
-      h.api.commitChangelog = async () => oid;
+      h.api.commitReleaseFiles = async () => oid;
       await expect(h.run(undefined, async () => formatted)).rejects.toThrow(
         "commit SHA",
       );
@@ -288,10 +309,10 @@ describe("release PR normalization and dispatch", () => {
   );
 });
 
-function fileContent(content = formatted) {
+function fileContent(content = formatted, path = releaseChangelog) {
   return {
     type: "file",
-    path: "CHANGELOG.md",
+    path,
     encoding: "base64",
     size: Buffer.byteLength(content),
     content: Buffer.from(content).toString("base64"),
@@ -312,10 +333,19 @@ function apiServer(
     fail?: string;
     initial?: string;
     commitHead?: string;
+    draft?: boolean;
+    tree?: unknown;
   } = {},
 ) {
   let head = sha;
-  let changelog = options.initial ?? formatted;
+  const files = new Map([
+    [
+      releaseChangelog,
+      options.initial ?? (options.draft ? draftChangelog : formatted),
+    ],
+    [releaseManifest, JSON.stringify({ ".": version })],
+    options.draft ? [releaseDraft, authoredNotes] : [page, versionedNotes],
+  ]);
   const requests: RequestRecord[] = [];
   const server = Bun.serve({
     port: 0,
@@ -337,10 +367,32 @@ function apiServer(
           options.pr === undefined ? releasePr(head) : options.pr,
           { status: options.status ?? 200 },
         );
-      if (url.pathname.endsWith("/contents/CHANGELOG.md")) {
-        expect(url.searchParams.get("ref")).toBe(head);
+      if (url.pathname.includes("/git/trees/")) {
+        expect(url.pathname.endsWith("/" + head)).toBe(true);
+        expect(url.searchParams.get("recursive")).toBe("1");
         return Response.json(
-          "content" in options ? options.content : fileContent(changelog),
+          "tree" in options
+            ? options.tree
+            : {
+                truncated: false,
+                tree: [...files].map(([path, content]) => ({
+                  path,
+                  type: "blob",
+                  mode: "100644",
+                  size: Buffer.byteLength(content),
+                })),
+              },
+        );
+      }
+      if (url.pathname.includes("/contents/")) {
+        expect(url.searchParams.get("ref")).toBe(head);
+        const path = decodeURIComponent(url.pathname.split("/contents/")[1]!);
+        const content = files.get(path);
+        if (content === undefined) return new Response(null, { status: 404 });
+        return Response.json(
+          path === releaseChangelog && "content" in options
+            ? options.content
+            : fileContent(content, path),
         );
       }
       if (url.pathname === "/graphql") {
@@ -351,14 +403,16 @@ function apiServer(
                 expectedHeadOid: string;
                 fileChanges: {
                   additions: Array<{ path: string; contents: string }>;
+                  deletions: Array<{ path: string }>;
                 };
               };
             };
           }
         ).variables.input;
         expect(input.expectedHeadOid).toBe(head);
-        const addition = input.fileChanges.additions[0]!;
-        changelog = Buffer.from(addition.contents, "base64").toString("utf8");
+        for (const { path, contents } of input.fileChanges.additions)
+          files.set(path, Buffer.from(contents, "base64").toString("utf8"));
+        for (const { path } of input.fileChanges.deletions) files.delete(path);
         head = options.commitHead ?? normalizedSha;
         return Response.json(
           options.graphql ?? {
@@ -376,7 +430,7 @@ function apiServer(
     GITHUB_GRAPHQL_URL: new URL("/graphql", server.url).href,
     RELEASE_PRS: '[{"number":24}]',
   };
-  return { server, requests, env };
+  return { server, requests, env, files };
 }
 describe("release normalization GitHub adapter", () => {
   test("requires valid repository credentials", async () => {
@@ -410,6 +464,9 @@ describe("release normalization GitHub adapter", () => {
         "GET",
         "GET",
         "GET",
+        "GET",
+        "GET",
+        "GET",
         "POST",
       ]);
       expect(h.requests.at(-1)?.body).toEqual({
@@ -420,8 +477,8 @@ describe("release normalization GitHub adapter", () => {
       h.server.stop(true);
     }
   });
-  test("uses an atomic expected-head append containing only canonical CHANGELOG bytes", async () => {
-    const h = apiServer({ initial: unformatted });
+  test("stamps and moves authored release content in one expected-head commit", async () => {
+    const h = apiServer({ draft: true });
     try {
       const env = { ...h.env };
       delete (env as Partial<typeof env>).GITHUB_GRAPHQL_URL;
@@ -440,14 +497,19 @@ describe("release normalization GitHub adapter", () => {
           branchName: "release-please--branches--main",
         },
         expectedHeadOid: sha,
-        message: { headline: "style: format generated changelog" },
+        message: { headline: "docs: stamp authored release content" },
         fileChanges: {
           additions: [
             {
-              path: "CHANGELOG.md",
+              path: page,
+              contents: Buffer.from(versionedNotes).toString("base64"),
+            },
+            {
+              path: releaseChangelog,
               contents: Buffer.from(formatted).toString("base64"),
             },
           ],
+          deletions: [{ path: releaseDraft }],
         },
       });
       expect(h.requests.at(-1)?.body).toEqual({
@@ -457,6 +519,28 @@ describe("release normalization GitHub adapter", () => {
       expect(
         h.requests.filter((r) => r.path.endsWith("/pulls/24")),
       ).toHaveLength(3);
+      expect(h.files.has(releaseDraft)).toBe(false);
+      expect(h.files.get(page)).toBe(versionedNotes);
+      expect(await runReleaseCi(env)).toEqual([normalizedSha]);
+      expect(h.requests.filter((r) => r.path === "/graphql")).toHaveLength(1);
+    } finally {
+      h.server.stop(true);
+    }
+  });
+  test.each([
+    null,
+    { truncated: true, tree: [] },
+    {
+      truncated: false,
+      tree: [
+        { path: releaseChangelog, type: "blob", mode: "120000", size: 12 },
+      ],
+    },
+  ])("rejects invalid release tree %j", async (tree) => {
+    const h = apiServer({ tree });
+    try {
+      await expect(runReleaseCi(h.env)).rejects.toThrow();
+      expect(h.requests.map((r) => r.method)).toEqual(["GET", "GET"]);
     } finally {
       h.server.stop(true);
     }
@@ -532,7 +616,7 @@ describe("release normalization GitHub adapter", () => {
   });
 });
 describe("installed changelog formatter", () => {
-  test("normalizes Release Please Markdown and is idempotent", async () => {
+  test("normalizes the authored changelog and is idempotent", async () => {
     expect(await formatReleaseChangelog(unformatted)).toBe(formatted);
     expect(await formatReleaseChangelog(formatted)).toBe(formatted);
   });
@@ -617,4 +701,238 @@ describe("release dispatch CLI", () => {
       }
     },
   );
+});
+
+describe("authored release content", () => {
+  const historicalPage = releasePage("0.8.0");
+  const historicalNotes = "---\ntitle: 0.8.0\n---\n\nHistorical notes.\n";
+  const history = "## 0.8.0\n\n- Historical entry.\n";
+  const repoDoc = "docs/ci.md";
+  const siteDoc = "website/content/docs/reference/configuration.mdx";
+  function files() {
+    return new Map([
+      [releaseManifest, JSON.stringify({ ".": version })],
+      [releaseChangelog, draftChangelog + "\n" + history],
+      [releaseDraft, authoredNotes],
+      [repoDoc, "Available since NEXT_RELEASE.\n"],
+      [siteDoc, "Deprecated since NEXT_RELEASE. Removed since NEXT_RELEASE.\n"],
+      [historicalPage, historicalNotes],
+    ]);
+  }
+  const identity = async (value: string) => value;
+
+  test("stamps both docs trees and leaves historical release bytes intact", async () => {
+    const source = files();
+    const changes = await prepareReleaseContent(source, identity);
+    expect(changes.additions).toEqual(
+      new Map([
+        [page, versionedNotes],
+        [repoDoc, "Available since 0.9.0.\n"],
+        [siteDoc, "Deprecated since 0.9.0. Removed since 0.9.0.\n"],
+        [releaseChangelog, formatted + "\n" + history],
+      ]),
+    );
+    expect(changes.deletions).toEqual([releaseDraft]);
+    for (const path of changes.deletions) source.delete(path);
+    for (const [path, content] of changes.additions) source.set(path, content);
+    expect(source.get(historicalPage)).toBe(historicalNotes);
+    expect(await prepareReleaseContent(source, identity)).toEqual({
+      additions: new Map(),
+      deletions: [],
+    });
+  });
+
+  test.each([
+    [page, versionedNotes, "already exists"],
+    [releaseManifest, '{".":"../0.9.0"}', "Invalid AST-MCP release version"],
+    [releaseManifest, "null", "Invalid release manifest"],
+    [releaseManifest, "{}", "Invalid release manifest"],
+    [
+      releaseChangelog,
+      "# Changelog\n\n- Missing heading.\n",
+      "The first changelog section",
+    ],
+    [releaseChangelog, formatted, "The first changelog section"],
+    [releaseDraft, historicalNotes, "title must match"],
+    [
+      historicalPage,
+      "Historical NEXT_RELEASE.",
+      "Unresolved release placeholder",
+    ],
+    [
+      repoDoc,
+      "Incorrectly suffixed NEXT_RELEASE_OLD.",
+      "Unresolved release placeholder",
+    ],
+    [
+      releaseChangelog,
+      draftChangelog + "\n" + history + "NEXT_RELEASE\n",
+      "historical changelog section",
+    ],
+  ])("rejects invalid release content in %s", async (path, content, error) => {
+    const source = files();
+    source.set(path, content);
+    await expect(prepareReleaseContent(source, identity)).rejects.toThrow(
+      error,
+    );
+  });
+
+  test("rejects formatting that changes an earlier changelog section", async () => {
+    await expect(
+      prepareReleaseContent(files(), async (value) =>
+        value.replace("Historical entry.", "Different entry."),
+      ),
+    ).rejects.toThrow("historical changelog entries");
+  });
+
+  test.each([false, true])(
+    "rejects a partially stamped branch, page present: %s",
+    async (hasPage) => {
+      const source = files();
+      source.delete(releaseDraft);
+      if (hasPage) source.set(page, versionedNotes);
+      else source.set(releaseChangelog, formatted);
+      await expect(prepareReleaseContent(source, identity)).rejects.toThrow(
+        "Missing authored release draft or changelog",
+      );
+    },
+  );
+
+  test("rejects unresolved placeholders on a previously stamped branch", async () => {
+    const source = files();
+    source.delete(releaseDraft);
+    source.set(page, versionedNotes);
+    source.set(releaseChangelog, formatted);
+    await expect(prepareReleaseContent(source, identity)).rejects.toThrow(
+      "Unresolved release placeholder",
+    );
+  });
+});
+
+describe("GitHub release notes renderer", () => {
+  const delimiter = String.fromCharCode(96).repeat(3);
+  test("keeps prose, links, tables and ordinary code while linking diagrams to the website", () => {
+    const notes =
+      '---\ntitle: "AST-MCP 0.9.0"\n---\n\n' +
+      "See [configuration](/docs/reference/configuration/#index) or [npm](https://npmjs.com/).\n\n" +
+      "| Workload | p95 |\n| --- | ---: |\n| Exact lookup | 43 ms |\n\n" +
+      delimiter +
+      "mermaid\nflowchart LR\nA --> B\n" +
+      delimiter +
+      "\n\n" +
+      delimiter +
+      "text\nimport thing\n[example](/docs/)\n" +
+      delimiter +
+      "\n";
+    const output = renderReleaseNotes(notes, version);
+    expect(output).toContain(
+      "[configuration](https://mwillbanks.github.io/ast-mcp/docs/reference/configuration/#index)",
+    );
+    expect(output).toContain("[npm](https://npmjs.com/)");
+    expect(output).toContain("| Exact lookup | 43 ms |");
+    expect(output).toContain("[example](/docs/)");
+    expect(output).not.toContain("flowchart");
+    expect(output).not.toContain("title:");
+    expect(output).toEndWith(
+      "(https://mwillbanks.github.io/ast-mcp/docs/releases/0.9.0/).\n",
+    );
+    expect(renderReleaseNotes(notes.replaceAll("\n", "\r\n"), version)).toBe(
+      output,
+    );
+  });
+
+  test.each([
+    ["missing metadata", "Release notes."],
+    ["pending metadata", authoredNotes],
+    ["missing prose", "---\ntitle: 0.9.0\n---\n"],
+    ["website-only component", versionedNotes + "\n<Chart />"],
+    ["unterminated diagram", versionedNotes + "\n~~~mermaid\nA --> B"],
+  ])("rejects %s", (_label, notes) => {
+    expect(() => renderReleaseNotes(notes, version)).toThrow();
+  });
+});
+
+describe("release notes CLI boundary", () => {
+  const byteLimit = 1024 * 1024;
+
+  test.each([
+    [[version], page],
+    [[version, "supplied.mdx"], "supplied.mdx"],
+  ] as const)(
+    "opens the resolved source for %j",
+    async (args, expectedPath) => {
+      const opens: string[] = [];
+      const ranges: [number, number][] = [];
+      const result = await releaseNotesCommand(args, (filename) => {
+        opens.push(filename);
+        return {
+          exists: async () => true,
+          slice(start, end) {
+            ranges.push([start, end]);
+            return new Blob([versionedNotes]);
+          },
+        };
+      });
+      expect(opens).toEqual([expectedPath]);
+      expect(ranges).toEqual([[0, byteLimit + 1]]);
+      expect(result).toBe(renderReleaseNotes(versionedNotes, version));
+    },
+  );
+
+  test.each([
+    [[], "Invalid AST-MCP release version"],
+    [["../0.9.0"], "Invalid AST-MCP release version"],
+    [[version, "supplied.mdx", "extra"], "Usage: render-release-notes"],
+  ] as const)(
+    "rejects invalid arguments %j before opening a file",
+    async (args, message) => {
+      await expect(
+        releaseNotesCommand(args, () => {
+          throw new Error("Unexpected source read");
+        }),
+      ).rejects.toThrow(message);
+    },
+  );
+
+  test("does not read a missing file", async () => {
+    await expect(
+      releaseNotesCommand([version], () => ({
+        exists: async () => false,
+        slice() {
+          throw new Error("Unexpected source read");
+        },
+      })),
+    ).rejects.toThrow("Release notes source is missing");
+  });
+
+  test("rejects an oversized source using one bounded read", async () => {
+    await expect(
+      releaseNotesCommand([version], () => ({
+        exists: async () => true,
+        slice(start, end) {
+          expect([start, end]).toEqual([0, byteLimit + 1]);
+          return new Blob([new Uint8Array(end)]);
+        },
+      })),
+    ).rejects.toThrow("Release notes source is too large");
+  });
+
+  test("the executable renders the released page to stdout", async () => {
+    const root = fileURLToPath(new URL("../..", import.meta.url));
+    const child = Bun.spawn(
+      [process.execPath, "scripts/release/render-release-notes.ts", "0.8.0"],
+      { cwd: root, stdout: "pipe", stderr: "pipe" },
+    );
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain(
+      "https://mwillbanks.github.io/ast-mcp/docs/releases/0.8.0/",
+    );
+    expect(stdout).not.toContain("---\ntitle:");
+  });
 });

@@ -2,6 +2,9 @@
 # fixtures are dynamically loaded by source-owned tests as test runtime roots.
 entry = [
   "bin/ast-mcp.ts",
+  # Packaged npm launcher and the authored release workflow input.
+  "bin/ast-mcp-launch.cjs",
+  "website/content/release-drafts/*.mdx",
   "scripts/testing/regenerate-document-goldens.ts",
   # Spawned collection generation and Tailwind CLI inputs.
   "website/scripts/generate-data.ts",

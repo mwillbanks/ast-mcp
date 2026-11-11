@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +23,7 @@ import {
   parseInstallerArguments,
 } from "../helpers/installer";
 import { isManagedHook } from "../hooks/managed";
+import { npmNativeBinaries } from "../runtime/binary-resolution";
 import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
@@ -31,6 +32,7 @@ import {
 import { withFencedFileLocks } from "../runtime/locks";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
+import { bundledSkillRoot } from "../skills";
 import {
   enableCodexElicitation,
   parseCodexConfig,
@@ -109,15 +111,35 @@ function stableGlobalCliEntry(
   });
 }
 
+function resolvedCliAlias(alias: string, platform: NodeJS.Platform): string {
+  if (!/^ast-mcp-bytecode(?:[.]exe)?$/iu.test(path.basename(process.execPath)))
+    return alias;
+  const executable = realpathSync(process.execPath);
+  return (
+    npmNativeBinaries(alias, platform).find((candidate) =>
+      platform === "win32"
+        ? candidate.toLowerCase() === executable.toLowerCase()
+        : candidate === executable,
+    ) ?? alias
+  );
+}
+
 function configuredCliEntry(
   options: InstallOptions,
   root: string,
   home: string,
 ) {
   const platform = options.platform ?? process.platform;
+  const bunOnly = !Bun.which("node");
   if (options.scope === "local") {
+    const bunAlias =
+      bunOnly && resolveLocalBinaryAlias("ast-mcp-bun", root, platform);
     const alias = resolveLocalBinaryAlias("ast-mcp", root, platform);
-    if (alias) return alias;
+    if (alias) {
+      const resolved = resolvedCliAlias(alias, platform);
+      return resolved === alias && bunAlias ? bunAlias : resolved;
+    }
+    if (bunAlias) return bunAlias;
     if (existsSync(cliEntry)) return cliEntry;
     throw new Error(
       "No local ast-mcp executable or shipped CLI was found. Build or install ast-mcp, then rerun the installer.",
@@ -134,13 +156,32 @@ function configuredCliEntry(
       directories,
       platform,
     );
-    if (preferred) return preferred;
-    if (options.cliEntry && !discover && !options.globalBinDirectories)
+    if (preferred) {
+      const resolved = resolvedCliAlias(preferred, platform);
+      if (resolved !== preferred || !bunOnly) return resolved;
+    }
+    if (
+      options.cliEntry &&
+      !preferred &&
+      !discover &&
+      !options.globalBinDirectories
+    )
       continue;
     const resolved = resolveGlobalBinaryAlias("ast-mcp", {
       globalBinDirectories: directories,
       platform,
     });
+    if (resolved) {
+      const command = resolvedCliAlias(resolved, platform);
+      if (command !== resolved || !bunOnly) return command;
+    }
+    const bunAlias =
+      bunOnly &&
+      resolveGlobalBinaryAlias("ast-mcp-bun", {
+        globalBinDirectories: directories,
+        platform,
+      });
+    if (bunAlias) return bunAlias;
     if (resolved) return resolved;
   }
   throw new Error(
@@ -561,7 +602,7 @@ async function writeText(file: string, content: string) {
 
 async function instructions(file: string) {
   const block = (
-    await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
+    await Bun.file(path.join(bundledSkillRoot, "../../AGENTS.md")).text()
   ).trim();
   const old = await readInstallerText(file).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";

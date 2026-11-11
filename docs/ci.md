@@ -48,7 +48,7 @@ If that head already passed a full PR run, use that result instead of manually d
 Otherwise dispatch CI from a same-repository branch or tag that points exactly to the frozen commit, with matching `expected_sha`.
 A fork-only head requires a reviewed same-repository ref before dispatch.
 Main package pushes, explicit dispatches, and release qualification retain the full matrix.
-The existing automated release dispatch remains unchanged.
+The release workflow dispatches validation after it stamps the authored changelog and docs.
 
 Selected paths travel through JSON environment values and validated argument arrays.
 They are never interpolated into shell commands.
@@ -60,3 +60,11 @@ Review workflow and selector changes before trusting their results.
 The full summary assumes that reviewed workflow definition; a PR can edit both its selector and acceptance workflow.
 This workflow does not provide an independent governance boundary against changes to that definition.
 Tokens remain read-only; validation does not use privileged `pull_request_target` execution.
+
+## First npm publication of the platform packages
+
+Use the `standalone-release-matrix` artifact from the qualified tagged release run. It contains one `ast-mcp-npm-<target>.tgz` and checksum per target. Verify all six checksums and confirm the package versions match the tag.
+
+The npm scope owner completes each first publish with their authenticated npm session and account verification. Publish the exact artifact with `npm publish <tarball> --ignore-scripts --access public`. Keep registry credentials out of GitHub. Configure each package's trusted publisher for `mwillbanks/ast-mcp` and the caller workflow `ci.yml`, matching the main package. Configure it during the two days before its first automated publish so it can [validate before it expires](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry).
+
+Rerun the failed jobs in the same release run to reuse the qualified artifacts. The release job verifies existing platform versions against their local tarballs before it publishes the main package. A digest mismatch needs investigation before any further publication.

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import type { BunPlugin } from "bun";
@@ -211,6 +211,15 @@ async function buildCli(directory: string, standalone = false): Promise<void> {
 }
 
 await buildCli(outdir);
+const launcher = path.join(outdir, "ast-mcp-launch.cjs");
+await Promise.all([
+  copyFile(path.join(root, "bin/ast-mcp-launch.cjs"), launcher),
+  copyFile(
+    path.join(root, "bin/npm-platforms.json"),
+    path.join(outdir, "npm-platforms.json"),
+  ),
+]);
+await chmod(launcher, 0o755);
 
 async function buildWorkers(
   directory: string,

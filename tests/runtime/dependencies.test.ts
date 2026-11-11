@@ -12,10 +12,18 @@ import path from "node:path";
 
 import { withConfig } from "../../src/config";
 import {
+  commandForPlatform,
+  npmNativeBinaries,
+} from "../../src/runtime/binary-resolution";
+import {
   configuredDprintBinary,
   resolveDependencyBinary,
   resolveGlobalBinaryAlias,
 } from "../../src/runtime/dependencies";
+import {
+  commandForPlatform as skillCommandForPlatform,
+  npmNativeBinaries as skillNativeBinaries,
+} from "../../templates/skills/ast-mcp/scripts/binary-resolution";
 import { hermeticConfig } from "../support/hermetic-config";
 
 const created: string[] = [];
@@ -34,6 +42,119 @@ async function executable(file: string) {
   await chmod(file, 0o755);
   return file;
 }
+
+async function npmManifest(
+  modules: string,
+  name: string,
+  version: string,
+  optionalDependencies?: Record<string, string>,
+) {
+  const directory = path.join(modules, name);
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "package.json"),
+    JSON.stringify({ name, version, optionalDependencies }),
+  );
+  return directory;
+}
+
+function expectNativeBinaries(
+  alias: string,
+  platform: NodeJS.Platform,
+  arch: string,
+  expected: string[],
+) {
+  expect(npmNativeBinaries(alias, platform, arch)).toEqual(expected);
+  expect(skillNativeBinaries(alias, platform, arch)).toEqual(expected);
+}
+
+test("recognizes matching npm native commands and ignores stale or unavailable optional packages", async () => {
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "ast-mcp-native-bin-")),
+  );
+  created.push(root);
+  const modules = path.join(root, "node_modules");
+  const musl = "@mwillbanks/ast-mcp-linux-arm64-musl";
+  const gnu = "@mwillbanks/ast-mcp-linux-arm64";
+  const windows = "@mwillbanks/ast-mcp-windows-x64";
+  const missing = "@mwillbanks/ast-mcp-linux-x64";
+  const unpinned = "@mwillbanks/ast-mcp-windows-arm64";
+  const main = await npmManifest(modules, "@mwillbanks/ast-mcp", "1.2.3", {
+    [musl]: "1.2.3",
+    [gnu]: "1.2.3",
+    [windows]: "1.2.3",
+    [missing]: "1.2.3",
+    [unpinned]: "1.2.2",
+  });
+  const native = await executable(
+    path.join(await npmManifest(modules, musl, "1.2.3"), "ast-mcp-bytecode"),
+  );
+  await executable(
+    path.join(await npmManifest(modules, gnu, "1.2.2"), "ast-mcp-bytecode"),
+  );
+  const windowsNative = await executable(
+    path.join(
+      await npmManifest(modules, windows, "1.2.3"),
+      "ast-mcp-bytecode.exe",
+    ),
+  );
+  await executable(
+    path.join(
+      await npmManifest(modules, unpinned, "1.2.3"),
+      "ast-mcp-bytecode.exe",
+    ),
+  );
+  const localShim = await executable(path.join(modules, ".bin", "ast-mcp"));
+  const launcher = await executable(
+    path.join(main, "dist", "ast-mcp-launch.cjs"),
+  );
+  if (process.platform !== "win32") {
+    expectNativeBinaries(localShim, "linux", "arm64", [native]);
+    expectNativeBinaries(launcher, "linux", "arm64", [native]);
+  }
+  expectNativeBinaries(path.join(root, "ast-mcp.cmd"), "win32", "x64", [
+    windowsNative,
+  ]);
+  expectNativeBinaries(localShim, "linux", "x64", []);
+  expectNativeBinaries(localShim, "win32", "arm64", []);
+  await rm(windowsNative);
+  expectNativeBinaries(localShim, "win32", "x64", []);
+});
+
+test("does not persist an executable from a versioned manager store", async () => {
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "ast-mcp-versioned-bin-")),
+  );
+  created.push(root);
+  const name = "@mwillbanks/ast-mcp-darwin-arm64";
+  for (const manager of [".pnpm", ".yarn"]) {
+    const modules = path.join(root, manager, "node_modules");
+    const main = await npmManifest(modules, "@mwillbanks/ast-mcp", "1.2.3", {
+      [name]: "1.2.3",
+    });
+    const launcher = await executable(
+      path.join(main, "dist", "ast-mcp-launch.cjs"),
+    );
+    await executable(
+      path.join(await npmManifest(modules, name, "1.2.3"), "ast-mcp-bytecode"),
+    );
+    expectNativeBinaries(launcher, "darwin", "arm64", []);
+  }
+});
+
+test("rejects shell expansion and control characters in Windows npm shims", () => {
+  for (const resolve of [commandForPlatform, skillCommandForPlatform]) {
+    for (const argument of ["%PATH%", "!PATH!", "one\nnext", 'one"next']) {
+      expect(() => resolve("ast-mcp.cmd", ["mcp", argument], "win32")).toThrow(
+        "Windows batch command arguments cannot contain",
+      );
+      expect(resolve("ast-mcp.exe", ["mcp", argument], "win32")).toEqual({
+        args: ["mcp", argument],
+        command: "ast-mcp.exe",
+      });
+    }
+  }
+});
 
 test("resolves a dependency from an ancestor node_modules bin first", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-binary-"));

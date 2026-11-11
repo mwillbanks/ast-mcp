@@ -10,6 +10,7 @@ import {
   executableNames,
   globalBinDirectories,
   isExecutable,
+  npmNativeBinaries,
 } from "./binary-resolution";
 import { managedAstMcpHookEntry } from "./managed-hook";
 import {
@@ -763,13 +764,18 @@ async function matchingSourceLaunch(
 }
 
 function* installedBinaryCandidates(root: string | undefined, home: string) {
-  const names = executableNames("ast-mcp", process.platform);
+  const names = ["ast-mcp", "ast-mcp-bun"].flatMap((name) =>
+    executableNames(name, process.platform),
+  );
   for (const discover of root ? [false] : [false, true]) {
     const directories = root
       ? [path.join(root, "node_modules/.bin")]
       : globalBinDirectories("ast-mcp", process.platform, home, discover);
-    for (const candidate of directoryBinaryCandidates(directories, names))
-      if (isExecutable(candidate, process.platform)) yield candidate;
+    for (const candidate of directoryBinaryCandidates(directories, names)) {
+      if (!isExecutable(candidate, process.platform)) continue;
+      yield candidate;
+      yield* npmNativeBinaries(candidate);
+    }
   }
 }
 
