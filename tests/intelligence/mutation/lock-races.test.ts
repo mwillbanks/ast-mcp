@@ -1,8 +1,9 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 
-import { createMockTime } from "../../support/mock-time.ts";
+import { createMockTime, type MockTime } from "../../support/mock-time.ts";
+let time: MockTime;
 beforeEach(() => {
-  createMockTime();
+  time = createMockTime();
 });
 import * as fs from "node:fs/promises";
 import os from "node:os";
@@ -11,7 +12,12 @@ import path from "node:path";
 import {
   acquireFileLock,
   mutationLockPath,
+  withFencedFileLock,
 } from "../../../src/intelligence/mutation/locks.ts";
+import {
+  ensurePrivateLockDirectory,
+  systemAccount,
+} from "../../../src/runtime/private-lock-directory.ts";
 
 test.each(["opened", "synced"] as const)(
   "renewal fences an owner changed at the %s boundary",
@@ -62,6 +68,52 @@ test.each(["opened", "synced"] as const)(
     }
   },
 );
+test.each([false, true])(
+  "guarded lock preserves the operation result when release fails (action fails: %s)",
+  async (actionFails) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ast-mcp-release-"));
+    const file = path.join(root, "value.ts");
+    const actionError = new Error("action failed");
+    const cleanupError = new Error("release failed");
+    const diagnostics: unknown[] = [];
+    const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const operation = withFencedFileLock(
+        file,
+        async (lease) => {
+          const release = lease.release.bind(lease);
+          lease.release = async () => {
+            await release();
+            throw cleanupError;
+          };
+          if (actionFails) throw actionError;
+          return "committed";
+        },
+        actionFails
+          ? {
+              onReleaseError(error) {
+                diagnostics.push(error);
+                throw new Error("diagnostic failed");
+              },
+            }
+          : {},
+      );
+      if (actionFails) {
+        await expect(operation).rejects.toBe(actionError);
+        expect(diagnostics).toEqual([cleanupError]);
+      } else {
+        await expect(operation).resolves.toBe("committed");
+        expect(stderr).toHaveBeenCalledWith(
+          "ast-mcp: file lock cleanup failed\n",
+        );
+      }
+    } finally {
+      stderr.mockRestore();
+      await fs.rm(root, { force: true, recursive: true });
+    }
+  },
+);
+
 test("orphan lock cleanup propagates unreadable artifact failures", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ast-mcp-lock-orphan-"));
   const file = path.join(root, "value.ts");
@@ -82,6 +134,55 @@ test("orphan lock cleanup propagates unreadable artifact failures", async () => 
     expect(await Bun.file(orphan).text()).toBe("incomplete");
   } finally {
     stat.mockRestore();
+    await fs.rm(root, { force: true, recursive: true });
+  }
+});
+
+test("checkout lock orphan sweeps are bounded and failed sweeps retry", async () => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "ast-mcp-checkout-sweep-"),
+  );
+  const directory = await ensurePrivateLockDirectory(await systemAccount());
+  const target = path.join(directory, path.basename(root));
+  const lock = await mutationLockPath(target);
+  const orphan = `${lock}.pending-test`;
+  const originalReaddir = fs.readdir;
+  let scans = 0;
+  let fail = false;
+  const readdir = spyOn(fs, "readdir").mockImplementation((async (
+    ...args: Parameters<typeof fs.readdir>
+  ) => {
+    if (String(args[0]) === directory) {
+      scans++;
+      if (fail) throw new Error("orphan sweep failed");
+    }
+    return originalReaddir(...args);
+  }) as typeof fs.readdir);
+  async function takeLease() {
+    const lease = await acquireFileLock(target);
+    await lease.release();
+  }
+  try {
+    await takeLease();
+    expect(scans).toBe(1);
+
+    await fs.writeFile(orphan, "incomplete");
+    await fs.utimes(orphan, 0, 0);
+    await time.advanceBy(59_999);
+    await takeLease();
+    expect(scans).toBe(1);
+    expect(await Bun.file(orphan).exists()).toBe(true);
+
+    await time.advanceBy(1);
+    fail = true;
+    await expect(takeLease()).rejects.toThrow("orphan sweep failed");
+    fail = false;
+    await takeLease();
+    expect(scans).toBe(3);
+    expect(await Bun.file(orphan).exists()).toBe(false);
+  } finally {
+    readdir.mockRestore();
+    await fs.rm(orphan, { force: true });
     await fs.rm(root, { force: true, recursive: true });
   }
 });

@@ -1,25 +1,44 @@
 import { Worker } from "node:worker_threads";
 
+import { currentConfig } from "../../config";
+import {
+  isNativePackLanguage,
+  nativeGrammarSet,
+} from "../../intelligence/parser/native-pack-selection.ts";
+import {
+  createNativeProcess,
+  isEmbeddedBunExecutable,
+} from "../../intelligence/parser/native-process.ts";
 import {
   defaultLanguageRegistry,
   type DynamicGrammarManifest,
 } from "../../intelligence/parser/registry.ts";
+import { currentWorkspace } from "../../intelligence/workspace/index.ts";
 import type { PatchStrategyName } from "../../runtime/file-capabilities.ts";
 import type {
   PatchStrategyContext,
   PreparedStrategyPatch,
 } from "../strategy.ts";
 
+interface PreparationWorker {
+  once(event: "error" | "exit", callback: () => void): unknown;
+  once(event: "message", callback: (value: unknown) => void): unknown;
+  postMessage(message: unknown): void;
+  terminate(): Promise<number>;
+  unref(): void;
+}
+
 interface Task {
   bytes: number;
   cleanup(): void;
   context: PatchStrategyContext;
   manifest?: DynamicGrammarManifest;
+  packs?: ReturnType<typeof nativeGrammarSet>;
   reject(error: Error): void;
   resolve(patch: PreparedStrategyPatch): void;
   settled: boolean;
   strategy: PatchStrategyName;
-  worker?: Worker;
+  worker?: PreparationWorker;
 }
 
 interface WorkerOptions {
@@ -107,6 +126,26 @@ export class PatchPreparationPool {
         settled: false,
         strategy,
       };
+      const language = context.language;
+      if (
+        strategy === "ast" &&
+        language &&
+        isNativePackLanguage(language) &&
+        !this.options.workerFactory
+      ) {
+        const checkoutRoot = currentWorkspace()?.checkoutRoot;
+        task.packs = currentConfig().then((config) =>
+          nativeGrammarSet(
+            [language],
+            config,
+            checkoutRoot ?? config.projectRoot,
+            {
+              signal: context.signal,
+            },
+          ),
+        );
+        void task.packs.catch(() => {});
+      }
       context.signal?.addEventListener("abort", abort, { once: true });
       this.queue.push(task);
       if (context.signal?.aborted) abort();
@@ -152,70 +191,104 @@ export class PatchPreparationPool {
       const task = this.queue.shift()!;
       if (task.settled) continue;
       this.active.add(task);
-      try {
-        const worker = (
-          this.options.workerFactory ?? ((url) => new Worker(url))
-        )(this.options.workerUrl ?? new URL("./worker.ts", import.meta.url));
-        task.worker = worker;
-        worker.unref();
-        worker.once("error", () =>
-          this.settle(
-            task,
-            failure("patch_worker_error", "Patch preparation worker failed"),
-          ),
-        );
-        worker.once("exit", () =>
-          this.settle(
-            task,
-            failure("patch_worker_exit", "Patch preparation worker exited"),
-          ),
-        );
-        worker.once("message", (value: unknown) => {
-          const result = value as {
-            ok?: unknown;
-            patch?: PreparedStrategyPatch;
-            error?: Record<string, unknown>;
-          } | null;
-          if (
-            result?.ok === true &&
-            typeof result.patch?.candidate === "string" &&
-            result.patch.metadata?.strategy === task.strategy &&
-            Number.isSafeInteger(result.patch.metadata.operations)
-          ) {
-            this.settle(task, undefined, result.patch);
-          } else if (
-            result?.ok === false &&
-            typeof result.error?.message === "string"
-          ) {
-            const error =
-              result.error.name === "TypeError"
-                ? new TypeError(result.error.message)
-                : new Error(result.error.message);
-            this.settle(task, Object.assign(error, result.error));
-          } else
-            this.settle(
-              task,
-              failure(
-                "patch_worker_protocol",
-                "Patch preparation worker returned an invalid response",
+      void this.start(task);
+    }
+  }
+
+  private async start(task: Task): Promise<void> {
+    let packs: Awaited<Task["packs"]>;
+    try {
+      packs = task.packs ? await task.packs : undefined;
+    } catch (cause) {
+      this.settle(
+        task,
+        cause instanceof Error && "code" in cause
+          ? cause
+          : Object.assign(
+              new Error(
+                cause instanceof Error ? cause.message : String(cause),
+                {
+                  cause,
+                },
               ),
+              cause,
+              { code: "patch_pack_selection", retryable: false },
+            ),
+      );
+      return;
+    }
+    if (task.settled) return;
+    try {
+      const workerUrl =
+        this.options.workerUrl ?? new URL("./worker.ts", import.meta.url);
+      const worker: PreparationWorker =
+        packs || (!this.options.workerFactory && isEmbeddedBunExecutable())
+          ? createNativeProcess(workerUrl, "patch")
+          : (this.options.workerFactory ?? ((url) => new Worker(url)))(
+              workerUrl,
             );
-        });
-        const { signal: _signal, ...context } = task.context;
-        worker.postMessage({
-          context,
-          strategy: task.strategy,
-          manifest: task.manifest,
-        });
-      } catch {
+      task.worker = worker;
+      worker.unref();
+      worker.once("error", () =>
         this.settle(
           task,
-          failure(
-            "patch_worker_start",
-            "Patch preparation worker could not start",
-          ),
-        );
-      }
+          failure("patch_worker_error", "Patch preparation worker failed"),
+        ),
+      );
+      worker.once("exit", () =>
+        this.settle(
+          task,
+          failure("patch_worker_exit", "Patch preparation worker exited"),
+        ),
+      );
+      worker.once("message", (value: unknown) => {
+        const result = value as {
+          ok?: unknown;
+          patch?: PreparedStrategyPatch;
+          error?: Record<string, unknown>;
+        } | null;
+        if (
+          result?.ok === true &&
+          typeof result.patch?.candidate === "string" &&
+          result.patch.metadata?.strategy === task.strategy &&
+          Number.isSafeInteger(result.patch.metadata.operations)
+        ) {
+          this.settle(task, undefined, result.patch);
+        } else if (
+          result?.ok === false &&
+          typeof result.error?.message === "string"
+        ) {
+          const error =
+            result.error.name === "TypeError"
+              ? new TypeError(result.error.message)
+              : new Error(result.error.message);
+          this.settle(task, Object.assign(error, result.error));
+        } else
+          this.settle(
+            task,
+            failure(
+              "patch_worker_protocol",
+              "Patch preparation worker returned an invalid response",
+            ),
+          );
+      });
+      const { signal: _signal, ...context } = task.context;
+      worker.postMessage({
+        context,
+        strategy: task.strategy,
+        manifest: task.manifest,
+        ...(packs ? { packs } : {}),
+      });
+    } catch (cause) {
+      this.settle(
+        task,
+        cause instanceof Error && "code" in cause
+          ? cause
+          : failure(
+              "patch_worker_start",
+              "Patch preparation worker could not start",
+            ),
+      );
     }
   }
 }

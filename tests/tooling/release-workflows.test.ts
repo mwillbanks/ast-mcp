@@ -31,6 +31,7 @@ type Job = {
       | {
           os?: string[];
           installer?: string[];
+          include?: { os: string; target: string }[];
           platform?: {
             os: string;
             platform: string;
@@ -55,11 +56,98 @@ async function workflow(name: string): Promise<Workflow> {
 const ci = await workflow("ci");
 const release = await workflow("release");
 const consumers = await workflow("package-consumers");
+const standalone = await workflow("standalone");
 function job(source: Workflow, name: string): Job {
   const result = source.jobs[name];
   if (!result) throw new Error(`Missing job ${name}`);
   return result;
 }
+describe("standalone release contracts", () => {
+  test("builds each target on one host and qualifies the exact shared archive", () => {
+    const targets = [
+      "darwin-arm64",
+      "linux-arm64",
+      "linux-arm64-musl",
+      "linux-x64",
+      "linux-x64-musl",
+      "windows-x64",
+    ];
+    const build = job(standalone, "build");
+    expect(build.strategy).toBeUndefined();
+    const compile = build.steps?.find((step) =>
+      step.name?.startsWith("Compile ESM bytecode"),
+    )?.run;
+    expect(
+      compile
+        ?.match(/for target in ([^;]+); do/)?.[1]
+        ?.split(" ")
+        .map((target) => target.replace(/^bun-/, ""))
+        .sort(),
+    ).toEqual(targets);
+    expect(compile).toContain('--target "$target"');
+    expect(compile).toContain("ast-mcp-bytecode");
+    expect(compile).toContain("shasum -a 256");
+
+    const qualify = job(standalone, "qualify");
+    expect(qualify.needs).toBe("build");
+    const matrix = qualify.strategy?.matrix;
+    expect(
+      typeof matrix === "object" &&
+        matrix.include?.map(({ target }) => target).sort(),
+    ).toEqual(targets);
+    expect(
+      qualify.steps
+        ?.filter((step) => step.run?.includes("qualify-standalone.ts"))
+        .map(({ run }) => run?.includes("--bytecode-only --with-pm")),
+    ).toEqual([true, true]);
+
+    const upload = build.steps?.find((step) =>
+      step.uses?.startsWith("actions/upload-artifact@"),
+    );
+    const qualified = qualify.steps?.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
+    );
+    const publication = job(release, "publish-standalone");
+    const published = publication.steps?.find((step) =>
+      step.uses?.startsWith("actions/download-artifact@"),
+    );
+    expect([
+      upload?.with?.name,
+      qualified?.with?.name,
+      published?.with?.name,
+    ]).toEqual(Array(3).fill("standalone-release-matrix"));
+  });
+
+  test("attaches only complete qualified assets to the tagged release", () => {
+    expect(job(release, "standalone")).toMatchObject({
+      needs: "release",
+      uses: "./.github/workflows/standalone.yml",
+      with: { ref: "${{ needs.release.outputs.tag_name }}" },
+    });
+    const publication = job(release, "publish-standalone");
+    expect(publication.needs).toEqual(["release", "validate", "standalone"]);
+    expect(publication.permissions).toEqual({ contents: "write" });
+    const attach = publication.steps?.find((step) => step.run)?.run;
+    expect(attach).toContain("ast-mcp-v[0-9]");
+    expect(
+      attach
+        ?.match(/for target in ([^;]+); do/)?.[1]
+        ?.split(" ")
+        .sort(),
+    ).toEqual([
+      "darwin-arm64",
+      "linux-arm64",
+      "linux-arm64-musl",
+      "linux-x64",
+      "linux-x64-musl",
+      "windows-x64",
+    ]);
+    expect(attach).toContain('sha256sum --check --strict "$archive.sha256"');
+    expect(attach).toContain('for asset in "$archive" "$archive.sha256"');
+    expect(attach).toContain('gh release upload "$RELEASE_TAG" "$asset"');
+  });
+});
+
 describe("executed CI acceptance contracts", () => {
   test("declared qualifiers use package test policy and select the intended behavior", async () => {
     const root = await mkdtemp(join(tmpdir(), "ast-mcp-workflow-tests-"));

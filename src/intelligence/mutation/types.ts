@@ -37,6 +37,7 @@ export interface MutationRefreshResult {
   generationId: string | null;
   indexedAt: string;
   parsedFiles: readonly string[];
+  refreshPending?: true;
   skippedFiles: readonly string[];
 }
 

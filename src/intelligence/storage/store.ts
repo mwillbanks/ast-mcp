@@ -1,9 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import path from "node:path";
 
 import type { Connection, SchemaLike, Table } from "@lancedb/lancedb";
 import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
 
+import { acquireTransactionLock } from "../../runtime/transaction-lock.ts";
 import * as artifactContracts from "../contracts/artifacts.ts";
 import {
   createIdentity,
@@ -31,6 +34,7 @@ import {
   type CoordinatorLease,
   type CoordinatorOptions,
   StorageCoordinator,
+  withLanceRetry,
 } from "./coordinator.ts";
 import { StorageError } from "./errors.ts";
 import {
@@ -53,7 +57,7 @@ import {
 } from "./schemas.ts";
 
 export interface StoreOpenOptions extends CoordinatorOptions {
-  access?: "read-only" | "read-write";
+  access?: "read-only" | "read-pinned" | "read-write";
   networkFileSystem?: boolean;
   networkProof?: NetworkFileSystemProof;
 }
@@ -284,6 +288,42 @@ async function withLatestTable<T>(
   }
 }
 
+async function storageRows(
+  connection: Connection,
+  tableName: LanceTableName,
+  predicate?: string,
+  options: { limit?: number; timeoutMs?: number } = {},
+): Promise<readonly StorageRow[]> {
+  return withLatestTable(connection, tableName, async (table) => {
+    assertCompatibleSchema(tableName, await table.schema());
+    let query = table.query();
+    if (predicate) query = query.where(predicate);
+    if (options.limit !== undefined) query = query.limit(options.limit);
+    return (await query.toArray({
+      timeoutMs: options.timeoutMs,
+    })) as StorageRow[];
+  });
+}
+
+async function latestPublishedGeneration(
+  connection: Connection,
+  workspaceId: string,
+  timeoutMs = 5_000,
+): Promise<PublicationGeneration | null> {
+  return withLatestTable(connection, "publications", async (table) => {
+    assertCompatibleSchema("publications", await table.schema());
+    const [row] = (await table
+      .query()
+      .where(`workspace_id = ${sqlString(workspaceId)} AND state = 'published'`)
+      .orderBy({ columnName: "published_at", ascending: false })
+      .select(["payload_json"])
+      .limit(1)
+      .toArray({ timeoutMs })) as StorageRow[];
+    const payload = parseJsonRecord(row?.payload_json);
+    return payload ? PublicationGenerationSchema.parse(payload) : null;
+  });
+}
+
 function isLegacyPublicationTagSchema(
   tableName: LanceTableName,
   actual: SchemaLike,
@@ -412,21 +452,32 @@ export class PinnedGenerationReader {
 }
 
 export class LanceIntelligenceStore {
-  readonly coordinator: StorageCoordinator;
   readonly domain: StorageDomain;
   readonly storagePath: string;
+  private readonly access: NonNullable<StoreOpenOptions["access"]>;
+  private readonly now: () => Date;
   private shutdownPromise?: Promise<void>;
 
   private constructor(
     private readonly connection: Connection,
     domain: StorageDomain,
-    private readonly access: "read-only" | "read-write",
-    coordinator: StorageCoordinator,
-    private readonly now: () => Date,
+    private readonly storageCoordinator: StorageCoordinator | undefined,
+    private readonly options: StoreOpenOptions,
   ) {
     this.domain = domain;
     this.storagePath = domain.storagePath;
-    this.coordinator = coordinator;
+    this.access = options.access ?? "read-write";
+    this.now = options.now ?? (() => new Date());
+  }
+
+  get coordinator(): StorageCoordinator {
+    if (!this.storageCoordinator)
+      throw new StorageError(
+        "storage_unavailable",
+        "Pinned read storage has no writer coordinator",
+        false,
+      );
+    return this.storageCoordinator;
   }
 
   static async open(
@@ -458,29 +509,20 @@ export class LanceIntelligenceStore {
     const access = options.access ?? "read-write";
     let store: LanceIntelligenceStore | undefined;
     try {
-      if (access === "read-only") {
-        const names = await connection.tableNames();
-        if (!names.includes("coordinator_recovery")) {
-          throw new StorageError(
-            "storage_unavailable",
-            "Read-only storage requires an initialized LanceDB directory",
-            false,
-          );
-        }
-      }
-
-      const coordinator = await StorageCoordinator.acquireForStorageDirectory(
-        connection,
-        domain.domainId,
-        storagePath,
-        options,
-      );
+      const coordinator =
+        access === "read-pinned"
+          ? undefined
+          : await StorageCoordinator.acquireForStorageDirectory(
+              connection,
+              domain.domainId,
+              storagePath,
+              options,
+            );
       store = new LanceIntelligenceStore(
         connection,
         domain,
-        access,
         coordinator,
-        options.now ?? (() => new Date()),
+        options,
       );
       await store.initialize();
       return store;
@@ -491,9 +533,72 @@ export class LanceIntelligenceStore {
     }
   }
 
+  static async readMutationState(
+    domainInput: StorageDomain,
+    scope: { workspaceId: string; repositoryId: string; checkoutRoot: string },
+  ): Promise<{
+    repositoryIndexed: boolean;
+    publishedGenerationId?: string;
+    legacyPayloads: readonly unknown[];
+  }> {
+    const domain = StorageDomainSchema.parse(domainInput);
+    const storagePath = await assertSupportedStoragePath(domain.storagePath);
+    try {
+      await stat(storagePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        return { repositoryIndexed: false, legacyPayloads: [] };
+      throw error;
+    }
+    // This read must neither enter the shared writer lane nor inherit its
+    // coordinator lifetime. Source recovery owns its separate checkout lease.
+    const connection = await lancedb.connect(storagePath, {
+      readConsistencyInterval: 0,
+    });
+    try {
+      const names = new Set(await connection.tableNames());
+      const [latest, legacy] = await Promise.all([
+        names.has("publications")
+          ? latestPublishedGeneration(connection, scope.workspaceId)
+          : null,
+        names.has("jobs")
+          ? storageRows(
+              connection,
+              "jobs",
+              "state = 'running' OR state = 'failed'",
+            )
+          : [],
+      ]);
+      const repositoryIndexed =
+        latest !== null ||
+        (names.has("revision_manifests") &&
+          (
+            await storageRows(
+              connection,
+              "revision_manifests",
+              `repository_id = ${sqlString(scope.repositoryId)}`,
+              { limit: 1, timeoutMs: 5_000 },
+            )
+          ).length > 0);
+      return {
+        repositoryIndexed,
+        publishedGenerationId: latest?.generationId,
+        legacyPayloads: legacy.map((row) => row.payload_json),
+      };
+    } finally {
+      connection.close();
+    }
+  }
+
   private async initialize(): Promise<void> {
-    if (this.access === "read-only") {
+    if (this.access !== "read-write") {
       const names = new Set(await this.connection.tableNames());
+      if (!names.has("coordinator_recovery"))
+        throw new StorageError(
+          "storage_unavailable",
+          "Read-only storage requires an initialized LanceDB directory",
+          false,
+        );
       for (const tableName of ALL_TABLES) {
         if (!names.has(tableName)) {
           throw new StorageError(
@@ -744,13 +849,13 @@ export class LanceIntelligenceStore {
     options: { immutable?: boolean } = {},
   ): Promise<WriteMetrics> {
     this.assertWritable();
+    const immutable = options.immutable ?? IMMUTABLE_TABLES.has(tableName);
+    if (tableName === "reader_pins")
+      return this.withReaderPinWrite("write reader pins", (fence) =>
+        this.writeRowsWithFence(tableName, rows, immutable, fence),
+      );
     return this.coordinator.exclusive(`write ${tableName}`, (lease) =>
-      this.writeRowsUnlocked(
-        lease,
-        tableName,
-        rows,
-        options.immutable ?? IMMUTABLE_TABLES.has(tableName),
-      ),
+      this.writeRowsUnlocked(lease, tableName, rows, immutable),
     );
   }
 
@@ -759,15 +864,7 @@ export class LanceIntelligenceStore {
     predicate?: string,
     options: { limit?: number; timeoutMs?: number } = {},
   ): Promise<readonly StorageRow[]> {
-    return withLatestTable(this.connection, tableName, async (table) => {
-      assertCompatibleSchema(tableName, await table.schema());
-      let query = table.query();
-      if (predicate) query = query.where(predicate);
-      if (options.limit !== undefined) query = query.limit(options.limit);
-      return (await query.toArray({
-        timeoutMs: options.timeoutMs,
-      })) as StorageRow[];
-    });
+    return storageRows(this.connection, tableName, predicate, options);
   }
 
   async count(tableName: LanceTableName, predicate?: string): Promise<number> {
@@ -1623,17 +1720,11 @@ export class LanceIntelligenceStore {
     workspaceId: string,
     options: { timeoutMs?: number } = {},
   ): Promise<PublicationGeneration | null> {
-    const rows = await this.rows(
-      "publications",
-      `workspace_id = ${sqlString(workspaceId)} AND state = 'published'`,
-      { limit: 1_000, timeoutMs: options.timeoutMs ?? 5_000 },
+    return latestPublishedGeneration(
+      this.connection,
+      workspaceId,
+      options.timeoutMs,
     );
-    const generations = rows
-      .map((row) => parseJsonRecord(row.payload_json))
-      .filter((row): row is Record<string, unknown> => row !== null)
-      .map((row) => PublicationGenerationSchema.parse(row))
-      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
-    return generations[0] ?? null;
   }
 
   private generationContainsArtifact(
@@ -2059,20 +2150,8 @@ export class LanceIntelligenceStore {
     readerId: string,
     ttlMs = 60_000,
   ): Promise<PinnedGenerationReader> {
-    this.assertWritable();
+    if (this.access !== "read-pinned") this.assertWritable();
     const generation = PublicationGenerationSchema.parse(generationInput);
-    const stored = await this.publicationRecord(generation.generationId);
-    if (
-      stored?.state !== "published" ||
-      JSON.stringify(stored) !== JSON.stringify(generation)
-    ) {
-      throw new StorageError(
-        "mixed_generation",
-        "Only the exact finalized publication can be pinned",
-        false,
-        { generationId: generation.generationId },
-      );
-    }
     const createdAt = this.now();
     const pin = ReaderPinSchema.parse({
       attempt: generation.attempt,
@@ -2096,25 +2175,41 @@ export class LanceIntelligenceStore {
       workspaceId: generation.workspaceId,
     });
     assertReaderPinsGeneration(generation, pin);
-    await this.putRows(
-      "reader_pins",
-      [
-        {
-          created_at: pin.createdAt,
-          expires_at: pin.expiresAt,
-          generation_id: pin.generationId,
-          manifest_artifact_id: pin.manifestArtifactId,
-          payload_json: JSON.stringify(pin),
-          pin_id: pin.pinId,
-          reader_id: pin.readerId,
-          revision_id: pin.revisionId,
-          storage_domain_id: pin.storageDomainId,
-          table_versions_json: JSON.stringify(pin.tableVersions),
-          workspace_id: pin.workspaceId,
-        },
-      ],
-      { immutable: false },
-    );
+    await this.withReaderPinWrite("pin generation", async (fence) => {
+      const stored = await this.publicationRecord(generation.generationId);
+      if (
+        stored?.state !== "published" ||
+        JSON.stringify(stored) !== JSON.stringify(generation)
+      )
+        throw new StorageError(
+          "mixed_generation",
+          "Only the exact finalized publication can be pinned",
+          false,
+          { generationId: generation.generationId },
+        );
+      if (this.now().getTime() >= Date.parse(pin.expiresAt))
+        throw new ReaderPinExpiredError(pin.pinId, pin.expiresAt);
+      await this.writeRowsWithFence(
+        "reader_pins",
+        [
+          {
+            created_at: pin.createdAt,
+            expires_at: pin.expiresAt,
+            generation_id: pin.generationId,
+            manifest_artifact_id: pin.manifestArtifactId,
+            payload_json: JSON.stringify(pin),
+            pin_id: pin.pinId,
+            reader_id: pin.readerId,
+            revision_id: pin.revisionId,
+            storage_domain_id: pin.storageDomainId,
+            table_versions_json: JSON.stringify(pin.tableVersions),
+            workspace_id: pin.workspaceId,
+          },
+        ],
+        false,
+        fence,
+      );
+    });
 
     const tables = new Map<LanceTableName, Table>();
     try {
@@ -2175,12 +2270,12 @@ export class LanceIntelligenceStore {
 
   async releaseReaderPin(pinId: string): Promise<void> {
     if (this.access === "read-only") return;
-    await this.coordinator.exclusive("release reader pin", async (lease) => {
-      await withLatestTable(this.connection, "reader_pins", async (table) => {
-        await this.coordinator.fence(lease);
+    await this.withReaderPinWrite("release reader pin", (fence) =>
+      withLatestTable(this.connection, "reader_pins", async (table) => {
+        await fence();
         await table.delete(`pin_id = ${sqlString(pinId)}`);
-      });
-    });
+      }),
+    );
   }
 
   async ensureIndex(tableName: LanceTableName, column: string): Promise<void> {
@@ -2188,6 +2283,8 @@ export class LanceIntelligenceStore {
     await this.coordinator.exclusive(
       `create ${tableName}.${column} index`,
       async (lease) => {
+        using pinLock =
+          tableName === "reader_pins" ? await this.lockReaderPins() : undefined;
         await withLatestTable(this.connection, tableName, async (table) => {
           const field = (await table.schema()).fields.find(
             (candidate) => candidate.name === column,
@@ -2206,6 +2303,7 @@ export class LanceIntelligenceStore {
           const indices = await table.listIndices();
           if (!indices.some((index) => index.columns.includes(column))) {
             await this.coordinator.fence(lease);
+            pinLock?.fence();
             await table.createIndex(column);
           }
         });
@@ -2371,6 +2469,9 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       "collect unreachable artifacts",
       async (lease) => {
+        // Keep the pin snapshot valid through deletion. Pin writers never take
+        // the storage writer lock, so staging cannot delay them.
+        using pinLock = await this.lockReaderPins();
         const now = options.now ?? new Date();
         const retentionRows = await this.rows("retention");
         const retention = [...retentionRows].sort(
@@ -2430,6 +2531,7 @@ export class LanceIntelligenceStore {
           if (candidates.length === 0) return;
           await withLatestTable(this.connection, tableName, async (table) => {
             await this.coordinator.fence(lease);
+            pinLock.fence();
             await table.delete(
               candidates
                 .map(
@@ -2777,6 +2879,7 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       "preview storage relocation",
       async () => {
+        using pinLock = await this.lockReaderPins();
         const files = await snapshotStorageDirectory(this.storagePath);
         return {
           destinationPath,
@@ -2804,6 +2907,7 @@ export class LanceIntelligenceStore {
       );
     }
     return this.coordinator.exclusive("relocate storage", async (lease) => {
+      using pinLock = await this.lockReaderPins();
       const currentFiles = await snapshotStorageDirectory(this.storagePath);
       if (JSON.stringify(currentFiles) !== JSON.stringify(preview.files)) {
         throw new StorageError(
@@ -2812,20 +2916,26 @@ export class LanceIntelligenceStore {
           false,
         );
       }
-      return copyRelocationSnapshot(preview, () =>
-        this.coordinator.fence(lease),
-      );
+      return await copyRelocationSnapshot(preview, async () => {
+        await this.coordinator.fence(lease);
+        pinLock.fence();
+      });
     });
   }
 
   async shutdownCoordinator(): Promise<void> {
     this.shutdownPromise ??= (async () => {
-      const coordinatorOwnsConnection = this.coordinator.usesConnection(
+      const coordinator = this.storageCoordinator;
+      if (!coordinator) {
+        this.connection.close();
+        return;
+      }
+      const coordinatorOwnsConnection = coordinator.usesConnection(
         this.connection,
       );
       try {
-        const draining = this.coordinator.drain();
-        await Promise.all([this.coordinator.release(), draining]);
+        const draining = coordinator.drain();
+        await Promise.all([coordinator.release(), draining]);
       } finally {
         if (!coordinatorOwnsConnection) this.connection.close();
       }
@@ -2833,14 +2943,18 @@ export class LanceIntelligenceStore {
     await this.shutdownPromise;
   }
 
-  private assertWritable(): void {
+  private assertOpen(): void {
     if (this.shutdownPromise)
       throw new StorageError(
         "storage_unavailable",
         "LanceDB store is closing",
         false,
       );
-    if (this.access === "read-only") {
+  }
+
+  private assertWritable(): void {
+    this.assertOpen();
+    if (this.access !== "read-write") {
       throw new StorageError(
         "storage_unavailable",
         "Read-only LanceDB store cannot mutate persistent state",
@@ -2849,11 +2963,49 @@ export class LanceIntelligenceStore {
     }
   }
 
-  private async writeRowsUnlocked(
+  private async lockReaderPins() {
+    const lockPath = path.join(this.storagePath, ".reader-pins.ast-mcp.lock");
+    const lock = await acquireTransactionLock(lockPath, {
+      sharedDatabasePath: lockPath + ".sqlite",
+    });
+    return { fence: lock.fence, [Symbol.dispose]: () => lock.release() };
+  }
+
+  private async withReaderPinWrite<T>(
+    operation: string,
+    action: (fence: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
+    this.assertOpen();
+    const write = async (lease?: CoordinatorLease): Promise<T> => {
+      using lock = await this.lockReaderPins();
+      const result = await action(async () => {
+        if (lease) await this.coordinator.fence(lease);
+        lock.fence();
+      });
+      lock.fence();
+      return result;
+    };
+    if (this.access === "read-pinned")
+      return withLanceRetry(operation, () => write(), this.options);
+    return this.coordinator.exclusive(operation, write);
+  }
+
+  private writeRowsUnlocked(
     lease: CoordinatorLease,
     tableName: LanceTableName,
     rows: readonly StorageRow[],
     immutable: boolean,
+  ): Promise<WriteMetrics> {
+    return this.writeRowsWithFence(tableName, rows, immutable, () =>
+      this.coordinator.fence(lease, !immutable && tableName === "jobs"),
+    );
+  }
+
+  private async writeRowsWithFence(
+    tableName: LanceTableName,
+    rows: readonly StorageRow[],
+    immutable: boolean,
+    fence: () => void | Promise<void>,
   ): Promise<WriteMetrics> {
     if (rows.length === 0) {
       return {
@@ -2938,14 +3090,14 @@ export class LanceIntelligenceStore {
 
       if (immutable) {
         if (missing.length > 0) {
-          await this.coordinator.fence(lease);
+          await fence();
           await table
             .mergeInsert(primaryKey)
             .whenNotMatchedInsertAll()
             .execute(missing, { timeoutMs: 10_000 });
         }
       } else {
-        await this.coordinator.fence(lease);
+        await fence();
         await table
           .mergeInsert(primaryKey)
           .whenMatchedUpdateAll()

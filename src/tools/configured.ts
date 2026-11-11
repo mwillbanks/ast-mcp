@@ -4,11 +4,13 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
 import { configRegistry, type ConfigSnapshot } from "../config/registry";
+import { toolFailure, toolSuccess } from "../helpers/mcp-schema";
 import type {
   RevisionSelector,
   StoragePlacement,
 } from "../intelligence/contracts/index.ts";
 import type { GenerationDependencies } from "../intelligence/generation/index.ts";
+import { withLanceMutationLifecycle } from "../intelligence/mutation/index.ts";
 import { withWorkspaceGitContext } from "../intelligence/workspace/git.ts";
 import {
   currentWorkspace,
@@ -50,6 +52,28 @@ export interface ConfiguredExecution {
     context?: ServerContext,
     tool?: string,
   ): Promise<T>;
+}
+
+export async function executeFileMutation<T>(
+  execute: ConfiguredExecution,
+  args: unknown,
+  operation: (signal?: AbortSignal) => Promise<T>,
+  context: ServerContext,
+  tool: string,
+) {
+  try {
+    return toolSuccess(
+      await execute(
+        args,
+        (signal) =>
+          withLanceMutationLifecycle(() => operation(signal), { signal }),
+        context,
+        tool,
+      ),
+    );
+  } catch (error) {
+    return toolFailure(error);
+  }
 }
 
 function requestSignal(context?: ServerContext): AbortSignal | undefined {

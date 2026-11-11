@@ -26,8 +26,11 @@ export interface TransactionLock {
   fence(): void;
   release(): void;
 }
-function waiting(options: TransactionLockOptions, deadline: number): void {
-  if (options.signal?.aborted)
+export function assertTransactionLockBudget(
+  deadline: number,
+  signal?: AbortSignal,
+): void {
+  if (signal?.aborted)
     throw Object.assign(
       new Error("Transaction lock acquisition was cancelled"),
       { code: "lock_aborted", retryable: false },
@@ -292,7 +295,7 @@ async function acquireDatabaseLock(
   shared: boolean,
 ): Promise<TransactionLock> {
   while (true) {
-    waiting(options, deadline);
+    assertTransactionLockBudget(deadline, options.signal);
     try {
       return acquireDatabaseNow(databasePath, shared);
     } catch (error) {
@@ -315,7 +318,7 @@ export async function acquireTransactionLock(
   options: TransactionLockOptions = {},
 ): Promise<TransactionLock> {
   const deadline = lockDeadline(options);
-  waiting(options, deadline);
+  assertTransactionLockBudget(deadline, options.signal);
   const databasePath = await privateLockDatabasePath(lockIdentity);
   const privateGuard = await acquireDatabaseLock(
     databasePath,
@@ -344,14 +347,14 @@ export function acquireTransactionLockSync(
   options: TransactionLockOptions = {},
 ): TransactionLock {
   const deadline = lockDeadline(options);
-  waiting(options, deadline);
+  assertTransactionLockBudget(deadline, options.signal);
   let privateGuard: TransactionLock | undefined;
   try {
     privateGuard = acquireDatabaseNow(
       privateLockDatabasePathSync(lockIdentity),
       false,
     );
-    waiting(options, deadline);
+    assertTransactionLockBudget(deadline, options.signal);
     if (!options.sharedDatabasePath) return privateGuard;
     return combine(
       privateGuard,

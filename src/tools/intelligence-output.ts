@@ -29,7 +29,9 @@ const CommonIntelligenceDataSchema = z
     freshness: z
       .object({
         dirtyOverlayId: DirtyOverlayArtifactIdSchema.nullable(),
+        generationWorkspaceId: WorkspaceIdSchema.optional(),
         revisionId: RevisionIdSchema,
+        stale: z.literal(true).optional(),
       })
       .strict(),
     generation: GenerationIdSchema.nullable(),
@@ -259,6 +261,10 @@ const RetrieveDataSchema = z
 const GenerateDataSchema = z
   .object({
     base: z.null(),
+    freshness: z
+      .object({ stale: z.literal(true) })
+      .strict()
+      .optional(),
     generated: z
       .object({
         answer: z.string().min(1),

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { Worker } from "node:worker_threads";
 
+import { withConfig } from "../../src/config";
+import { nativePackDescriptor } from "../../src/language-packs/catalog";
 import {
   aiderBlockStrategy,
   inlineAiderBlockStrategy,
@@ -108,6 +113,55 @@ describe("native patch worker integration", () => {
       ).toContain(" appended");
     }
   });
+  test.skipIf(!nativePackDescriptor("python"))(
+    "reports invalid native pack selection separately from worker startup",
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-patch-pack-"));
+      try {
+        await mkdir(path.join(root, ".git"));
+        await writeFile(
+          path.join(root, "ast-mcp.toml"),
+          'version = 2\n[language_packs]\nscope = "project"\n',
+        );
+        await writeFile(path.join(root, ".ast-mcp"), "");
+        await withConfig(
+          {
+            cwd: root,
+            env: {},
+            home: root,
+            languagePackHost: { allowProject: true },
+          },
+          async () => {
+            await expect(
+              new PatchPreparationPool().prepare("ast", {
+                ...patchContext(),
+                language: "python",
+              }),
+            ).rejects.toMatchObject({
+              code: "patch_pack_selection",
+              message: expect.stringContaining("must be owned by this user"),
+              retryable: false,
+            });
+          },
+        );
+
+        const pool = new PatchPreparationPool({
+          workerFactory: () => {
+            throw new Error("fixture worker startup failed");
+          },
+        });
+        await expect(
+          pool.prepare("aider_block", patchContext()),
+        ).rejects.toMatchObject({
+          code: "patch_worker_start",
+          retryable: true,
+        });
+      } finally {
+        await rm(root, { force: true, recursive: true });
+      }
+    },
+  );
+
   test("terminates a stuck native patch worker while the event loop remains responsive", async () => {
     const worker = new Worker(fixture("while (true) {}"));
     const exited = once(worker, "exit");

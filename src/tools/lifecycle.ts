@@ -35,7 +35,11 @@ import { renameFilesSafely } from "../runtime/file-rename";
 import { withFileLocks } from "../runtime/locks";
 import { resolveWritablePath } from "../runtime/paths";
 import { requireExpectedHash, verifyExpectedHash } from "../runtime/policy";
-import { type ConfiguredExecution, localExecution } from "./configured";
+import {
+  type ConfiguredExecution,
+  executeFileMutation,
+  localExecution,
+} from "./configured";
 
 const chattr = chattrSchema;
 
@@ -267,24 +271,14 @@ export default function registerLifecycleTools(
       outputSchema: toolOutputSchema,
       title: "Delete Files Safely",
     },
-    async ({ files, revision, workspaceId }, context) => {
-      try {
-        return toolSuccess(
-          await execute(
-            { files, revision, workspaceId },
-            (signal) =>
-              withLanceMutationLifecycle(
-                () => deleteFilesSafely(files, signal),
-                { signal },
-              ),
-            context,
-            "file_delete",
-          ),
-        );
-      } catch (error) {
-        return failure(error);
-      }
-    },
+    ({ files, revision, workspaceId }, context) =>
+      executeFileMutation(
+        execute,
+        { files, revision, workspaceId },
+        (signal) => deleteFilesSafely(files, signal),
+        context,
+        "file_delete",
+      ),
   );
   server.registerTool(
     "file_rename",
@@ -307,23 +301,13 @@ export default function registerLifecycleTools(
       outputSchema: toolOutputSchema,
       title: "Rename Files Safely",
     },
-    async ({ files, revision, workspaceId }, context) => {
-      try {
-        return toolSuccess(
-          await execute(
-            { files, revision, workspaceId },
-            (signal) =>
-              withLanceMutationLifecycle(
-                () => renameFilesSafely(files, signal),
-                { signal },
-              ),
-            context,
-            "file_rename",
-          ),
-        );
-      } catch (error) {
-        return failure(error);
-      }
-    },
+    ({ files, revision, workspaceId }, context) =>
+      executeFileMutation(
+        execute,
+        { files, revision, workspaceId },
+        (signal) => renameFilesSafely(files, signal),
+        context,
+        "file_rename",
+      ),
   );
 }

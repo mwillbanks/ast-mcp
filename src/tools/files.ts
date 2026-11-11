@@ -23,7 +23,11 @@ import {
   readFilesSafely,
 } from "../runtime/file-read";
 import { sqlAssistanceOptionsSchema } from "../runtime/sql-options-schema";
-import { type ConfiguredExecution, localExecution } from "./configured";
+import {
+  type ConfiguredExecution,
+  executeFileMutation,
+  localExecution,
+} from "./configured";
 
 const failure = toolFailure;
 export default function registerFileTools(
@@ -210,24 +214,14 @@ export default function registerFileTools(
       outputSchema: toolOutputSchema,
       title: "Write Files Safely",
     },
-    async ({ files, revision, workspaceId }, context) => {
-      try {
-        return toolSuccess(
-          await execute(
-            { files, revision, workspaceId },
-            (signal) =>
-              withLanceMutationLifecycle(
-                () => writeFilesSafely(files, { signal }),
-                { signal },
-              ),
-            context,
-            "file_write",
-          ),
-        );
-      } catch (error) {
-        return failure(error);
-      }
-    },
+    ({ files, revision, workspaceId }, context) =>
+      executeFileMutation(
+        execute,
+        { files, revision, workspaceId },
+        (signal) => writeFilesSafely(files, { signal }),
+        context,
+        "file_write",
+      ),
   );
 
   server.registerTool(
@@ -283,6 +277,9 @@ export default function registerFileTools(
       title: "Patch Files Through the Enforced State Machine",
     },
     async ({ files, revision, workspaceId }, context) => {
+      const preview = Object.values(files).every(
+        (file) => file.preview === true,
+      );
       try {
         return toolSuccess(
           await execute(
@@ -290,9 +287,7 @@ export default function registerFileTools(
             (signal) =>
               withLanceMutationLifecycle(() => patchFiles(files, { signal }), {
                 signal,
-                preview: Object.values(files).every(
-                  (file) => file.preview === true,
-                ),
+                preview,
               }),
             context,
             "file_patch",

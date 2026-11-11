@@ -139,6 +139,35 @@ test("coordinator close waits for a peer process writer before releasing its lea
   }
 });
 
+test("a fresh journal fence verifies ownership before renewal is needed", async () => {
+  const storage = await domain();
+  let now = Date.parse(NOW);
+  const store = await LanceIntelligenceStore.open(storage, {
+    leaseDurationMs: 10_000,
+    now: () => new Date(now),
+  });
+  try {
+    await store.coordinator.exclusive("journal fence test", async (lease) => {
+      const before = await store.rows("coordinator_recovery");
+      now += 1;
+      await store.coordinator.fence(lease, true);
+      expect(await store.rows("coordinator_recovery")).toEqual(before);
+
+      now += 4_999;
+      await store.coordinator.fence(lease, true);
+      const [renewed] = await store.rows("coordinator_recovery");
+      expect(renewed?.lease_expires_at).toBe(
+        new Date(now + 10_000).toISOString(),
+      );
+      expect(renewed?.owner_id).toBe(lease.ownerId);
+      expect(renewed?.epoch).toBe(lease.epoch);
+    });
+  } finally {
+    await store.shutdownCoordinator();
+    await rm(storage.storagePath, { recursive: true, force: true });
+  }
+});
+
 test("renews long operations across processes and recovers a stale owner", async () => {
   const storage = await domain();
   const store = await LanceIntelligenceStore.open(storage, {

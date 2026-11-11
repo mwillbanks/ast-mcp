@@ -48,6 +48,17 @@ ast-mcp config migrate --global [--check|--write]
 
 `validate` and `show` resolve environment, project, global, and default layers. Migration defaults to preview; `--check` exits 0 when current, 2 when migration is required, and 1 for invalid input. `--write` performs atomic replacement and creates a `.v1.bak` unless disabled.
 
+## Native language packs
+
+```sh
+ast-mcp pm list
+ast-mcp pm install <python|go|sql>
+ast-mcp pm install <python|go|sql> --offline
+ast-mcp pm doctor
+```
+
+Install uses the pinned catalog and disables dependency scripts. Installed packs live in AST-MCP's own store. Offline mode uses verified installed bytes. Doctor reports missing, corrupt, or unsupported packs. Select the storage scope and versions in [configuration](/docs/reference/configuration#native-language-packs).
+
 ## Output formats
 
 User-facing configuration, installer, and skills commands detect whether stdout is an interactive terminal. Interactive stdout defaults to readable human summaries and sections. Redirected or piped stdout defaults to JSON.

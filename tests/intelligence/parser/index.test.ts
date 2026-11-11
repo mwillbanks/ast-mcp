@@ -14,7 +14,7 @@ import {
   LanguageRegistry,
   ParserError,
   ParserWorkerPool,
-  PINNED_GRAMMAR_REGISTRATIONS,
+  pinnedGrammarRegistration,
   parseSource,
   rewriteStructuralMatches,
   SourceCoordinateIndex,
@@ -401,9 +401,17 @@ describe("native intelligence parser", () => {
     expect(registryIds).toEqual([...catalogIds].sort());
     expect(catalogIds).not.toContain("json");
     expect(catalogIds).not.toContain("jsonc");
-    expect(Object.keys(PINNED_GRAMMAR_REGISTRATIONS).sort()).toEqual(
-      catalogIds.slice(6).sort(),
+    const packaged = LANGUAGE_CAPABILITY_CATALOG.filter(
+      (entry) => entry.packaged,
     );
+    expect(packaged.map((entry) => entry.languageId)).toEqual(
+      catalogIds.slice(6),
+    );
+    for (const entry of packaged) {
+      expect(pinnedGrammarRegistration(entry.languageId).extensions).toEqual(
+        entry.extensions.map((extension) => extension.slice(1)),
+      );
+    }
     expect(languageForExtension(".jsx")).toBe("jsx");
     expect(languageForExtension(".dart")).toBe("dart");
     expect(languageForExtension(".json")).toBe("json");
@@ -459,6 +467,28 @@ describe("native intelligence parser", () => {
       LANGUAGE_CAPABILITY_CATALOG.find((entry) => entry.languageId === "toml")
         ?.analysis.symbolExtraction,
     ).toBe(false);
+  });
+
+  test("core keeps omitted source types visible and rejects parser work", () => {
+    let registrations = 0;
+    const core = new LanguageRegistry(() => {
+      registrations++;
+    }, []);
+    expect(core.get("python").extensions).toEqual([".py"]);
+    expect(core.parserPackOmitted("python")).toBe(true);
+    expect(core.parserPackOmitted("plain-text")).toBe(false);
+    expect(core.capabilities("python").parse.status).toBe("unsupported");
+    expect(core.capabilities("python").rewrite.status).toBe("unsupported");
+    expect(core.capabilities("typescript").parse.status).toBe("supported");
+    expect(() =>
+      parseSource({ languageId: "python", source: "print(1)" }, core),
+    ).toThrow("Parser is unavailable in this language profile: python");
+    expect(() =>
+      findStructuralMatches("print(1)", "python", "print(1)", core),
+    ).toThrow("Parser is unavailable in this language profile: python");
+    expect(registrations).toBe(0);
+    core.registerDynamicGrammars();
+    expect(registrations).toBe(1);
   });
 
   test("parses sources with pinned native grammar packages", () => {
@@ -584,7 +614,12 @@ describe("native intelligence parser", () => {
     dynamicRegistry.registerDynamicGrammars();
     expect(registrations).toHaveLength(1);
     expect(Object.keys(registrations[0] as object).sort()).toEqual(
-      [...Object.keys(PINNED_GRAMMAR_REGISTRATIONS), "FixtureLanguage"].sort(),
+      [
+        ...LANGUAGE_CAPABILITY_CATALOG.filter((entry) => entry.packaged).map(
+          (entry) => entry.astGrepLanguage,
+        ),
+        "FixtureLanguage",
+      ].sort(),
     );
     expect(registrations[0]).toMatchObject({
       FixtureLanguage: {

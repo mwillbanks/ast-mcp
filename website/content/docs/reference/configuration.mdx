@@ -205,6 +205,17 @@ api_key_env = "MODEL_API_KEY"
 
 For MCP sampling, replace the provider table with `kind = "mcp"`, `model = "your-model"`, and optional `server_id = "host"`. Enabling generation requires a provider. Omitting a provider keeps the resolved provider empty.
 
+### Native language packs
+
+| Field                            | Default   | Accepted values and behavior                                                                                                    |
+| -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `language_packs.scope`           | `"user"`  | `user` uses AST-MCP's private user store. `project` selects `.ast-mcp/language-packs` in the checkout when the host permits it. |
+| `language_packs.versions.go`     | `"0.0.6"` | Pinned Go pack version in the trusted catalog.                                                                                  |
+| `language_packs.versions.python` | `"0.0.6"` | Pinned Python pack version in the trusted catalog.                                                                              |
+| `language_packs.versions.sql`    | `"0.0.8"` | Pinned SQL pack version in the trusted catalog.                                                                                 |
+
+The MCP host can pass `--allow-project-language-packs` to authorize project storage. First-use downloads require the separate `--allow-language-pack-downloads` startup flag. Use [the package manager commands](/docs/reference/commands#native-language-packs) for explicit installs.
+
 ### Transport and telemetry
 
 | Field                            | Default       | Accepted values and behavior                                                             |
@@ -227,7 +238,7 @@ non_interactive = "json"
 
 Each value accepts `human`, `json`, `yaml`, or `toml`. Defaults are human output when stdout is a TTY and JSON otherwise. Global and project values merge by field. For example, a project can override `non_interactive` while retaining the global `interactive` setting. Version 1 and version 2 accept this section.
 
-An explicit `--output <format>` or `--output=<format>` overrides configuration. It applies to configuration, installer, and skills commands. MCP and hook protocol commands reject the option. See [command output formats](/docs/reference/commands#output-formats) for serialization behavior and examples.
+An explicit `--output <format>` or `--output=<format>` overrides configuration. It applies to configuration, installer, skills, and package manager commands. MCP and hook protocol commands reject the option. See [command output formats](/docs/reference/commands#output-formats) for serialization behavior and examples.
 
 ## Intelligence storage and models
 

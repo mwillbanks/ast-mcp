@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 
 import type { McpServer } from "@modelcontextprotocol/server";
 
+import * as mutation from "../../src/intelligence/mutation/service.ts";
 import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
 import {
   type WorkspaceHandle,
@@ -30,7 +31,10 @@ const workspace = {
   checkoutRoot: "/worktrees/feature",
   dirtyOverlayId: null,
   repositoryId: identity("repository", "a"),
-  selectedRevision: { revisionId: identity("revision", "b") },
+  selectedRevision: {
+    revisionId: identity("revision", "b"),
+    selector: { kind: "index" },
+  },
   storageDomain: { domainId: identity("storage-domain", "c") },
   workspaceId: identity("workspace", "d"),
 } as unknown as WorkspaceHandle;
@@ -170,7 +174,12 @@ test.each([100, 1])(
         (error) => error,
       );
     try {
-      await entered.promise;
+      await Promise.race([
+        entered.promise,
+        query.then((error) => {
+          throw error;
+        }),
+      ]);
       await time.advanceBy(maxMilliseconds);
       expect(await query).toMatchObject({ code: "graph_budget_exhausted" });
       expect(shutdown).toBe(1);
@@ -186,6 +195,85 @@ test.each([100, 1])(
     }
   },
 );
+
+test.each([false, true])(
+  "index status checks the publication epoch after reading with strictRead=%s",
+  async (strictRead) => {
+    const time = createMockTime();
+    const working = {
+      ...workspace,
+      selectedRevision: {
+        ...workspace.selectedRevision,
+        selector: { kind: "working" } as const,
+      },
+    };
+    const observe = spyOn(mutation, "observeMutationIndex")
+      .mockResolvedValueOnce({ epoch: "before", pending: false })
+      .mockResolvedValueOnce({ epoch: "after", pending: true });
+    const open = spyOn(LanceIntelligenceStore, "open").mockResolvedValue({
+      boundedTableCounts: async () => ({
+        counts: {},
+        exhaustive: true,
+        returnedTables: [],
+        truncated: false,
+      }),
+      latestGeneration: async () => ({
+        generationId: generation,
+        workspaceId: working.workspaceId,
+      }),
+      shutdownCoordinator: async () => {},
+    } as never);
+    const service = createIntelligenceToolService();
+    try {
+      const status = service.indexStatus(
+        working,
+        IndexStatusInputSchema.parse({
+          strictRead,
+          workspaceId: working.workspaceId,
+        }),
+      );
+      if (strictRead) {
+        await expect(status).rejects.toMatchObject({
+          code: "intelligence_refresh_pending",
+          retryable: true,
+        });
+      } else {
+        await expect(status).resolves.toMatchObject({
+          freshness: { stale: true },
+          generation,
+        });
+      }
+      expect(observe).toHaveBeenCalledTimes(2);
+      expect(open).toHaveBeenCalledWith(working.storageDomain, {
+        access: "read-only",
+      });
+    } finally {
+      open.mockRestore();
+      observe.mockRestore();
+      await service.close?.();
+      time.dispose();
+    }
+  },
+);
+
+test("index status reports a pending refresh when no generation can be retained", async () => {
+  const observe = spyOn(mutation, "observeMutationIndex").mockResolvedValue({
+    pending: true,
+  });
+  const open = spyOn(LanceIntelligenceStore, "open");
+  const service = createIntelligenceToolService();
+  try {
+    await expect(service.indexStatus(workspace)).rejects.toMatchObject({
+      code: "intelligence_refresh_pending",
+      retryable: true,
+    });
+    expect(open).not.toHaveBeenCalled();
+  } finally {
+    open.mockRestore();
+    observe.mockRestore();
+    await service.close?.();
+  }
+});
 
 test("registration binds every operation to the selected workspace", async () => {
   type Handler = (

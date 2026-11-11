@@ -7,11 +7,12 @@ export interface CliHandlers {
   skills?(args: string[]): Promise<void>;
   installer(args: string[]): Promise<void>;
   mcp(args: string[]): Promise<void>;
+  pm?(args: string[]): Promise<number | undefined>;
   stderr?(text: string): void;
   stdout?(text: string): void;
 }
 
-const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  doctor       Diagnose host setup, approvals, and release currency\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  skills       Export or update manually installed skills\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n      --output <format>  Output: human, json, yaml, or toml\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
+const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  doctor       Diagnose host setup, approvals, and release currency\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  pm           List, install, or diagnose native language packs\n  skills       Export or update manually installed skills\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n      --output <format>  Output: human, json, yaml, or toml\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
 
 const installerOptions = `Options:\n  -s, --scope <scope>       Installation scope: local or global (default: local)\n  -t, --target <target>     Host: codex, claude, copilot, or all (default: all)\n  -r, --root <path>         Deprecated root override (default: current directory)\n      --transport <mode>    MCP transport: stdio or http (default: stdio)\n      --host <address>      HTTP bind host (default: layered configuration)\n      --port <number>       HTTP bind port (default: layered configuration)\n      --service             Install and start a managed user HTTP service\n      --no-service          Stop and remove a managed user HTTP service\n      --output <format>     Output: human, json, yaml, or toml\n  -h, --help                Display help\n`;
 
@@ -21,7 +22,8 @@ const commandHelp: Record<string, string> = {
   config: `Usage:\n  ast-mcp config <validate|show|migrate> [options]\n\nValidate, display, or migrate layered ast-mcp.toml configuration. Migration previews by default and never rewrites automatically.\n\nOptions:\n  -r, --root <path>  Deprecated root or migration target directory\n      --file <path>  Migrate an explicit configuration file\n      --global       Migrate the user-global configuration\n      --to <version> Migration target version (currently 2)\n      --check        Exit 2 when migration is required\n      --write        Atomically write the migration\n      --no-backup    Do not create the default v1 backup\n      --output <format> Output: human, json, yaml, or toml\n  -h, --help         Display help\n`,
   hook: `Usage:\n  ast-mcp hook\n\nRun the pre-tool-use filesystem guard. Hook input is read from stdin.\n\nOptions:\n  -h, --help   Display help\n`,
   install: `Usage:\n  ast-mcp install [options]\n\nConfigure ast-mcp for supported hosts.\n\n${installerOptions}`,
-  mcp: `Usage:\n  ast-mcp mcp [options]\n\nStart the MCP server. Stdio is the default; HTTP listens on the layered configuration unless flags override it.\n\nOptions:\n      --transport <mode>  MCP transport: stdio or http (default: stdio)\n      --host <address>    HTTP bind host\n      --port <number>     HTTP bind port\n  -h, --help              Display help\n`,
+  mcp: `Usage:\n  ast-mcp mcp [options]\n\nStart the MCP server. Stdio is the default; HTTP listens on the layered configuration unless flags override it.\n\nOptions:\n      --transport <mode>  MCP transport: stdio or http (default: stdio)\n      --host <address>    HTTP bind host\n      --port <number>     HTTP bind port\n      --allow-language-pack-downloads  Allow first-use native pack installation\n      --allow-project-language-packs   Authorize the configured checkout pack store\n  -h, --help              Display help\n`,
+  pm: `Usage:\n  ast-mcp pm list [--output <format>]\n  ast-mcp pm install <python|go|sql> [--offline] [--output <format>]\n  ast-mcp pm doctor [--output <format>]\n\nInstall verified native packs in AST-MCP storage with package scripts disabled. Use --allow-project-language-packs to authorize a configured project store.\n`,
   uninstall: `Usage:\n  ast-mcp uninstall [options]\n\nRemove ast-mcp-managed configuration while preserving shared host files.\n\n${installerOptions}`,
   update: `Usage:\n  ast-mcp update [options]\n\nRefresh managed configuration. Existing manual skills are preserved.\n\n${installerOptions}`,
 };
@@ -93,6 +95,7 @@ function isCliUsageError(error: unknown): error is Error {
     "McpUsageError",
     "SkillsUsageError",
     "CliOutputUsageError",
+    "LanguagePackUsageError",
   ].includes(error.name);
 }
 
@@ -106,6 +109,10 @@ async function runConfiguredCommand(
       if (!handlers.doctor) throw new Error("Doctor command is unavailable");
       const result = await handlers.doctor(rest);
       return typeof result === "number" ? result : undefined;
+    }
+    if (command === "pm") {
+      if (!handlers.pm) throw new Error("Language pack command is unavailable");
+      return await handlers.pm(rest);
     }
     if (command === "skills") {
       if (!handlers.skills) throw new Error("Skills command is unavailable");

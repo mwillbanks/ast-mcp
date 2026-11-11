@@ -2289,6 +2289,54 @@
       "files": [],
       "required_tools": ["file_read", "file_hash", "file_patch"],
       "forbidden_tools": ["config_core", "config_paths"]
+    },
+    {
+      "id": 238,
+      "surface": "read_symbols",
+      "category": "positive",
+      "variant": "ordered-definitions-and-callers",
+      "prompt": "Read the definitions and direct callers of currentConfig and withResolvedConfig in src/config/index.ts in one MCP request.",
+      "expected_output": "Makes one scoped read_symbols call and reports definition and caller results in request order.",
+      "assertions": [
+        "Supplies the exact file and ordered symbol list.",
+        "Reports definition source and direct callers from the selected scope.",
+        "Keeps distinct outcomes in request order."
+      ],
+      "files": [],
+      "required_tools": ["read_symbols"],
+      "forbidden_tools": []
+    },
+    {
+      "id": 239,
+      "surface": "read_symbols",
+      "category": "variant",
+      "variant": "incomplete-symbol-scan",
+      "prompt": "Use read_symbols to find currentConfig and a symbol named definitelyAbsent in src/config/*.ts, limiting the scan to one file. Explain whether this proves absence.",
+      "expected_output": "Uses a scoped read_symbols request with a scan limit and reports incomplete coverage instead of claiming a definitive miss.",
+      "assertions": [
+        "Supplies both symbols and an explicit glob.",
+        "Passes the requested scan_limit.",
+        "Treats incomplete outcomes as insufficient evidence of absence."
+      ],
+      "files": [],
+      "required_tools": ["read_symbols"],
+      "forbidden_tools": []
+    },
+    {
+      "id": 240,
+      "surface": "read_symbols",
+      "category": "negative",
+      "variant": "unknown-symbols-near-miss",
+      "prompt": "I do not know the declarations in src/config/index.ts. List its symbol names and imports without retrieving source bodies.",
+      "expected_output": "Uses map on the exact file to discover names and imports.",
+      "assertions": [
+        "Selects map for discovery when symbol names are unknown.",
+        "Scopes the request to the exact file.",
+        "Does not invent symbol names to satisfy read_symbols input."
+      ],
+      "files": [],
+      "required_tools": ["map"],
+      "forbidden_tools": ["read_symbols"]
     }
   ],
   "mcp_tools": [
@@ -2311,6 +2359,7 @@
     "map",
     "digest",
     "show",
+    "read_symbols",
     "implements",
     "surface",
     "deps",

@@ -71,6 +71,35 @@ async function blobPath(snapshot: StagedFileSnapshot) {
   );
 }
 
+test("snapshot sweep skips a capture removed after listing", async () => {
+  const { root, workspace } = await fixture();
+  const source = path.join(root, "sweep-source.txt");
+  await fs.writeFile(source, "original");
+  const snapshot = await withWorkspaceContext(workspace, () =>
+    stageFileSnapshot(source),
+  );
+  snapshots.push(snapshot);
+
+  const namespacePath = path.dirname(path.dirname(await blobPath(snapshot)));
+  const vanished = path.join(
+    namespacePath,
+    `${process.pid}-00000000-0000-4000-8000-000000000001`,
+  );
+  await fs.mkdir(vanished, { mode: 0o700 });
+  const original = fs.lstat;
+  const stat = spyOn(fs, "lstat").mockImplementation((async (file, options) => {
+    if (file === vanished) await fs.rmdir(vanished);
+    return original(file, options);
+  }) as typeof fs.lstat);
+  try {
+    expect(await sweepSnapshotBlobs(snapshot.namespace, new Set())).toBe(0);
+    expect(await fs.readFile(source, "utf8")).toBe("original");
+  } finally {
+    stat.mockRestore();
+    await fs.rm(vanished, { force: true, recursive: true });
+  }
+});
+
 async function publicationFixture() {
   const { root } = await fixture();
   const source = path.join(root, "publication-staged.bin");

@@ -30,15 +30,18 @@ function accountEnvironment(): NodeJS.ProcessEnv {
     "HOMEPATH",
     "NODE_OPTIONS",
     "BUN_OPTIONS",
+    "BUN_BE_BUN",
   ]);
   for (const key of Object.keys(env))
     if (excluded.has(key.toUpperCase())) delete env[key];
+  // A compiled executable uses its embedded Bun CLI for this account probe.
+  env.BUN_BE_BUN = "1";
   return env;
 }
 
 /** Clear inherited native Windows home overrides inside the child before querying its account. */
 export function accountLookupCommand(): string[] {
-  return [process.execPath, "--eval", ACCOUNT_QUERY];
+  return [process.execPath, "--no-env-file", "--eval", ACCOUNT_QUERY];
 }
 function parseAccount(output: string): SystemAccount {
   const account: unknown = JSON.parse(output);

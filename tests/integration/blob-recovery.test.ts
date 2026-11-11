@@ -10,6 +10,7 @@ import { withMutationLifecycle } from "../../src/intelligence/mutation/lifecycle
 import {
   LanceMutationLifecycle,
   mutationOperationId,
+  withLanceMutationLifecycle,
 } from "../../src/intelligence/mutation/service.ts";
 import type { MutationFilePlan } from "../../src/intelligence/mutation/types.ts";
 import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
@@ -20,6 +21,7 @@ import {
 import { patchFiles, writeFilesSafely } from "../../src/patch/engine.ts";
 import { deleteFilesSafely } from "../../src/runtime/file-delete.ts";
 import { renameFilesSafely } from "../../src/runtime/file-rename.ts";
+import * as formatting from "../../src/runtime/format.ts";
 import { sha256, sha256File } from "../../src/runtime/hash.ts";
 import * as hashing from "../../src/runtime/hash.ts";
 import {
@@ -146,6 +148,116 @@ test.each(["blob", "legacy"] as const)(
     ).toBeFalse();
   },
 );
+
+test("recovers formatted bytes after a journal update and rollback both fail", async () => {
+  const { root, workspace, lifecycle, snapshotRoot } = await fixture();
+  const target = path.join(root, "formatted.ts");
+  const original = "export const n = 0;\n";
+  const formatted = "export const n = 1;\n";
+  await fs.writeFile(target, original);
+
+  const format = spyOn(formatting, "formatContent").mockResolvedValue(
+    formatted,
+  );
+  const committed = spyOn(lifecycle.journal, "committed").mockRejectedValue(
+    new Error("journal update unavailable"),
+  );
+  const rename = fs.rename;
+  let replacements = 0;
+  const replace = spyOn(fs, "rename").mockImplementation(async (...args) => {
+    if (String(args[1]) === target && ++replacements === 2)
+      throw new Error("rollback rename unavailable");
+    return rename(...args);
+  });
+  try {
+    await expect(
+      withConfig({ cwd: root }, () =>
+        withWorkspaceContext(workspace, () =>
+          withMutationLifecycle(lifecycle, () =>
+            patchFiles({
+              [target]: {
+                patchStrategy: "aider_block",
+                expectedSha256: sha256(original),
+                aiderBlocks: [
+                  { search: original, replace: "export const n=1;\n" },
+                ],
+              },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toThrow("Mutation failed and rollback requires recovery");
+  } finally {
+    replace.mockRestore();
+    committed.mockRestore();
+    format.mockRestore();
+  }
+  expect(await fs.readFile(target, "utf8")).toBe(formatted);
+  const records = await lifecycle.journal.unfinished(
+    workspace.workspaceId,
+    root,
+  );
+  expect(records).toHaveLength(1);
+  expect(records[0]?.files[0]?.candidateSha256).toBe(sha256(formatted));
+
+  await lifecycle.recover();
+  expect(await fs.readFile(target, "utf8")).toBe(original);
+  expect((await lifecycle.journal.get(records[0]!.operationId))?.state).toBe(
+    "recovered",
+  );
+  expect(await fs.readdir(snapshotRoot)).toEqual([]);
+});
+
+test("acknowledges a durable mutation after legacy recovery coordinator cleanup fails", async () => {
+  const { root, workspace, store, lifecycle } = await fixture();
+  const target = path.join(root, "durable.txt");
+  await fs.writeFile(target, "before\n");
+  const operationId = `job:v1:${sha256("legacy coordinator cleanup")}`;
+  await lifecycle.journal.begin({
+    operationId,
+    workspace,
+    tool: "file_patch",
+    files: [
+      {
+        candidateSha256: sha256("after\n"),
+        filePath: target,
+        sourceContentBase64: Buffer.from("before\n").toString("base64"),
+        sourceSha256: sha256("before\n"),
+      },
+    ],
+  });
+  const shutdown = LanceIntelligenceStore.prototype.shutdownCoordinator;
+  const close = spyOn(
+    LanceIntelligenceStore.prototype,
+    "shutdownCoordinator",
+  ).mockImplementation(async function (this: LanceIntelligenceStore) {
+    await shutdown.call(this);
+    if (this !== store) throw new Error("coordinator cleanup unavailable");
+  });
+  try {
+    await withConfig({ cwd: root }, () =>
+      withWorkspaceContext(workspace, () =>
+        withLanceMutationLifecycle(() =>
+          patchFiles({
+            [target]: {
+              patchStrategy: "aider_block",
+              expectedSha256: sha256("before\n"),
+              aiderBlocks: [{ search: "before\n", replace: "after\n" }],
+            },
+          }),
+        ),
+      ),
+    );
+    expect(close).toHaveBeenCalled();
+  } finally {
+    close.mockRestore();
+  }
+  expect(await fs.readFile(target, "utf8")).toBe("after\n");
+  expect(
+    await lifecycle.journal.unfinished(workspace.workspaceId, root),
+  ).toEqual([]);
+  expect((await lifecycle.journal.get(operationId))?.state).toBe("recovered");
+});
 
 test("guarded deletion rolls back when restore publication links fail", async () => {
   const { root, workspace, store, lifecycle, snapshotRoot } = await fixture();

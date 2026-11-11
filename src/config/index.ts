@@ -29,6 +29,11 @@ import {
   projectConfigurationPath,
 } from "./identity";
 import {
+  resolveLanguagePacks,
+  type LanguagePackHostPolicy,
+  type ResolvedLanguagePacks,
+} from "./language-packs";
+import {
   cliSchema,
   type CliOutputFormat,
   createFormatterSchema,
@@ -154,6 +159,7 @@ export interface ResolvedConfig {
     sessionTimeoutMs: number;
     sessionSweepIntervalMs: number;
   };
+  languagePacks?: ResolvedLanguagePacks;
   mcp: {
     configuration: { enabled: boolean; requireApproval: boolean };
   };
@@ -197,6 +203,8 @@ export interface ResolveConfigOptions {
   launchCwd?: string;
   env?: NodeJS.ProcessEnv;
   home?: string;
+  /** Host launch policy. Request and repository data cannot grant it. */
+  languagePackHost?: Readonly<LanguagePackHostPolicy>;
   platform?: NodeJS.Platform;
   requestPaths?: string[];
   revisionId?: string;
@@ -1195,6 +1203,7 @@ function resolvedConfiguration(args: {
   dprintConfig: string;
   environment: ReturnType<typeof environmentLayer>;
   global: LoadedLayer;
+  languagePacks: ResolvedLanguagePacks;
   project: LoadedLayer;
   projectRoot: string;
   provenance: ResolvedConfig["provenance"];
@@ -1206,6 +1215,7 @@ function resolvedConfiguration(args: {
     dprintConfig,
     environment,
     global,
+    languagePacks,
     project,
     projectRoot,
     provenance,
@@ -1227,6 +1237,7 @@ function resolvedConfiguration(args: {
     generation: 0,
     intelligence: resolvedIntelligence(value),
     http: resolvedHttp(value),
+    languagePacks,
     mcp: resolvedMcp(value),
     paths: resolvedPathEntries([
       ...layerPathRules(global, "global"),
@@ -1406,6 +1417,13 @@ async function resolveForProject(
       dprintConfig: dprint.config,
       environment,
       global,
+      languagePacks: resolveLanguagePacks(
+        global.value?.version === 2 ? global.value.language_packs : undefined,
+        project.value?.version === 2 ? project.value.language_packs : undefined,
+        globalPath,
+        projectRoot,
+        options.languagePackHost,
+      ),
       project,
       projectRoot,
       provenance: configProvenance(layers),
@@ -1435,6 +1453,13 @@ function projectRelativePolicyPath(
 }
 
 function policy(config: ResolvedConfig) {
+  let languagePacks: Omit<ResolvedLanguagePacks, "directory"> | undefined =
+    config.languagePacks;
+  if (config.languagePacks?.scope === "project") {
+    // The authorized checkout determines the effective project store.
+    const { directory: _directory, ...settings } = config.languagePacks;
+    languagePacks = settings;
+  }
   return JSON.stringify({
     dependencies: config.dependencies,
     files: config.files,
@@ -1446,6 +1471,7 @@ function policy(config: ResolvedConfig) {
           ? null
           : config.formatting.dprintConfig,
     },
+    languagePacks,
     mcp: config.mcp.configuration,
     safety: config.safety,
     telemetry: config.telemetry,

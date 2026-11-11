@@ -251,11 +251,99 @@ function recoveryRecord(
   return null;
 }
 
+function needsRecovery(record: MutationJournalRecord): boolean {
+  return (
+    ["running", "refreshing", "recovery-required"].includes(record.state) ||
+    (record.state === "failed" &&
+      record.files.some((file) => file.committedSha256 !== null))
+  );
+}
+
+export function hasUnfinishedLegacyMutations(
+  payloads: readonly unknown[],
+  workspaceId: string,
+  checkoutRoot: string,
+): boolean {
+  // Inspect every candidate. An opaque later row can prevent safe recovery
+  // even when an earlier row already proves that work remains.
+  return payloads
+    .map((payload) => recoveryRecord(payload, workspaceId, checkoutRoot))
+    .some((record) => record !== null && needsRecovery(record));
+}
+
+export interface MutationJournalPersistence {
+  readonly storagePath: string;
+  readonly scope?: Readonly<{
+    checkoutRoot: string;
+    storageDomainId: string;
+  }>;
+  getPayload(
+    operationId: string,
+  ): Promise<{ payload: unknown } | null> | { payload: unknown } | null;
+  recoveryPayloads(
+    workspaceId?: string,
+    checkoutRoot?: string,
+  ): Promise<readonly unknown[]> | readonly unknown[];
+  writeRecord(record: MutationJournalRecord): Promise<void> | void;
+}
+
+function lancePersistence(
+  store: LanceIntelligenceStore,
+): MutationJournalPersistence {
+  return {
+    storagePath: store.storagePath,
+    async getPayload(operationId) {
+      const [row] = await store.rows(
+        "jobs",
+        `job_id = ${sqlString(operationId)}`,
+      );
+      return row ? { payload: row.payload_json } : null;
+    },
+    async recoveryPayloads(workspaceId, checkoutRoot) {
+      const rows = await store.rows(
+        "jobs",
+        checkoutRoot
+          ? "state = 'running' OR state = 'failed'"
+          : workspaceId
+            ? `workspace_id = ${sqlString(workspaceId)}`
+            : undefined,
+      );
+      return rows.map((row) => row.payload_json);
+    },
+    async writeRecord(record) {
+      await store.putRows(
+        "jobs",
+        [
+          {
+            attempt: record.attempt,
+            created_at: record.createdAt,
+            error_code: record.errorCode,
+            idempotency_key: record.operationId,
+            job_id: record.operationId,
+            payload_json: JSON.stringify(record),
+            revision_id: record.revisionId,
+            state: persistentState(record.state),
+            storage_domain_id: record.storageDomainId,
+            type: "index-source",
+            updated_at: record.updatedAt,
+            workspace_id: record.workspaceId,
+          },
+        ],
+        { immutable: false },
+      );
+    },
+  };
+}
+
 export class LanceMutationJournal {
+  private readonly persistence: MutationJournalPersistence;
+
   constructor(
-    private readonly store: LanceIntelligenceStore,
+    store: LanceIntelligenceStore | MutationJournalPersistence,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+  ) {
+    this.persistence = "getPayload" in store ? store : lancePersistence(store);
+  }
 
   async begin(plan: MutationBatchPlan): Promise<MutationJournalRecord | null> {
     const workspace = plan.workspace;
@@ -289,12 +377,24 @@ export class LanceMutationJournal {
   }
 
   async get(operationId: string): Promise<MutationJournalRecord | null> {
-    const rows = await this.store.rows(
-      "jobs",
-      `job_id = ${sqlString(operationId)}`,
-    );
-    if (!rows[0]) return null;
-    return parseRecord(rows[0].payload_json, true);
+    const row = await this.persistence.getPayload(operationId);
+    return row ? this.parseScopedRecord(row.payload, operationId) : null;
+  }
+
+  private parseScopedRecord(
+    payload: unknown,
+    operationId?: string,
+  ): MutationJournalRecord {
+    const record = parseRecord(payload, true)!;
+    const scope = this.persistence.scope;
+    if (
+      (operationId !== undefined && record.operationId !== operationId) ||
+      (scope &&
+        (record.checkoutRoot !== scope.checkoutRoot ||
+          record.storageDomainId !== scope.storageDomainId))
+    )
+      throw new Error("mutation_journal_scope_mismatch");
+    return record;
   }
 
   async committed(
@@ -332,24 +432,22 @@ export class LanceMutationJournal {
     workspaceId?: string,
     checkoutRoot?: string,
   ): Promise<MutationJournalRecord[]> {
-    const rows = await this.store.rows(
-      "jobs",
-      checkoutRoot
-        ? "state = 'running' OR state = 'failed'"
-        : workspaceId
-          ? `workspace_id = ${sqlString(workspaceId)}`
-          : undefined,
+    const scope = this.persistence.scope;
+    if (scope && checkoutRoot && checkoutRoot !== scope.checkoutRoot)
+      throw new Error("mutation_journal_scope_mismatch");
+    const payloads = await this.persistence.recoveryPayloads(
+      workspaceId,
+      checkoutRoot,
     );
-    return rows
-      .map((row) => recoveryRecord(row.payload_json, workspaceId, checkoutRoot))
-      .filter((record): record is MutationJournalRecord => Boolean(record))
+    return payloads
+      .map((payload) =>
+        scope
+          ? this.parseScopedRecord(payload)
+          : recoveryRecord(payload, workspaceId, checkoutRoot),
+      )
       .filter(
-        (record) =>
-          ["running", "refreshing", "recovery-required"].includes(
-            record.state,
-          ) ||
-          (record.state === "failed" &&
-            record.files.some((file) => file.committedSha256 !== null)),
+        (record): record is MutationJournalRecord =>
+          record !== null && needsRecovery(record),
       )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
@@ -388,7 +486,7 @@ export class LanceMutationJournal {
   ): Promise<void> {
     // Serialize the complete read-modify-write, including updates through
     // separate journal objects sharing this process and storage directory.
-    const key = `${this.store.storagePath}\0${operationId}`;
+    const key = `${this.persistence.storagePath}\0${operationId}`;
     const previous = journalUpdates.get(key) ?? Promise.resolve();
     const pending = previous.then(async () => {
       const current = await this.get(operationId);
@@ -414,25 +512,6 @@ export class LanceMutationJournal {
   private async write(record: MutationJournalRecord): Promise<void> {
     // Reject invalid records before they can poison durable recovery.
     MutationJournalRecordSchema.parse(record);
-    await this.store.putRows(
-      "jobs",
-      [
-        {
-          attempt: record.attempt,
-          created_at: record.createdAt,
-          error_code: record.errorCode,
-          idempotency_key: record.operationId,
-          job_id: record.operationId,
-          payload_json: JSON.stringify(record),
-          revision_id: record.revisionId,
-          state: persistentState(record.state),
-          storage_domain_id: record.storageDomainId,
-          type: "index-source",
-          updated_at: record.updatedAt,
-          workspace_id: record.workspaceId,
-        },
-      ],
-      { immutable: false },
-    );
+    await this.persistence.writeRecord(record);
   }
 }

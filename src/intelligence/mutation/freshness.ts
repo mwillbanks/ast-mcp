@@ -5,6 +5,7 @@ import { isTransactionLockArtifact } from "../../runtime/transaction-lock.ts";
 import {
   createIdentity,
   resolvedRelationshipsArtifactIdentity,
+  type PublicationGeneration,
   revisionManifestArtifactIdentity,
   sourceArtifactIdentity,
   syntaxFactsArtifactIdentity,
@@ -403,6 +404,10 @@ async function selectedRevisionSources(
   return { skipped: selection.skipped, sources };
 }
 
+export type MutationRefreshFinalizer = (
+  publish: () => Promise<PublicationGeneration>,
+) => Promise<PublicationGeneration>;
+
 export interface IntelligenceRefreshDependencies {
   allowReadOnlySource?: boolean;
   analyze?: (
@@ -412,6 +417,7 @@ export interface IntelligenceRefreshDependencies {
     config: EmbeddingModelConfig;
     pool: EmbeddingWorkerPool;
   };
+  finalize?: MutationRefreshFinalizer;
   parse?: (
     request: ParseSourceRequest,
     options?: { signal?: AbortSignal; timeoutMs?: number },
@@ -603,7 +609,12 @@ export async function refreshMutationIntelligence(
         appendRetrievalChunk(chunkInput, indexedAt, chunkRows, retrievalChunks);
       }
       parsedFiles.push(relative);
-      units.push({ facts, kind: "document", path: relative, sourceArtifactId });
+      units.push({
+        facts,
+        kind: "document",
+        path: relative,
+        sourceArtifactId,
+      });
       continue;
     }
     if (!languageId) {
@@ -711,6 +722,7 @@ export async function refreshMutationIntelligence(
           workspace.git,
           workspace.repositoryId,
           workspace.selectedRevision.revisionId,
+          workspace.storageDomain.storagePath,
         )
       : null;
   throwIfRefreshAborted(input.signal);
@@ -900,10 +912,13 @@ export async function refreshMutationIntelligence(
   const reusable = await store.reusablePublication(reservationInput);
   throwIfRefreshAborted(input.signal);
   if (reusable) {
+    const publication = input.finalize
+      ? await input.finalize(async () => reusable)
+      : reusable;
     return {
       dirtyOverlayId,
-      generationId: reusable.generationId,
-      indexedAt: reusable.publishedAt,
+      generationId: publication.generationId,
+      indexedAt: publication.publishedAt,
       parsedFiles,
       skippedFiles,
     };
@@ -963,13 +978,14 @@ export async function refreshMutationIntelligence(
       reservation,
     });
     throwIfRefreshAborted(input.signal);
-    if (input.embedding) {
+    const embedding = input.embedding;
+    if (embedding) {
       const embeddings = await publishChunkEmbeddings(
         store,
         snapshot.scope,
         retrievalChunks,
-        input.embedding.config,
-        input.embedding.pool,
+        embedding.config,
+        embedding.pool,
         {
           allowReadOnlySource: input.allowReadOnlySource,
           reservation,
@@ -984,7 +1000,10 @@ export async function refreshMutationIntelligence(
       throwIfRefreshAborted(input.signal);
     }
     throwIfRefreshAborted(input.signal);
-    const publication = await store.finalizePublication(reservation);
+    const publish = () => store.finalizePublication(reservation);
+    const publication = await (input.finalize
+      ? input.finalize(publish)
+      : publish());
     return {
       dirtyOverlayId,
       generationId: publication.generationId,

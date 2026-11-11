@@ -17,10 +17,10 @@ import { createMockTime } from "../support/mock-time";
 test("account lookup uses the current runtime and clears native home overrides inside its child", () => {
   const command = accountLookupCommand();
   expect(command[0]).toBe(process.execPath);
-  expect(command[1]).toBe("--eval");
-  expect(command[2]).toContain("delete process.env[key]");
-  expect(command[2]).toContain("USERPROFILE");
-  expect(command[2]).toContain("os.userInfo()");
+  expect(command.slice(1, 3)).toEqual(["--no-env-file", "--eval"]);
+  expect(command[3]).toContain("delete process.env[key]");
+  expect(command[3]).toContain("USERPROFILE");
+  expect(command[3]).toContain("os.userInfo()");
   expect(command.join(" ")).not.toContain("powershell");
 });
 
@@ -74,6 +74,7 @@ test("account lookup removes environment home and runtime options with mixed cas
     "Node_Options",
     "Bun_Options",
   ];
+  const ambientCliMode = process.env.BUN_BE_BUN;
   const before = names.map((name) => process.env[name]);
   const original = Bun.spawn;
   let environment: NodeJS.ProcessEnv | undefined;
@@ -90,7 +91,10 @@ test("account lookup removes environment home and runtime options with mixed cas
   }) as typeof Bun.spawn);
   try {
     for (const name of names) process.env[name] = "untrusted";
+    process.env.BUN_BE_BUN = "0";
     await readSystemAccount();
+    expect(environment?.BUN_BE_BUN).toBe("1");
+    expect(process.env.BUN_BE_BUN).toBe("0");
     for (const name of names) {
       expect(
         Object.keys(environment!).some(
@@ -101,6 +105,8 @@ test("account lookup removes environment home and runtime options with mixed cas
     }
   } finally {
     spawn.mockRestore();
+    if (ambientCliMode === undefined) delete process.env.BUN_BE_BUN;
+    else process.env.BUN_BE_BUN = ambientCliMode;
     for (const [index, name] of names.entries()) {
       if (before[index] === undefined) delete process.env[name];
       else process.env[name] = before[index];

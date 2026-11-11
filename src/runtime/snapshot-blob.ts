@@ -252,7 +252,8 @@ export async function stageFileSnapshot(
     )
       throw failure("stale_or_missing_hash");
     const digest = hash.digest("hex");
-    await destination.sync();
+    const output = destination;
+    await output.sync();
     await destination.close();
     destination = undefined;
     // Publication is a no-replace link, never a replace of existing recovery material.
@@ -705,7 +706,14 @@ export async function sweepSnapshotBlobs(
     if (!entry.isDirectory() || entry.isSymbolicLink())
       throw failure("mutation_snapshot_directory_unsafe");
     const directory = path.join(root, entry.name);
-    const metadata = await lstat(directory);
+    const metadata = await lstat(directory).catch(
+      (error: NodeJS.ErrnoException) => {
+        // A live process may finish and remove its capture after readdir.
+        if (error.code === "ENOENT") return null;
+        throw error;
+      },
+    );
+    if (!metadata) continue;
     const owner = Number(entry.name.slice(0, entry.name.indexOf("-")));
     if (owner !== process.pid) {
       if (now - metadata.mtimeMs < 24 * 60 * 60 * 1000) continue;

@@ -501,6 +501,11 @@ export function parseSource(
   let grammar: GrammarDescriptor;
   try {
     grammar = registry.get(request.languageId);
+    if (!registry.parserAvailable(request.languageId)) {
+      throw new TypeError(
+        `Parser is unavailable in this language profile: ${request.languageId}`,
+      );
+    }
   } catch (error) {
     throw new ParserError({
       code: "invalid-language",

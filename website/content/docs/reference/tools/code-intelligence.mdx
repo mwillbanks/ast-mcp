@@ -290,6 +290,30 @@ Returns native AST symbols, imports, and diagnostics by file. Bulk budget omissi
 }
 ```
 
+## read_symbols
+
+Get source definitions and direct callers for 1–100 symbols in one request. Each symbol can contain up to 256 characters.
+
+Use an explicit file, path list, or glob to read known symbols. Callers come from the selected scope.
+
+The selected paths must pass read policy. The tool reads source without building a persistent index.
+
+Each input symbol gets an outcome in input order, including duplicates. Definitions include source and a range. An incomplete outcome means the scan could not establish whether a symbol is missing.
+
+A limited scan or response budget can omit details. Inspect the outcome status and scan coverage. A budget that cannot fit all compact outcomes returns `intelligence_budget_exceeded`.
+
+<ToolParameters name="read_symbols" />
+
+```json
+{
+  "name": "read_symbols",
+  "arguments": {
+    "file": "src/config/index.ts",
+    "symbols": ["currentConfig", "withResolvedConfig"]
+  }
+}
+```
+
 ## reverse_deps
 
 Returns native reverse import dependencies for a file. Bulk budget omissions return incomplete, truncated coverage with bounded reasons and paths; narrow scope before treating absent results as complete.

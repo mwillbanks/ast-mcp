@@ -267,10 +267,22 @@ export class StorageCoordinator {
     }
   }
 
-  async fence(expected: CoordinatorLease): Promise<void> {
-    const maintenance = this.leaseMaintenance.then(() =>
-      this.renewLease(expected),
-    );
+  async fence(
+    expected: CoordinatorLease,
+    reuseFreshLease = false,
+  ): Promise<void> {
+    const maintenance = this.leaseMaintenance.then(() => {
+      if (
+        reuseFreshLease &&
+        Date.parse(expected.expiresAt) - this.now().getTime() >
+          this.leaseDurationMs / 2
+      ) {
+        // Short journal writes still verify owner and epoch under the writer
+        // transaction. The existing heartbeat renews longer operations.
+        return this.assertOwnership(expected);
+      }
+      return this.renewLease(expected);
+    });
     this.leaseMaintenance = maintenance.then(
       () => undefined,
       () => undefined,

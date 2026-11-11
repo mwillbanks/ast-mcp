@@ -570,6 +570,7 @@ export async function gitDirtyOverlayId(
   git: GitWorkspaceIdentity,
   repositoryId: string,
   baseRevisionId: string,
+  excludedStorageRoot?: string,
 ): Promise<string | null> {
   if (!git.isGit) return null;
   const result = await runGitRaw(git.checkoutRoot, [
@@ -587,10 +588,16 @@ export async function gitDirtyOverlayId(
   const records = parseGitPorcelainV1Z(result.stdout).filter(
     (record) => !isTransactionLockArtifact(record.path),
   );
+  const insideManagedStorage = (filePath: string) =>
+    excludedStorageRoot !== undefined &&
+    path.relative(git.checkoutRoot, excludedStorageRoot) !== "" &&
+    pathWithin(git.checkoutRoot, excludedStorageRoot) &&
+    pathWithin(excludedStorageRoot, path.join(git.checkoutRoot, filePath));
   const entries: DirtyEntry[] = [];
   for (const record of records) {
-    entries.push(await dirtyEntry(git, record.path, record.code));
-    if (record.sourcePath) {
+    if (!insideManagedStorage(record.path))
+      entries.push(await dirtyEntry(git, record.path, record.code));
+    if (record.sourcePath && !insideManagedStorage(record.sourcePath)) {
       const copied = record.code.includes("C");
       entries.push(
         await dirtyEntry(

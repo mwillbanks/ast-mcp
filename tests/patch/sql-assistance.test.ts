@@ -584,11 +584,11 @@ for (const policy of ["advisory", "skip", "not_requested"] as const) {
   });
 }
 
-test("later required SQL formatter rejection rolls back earlier batch commits", async () => {
+test("later required SQL formatter rejection prevents all batch commits", async () => {
   const script = `const source = await Bun.stdin.text();
 if (process.argv[1].endsWith("z-later.sql")) {
-  if ((await Bun.file(process.argv[1].replace("z-later.sql", "migration.sql")).text()) !== "SELECT 2;\\n")
-    throw new Error("earlier file did not commit");
+  if ((await Bun.file(process.argv[1].replace("z-later.sql", "migration.sql")).text()) !== "SELECT 1;\\n")
+    throw new Error("earlier file committed before staged validation");
   process.stdout.write("SELECT FROM;\\n");
 } else process.stdout.write(source);`;
   await project(

@@ -220,7 +220,12 @@ export class WorkspaceRegistry {
     );
     const dirtyOverlayId =
       revision.selector.kind === "working"
-        ? await gitDirtyOverlayId(git, repositoryId, revision.revisionId)
+        ? await gitDirtyOverlayId(
+            git,
+            repositoryId,
+            revision.revisionId,
+            storageDomain.storagePath,
+          )
         : null;
     const mismatches = {
       checkoutIdentity:
@@ -296,6 +301,7 @@ export class WorkspaceRegistry {
             git,
             repositoryId,
             selectedRevision.revisionId,
+            storageDomain.storagePath,
           )
         : null;
     const coordinates = {

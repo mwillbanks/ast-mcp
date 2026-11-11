@@ -4,7 +4,7 @@ import { createMockTime } from "../../support/mock-time.ts";
 beforeEach(() => {
   createMockTime();
 });
-import { mkdtemp, rename } from "node:fs/promises";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -118,6 +118,86 @@ describe("LanceDB intelligence storage", () => {
       await afterShutdown.serializeMigration("reopened", async () => "open"),
     ).toBe("open");
     await afterShutdown.shutdownCoordinator();
+  });
+
+  test("inspects legacy mutations and repository manifests without joining the index writer lane", async () => {
+    const domain = await storageDomain();
+    const coordinates = workspaceCoordinates(domain);
+    const scope = { ...coordinates, checkoutRoot: "/repos/0" };
+    const pristine = { repositoryIndexed: false, legacyPayloads: [] };
+    try {
+      expect(
+        await LanceIntelligenceStore.readMutationState(domain, scope),
+      ).toMatchObject(pristine);
+      const store = await LanceIntelligenceStore.open(domain);
+      try {
+        const manifest = {
+          dirtyOverlayId: null,
+          entries: [],
+          repositoryId: coordinates.repositoryId,
+          revisionId: coordinates.revisionId,
+        };
+        await store.putRows("revision_manifests", [
+          {
+            artifact_id: revisionManifestArtifactIdentity(manifest),
+            created_at: NOW,
+            dirty_overlay_id: null,
+            entry_count: 0,
+            logical_bytes: 0,
+            payload_json: JSON.stringify(manifest),
+            repository_id: coordinates.repositoryId,
+            revision_id: coordinates.revisionId,
+          },
+        ]);
+        const payloads = ["running", "failed", "succeeded"].map((state) =>
+          JSON.stringify({ fixture: state }),
+        );
+        await store.putRows(
+          "jobs",
+          payloads.map((payload_json, index) => {
+            const state = ["running", "failed", "succeeded"][index];
+            const jobId = createIdentity("job", { state });
+            return {
+              attempt: 0,
+              created_at: NOW,
+              error_code: null,
+              idempotency_key: jobId,
+              job_id: jobId,
+              payload_json,
+              revision_id: coordinates.revisionId,
+              state,
+              storage_domain_id: domain.domainId,
+              type: "index-source",
+              updated_at: NOW,
+              workspace_id: coordinates.workspaceId,
+            };
+          }),
+        );
+        await store.coordinator.exclusive("active index writer", async () => {
+          const indexed = await LanceIntelligenceStore.readMutationState(
+            domain,
+            scope,
+          );
+          expect(indexed.repositoryIndexed).toBeTrue();
+          expect(indexed.publishedGenerationId).toBeUndefined();
+          expect([...indexed.legacyPayloads].sort()).toEqual(
+            payloads.slice(0, 2).sort(),
+          );
+          const unrelated = await LanceIntelligenceStore.readMutationState(
+            domain,
+            {
+              ...scope,
+              ...workspaceCoordinates(domain, "other"),
+            },
+          );
+          expect(unrelated.repositoryIndexed).toBeFalse();
+        });
+      } finally {
+        await store.shutdownCoordinator();
+      }
+    } finally {
+      await rm(domain.storagePath, { force: true, recursive: true });
+    }
   });
 
   test("roundtrips every persistent record family", async () => {

@@ -39,6 +39,28 @@ ignoreUnresolvedImports = [
 # dynamic loader resolves direct optional native packages in installed consumers.
 # Static analysis cannot inspect that bundled facade or its platform selection.
 ignoreDependencies = [
+  # The native grammar catalog loads these package assets on demand with createRequire.
+  # The package and standalone native qualification suites exercise their registrations.
+  "@ast-grep/lang-bash",
+  "@ast-grep/lang-c",
+  "@ast-grep/lang-cpp",
+  "@ast-grep/lang-csharp",
+  "@ast-grep/lang-dart",
+  "@ast-grep/lang-elixir",
+  "@ast-grep/lang-go",
+  "@ast-grep/lang-java",
+  "@ast-grep/lang-kotlin",
+  "@ast-grep/lang-lua",
+  "@ast-grep/lang-markdown",
+  "@ast-grep/lang-php",
+  "@ast-grep/lang-python",
+  "@ast-grep/lang-ruby",
+  "@ast-grep/lang-rust",
+  "@ast-grep/lang-scala",
+  "@ast-grep/lang-sql",
+  "@ast-grep/lang-swift",
+  "@ast-grep/lang-toml",
+  "@ast-grep/lang-yaml",
   "@lancedb/lancedb",
   "@lancedb/lancedb-darwin-arm64",
   "@lancedb/lancedb-linux-arm64-gnu",
@@ -112,6 +134,8 @@ ignoredClones = [
   "dup:38a31906:2",
   # Bounded release HTTP reads and cancellable subprocess reads retain distinct stream policies.
   "dup:89e3c7c0:2",
+  # The independently installed skill smoke and the server sanitize their own Git subprocess environments.
+  "dup:f18dfc8c:2",
 ]
 
 [rules]

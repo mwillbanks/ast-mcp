@@ -8,6 +8,12 @@ import {
   wasmGrammarAssets as grammarAssets,
   wasmProviderVersions,
 } from "../../src/intelligence/languages/shared/wasm-assets.ts";
+import {
+  buildStandalones,
+  standaloneAssetsPlugin,
+  standaloneNativeAssets,
+  standaloneTarget,
+} from "./standalone.ts";
 
 const revision = Bun.spawnSync(["git", "rev-parse", "HEAD"], {
   cwd: path.resolve(import.meta.dir, "../.."),
@@ -47,6 +53,32 @@ const providerMetadata = {
 const root = path.resolve(import.meta.dir, "../..");
 const outdir = path.join(root, "dist");
 const workerOutdir = path.join(outdir, "workers");
+const [mode, destination, ...extra] = process.argv.slice(2);
+const options = new Map<string, string>();
+const usage =
+  "Usage: bun run build [--standalone <new-directory> [--target <bun-target>] [--native-root <directory>]]";
+if (mode !== undefined && (mode !== "--standalone" || !destination))
+  throw new Error(usage);
+for (let index = 0; index < extra.length; index += 2) {
+  const [key, value] = [extra[index], extra[index + 1]];
+  if (
+    (key !== "--target" && key !== "--native-root") ||
+    !value ||
+    value.startsWith("--") ||
+    options.has(key)
+  )
+    throw new Error(usage);
+  options.set(key, value);
+}
+const requestedTarget = options.get("--target");
+const nativeRoot = options.get("--native-root");
+const assets = destination
+  ? standaloneNativeAssets(
+      root,
+      requestedTarget ? standaloneTarget(requestedTarget) : undefined,
+      nativeRoot ? path.resolve(nativeRoot) : undefined,
+    )
+  : undefined;
 // Preserve package-relative native binaries and grammar assets at runtime.
 // Bundle the LanceDB facade to exclude its obsolete optional embedding providers.
 const nativeExternals = [
@@ -120,79 +152,93 @@ function assertBuild(
 
 await rm(outdir, { force: true, recursive: true });
 
-const packagedWorkerPlugin: BunPlugin = {
-  name: "packaged-worker-urls",
-  setup(build) {
-    build.onLoad(
-      {
-        filter:
-          /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|intelligence[\\/]+retrieval[\\/]+worker-session|patch[\\/]+strategy[\\/]+worker-client|runtime[\\/]+sql-postgres|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
-      },
-      async ({ path: filePath }: { path: string }) => {
-        const relative = path
-          .relative(root, filePath)
-          .split(path.sep)
-          .join("/");
-        const worker = workers.find((item) => item.client === relative);
-        if (!worker) return;
-        const source = await Bun.file(filePath).text();
-        const marker =
-          relative === "src/tools/code-intelligence.ts"
-            ? 'new URL("./code-intelligence-worker.ts", import.meta.url)'
-            : relative === "src/intelligence/parser/pool.ts"
-              ? 'new URL("./worker.ts", import.meta.url)'
-              : relative === "src/runtime/sql-postgres.ts"
-                ? 'new URL("./sql-postgres-worker.ts", import.meta.url)'
-                : relative === "src/intelligence/retrieval/worker-session.ts"
-                  ? 'new URL("./model-worker.ts", import.meta.url)'
-                  : relative === "src/patch/strategy/worker-client.ts"
-                    ? 'new URL("./worker.ts", import.meta.url)'
-                    : 'new URL("./wasm-worker.ts", import.meta.url)';
-        if (!source.includes(marker))
-          throw new Error(`Worker URL marker is missing from ${relative}`);
-        return {
-          contents: source.replace(
-            marker,
-            `new URL("./workers/${worker.output}", import.meta.url)`,
-          ),
-          loader: "ts" as const,
-        };
-      },
-    );
-  },
-};
+function packagedWorkerPlugin(directory = "./workers"): BunPlugin {
+  return {
+    name: "packaged-worker-urls",
+    setup(build) {
+      build.onLoad(
+        {
+          filter:
+            /src[\\/]+(?:intelligence[\\/]+parser[\\/]+pool|intelligence[\\/]+retrieval[\\/]+worker-session|patch[\\/]+strategy[\\/]+worker-client|runtime[\\/]+sql-postgres|tools[\\/]+code-intelligence|intelligence[\\/]+languages[\\/]+(?:dynamic[\\/]+analyzer|legacy[\\/]+analyzer|(?:infra|jvm|systems)[\\/]+worker-client))\.ts$/,
+        },
+        async ({ path: filePath }: { path: string }) => {
+          const relative = path
+            .relative(root, filePath)
+            .split(path.sep)
+            .join("/");
+          const worker = workers.find((item) => item.client === relative);
+          if (!worker) return;
+          const source = await Bun.file(filePath).text();
+          const original = relative.startsWith("src/intelligence/languages/")
+            ? "wasm-worker.ts"
+            : path.basename(worker.entrypoint);
+          const marker = new RegExp(
+            String.raw`new URL\(\s*"\./${original.replace(".", "[.]")}"\s*,\s*import\.meta\.url\s*,?\s*\)`,
+          );
+          if (!marker.test(source))
+            throw new Error(`Worker URL marker is missing from ${relative}`);
+          return {
+            contents: source.replace(
+              marker,
+              `new URL("${directory}/${worker.output}", import.meta.url)`,
+            ),
+            loader: "ts" as const,
+          };
+        },
+      );
+    },
+  };
+}
 
-assertBuild(
-  "CLI",
-  await Bun.build({
-    entrypoints: [path.join(root, "bin/ast-mcp.ts")],
-    external: nativeExternals,
-    define: providerMetadata,
-    format: "esm",
-    minify: true,
-    outdir,
-    plugins: [packagedWorkerPlugin],
-    sourcemap: "external",
-    target: "bun",
-  }),
-);
-
-for (const worker of workers) {
+async function buildCli(directory: string, standalone = false): Promise<void> {
   assertBuild(
-    worker.output,
+    "CLI",
     await Bun.build({
-      entrypoints: [path.join(root, worker.entrypoint)],
-      external: nativeExternals,
+      entrypoints: [path.join(root, "bin/ast-mcp.ts")],
+      external: standalone ? ["@ast-grep/lang-*"] : nativeExternals,
       define: providerMetadata,
       format: "esm",
       minify: true,
-      naming: worker.output,
-      outdir: workerOutdir,
+      outdir: directory,
+      plugins: [
+        packagedWorkerPlugin(),
+        ...(standalone && assets ? [standaloneAssetsPlugin(assets)] : []),
+      ],
       sourcemap: "external",
       target: "bun",
     }),
   );
 }
+
+await buildCli(outdir);
+
+async function buildWorkers(
+  directory: string,
+  standalone = false,
+): Promise<void> {
+  for (const worker of workers) {
+    assertBuild(
+      worker.output,
+      await Bun.build({
+        entrypoints: [path.join(root, worker.entrypoint)],
+        external: standalone ? ["@ast-grep/lang-*"] : nativeExternals,
+        define: providerMetadata,
+        format: "esm",
+        minify: true,
+        naming: worker.output,
+        outdir: directory,
+        plugins:
+          standalone && assets
+            ? [packagedWorkerPlugin("."), standaloneAssetsPlugin(assets)]
+            : [],
+        sourcemap: "external",
+        target: "bun",
+      }),
+    );
+  }
+}
+
+await buildWorkers(workerOutdir);
 
 // Inspect executable JavaScript only; source maps retain original source paths.
 for (const artifact of [
@@ -227,5 +273,18 @@ for (const grammar of grammarAssets) {
   await copyFile(
     resolveWasmGrammarAsset(grammar),
     path.join(grammarDirectory, `tree-sitter-${grammar}.wasm`),
+  );
+}
+
+if (destination && assets) {
+  await buildStandalones(
+    root,
+    path.resolve(destination),
+    workers.map((worker) => worker.output),
+    async (stage) => {
+      await buildCli(stage, true);
+      await buildWorkers(path.join(stage, "workers"), true);
+    },
+    assets,
   );
 }

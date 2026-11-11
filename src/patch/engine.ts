@@ -31,6 +31,7 @@ import {
 import {
   type FileCapabilities,
   inspectFileCapabilities,
+  sourceParserPackOmitted,
   validateStructuredCandidate,
 } from "../runtime/file-capabilities";
 import { FILE_READ_MAX_BATCH } from "../runtime/file-read";
@@ -166,13 +167,14 @@ async function commit(
     await revalidateWritePath(filePath);
     output = await open(next, "wx", mode);
     temporaryCreated = true;
-    await output.writeFile(formatted, { encoding: "utf8" });
+    const handle = output;
+    await handle.writeFile(formatted, { encoding: "utf8" });
     if (mode !== undefined) {
       await beforeReplace?.();
       await chmod(next, mode);
     }
     await applyFileChattr(next, chattr, beforeReplace);
-    await output.sync();
+    await handle.sync();
     await output.close();
     output = undefined;
     const committedChattr = await resultingFileChattr(next);
@@ -185,6 +187,7 @@ async function commit(
     await beforeReplace?.();
     await revalidateWritePath(filePath);
     await rename(next, filePath);
+    temporaryCreated = false;
     committed = true;
     return {
       chattr: committedChattr,
@@ -670,9 +673,8 @@ async function patchPreview(
 }
 
 async function prepareStrategyPatch(context: PatchContext) {
-  const prepared = await patchStrategyAdapter(
-    context.request.patchStrategy,
-  ).prepare(context);
+  const strategy = context.request.patchStrategy;
+  const prepared = await patchStrategyAdapter(strategy).prepare(context);
   await validateStructuredCandidate(context.capabilities, prepared.candidate);
   return {
     candidate: prepared.candidate,
@@ -756,19 +758,22 @@ export async function patchFile(
   request: PatchRequest,
 ): Promise<Record<string, unknown>> {
   request = structuredClone(request);
-  return applyPatchBatch(await resolveWritablePath(request.filePath), {
+  const batchRequest: PatchBatchRequest = {
     aiderBlocks: request.aiderBlock ? [request.aiderBlock] : undefined,
     astRules: request.astRule ? [request.astRule] : undefined,
     expectedSha256: request.expectedSha256,
     patchStrategy: request.patchStrategy,
     preview: request.preview,
     sql: request.sql,
-  });
+  };
+  const filePath = await resolveWritablePath(request.filePath);
+  return applyPatchBatch(filePath, batchRequest);
 }
 
 interface PreparedPatch {
   candidate?: string;
   chattr?: FileChattr;
+  formatted?: Awaited<ReturnType<typeof formatCandidate>>;
   mode?: number;
   previewResult?: Record<string, unknown>;
   receiptToken?: string;
@@ -833,6 +838,21 @@ async function preflightPatchBatch(
   };
 }
 
+async function formatPreparedCandidate(
+  filePath: string,
+  candidate: string,
+  prepared: PreparedPatch,
+) {
+  return formatCandidate(
+    filePath,
+    candidate,
+    await inspectFileCapabilities(filePath),
+    prepared.sqlBinding,
+    // A receipt crosses operations and must recheck the current validator.
+    prepared.receiptToken ? undefined : prepared.sqlDecision,
+  );
+}
+
 async function applyPreparedPatch(
   filePath: string,
   _request: PatchBatchRequest,
@@ -847,14 +867,9 @@ async function applyPreparedPatch(
     prepared.sourceSha256 === undefined
   )
     throw new Error("Patch batch preflight did not produce a commit candidate");
-  const formatted = await formatCandidate(
-    filePath,
-    prepared.candidate,
-    await inspectFileCapabilities(filePath),
-    prepared.sqlBinding,
-    // A receipt crosses operations and must recheck the current validator.
-    prepared.receiptToken ? undefined : prepared.sqlDecision,
-  );
+  const formatted =
+    prepared.formatted ??
+    (await formatPreparedCandidate(filePath, prepared.candidate, prepared));
   const candidate = formatted.candidate;
   if (
     prepared.receiptToken &&
@@ -891,7 +906,8 @@ interface PreparedWrite {
 }
 
 function preparedCandidateSha256(prepared: unknown): string | null {
-  const candidate = (prepared as Partial<PreparedPatch>).candidate;
+  const patch = prepared as Partial<PreparedPatch>;
+  const candidate = patch.formatted?.candidate ?? patch.candidate;
   if (typeof candidate === "string") return sha256(candidate);
   const content = (prepared as Partial<PreparedWrite>).content;
   return typeof content === "string" ? sha256(content) : null;
@@ -902,6 +918,14 @@ async function preflightFileWrite(
   request: FileWriteRequest,
 ): Promise<PreparedWrite> {
   validateFileChattr(request.chattr);
+  if (sourceParserPackOmitted(filePath)) {
+    throw Object.assign(
+      new Error(
+        "The selected language profile does not load the source parser",
+      ),
+      { code: "write_strategy_unsupported", retryable: false },
+    );
+  }
   const existing = await optionalContent(filePath);
   let actual: string | undefined;
   let mode: number | undefined;
@@ -962,6 +986,40 @@ type BatchFileSnapshot =
       mode: number;
     };
 
+type BatchStaging<T, Prepared> = (
+  entries: readonly ResolvedBatchEntry<T>[],
+  snapshots: ReadonlyMap<string, BatchFileSnapshot>,
+  prepared: readonly Prepared[],
+) => Promise<void>;
+
+const formatPatchBatch: BatchStaging<PatchBatchRequest, PreparedPatch> = async (
+  entries,
+  snapshots,
+  prepared,
+) => {
+  const signal = patchSignals.getStore();
+  for (const [index, { request, resolvedPath }] of entries.entries()) {
+    if (request.preview) continue;
+    signal?.throwIfAborted();
+    const patch = prepared[index];
+    const snapshot = snapshots.get(resolvedPath);
+    if (
+      !snapshot ||
+      patch?.candidate === undefined ||
+      patch.sourceSha256 === undefined
+    )
+      throw new Error("Patch formatting requires a preflighted snapshot");
+    verifyExpectedHash(patch.sourceSha256, sha256(snapshot.content));
+    // Recovery must recognize the exact replacement even if the process
+    // stops between rename and recording the committed hash.
+    patch.formatted = await formatPreparedCandidate(
+      resolvedPath,
+      patch.candidate,
+      patch,
+    );
+  }
+};
+
 interface CommittedBatchEntry {
   resolvedPath: string;
   result: Record<string, unknown>;
@@ -1009,11 +1067,14 @@ function discardPreparedPreviews<Prepared>(prepared: Prepared[]): void {
 async function prepareFileBatch<T, Prepared>(
   entries: ResolvedBatchEntry<T>[],
   preflight: (filePath: string, request: T) => Promise<Prepared>,
+  snapshots: ReadonlyMap<string, BatchFileSnapshot>,
+  stage?: BatchStaging<T, Prepared>,
 ): Promise<Prepared[]> {
   const prepared: Prepared[] = [];
   try {
     for (const { request, resolvedPath } of entries)
       prepared.push(await preflight(resolvedPath, request));
+    if (stage) await stage(entries, snapshots, prepared);
     return prepared;
   } catch (error) {
     discardPreparedPreviews(prepared);
@@ -1087,11 +1148,12 @@ async function executeReservedFileBatch<T, Prepared>(
   fence: () => Promise<void>,
   signal: AbortSignal | undefined,
   receiptState: ReceiptBatchState,
+  stage?: BatchStaging<T, Prepared>,
 ): Promise<Record<string, unknown>> {
   signal?.throwIfAborted();
   await using durableSnapshots = new FileSnapshotCollection();
   const snapshots = await captureBatchSnapshots(entries);
-  const prepared = await prepareFileBatch(entries, preflight);
+  const prepared = await prepareFileBatch(entries, preflight, snapshots, stage);
   const files: Record<string, unknown> = {};
   const committed: CommittedBatchEntry[] = [];
   const workspace = currentWorkspace() ?? null;
@@ -1226,6 +1288,7 @@ async function processFileBatch<T, Prepared>(
   preflight: (filePath: string, request: T) => Promise<Prepared>,
   mutates: (request: T) => boolean,
   options: FileLockOptions = {},
+  stage?: BatchStaging<T, Prepared>,
 ): Promise<Record<string, unknown>> {
   options.signal?.throwIfAborted();
   const entries = Object.entries(structuredClone(requests));
@@ -1262,9 +1325,16 @@ async function processFileBatch<T, Prepared>(
             },
             options.signal,
             receiptState,
+            stage,
           ),
       ),
-    { ...options, deadline: options.deadline ?? Date.now() + 10_000 },
+    {
+      ...options,
+      deadline: options.deadline ?? Date.now() + 10_000,
+      onReleaseError: () => {
+        process.stderr.write("ast-mcp: file lock cleanup failed\n");
+      },
+    },
   );
 }
 
@@ -1280,6 +1350,7 @@ export async function patchFiles(
       preflightPatchBatch,
       (request) => request.preview !== true,
       options,
+      formatPatchBatch,
     ),
   );
 }
