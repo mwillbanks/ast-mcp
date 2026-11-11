@@ -5,7 +5,7 @@ beforeEach(() => {
   createMockTime();
 });
 import { createHash } from "node:crypto";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,6 +21,7 @@ import {
 } from "../../../src/intelligence/contracts/common.ts";
 import { revisionMembershipIdentity } from "../../../src/intelligence/contracts/graph.ts";
 import {
+  createPublicationGenerationId,
   createStorageDomainId,
   PublicationGenerationSchema,
   type PublicationReservation,
@@ -109,6 +110,76 @@ function sourceRow(id: string): StorageRow {
 }
 
 describe("publication reservation protocol", () => {
+  test("selects the newest published generation beyond 1,000 rows", async () => {
+    const domain = await storageDomain("generation-history");
+    const { revisionId, workspaceId } = analyticsFixture(
+      ["guide"],
+      [],
+      "generation-history",
+    ).scope;
+    const store = await LanceIntelligenceStore.open(domain);
+    try {
+      const seed = await store.publish({
+        manifestArtifactId: manifestId(revisionId),
+        revisionId,
+        workspaceId,
+      });
+      const rowFor = (index: number, publishedAt: string) => {
+        const identity = {
+          manifestArtifactId: createIdentity("revision-manifest", { index }),
+          revisionId,
+          storageDomainId: seed.storageDomainId,
+          tableVersions: seed.tableVersions,
+          workspaceId,
+        };
+        const generation = {
+          ...seed,
+          ...identity,
+          generationId: createPublicationGenerationId(identity),
+          publishedAt,
+        };
+        return {
+          generation_id: generation.generationId,
+          immutable: generation.immutable,
+          manifest_artifact_id: generation.manifestArtifactId,
+          payload_json: JSON.stringify(generation),
+          published_at: publishedAt,
+          revision_id: revisionId,
+          schema_version: generation.schemaVersion,
+          state: generation.state,
+          storage_domain_id: generation.storageDomainId,
+          table_versions_json: JSON.stringify(generation.tableVersions),
+          workspace_id: workspaceId,
+        };
+      };
+      const older = "2026-09-10T00:00:00.000Z";
+      const newest = rowFor(1_001, "2099-09-10T00:00:00.000Z");
+      const connection = await lancedb.connect(domain.storagePath);
+      try {
+        const table = await connection.openTable("publications");
+        try {
+          await table.add([
+            ...Array.from({ length: 1_001 }, (_, index) =>
+              rowFor(index, older),
+            ),
+            newest,
+            rowFor(1_002, older),
+          ]);
+        } finally {
+          table.close();
+        }
+      } finally {
+        connection.close();
+      }
+      expect((await store.latestGeneration(workspaceId))?.generationId).toBe(
+        newest.generation_id,
+      );
+    } finally {
+      await store.shutdownCoordinator();
+      await rm(domain.storagePath, { force: true, recursive: true });
+    }
+  });
+
   test("rejects malformed publication reservation contracts", async () => {
     expect(
       RequiredPublicationTablesSchema.safeParse(["artifacts", "artifacts"])

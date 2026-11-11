@@ -1453,6 +1453,13 @@ function projectRelativePolicyPath(
 }
 
 function policy(config: ResolvedConfig) {
+  let languagePacks: Omit<ResolvedLanguagePacks, "directory"> | undefined =
+    config.languagePacks;
+  if (config.languagePacks?.scope === "project") {
+    // The authorized checkout determines the effective project store.
+    const { directory: _directory, ...settings } = config.languagePacks;
+    languagePacks = settings;
+  }
   return JSON.stringify({
     dependencies: config.dependencies,
     files: config.files,
@@ -1464,7 +1471,7 @@ function policy(config: ResolvedConfig) {
           ? null
           : config.formatting.dprintConfig,
     },
-    languagePacks: config.languagePacks,
+    languagePacks,
     mcp: config.mcp.configuration,
     safety: config.safety,
     telemetry: config.telemetry,

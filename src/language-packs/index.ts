@@ -15,7 +15,7 @@ import {
   writeFileSync,
   type BigIntStats,
 } from "node:fs";
-import { mkdir, mkdtemp, open, rm, unlink } from "node:fs/promises";
+import { mkdtemp, open, rm, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -384,26 +384,24 @@ async function installInto(
 ): Promise<void> {
   const destination = path.join(directory, descriptor.filename);
   const pending = path.join(directory, "." + descriptor.filename + ".pending");
-  const stageRoot = path.join(
-    realpathSync(os.tmpdir()),
-    "ast-mcp-pack-" + digest(Buffer.from(destination)),
-  );
   const deadline = Date.now() + 35_000;
   const signal = AbortSignal.timeout(35_000);
   const lock = await acquireTransactionLock(destination, { deadline, signal });
+  let stage: string | undefined;
   try {
     await unlink(pending).catch((error) => {
       if (!missing(error)) throw error;
     });
-    await cleanStaging(stageRoot);
     try {
       checkedAsset(destination, descriptor);
       return;
     } catch (error) {
       if (!missing(error)) throw error;
     }
-    await mkdir(stageRoot, { mode: 0o700 });
-    const stage = await mkdtemp(path.join(stageRoot, "install-"));
+    // Keep Bun's extracted paths short, with a fresh directory per install.
+    stage = await mkdtemp(
+      path.join(realpathSync(os.tmpdir()), "ast-mcp-pack-"),
+    );
     const libraryPath = await stagePackWithBun(stage, descriptor, signal);
     const bytes = await sourceBytes(libraryPath, descriptor);
     signal.throwIfAborted();
@@ -424,9 +422,12 @@ async function installInto(
       await unlink(pending).catch((error) => {
         if (!missing(error)) throw error;
       });
-      await cleanStaging(stageRoot);
     } finally {
-      lock.release();
+      try {
+        if (stage) await cleanStaging(stage);
+      } finally {
+        lock.release();
+      }
     }
   }
 }

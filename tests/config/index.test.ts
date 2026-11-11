@@ -185,6 +185,42 @@ test("inactive project-default dprint paths preserve compatible multi-root reque
   );
 });
 
+test("compares project language pack policy independently of checkout directory", async () => {
+  const first = await project("ast-mcp-config-pack-a-");
+  const second = await project("ast-mcp-config-pack-b-");
+  const roots = [first, second];
+  const options = {
+    clientRoots: roots,
+    cwd: first,
+    env: {},
+    languagePackHost: { allowProject: true },
+    requestPaths: roots.map((root) => path.join(root, "example.ts")),
+  };
+  for (const root of roots)
+    await writeFile(
+      path.join(root, "ast-mcp.toml"),
+      'version = 2\n[language_packs]\nscope = "project"\n',
+    );
+
+  const config = await resolveConfig(options);
+  expect(config.languagePacks).toMatchObject({
+    scope: "project",
+    directory: path.join(first, ".ast-mcp", "language-packs"),
+  });
+
+  await writeFile(
+    path.join(second, "ast-mcp.toml"),
+    'version = 2\n[language_packs]\nscope = "user"\n',
+  );
+  clearConfigCache();
+  await expect(resolveConfig(options)).rejects.toThrow(
+    "conflicting ast-mcp policies",
+  );
+  await expect(
+    resolveConfig({ ...options, languagePackHost: { allowProject: false } }),
+  ).rejects.toThrow("conflicting ast-mcp policies");
+});
+
 test("validates and resolves intelligence placement, retrieval, and generation", async () => {
   const root = await project("ast-mcp-config-intelligence-");
   await writeFile(

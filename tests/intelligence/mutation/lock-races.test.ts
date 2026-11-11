@@ -12,6 +12,7 @@ import path from "node:path";
 import {
   acquireFileLock,
   mutationLockPath,
+  withFencedFileLock,
 } from "../../../src/intelligence/mutation/locks.ts";
 import {
   ensurePrivateLockDirectory,
@@ -67,6 +68,52 @@ test.each(["opened", "synced"] as const)(
     }
   },
 );
+test.each([false, true])(
+  "guarded lock preserves the operation result when release fails (action fails: %s)",
+  async (actionFails) => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "ast-mcp-release-"));
+    const file = path.join(root, "value.ts");
+    const actionError = new Error("action failed");
+    const cleanupError = new Error("release failed");
+    const diagnostics: unknown[] = [];
+    const stderr = spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      const operation = withFencedFileLock(
+        file,
+        async (lease) => {
+          const release = lease.release.bind(lease);
+          lease.release = async () => {
+            await release();
+            throw cleanupError;
+          };
+          if (actionFails) throw actionError;
+          return "committed";
+        },
+        actionFails
+          ? {
+              onReleaseError(error) {
+                diagnostics.push(error);
+                throw new Error("diagnostic failed");
+              },
+            }
+          : {},
+      );
+      if (actionFails) {
+        await expect(operation).rejects.toBe(actionError);
+        expect(diagnostics).toEqual([cleanupError]);
+      } else {
+        await expect(operation).resolves.toBe("committed");
+        expect(stderr).toHaveBeenCalledWith(
+          "ast-mcp: file lock cleanup failed\n",
+        );
+      }
+    } finally {
+      stderr.mockRestore();
+      await fs.rm(root, { force: true, recursive: true });
+    }
+  },
+);
+
 test("orphan lock cleanup propagates unreadable artifact failures", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ast-mcp-lock-orphan-"));
   const file = path.join(root, "value.ts");

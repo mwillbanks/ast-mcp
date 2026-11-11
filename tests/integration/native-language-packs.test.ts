@@ -30,11 +30,26 @@ import {
   verifyNativePackAsset,
 } from "../../src/language-packs/index.ts";
 
+async function makeFixturePackRemovable(file: string): Promise<void> {
+  if (process.platform !== "win32") return;
+  try {
+    await chmod(file, 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+async function removeFixturePack(file: string): Promise<void> {
+  await makeFixturePackRemovable(file);
+  await rm(file);
+}
+
 async function withPackFixture<T>(
   use: (fixture: {
     root: string;
     checkout: string;
     config: string;
+    trackPack: (file: string) => string;
     options: { cwd: string; env: NodeJS.ProcessEnv; home: string };
   }) => Promise<T>,
 ) {
@@ -43,6 +58,7 @@ async function withPackFixture<T>(
   );
   const checkout = path.join(root, "checkout");
   const home = path.join(root, "config");
+  const packs = new Set<string>();
   const options = {
     cwd: checkout,
     env: { APPDATA: home, XDG_CONFIG_HOME: home },
@@ -54,9 +70,15 @@ async function withPackFixture<T>(
       root,
       checkout,
       config: path.join(checkout, "ast-mcp.toml"),
+      trackPack(file) {
+        packs.add(file);
+        return file;
+      },
       options,
     });
   } finally {
+    // Windows recursive removal can reject read-only files in the fixture.
+    await Promise.all([...packs].map(makeFixturePackRemovable));
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -153,7 +175,7 @@ test("language pack store and first-use download require the host's grants", asy
 });
 
 test("offline lookup and doctor reject corrupt packs without loading or fetching", async () => {
-  await withPackFixture(async ({ options }) => {
+  await withPackFixture(async ({ options, trackPack }) => {
     const config = await resolveConfig(options);
     const directory = languagePackStore(config)!;
     const descriptor = nativePackDescriptor("python");
@@ -175,7 +197,7 @@ test("offline lookup and doctor reject corrupt packs without loading or fetching
         installNativeLanguagePack(config, "python", { offline: true }),
       ).rejects.toThrow("available offline");
       await mkdir(directory, { mode: 0o700, recursive: true });
-      const libraryPath = path.join(directory, descriptor.filename);
+      const libraryPath = trackPack(path.join(directory, descriptor.filename));
       await writeFile(libraryPath, "invalid native bytes", { mode: 0o400 });
       const asset = { ...descriptor, libraryPath };
       expect(
@@ -203,22 +225,27 @@ test("offline lookup and doctor reject corrupt packs without loading or fetching
   });
 });
 
-test("concurrent installs share archive requests and clean up interrupted staging", async () => {
+test("concurrent installs coalesce and clean only their own stages on failure", async () => {
   const descriptor = nativePackDescriptor("sql");
   if (!descriptor) return;
-  await withPackFixture(async ({ options }) => {
+  await withPackFixture(async ({ options, trackPack }) => {
     const config = await resolveConfig(options);
     const directory = languagePackStore(config)!;
     await mkdir(directory, { mode: 0o700, recursive: true });
     const destination = path.join(directory, descriptor.filename);
-    const pending = path.join(
-      directory,
-      "." + descriptor.filename + ".pending",
+    const pending = trackPack(
+      path.join(directory, "." + descriptor.filename + ".pending"),
     );
     const key = createHash("sha256").update(destination).digest("hex");
-    const stage = path.join(await realpath(os.tmpdir()), "ast-mcp-pack-" + key);
-    await mkdir(stage, { mode: 0o700 });
+    const foreignStage = path.join(
+      await realpath(os.tmpdir()),
+      "ast-mcp-pack-" + key,
+    );
+    await mkdir(foreignStage, { mode: 0o700 });
+    const sentinel = path.join(foreignStage, "keep");
+    await writeFile(sentinel, "outside the current install");
     await writeFile(pending, "partial native bytes", { mode: 0o400 });
+    const staging = spyOn(packArchive, "stagePackWithBun");
     const network = spyOn(globalThis, "fetch").mockImplementation(
       Object.assign(async () => new Response("invalid archive"), {
         preconnect: fetch.preconnect,
@@ -235,9 +262,21 @@ test("concurrent installs share archive requests and clean up interrupted stagin
         });
       }
       expect(network).toHaveBeenCalledTimes(2);
-      for (const entry of [stage, pending, destination]) {
+      expect(staging).toHaveBeenCalledTimes(1);
+      await expect(installNativeLanguagePack(config, "sql")).rejects.toThrow(
+        "archive integrity mismatch",
+      );
+      expect(staging).toHaveBeenCalledTimes(2);
+      expect(staging.mock.calls[0]?.[0]).not.toBe(staging.mock.calls[1]?.[0]);
+      for (const [stage] of staging.mock.calls) {
+        await expect(stat(stage)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      for (const entry of [pending, destination]) {
         await expect(stat(entry)).rejects.toMatchObject({ code: "ENOENT" });
       }
+      expect(await Bun.file(sentinel).text()).toBe(
+        "outside the current install",
+      );
       const signal = new AbortController().signal;
       await expect(
         packArchive.verifiedPackArchive(
@@ -248,7 +287,8 @@ test("concurrent installs share archive requests and clean up interrupted stagin
       ).rejects.toThrow("archive integrity mismatch");
     } finally {
       network.mockRestore();
-      await rm(stage, { force: true, recursive: true });
+      staging.mockRestore();
+      await rm(foreignStage, { force: true, recursive: true });
     }
   });
 });
@@ -256,12 +296,13 @@ test("concurrent installs share archive requests and clean up interrupted stagin
 test.skipIf(!nativePackDescriptor("go"))(
   "publishes a verified native pack while a coalesced waiter can cancel independently",
   async () => {
-    await withPackFixture(async ({ options }) => {
+    await withPackFixture(async ({ options, trackPack }) => {
       const config = await resolveConfig({
         ...options,
         languagePackHost: { allowDownload: true },
       });
       const descriptor = nativePackDescriptor("go")!;
+      trackPack(path.join(languagePackStore(config)!, descriptor.filename));
       const ready = Promise.withResolvers<void>();
       const resume = Promise.withResolvers<void>();
       const staging = spyOn(packArchive, "stagePackWithBun").mockImplementation(
@@ -271,7 +312,7 @@ test.skipIf(!nativePackDescriptor("go"))(
           await resume.promise;
           const source = path.join(stage, "grammar.so");
           await copyFile(pinnedGrammarRegistration("go").libraryPath, source);
-          await chmod(source, 0o400);
+          await chmod(source, 0o600);
           return source;
         },
       );
@@ -325,56 +366,60 @@ test.skipIf(!nativePackDescriptor("go"))(
 test.skipIf(!nativePackDescriptor("python"))(
   "activates a verified project pack through a private copy outside the checkout",
   async () => {
-    await withPackFixture(async ({ checkout, config: configPath, options }) => {
-      await writeFile(
-        configPath,
-        'version = 2\n[language_packs]\nscope = "project"\n',
-      );
-      const config = await resolveConfig({
-        ...options,
-        languagePackHost: { allowProject: true },
-      });
-      const descriptor = nativePackDescriptor("python")!;
-      const store = languagePackStore(config)!;
-      const projectLibrary = path.join(store, descriptor.filename);
-      const activated = path.join(
-        config.languagePacks!.userDirectory,
-        ".activated",
-        descriptor.filename,
-      );
-      await mkdir(store, { recursive: true, mode: 0o700 });
-      await copyFile(
-        pinnedGrammarRegistration("python").libraryPath,
-        projectLibrary,
-      );
-      await chmod(projectLibrary, 0o400);
-      expect(listNativeLanguagePacks(config)).toContainEqual(
-        expect.objectContaining({
-          language: "python",
-          libraryPath: projectLibrary,
-          status: "installed",
-        }),
-      );
-      await expect(stat(activated)).rejects.toMatchObject({ code: "ENOENT" });
-      const asset = activeNativePack("python", config, checkout)!;
-      expect(asset.libraryPath).toBe(activated);
-      expect(verifyNativePackAsset("python", asset)).toBe(true);
-      expect(activeNativePack("python", config, checkout)).toEqual(asset);
+    await withPackFixture(
+      async ({ checkout, config: configPath, options, trackPack }) => {
+        await writeFile(
+          configPath,
+          'version = 2\n[language_packs]\nscope = "project"\n',
+        );
+        const config = await resolveConfig({
+          ...options,
+          languagePackHost: { allowProject: true },
+        });
+        const descriptor = nativePackDescriptor("python")!;
+        const store = languagePackStore(config)!;
+        const projectLibrary = trackPack(path.join(store, descriptor.filename));
+        const activated = trackPack(
+          path.join(
+            config.languagePacks!.userDirectory,
+            ".activated",
+            descriptor.filename,
+          ),
+        );
+        await mkdir(store, { recursive: true, mode: 0o700 });
+        await copyFile(
+          pinnedGrammarRegistration("python").libraryPath,
+          projectLibrary,
+        );
+        await chmod(projectLibrary, 0o400);
+        expect(listNativeLanguagePacks(config)).toContainEqual(
+          expect.objectContaining({
+            language: "python",
+            libraryPath: projectLibrary,
+            status: "installed",
+          }),
+        );
+        await expect(stat(activated)).rejects.toMatchObject({ code: "ENOENT" });
+        const asset = activeNativePack("python", config, checkout)!;
+        expect(asset.libraryPath).toBe(activated);
+        expect(verifyNativePackAsset("python", asset)).toBe(true);
+        expect(activeNativePack("python", config, checkout)).toEqual(asset);
 
-      await rm(activated);
-      expect(activeNativePack("python", config, checkout)).toEqual(asset);
-      await chmod(activated, 0o600);
-      await writeFile(activated, "damaged activated copy");
-      await chmod(activated, 0o400);
-      expect(() => activeNativePack("python", config, checkout)).toThrow(
-        "digest mismatch",
-      );
-      await rm(activated);
-      expect(activeNativePack("python", config, checkout)).toEqual(asset);
-      await rm(projectLibrary);
-      expect(activeNativePack("python", config, checkout)).toBeUndefined();
-      expect(verifyNativePackAsset("python", asset)).toBe(true);
-    });
+        await removeFixturePack(activated);
+        expect(activeNativePack("python", config, checkout)).toEqual(asset);
+        await chmod(activated, 0o600);
+        await writeFile(activated, "damaged activated copy");
+        await chmod(activated, 0o400);
+        expect(() => activeNativePack("python", config, checkout)).toThrow(
+          "digest mismatch",
+        );
+        await removeFixturePack(activated);
+        expect(activeNativePack("python", config, checkout)).toEqual(asset);
+        await removeFixturePack(projectLibrary);
+        expect(activeNativePack("python", config, checkout)).toBeUndefined();
+        expect(verifyNativePackAsset("python", asset)).toBe(true);
+      },
+    );
   },
 );
 
@@ -390,7 +435,7 @@ test.skipIf(!nativePackDescriptor("sql"))(
         async (stage) => {
           const file = path.join(stage, "wrong.so");
           await writeFile(file, "staged bytes of the wrong grammar", {
-            mode: 0o400,
+            mode: 0o600,
           });
           return file;
         },
@@ -407,7 +452,7 @@ test.skipIf(!nativePackDescriptor("sql"))(
         expect(activeNativePack("sql", config)).toBeUndefined();
         staging.mockImplementation(async (stage) => {
           const file = path.join(stage, "empty.so");
-          await writeFile(file, "", { mode: 0o400 });
+          await writeFile(file, "", { mode: 0o600 });
           return file;
         });
         await expect(installNativeLanguagePack(config, "sql")).rejects.toThrow(

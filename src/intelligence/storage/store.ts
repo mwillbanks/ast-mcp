@@ -310,18 +310,18 @@ async function latestPublishedGeneration(
   workspaceId: string,
   timeoutMs = 5_000,
 ): Promise<PublicationGeneration | null> {
-  const rows = await storageRows(
-    connection,
-    "publications",
-    `workspace_id = ${sqlString(workspaceId)} AND state = 'published'`,
-    { limit: 1_000, timeoutMs },
-  );
-  const generations = rows
-    .map((row) => parseJsonRecord(row.payload_json))
-    .filter((row): row is Record<string, unknown> => row !== null)
-    .map((row) => PublicationGenerationSchema.parse(row))
-    .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
-  return generations[0] ?? null;
+  return withLatestTable(connection, "publications", async (table) => {
+    assertCompatibleSchema("publications", await table.schema());
+    const [row] = (await table
+      .query()
+      .where(`workspace_id = ${sqlString(workspaceId)} AND state = 'published'`)
+      .orderBy({ columnName: "published_at", ascending: false })
+      .select(["payload_json"])
+      .limit(1)
+      .toArray({ timeoutMs })) as StorageRow[];
+    const payload = parseJsonRecord(row?.payload_json);
+    return payload ? PublicationGenerationSchema.parse(payload) : null;
+  });
 }
 
 function isLegacyPublicationTagSchema(

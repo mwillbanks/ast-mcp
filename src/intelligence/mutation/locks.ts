@@ -901,12 +901,20 @@ async function withFencedFileLockDiscovery<Result>(
       return await operation(lease);
     } finally {
       clearInterval(heartbeat);
-      const release = () =>
-        lease.release().catch((error: unknown) => {
-          if (!options.onReleaseError) throw error;
-          options.onReleaseError(error);
-        });
-      await release();
+      try {
+        await lease.release();
+      } catch (error) {
+        // Cleanup diagnostics must preserve the guarded operation's outcome.
+        try {
+          if (options.onReleaseError) {
+            options.onReleaseError(error);
+          } else {
+            process.stderr.write("ast-mcp: file lock cleanup failed\n");
+          }
+        } catch {
+          // The diagnostic sink may also be unavailable.
+        }
+      }
     }
   });
 }

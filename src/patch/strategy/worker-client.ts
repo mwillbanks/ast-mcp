@@ -196,9 +196,29 @@ export class PatchPreparationPool {
   }
 
   private async start(task: Task): Promise<void> {
+    let packs: Awaited<Task["packs"]>;
     try {
-      const packs = task.packs ? await task.packs : undefined;
-      if (task.settled) return;
+      packs = task.packs ? await task.packs : undefined;
+    } catch (cause) {
+      this.settle(
+        task,
+        cause instanceof Error && "code" in cause
+          ? cause
+          : Object.assign(
+              new Error(
+                cause instanceof Error ? cause.message : String(cause),
+                {
+                  cause,
+                },
+              ),
+              cause,
+              { code: "patch_pack_selection", retryable: false },
+            ),
+      );
+      return;
+    }
+    if (task.settled) return;
+    try {
       const workerUrl =
         this.options.workerUrl ?? new URL("./worker.ts", import.meta.url);
       const worker: PreparationWorker =

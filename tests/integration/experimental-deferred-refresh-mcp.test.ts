@@ -671,7 +671,6 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     const cancelled = await startStrictRead(controller.signal);
     controller.abort(new Error("Strict read cancelled by fixture"));
     await expect(cancelled.result).rejects.toThrow(/cancelled|abort/i);
-    const { result: strict } = await startStrictRead();
     const newerCommit = success(
       await call("file_patch", {
         workspaceId,
@@ -745,15 +744,18 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     );
     if (!queued)
       throw new Error("Concurrent commit did not schedule the newer epoch");
-    await queued[2](queued[1]);
+    const publication = holdFinalization();
+    const latestJob = queued[2](queued[1]);
+    await publication.enter(latestJob);
+    const { result: strict } = await startStrictRead();
+    publication.release();
+    await latestJob;
     const published = await deferredRefresh.readRefreshState(key);
     if (published?.kind !== "clean")
       throw new Error("Background refresh left the checkout pending");
     const generation = published.publishedGenerationId;
     expect(generation).toStartWith("generation:v1:");
     expect(generation).not.toBe(originalGeneration);
-    await work(state);
-    expect(await deferredRefresh.readRefreshState(key)).toEqual(published);
     const refreshed = success<{
       scope: { generationId: string };
       results: Array<{ text: string }>;
@@ -765,6 +767,8 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     expect(
       refreshed.results.some(({ text }) => text.includes("latestMarker")),
     ).toBeTrue();
+    await work(state);
+    expect(await deferredRefresh.readRefreshState(key)).toEqual(published);
   } finally {
     for (const release of releases) release();
     await Promise.allSettled(jobs);
