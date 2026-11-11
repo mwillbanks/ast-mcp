@@ -296,8 +296,13 @@ function userActivationAsset(
     );
     const file = openSync(pending, "wx", 0o400);
     try {
-      writeFileSync(file, bytes);
-      fsyncSync(file);
+      try {
+        writeFileSync(file, bytes);
+        fsyncSync(file);
+      } finally {
+        closeSync(file);
+      }
+      // Windows must map the DLL after the writable handle has closed.
       checkAbi(pending, descriptor);
       try {
         linkSync(pending, destination);
@@ -305,11 +310,7 @@ function userActivationAsset(
         if ((failure as NodeJS.ErrnoException).code !== "EEXIST") throw failure;
       }
     } finally {
-      try {
-        closeSync(file);
-      } finally {
-        unlinkSync(pending);
-      }
+      unlinkSync(pending);
     }
   }
   rememberVerified(projectLibrary, projectIdentity);
