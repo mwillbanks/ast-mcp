@@ -113,7 +113,9 @@ async function readMarker({
           (constants.O_NONBLOCK ?? 0),
       );
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      if (code === "mutation_refresh_marker_unsafe") throw error;
       throw markerError("mutation_refresh_marker_unreadable", error);
     }
   })();

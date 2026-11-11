@@ -37,6 +37,7 @@ import {
 } from "../../src/intelligence/workspace/index.ts";
 import { withCheckoutAdmission } from "../../src/runtime/checkout-admission.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
+import * as transactionLocks from "../../src/runtime/transaction-lock.ts";
 import { acquireTransactionLock } from "../../src/runtime/transaction-lock.ts";
 import { MOCK_EPOCH } from "../support/mock-time.ts";
 
@@ -155,17 +156,6 @@ test("explicit publication requires its fence and strict reads reject intervenin
     async ({ transaction, workspace, scheduled }) => {
       expect(await observeMutationIndex(workspace)).toEqual({ pending: false });
       const generation = publication(workspace, "initial");
-      const active = await acquireTransactionLock(transaction + ".refresh-job");
-      try {
-        await expect(
-          withDeferredIndexPublication(workspace, async () => {
-            throw new Error("A competing publication entered");
-          }),
-        ).rejects.toMatchObject(pendingError);
-      } finally {
-        active.release();
-      }
-
       await expect(
         withDeferredIndexPublication(workspace, async () =>
           refreshResult(generation.generationId),
@@ -218,6 +208,90 @@ test("explicit publication requires its fence and strict reads reject intervenin
         paths: ["edited.ts"],
         publishedGenerationId: generation.generationId,
       });
+    },
+  );
+});
+
+test("explicit index build waits outside writer admission for another storage scope", async () => {
+  await withPublicationFixture(
+    async ({ alternate, transaction, workspace }) => {
+      const release = Promise.withResolvers<void>();
+      const staged = Promise.withResolvers<void>();
+      const firstGeneration = publication(workspace, "first scope");
+      const nextGeneration = publication(alternate, "second scope");
+      const first = withDeferredIndexPublication(
+        workspace,
+        async (finalize) => {
+          staged.resolve();
+          await release.promise;
+          return publishFixture(finalize, firstGeneration);
+        },
+      );
+      const ready = [
+        Promise.withResolvers<void>(),
+        Promise.withResolvers<void>(),
+      ];
+      const abort = new AbortController();
+      let requests = 0;
+      let observing = false;
+      let cancelled: Promise<MutationRefreshResult> | undefined;
+      let next: Promise<MutationRefreshResult> | undefined;
+      const acquire = acquireTransactionLock;
+      const spy = spyOn(
+        transactionLocks,
+        "acquireTransactionLock",
+      ).mockImplementation((...args: Parameters<typeof acquire>) => {
+        const result = acquire(...args);
+        if (observing && args[0] === transaction + ".refresh-job")
+          ready[requests++]?.resolve();
+        return result;
+      });
+      try {
+        await Promise.race([staged.promise, first]);
+        observing = true;
+        cancelled = withDeferredIndexPublication(
+          alternate,
+          async () => {
+            throw new Error("Cancelled publication entered");
+          },
+          abort.signal,
+        );
+        void cancelled.catch(() => undefined);
+        await Promise.race([ready[0]!.promise, cancelled]);
+        next = withDeferredIndexPublication(alternate, (finalize) =>
+          publishFixture(finalize, nextGeneration),
+        );
+        void next.catch(() => undefined);
+        await Promise.race([ready[1]!.promise, next]);
+        await withCheckoutAdmission(
+          transaction,
+          { deadline: Date.now() + 10_000, tryOnly: true },
+          async () => {
+            const writer = await acquireTransactionLock(transaction, {
+              tryOnly: true,
+            });
+            writer.release();
+          },
+        );
+        abort.abort();
+        await expect(cancelled).rejects.toMatchObject({ code: "lock_aborted" });
+        release.resolve();
+        expect(await first).toMatchObject({
+          generationId: firstGeneration.generationId,
+        });
+        expect(await next).toMatchObject({
+          generationId: nextGeneration.generationId,
+        });
+        expect(await observeMutationIndex(alternate)).toMatchObject({
+          pending: false,
+          generationId: nextGeneration.generationId,
+        });
+      } finally {
+        abort.abort();
+        release.resolve();
+        spy.mockRestore();
+        await Promise.allSettled([first, cancelled, next]);
+      }
     },
   );
 });

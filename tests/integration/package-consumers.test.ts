@@ -70,11 +70,12 @@ function workspaceId(result: unknown): string {
   return match[0];
 }
 
-function toolData<T>(result: Awaited<ReturnType<Client["callTool"]>>): T {
-  expect(
-    result.isError,
-    JSON.stringify(result.structuredContent),
-  ).not.toBeTrue();
+function toolData<T>(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+  step?: string,
+): T {
+  const details = JSON.stringify(result.structuredContent);
+  expect(result.isError, step ? step + " " + details : details).not.toBeTrue();
   const data = (result.structuredContent as { data?: T } | undefined)?.data;
   expect(data).toBeDefined();
   if (!data) throw new Error("Tool omitted structured data");
@@ -261,6 +262,7 @@ async function exercisePackage(
       action: "build",
       workspaceId: id,
     }),
+    "Build working index",
   );
   expect(built.generation).toMatch(/^generation:v1:[a-f0-9]{64}$/);
   const status = toolData<{
@@ -271,6 +273,7 @@ async function exercisePackage(
       timeoutMs: 30_000,
       workspaceId: id,
     }),
+    "Read newly built index",
   );
   expect(status.generation).toBe(built.generation);
   expect(status.counts.artifacts).toBeGreaterThan(0);

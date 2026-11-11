@@ -1122,11 +1122,13 @@ function acquireRefreshClaim(
   transactionPath: string,
   options: CheckoutMutationOptions,
 ) {
+  const tryOnly = options.tryOnly ?? true;
   return acquireTransactionLock(transactionPath + ".refresh-job", {
     ...options,
-    tryOnly: true,
+    tryOnly,
   }).catch((error: unknown) => {
-    if (errorCode(error) !== "lock_busy") throw error;
+    if (errorCode(error) !== (tryOnly ? "lock_busy" : "lock_deadline"))
+      throw error;
     return undefined;
   });
 }
@@ -1619,7 +1621,12 @@ export async function withDeferredIndexPublication(
   const options = { signal };
   const config = await currentConfig();
   const scope = refreshScope(workspace, configurationIdentity(config));
-  const claim = await acquireRefreshClaim(transactionPath, options);
+  // An explicit build can wait for the existing refresh without holding the
+  // checkout lease. The background scheduler continues to use a try-only claim.
+  const claim = await acquireRefreshClaim(transactionPath, {
+    ...options,
+    tryOnly: false,
+  });
   if (!claim) throw refreshPendingError();
   let attemptedEpoch: string | undefined;
   let retryCurrent = false;

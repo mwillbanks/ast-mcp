@@ -100,7 +100,8 @@ jobs:
           cd "$RUNNER_TEMP/standalone-matrix/standalone-bun-$TARGET"
           bun -e 'const archive = Bun.argv[1]; const checksum = (await Bun.file(archive + ".sha256").text()).split(/\s+/)[0]; const hash = new Bun.CryptoHasher("sha256"); for await (const chunk of Bun.file(archive).stream()) hash.update(chunk); if (hash.digest("hex") !== checksum) throw new Error("Standalone archive checksum mismatch");' "$archive"
           mkdir "$RUNNER_TEMP/standalone"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/standalone"
+          cd "$RUNNER_TEMP/standalone"
+          tar -xzf "../standalone-matrix/standalone-bun-$TARGET/$archive"
       - name: Qualify the standalone executable
         if: ${{ !matrix.musl }}
         shell: bash

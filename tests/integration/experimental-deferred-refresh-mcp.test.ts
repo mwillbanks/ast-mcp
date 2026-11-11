@@ -31,7 +31,7 @@ import { createServer } from "../../src/server/index.ts";
 
 const fixtureEnv = "AST_MCP_TEST_DEFERRED_REFRESH_FIXTURE";
 const fixtureModeEnv = "AST_MCP_TEST_DEFERRED_REFRESH_MODE";
-type FixtureMode = "plain" | "git" | "unindexed" | "publication";
+type FixtureMode = "plain" | "git" | "unindexed" | "publication" | "selection";
 const previous = "export function beforeMarker() { return 1; }";
 const next = "export function afterMarker() { return 2; }";
 const latest = "export function latestMarker() { return 3; }";
@@ -190,7 +190,7 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
       return;
     }
     let workspaceId = openedWorkspaceId;
-    const initial = mode === "plain" ? holdFinalization() : undefined;
+    const initial = mode === "selection" ? holdFinalization() : undefined;
     const initialBuild = call("index", { action: "build", workspaceId });
     if (initial) {
       await initial.enter(initialBuild);
@@ -221,6 +221,44 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     );
     schedule.mockClear();
     expect(originalGeneration).toStartWith("generation:v1:");
+    if (mode === "selection") {
+      const alternate = success<{ workspace: { workspaceId: string } }>(
+        await call("workspace_open", {
+          directory: checkout,
+          storage: {
+            kind: "explicit",
+            path: path.join(root, "alternate-index"),
+          },
+        }),
+      ).workspace.workspaceId;
+      expect(alternate).not.toBe(workspaceId);
+      success(await call("index", { action: "build", workspaceId: alternate }));
+
+      const switching = holdFinalization();
+      const rebuild = call("index", { action: "refresh", workspaceId });
+      await switching.enter(rebuild);
+      expect(
+        success(
+          await call("retrieve", {
+            workspaceId,
+            query: "beforeMarker",
+            semantic: false,
+          }),
+        ),
+      ).toMatchObject({
+        freshness: { stale: true },
+        scope: { generationId: originalGeneration, workspaceId },
+      });
+      switching.release();
+      const explicit = success<{ generation: string }>(await rebuild);
+      expect(
+        await deferredRefresh.readRefreshState(transactionPath),
+      ).toMatchObject({
+        kind: "clean",
+        publishedGenerationId: explicit.generation,
+      });
+      return;
+    }
     const beforePreview =
       await deferredRefresh.readRefreshState(transactionPath);
     const expectedSha256 = sha256(previous + "\n");
@@ -727,40 +765,6 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     expect(
       refreshed.results.some(({ text }) => text.includes("latestMarker")),
     ).toBeTrue();
-    const explicit = success<{ generation: string }>(
-      await call("index", { action: "refresh", workspaceId }),
-    );
-    expect(await deferredRefresh.readRefreshState(key)).toMatchObject({
-      kind: "clean",
-      publishedGenerationId: explicit.generation,
-    });
-
-    const alternate = success<{ workspace: { workspaceId: string } }>(
-      await call("workspace_open", {
-        directory: checkout,
-        storage: { kind: "explicit", path: path.join(root, "alternate-index") },
-      }),
-    ).workspace.workspaceId;
-    expect(alternate).not.toBe(workspaceId);
-    success(await call("index", { action: "build", workspaceId: alternate }));
-
-    const switching = holdFinalization();
-    const rebuild = call("index", { action: "refresh", workspaceId });
-    await switching.enter(rebuild);
-    expect(
-      success(
-        await call("retrieve", {
-          workspaceId,
-          query: "latestMarker",
-          semantic: false,
-        }),
-      ),
-    ).toMatchObject({
-      freshness: { stale: true },
-      scope: { generationId: explicit.generation, workspaceId },
-    });
-    switching.release();
-    success(await rebuild);
   } finally {
     for (const release of releases) release();
     await Promise.allSettled(jobs);
@@ -853,20 +857,25 @@ async function launchFixture(mode: FixtureMode): Promise<void> {
     }
     const env = { ...process.env };
     delete env.AST_MCP_EXPERIMENT_DEFERRED_REFRESH;
-    const child = Bun.spawn([process.execPath, "test", import.meta.path], {
-      cwd: checkout,
-      env: {
-        ...env,
-        [fixtureEnv]: root,
-        [fixtureModeEnv]: mode,
-        APPDATA: path.join(root, "config"),
-        XDG_CONFIG_HOME: path.join(root, "config"),
-        AST_MCP_EXPERIMENT_NATIVE_ONLY: "1",
-        AST_MCP_TELEMETRY: "0",
+    // The isolated runner uses the package suite's integration safety ceiling.
+    // The fixture still exercises the original MCP and transaction deadlines.
+    const child = Bun.spawn(
+      [process.execPath, "test", "--timeout=30000", import.meta.path],
+      {
+        cwd: checkout,
+        env: {
+          ...env,
+          [fixtureEnv]: root,
+          [fixtureModeEnv]: mode,
+          APPDATA: path.join(root, "config"),
+          XDG_CONFIG_HOME: path.join(root, "config"),
+          AST_MCP_EXPERIMENT_NATIVE_ONLY: "1",
+          AST_MCP_TELEMETRY: "0",
+        },
+        stderr: "pipe",
+        stdout: "pipe",
       },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
+    );
     try {
       const [exit, stderr, stdout] = await Promise.all([
         child.exited,
@@ -894,6 +903,9 @@ async function launchFixture(mode: FixtureMode): Promise<void> {
 
 test("indexed reads and writes continue during staging with SQLite", () =>
   launchFixture("plain"));
+
+test("a rebuild exposes only a previously published generation from its selected store", () =>
+  launchFixture("selection"));
 
 test("unindexed writes enroll SQLite and an explicit build preserves recovery ownership", () =>
   launchFixture("unindexed"));
