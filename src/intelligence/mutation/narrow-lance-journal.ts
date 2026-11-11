@@ -130,10 +130,18 @@ async function syncStorageParents(
   storagePath: string,
   firstCreated: string,
 ): Promise<void> {
-  const existing = path.dirname(firstCreated);
-  for (let parent = storagePath; ; parent = path.dirname(parent)) {
+  // Windows has no directory fsync here. Bun may return a namespaced mkdir path.
+  if (process.platform === "win32") return;
+  const target = storagePathIdentity(storagePath);
+  const existing = path.dirname(storagePathIdentity(firstCreated));
+  const relative = path.relative(existing, target);
+  const components = relative === "" ? [] : relative.split(path.sep);
+  if (path.isAbsolute(relative) || components[0] === "..")
+    throw new Error("mutation_journal_path_unsafe");
+  let parent = target;
+  for (let remaining = components.length; remaining >= 0; remaining--) {
     await syncDirectory(parent);
-    if (parent === existing) return;
+    parent = path.dirname(parent);
   }
 }
 

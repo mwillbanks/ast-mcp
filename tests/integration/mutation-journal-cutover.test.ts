@@ -52,7 +52,10 @@ test.each(boundaries)(
       const workspace = await new WorkspaceRegistry().open({
         configurationGeneration: 1,
         directory: checkout,
-        storage: { kind: "explicit", path: path.join(root, "index") },
+        storage: {
+          kind: "explicit",
+          path: path.join(root, "storage", "index"),
+        },
       });
       const domain = workspace.storageDomain;
       const transaction = await mutationTransactionLockPath(checkout);
