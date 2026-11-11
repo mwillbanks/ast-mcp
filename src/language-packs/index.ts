@@ -153,8 +153,70 @@ function readVerifiedBytes(
   }
 }
 
+const abiProbeScript = `
+  import { dlopen, read } from "bun:ffi";
+  import { existsSync } from "node:fs";
+  const [file, symbol, abi] = process.argv.slice(1);
+  if (!existsSync(file)) process.exit(3);
+  let library;
+  try {
+    library = dlopen(file, { [symbol]: { args: [], returns: "ptr" } });
+  } catch {
+    process.exit(4);
+  }
+  const grammar = library.symbols[symbol]?.();
+  process.exit(grammar && read.u32(grammar) === Number(abi) ? 0 : 2);
+`;
+
+/** Call only on a manifest-verified library inside a private user store. */
+export function probeNativePackAbi(
+  libraryPath: string,
+  descriptor: PackDescriptor,
+): void {
+  const result = Bun.spawnSync(
+    [
+      process.execPath,
+      "--no-env-file",
+      "--eval",
+      abiProbeScript,
+      libraryPath,
+      descriptor.languageSymbol,
+      String(descriptor.abi),
+    ],
+    {
+      cwd: path.dirname(process.execPath),
+      env: {
+        BUN_BE_BUN: "1",
+        SystemRoot: process.env.SystemRoot,
+        WINDIR: process.env.WINDIR,
+      },
+      stderr: "ignore",
+      stdin: "ignore",
+      stdout: "ignore",
+      timeout: 5_000,
+    },
+  );
+  if (result.success) return;
+  if (result.exitCode === 2)
+    throw new Error(`Language pack ABI mismatch for ${descriptor.language}`);
+
+  let reason = `unexpected exit ${result.exitCode ?? result.signalCode}`;
+  if (result.exitedDueToTimeout) reason = "child timed out";
+  else if (result.exitCode === 3) reason = "library missing or inaccessible";
+  else if (result.exitCode === 4)
+    reason = "native loader rejected the library, its symbol, or a dependency";
+  throw new Error(
+    `Language pack ABI probe failed for ${descriptor.language}: ${reason}`,
+  );
+}
+
 /** Call only on a manifest-verified library inside a private user store. */
 function checkAbi(libraryPath: string, descriptor: PackDescriptor): void {
+  // Bun keeps DLLs mapped after FFI close on Windows. Let a child release
+  // the native file before the caller publishes or removes it.
+  if (process.platform === "win32")
+    return probeNativePackAbi(libraryPath, descriptor);
+
   const library = dlopen(libraryPath, {
     [descriptor.languageSymbol]: { args: [], returns: "ptr" },
   });

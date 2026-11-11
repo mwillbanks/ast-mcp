@@ -5,6 +5,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   realpath,
   rm,
   stat,
@@ -26,6 +27,7 @@ import {
   installNativeLanguagePack,
   languagePackStore,
   listNativeLanguagePacks,
+  probeNativePackAbi,
   resolveNativeLanguagePack,
   verifyNativePackAsset,
 } from "../../src/language-packs/index.ts";
@@ -64,6 +66,7 @@ async function withPackFixture<T>(
     env: { APPDATA: home, XDG_CONFIG_HOME: home },
     home,
   };
+  let fixtureFailure: unknown;
   try {
     await mkdir(checkout);
     return await use({
@@ -76,10 +79,22 @@ async function withPackFixture<T>(
       },
       options,
     });
+  } catch (error) {
+    fixtureFailure = error;
+    throw error;
   } finally {
-    // Windows recursive removal can reject read-only files in the fixture.
-    await Promise.all([...packs].map(makeFixturePackRemovable));
-    await rm(root, { recursive: true, force: true });
+    try {
+      // Windows recursive removal can reject read-only files in the fixture.
+      await Promise.all([...packs].map(makeFixturePackRemovable));
+      await rm(root, { recursive: true, force: true });
+    } catch (cleanupError) {
+      if (fixtureFailure === undefined) throw cleanupError;
+      throw new AggregateError(
+        [fixtureFailure, cleanupError],
+        "Pack fixture and cleanup both failed",
+        { cause: fixtureFailure },
+      );
+    }
   }
 }
 
@@ -294,6 +309,56 @@ test("concurrent installs coalesce and clean only their own stages on failure", 
 });
 
 test.skipIf(!nativePackDescriptor("go"))(
+  "validates native ABI in a child and releases the loaded file on exit",
+  async () => {
+    await withPackFixture(async ({ checkout, trackPack }) => {
+      const descriptor = nativePackDescriptor("go")!;
+      const libraryPath = trackPack(path.join(checkout, "verified grammar.so"));
+      await copyFile(pinnedGrammarRegistration("go").libraryPath, libraryPath);
+      await chmod(libraryPath, 0o400);
+      expect(() => probeNativePackAbi(libraryPath, descriptor)).not.toThrow();
+      expect(() =>
+        probeNativePackAbi(libraryPath, {
+          ...descriptor,
+          abi: descriptor.abi + 1,
+        }),
+      ).toThrow("Language pack ABI mismatch for go");
+      expect(() =>
+        probeNativePackAbi(libraryPath, {
+          ...descriptor,
+          languageSymbol: "absent_native_symbol",
+        }),
+      ).toThrow(
+        "Language pack ABI probe failed for go: native loader rejected the library, its symbol, or a dependency",
+      );
+      await removeFixturePack(libraryPath);
+      expect(() => probeNativePackAbi(libraryPath, descriptor)).toThrow(
+        /^Language pack ABI probe failed for go: library missing or inaccessible$/,
+      );
+    });
+  },
+);
+
+test("classifies an ABI probe timeout without exposing child output", () => {
+  const descriptor = nativePackDescriptor("go", "win32", "x64")!;
+  const libraryPath = path.resolve("unopened fixture grammar.so");
+  // The probe reads only exit metadata from this result.
+  const child = spyOn(Bun, "spawnSync").mockReturnValue({
+    success: false,
+    exitCode: null,
+    signalCode: "SIGTERM",
+    exitedDueToTimeout: true,
+  } as unknown as ReturnType<typeof Bun.spawnSync>);
+  try {
+    expect(() => probeNativePackAbi(libraryPath, descriptor)).toThrow(
+      /^Language pack ABI probe failed for go: child timed out$/,
+    );
+  } finally {
+    child.mockRestore();
+  }
+});
+
+test.skipIf(!nativePackDescriptor("go"))(
   "publishes a verified native pack while a coalesced waiter can cancel independently",
   async () => {
     await withPackFixture(async ({ options, trackPack }) => {
@@ -302,7 +367,11 @@ test.skipIf(!nativePackDescriptor("go"))(
         languagePackHost: { allowDownload: true },
       });
       const descriptor = nativePackDescriptor("go")!;
-      trackPack(path.join(languagePackStore(config)!, descriptor.filename));
+      const directory = languagePackStore(config)!;
+      trackPack(path.join(directory, descriptor.filename));
+      const pending = trackPack(
+        path.join(directory, "." + descriptor.filename + ".pending"),
+      );
       const ready = Promise.withResolvers<void>();
       const resume = Promise.withResolvers<void>();
       const staging = spyOn(packArchive, "stagePackWithBun").mockImplementation(
@@ -317,9 +386,7 @@ test.skipIf(!nativePackDescriptor("go"))(
         },
       );
       const controller = new AbortController();
-      const first = resolveNativeLanguagePack(config, "go", {
-        allowDownload: true,
-      });
+      const first = installNativeLanguagePack(config, "go");
       try {
         await Promise.race([
           ready.promise,
@@ -335,8 +402,8 @@ test.skipIf(!nativePackDescriptor("go"))(
         expect(activeNativePack("go", config)).toBeUndefined();
         resume.resolve();
         const installed = await first;
-        if (!installed) throw new Error("Verified pack was not installed");
         expect(installed.sha256).toBe(descriptor.sha256);
+        await expect(stat(pending)).rejects.toMatchObject({ code: "ENOENT" });
         expect(activeNativePack("go", config)).toEqual(installed);
         expect(verifyNativePackAsset("go", installed)).toBe(true);
         expect(
@@ -402,6 +469,9 @@ test.skipIf(!nativePackDescriptor("python"))(
         await expect(stat(activated)).rejects.toMatchObject({ code: "ENOENT" });
         const asset = activeNativePack("python", config, checkout)!;
         expect(asset.libraryPath).toBe(activated);
+        expect(await readdir(path.dirname(activated))).toEqual([
+          descriptor.filename,
+        ]);
         expect(verifyNativePackAsset("python", asset)).toBe(true);
         expect(activeNativePack("python", config, checkout)).toEqual(asset);
 
