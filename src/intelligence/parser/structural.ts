@@ -10,12 +10,11 @@ import type {
   StructuralRewriteOperation,
 } from "./types.ts";
 
-function orderedMatches(
+function structuralSource(
   source: string,
   languageId: ParserLanguageId,
-  pattern: string,
   registry: LanguageRegistry,
-): { matches: StructuralMatch[]; nodes: SgNode[] } {
+) {
   const grammar = registry.get(languageId);
   if (!registry.parserAvailable(languageId)) {
     throw new TypeError(
@@ -24,14 +23,27 @@ function orderedMatches(
   }
   registry.registerDynamicGrammars();
   const root = parse(grammar.astGrepLanguage, source).root();
-  const coordinates = new SourceCoordinateIndex(source);
+  return { coordinates: new SourceCoordinateIndex(source), grammar, root };
+}
+
+export function findStructuralMatches(
+  source: string,
+  languageId: ParserLanguageId,
+  pattern: string,
+  registry: LanguageRegistry = defaultLanguageRegistry,
+): StructuralMatch[] {
+  const { coordinates, grammar, root } = structuralSource(
+    source,
+    languageId,
+    registry,
+  );
   const nodes = root.findAll(pattern).sort((left, right) =>
     compareSourceRanges(left.range(), right.range(), {
       left: String(left.kind()),
       right: String(right.kind()),
     }),
   );
-  const matches = nodes.map((node, ordinal) => {
+  return nodes.map((node, ordinal) => {
     const range = coordinates.fromAstRange(node.range());
     return {
       id: sha256(
@@ -49,16 +61,6 @@ function orderedMatches(
       text: node.text(),
     };
   });
-  return { matches, nodes };
-}
-
-export function findStructuralMatches(
-  source: string,
-  languageId: ParserLanguageId,
-  pattern: string,
-  registry: LanguageRegistry = defaultLanguageRegistry,
-): StructuralMatch[] {
-  return orderedMatches(source, languageId, pattern, registry).matches;
 }
 
 function renderReplacement(template: string, node: SgNode): string {
@@ -92,15 +94,11 @@ export function rewriteStructuralMatches(
   operations: readonly StructuralRewriteOperation[],
   registry: LanguageRegistry = defaultLanguageRegistry,
 ): StructuralRewriteCandidate {
-  const grammar = registry.get(languageId);
-  if (!registry.parserAvailable(languageId)) {
-    throw new TypeError(
-      `Parser is unavailable in this language profile: ${languageId}`,
-    );
-  }
-  registry.registerDynamicGrammars();
-  const root = parse(grammar.astGrepLanguage, source).root();
-  const coordinates = new SourceCoordinateIndex(source);
+  const { coordinates, grammar, root } = structuralSource(
+    source,
+    languageId,
+    registry,
+  );
   const matches: StructuralMatch[] = [];
   const edits: Array<{
     matchId: string;

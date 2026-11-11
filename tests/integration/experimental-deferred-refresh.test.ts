@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
 import { randomBytes, randomUUID } from "node:crypto";
-import { lstat, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
   markRefreshPending,
   markRefreshPublished,
+  markRefreshReady,
   type PendingRefreshState,
   readRefreshState,
   scheduleMutationRefresh,
@@ -195,6 +196,104 @@ test("deferred refresh refuses to treat a malformed or oversized marker as clean
   }
 });
 
+test("deferred refresh refuses wrong marker identities and protects in-flight writes", async () => {
+  const fixture = await markerFixture();
+  const clock = createMockTime();
+  const { transactionPath } = fixture;
+  try {
+    await expect(
+      readRefreshState(transactionPath + ".other"),
+    ).rejects.toMatchObject({
+      code: "mutation_refresh_marker_scope_invalid",
+    });
+    await expect(
+      markRefreshPending(
+        transactionPath,
+        ["src/a.ts"],
+        "invalid",
+        storageScope,
+      ),
+    ).rejects.toMatchObject({ code: "mutation_refresh_marker_scope_invalid" });
+    await expect(
+      markRefreshPending(transactionPath, [], scope, storageScope, {
+        publishedGenerationId: "invalid",
+      }),
+    ).rejects.toMatchObject({ code: "mutation_refresh_generation_invalid" });
+    const pending = await markRefreshPending(
+      transactionPath,
+      ["../elsewhere.ts"],
+      scope,
+      storageScope,
+      {
+        indexRefresh: false,
+        inFlight: true,
+        journal: "sqlite-v1",
+      },
+    );
+    expect(pending.paths).toBeNull();
+    await expect(
+      markRefreshReady(transactionPath, randomUUID()),
+    ).rejects.toMatchObject({ code: "mutation_refresh_marker_stale" });
+    await expect(
+      markRefreshPublished(transactionPath, pending.epoch, generation),
+    ).rejects.toMatchObject({ code: "mutation_refresh_marker_stale" });
+    await clock.advanceBy(1);
+    const ready = await markRefreshReady(transactionPath, pending.epoch);
+    expect(ready).toMatchObject({
+      inFlight: false,
+      lastDirtyAt: MOCK_EPOCH + 1,
+    });
+    await expect(
+      markRefreshPublished(transactionPath, ready.epoch, "invalid"),
+    ).rejects.toMatchObject({ code: "mutation_refresh_generation_invalid" });
+    await markRefreshPublished(transactionPath, ready.epoch, generation);
+    expect(await readRefreshState(transactionPath)).toMatchObject({
+      kind: "clean",
+      journal: "sqlite-v1",
+      publishedGenerationId: generation,
+    });
+  } finally {
+    await fixture.close();
+    clock.dispose();
+  }
+});
+
+test("deferred refresh widens oversized encoded path sets and leaves the old marker after a write error", async () => {
+  const fixture = await markerFixture();
+  try {
+    const state = await markRefreshPending(
+      fixture.transactionPath,
+      Array.from(
+        { length: 256 },
+        (_, index) => `src/${index}-${"a".repeat(256)}.ts`,
+      ),
+      scope,
+      storageScope,
+    );
+    expect(state.paths).toBeNull();
+    await mkdir(fixture.file + ".tmp");
+    try {
+      await expect(
+        markRefreshReady(fixture.transactionPath, state.epoch),
+      ).rejects.toThrow();
+      expect(await readRefreshState(fixture.transactionPath)).toEqual(state);
+    } finally {
+      await rm(fixture.file + ".tmp", { recursive: true });
+    }
+    if (process.platform !== "win32") {
+      await rm(fixture.file);
+      await symlink(fixture.file + ".tmp", fixture.file);
+      await expect(
+        readRefreshState(fixture.transactionPath),
+      ).rejects.toMatchObject({
+        code: "mutation_refresh_marker_unreadable",
+      });
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
 function pending(offset: number): PendingRefreshState {
   return {
     kind: "pending",
@@ -228,6 +327,47 @@ test("deferred refresh debounces per checkout and dispatches at the burst ceilin
     expect(calls).toHaveLength(0);
     await clock.advanceBy(1);
     expect(calls.map((state) => state.lastDirtyAt)).toEqual([MOCK_EPOCH + 210]);
+    expect(clock.pending()).toBe(0);
+  } finally {
+    clock.dispose();
+  }
+});
+
+test("deferred refresh retries a busy claim with backoff and frees failed queue slots", async () => {
+  const clock = createMockTime();
+  const key = randomUUID();
+  const calls: string[] = [];
+  try {
+    const state = pending(0);
+    scheduleMutationRefresh(key, state, async () => {
+      calls.push("first");
+      return calls.length === 1 ? "retry" : undefined;
+    });
+    await clock.advanceBy(75);
+    await clock.advanceBy(249);
+    expect(calls).toEqual(["first"]);
+    await clock.advanceBy(1);
+    expect(calls).toEqual(["first", "first"]);
+
+    const keys = Array.from({ length: 32 }, () => randomUUID());
+    for (const [index, queued] of keys.entries()) {
+      scheduleMutationRefresh(queued, state, async () => {
+        calls.push("queued");
+        if (index === 0) throw new Error("failed refresh");
+      });
+    }
+    scheduleMutationRefresh(key, state, async () => {
+      calls.push("dropped");
+    });
+    expect(clock.pending()).toBe(32);
+    await clock.advanceBy(0);
+    expect(calls.filter((call) => call === "queued")).toHaveLength(32);
+    expect(calls).not.toContain("dropped");
+    scheduleMutationRefresh(key, state, async () => {
+      calls.push("recovered");
+    });
+    await clock.advanceBy(0);
+    expect(calls.at(-1)).toBe("recovered");
     expect(clock.pending()).toBe(0);
   } finally {
     clock.dispose();

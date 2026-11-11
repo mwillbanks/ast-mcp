@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { parseSource } from "../../src/intelligence/parser/index.ts";
 import {
+  acquireWorker,
   ParseFactsCache,
   parseCacheKey,
+  releaseWorker,
 } from "../../src/tools/code-intelligence-cache.ts";
 import { computeNative } from "../../src/tools/code-intelligence-compute.ts";
 
@@ -17,6 +19,80 @@ const file = {
   path: "/workspace/entry.ts",
   source,
 };
+
+class TestWorker extends EventTarget {
+  references = 0;
+  stops = 0;
+
+  ref() {
+    this.references++;
+  }
+
+  unref() {
+    this.references--;
+  }
+
+  terminate() {
+    this.stops++;
+  }
+
+  worker() {
+    return this as unknown as Worker;
+  }
+}
+
+describe("native parse worker retention", () => {
+  test("reuses only compatible workers and discards workers that fail while idle", () => {
+    const failed = new TestWorker();
+    const retained = new TestWorker();
+    const replacement = new TestWorker();
+    releaseWorker(failed.worker(), "failed-grammar");
+    releaseWorker(retained.worker(), "retained-grammar");
+    try {
+      expect(failed.references).toBe(-1);
+      failed.dispatchEvent(new Event("error"));
+      expect(failed.stops).toBe(1);
+      expect(acquireWorker(() => replacement.worker(), "failed-grammar")).toBe(
+        replacement.worker(),
+      );
+      expect(
+        acquireWorker(() => replacement.worker(), "retained-grammar"),
+      ).toBe(retained.worker());
+      expect(retained.references).toBe(0);
+      retained.dispatchEvent(new Event("error"));
+      expect(retained.stops).toBe(0);
+    } finally {
+      acquireWorker(() => replacement.worker(), "retained-grammar");
+      retained.terminate();
+      replacement.terminate();
+    }
+  });
+
+  test("bounds idle workers and evicts incompatible grammars first", () => {
+    const reusable = Array.from({ length: 4 }, () => new TestWorker());
+    const overflow = new TestWorker();
+    const newGrammar = new TestWorker();
+    for (const item of reusable) releaseWorker(item.worker(), "old-grammar");
+    try {
+      releaseWorker(overflow.worker(), "old-grammar");
+      expect(overflow.stops).toBe(1);
+      releaseWorker(newGrammar.worker(), "new-grammar");
+      expect(reusable[0]?.stops).toBe(1);
+      reusable[0]?.dispatchEvent(new Event("error"));
+      expect(reusable[0]?.stops).toBe(1);
+      expect(acquireWorker(() => overflow.worker(), "new-grammar")).toBe(
+        newGrammar.worker(),
+      );
+    } finally {
+      for (const item of reusable) {
+        acquireWorker(() => overflow.worker(), "old-grammar");
+        item.terminate();
+      }
+      acquireWorker(() => overflow.worker(), "new-grammar");
+      newGrammar.terminate();
+    }
+  });
+});
 
 describe("bounded native intelligence", () => {
   test("preserves direct-tool definitions and callers in a batched read", async () => {

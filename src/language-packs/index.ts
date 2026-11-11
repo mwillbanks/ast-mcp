@@ -507,22 +507,6 @@ export async function resolveNativeLanguagePack(
   }
 }
 
-export async function prepareNativePacks(
-  languages: Iterable<string>,
-  config: ResolvedConfig,
-  options: NativePackOptions = {},
-): Promise<void> {
-  if (!config.languagePacks?.allowFirstUse) return;
-  await Promise.all(
-    [...new Set(languages)].filter(isPackLanguage).map((language) =>
-      resolveNativeLanguagePack(config, language, {
-        ...options,
-        allowDownload: true,
-      }),
-    ),
-  );
-}
-
 export function listNativeLanguagePacks(
   config: ResolvedConfig,
   checkoutRoot?: string,

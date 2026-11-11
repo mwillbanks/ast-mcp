@@ -43,19 +43,20 @@ export async function stagePackWithBun(
   stage: string,
   descriptor: PackDescriptor,
   signal: AbortSignal,
+  setupDescriptor: Readonly<typeof setupPackage> = setupPackage,
 ): Promise<string> {
   const [grammar, setup] = await Promise.all([
     verifiedPackArchive(descriptor.url, descriptor.integrity, signal),
-    verifiedPackArchive(setupPackage.url, setupPackage.integrity, signal),
+    verifiedPackArchive(setupDescriptor.url, setupDescriptor.integrity, signal),
   ]);
   const manifest = {
     name: "ast-mcp-language-pack-stage",
     private: true,
     dependencies: {
       [descriptor.packageName]: "file:./grammar.tgz",
-      [setupPackage.packageName]: "file:./setup.tgz",
+      [setupDescriptor.packageName]: "file:./setup.tgz",
     },
-    overrides: { [setupPackage.packageName]: "file:./setup.tgz" },
+    overrides: { [setupDescriptor.packageName]: "file:./setup.tgz" },
     trustedDependencies: [],
   };
   const configPath = path.join(stage, "bunfig.toml");

@@ -399,11 +399,14 @@ function withGraphRead<T extends object>(
   input: { budget: GraphAlgorithmBudget; strictRead?: boolean },
   workspace: WorkspaceHandle,
   signal: AbortSignal | undefined,
-  operation: (
-    store: LanceIntelligenceStore,
+  selectScope: (
     budget: GraphAlgorithmBudget,
-    expected?: string,
-  ) => Promise<T>,
+  ) => Omit<GraphLoadOptions, "budget" | "state">,
+  operation: (
+    execution: ReturnType<typeof graphExecution>,
+    snapshot: GraphSnapshot,
+    budget: GraphAlgorithmBudget,
+  ) => T,
 ): Promise<T> {
   return withIndexRead(
     workspace,
@@ -415,15 +418,21 @@ function withGraphRead<T extends object>(
     (expected, remaining) =>
       withStore(
         workspace,
-        (store) =>
-          operation(
+        async (store) => {
+          const budget = {
+            ...input.budget,
+            maxMilliseconds: remaining ?? input.budget.maxMilliseconds,
+          };
+          const execution = graphExecution(budget);
+          const snapshot = await loadLatest(
             store,
-            {
-              ...input.budget,
-              maxMilliseconds: remaining ?? input.budget.maxMilliseconds,
-            },
+            workspace,
+            undefined,
+            scopedGraphLoad(budget, execution, selectScope(budget)),
             expected,
-          ),
+          );
+          return operation(execution, snapshot, budget);
+        },
         expected ? "read-pinned" : "read-write",
       ),
   );
@@ -633,27 +642,6 @@ function scopedGraphLoad(
   };
 }
 
-async function loadGraphExecution(
-  store: LanceIntelligenceStore,
-  workspace: WorkspaceHandle,
-  budget: GraphAlgorithmBudget,
-  scope: Omit<GraphLoadOptions, "budget" | "state">,
-  expected?: string,
-): Promise<{
-  execution: ReturnType<typeof graphExecution>;
-  snapshot: GraphSnapshot;
-}> {
-  const execution = graphExecution(budget);
-  const snapshot = await loadLatest(
-    store,
-    workspace,
-    undefined,
-    scopedGraphLoad(budget, execution, scope),
-    expected,
-  );
-  return { execution, snapshot };
-}
-
 async function readIndexStatus(
   workspace: WorkspaceHandle,
   input?: Pick<
@@ -840,18 +828,12 @@ export function createIntelligenceToolService(
         input,
         workspace,
         signal,
-        async (store, budget, expected) => {
-          const { execution, snapshot } = await loadGraphExecution(
-            store,
-            workspace,
-            budget,
-            {
-              direction: "both",
-              maxDepth: 0,
-              nodeIds: [input.nodeId],
-            },
-            expected,
-          );
+        () => ({
+          direction: "both",
+          maxDepth: 0,
+          nodeIds: [input.nodeId],
+        }),
+        (execution, snapshot, budget) => {
           const reasons = execution.state.exhaustedReasons;
           const expired = (): boolean => {
             if (performance.now() < execution.context.deadline) return false;
@@ -984,20 +966,14 @@ export function createIntelligenceToolService(
         input,
         workspace,
         signal,
-        async (store, budget, expected) => {
-          const { execution, snapshot } = await loadGraphExecution(
-            store,
-            workspace,
-            budget,
-            {
-              direction: input.direction,
-              edgeKinds: input.edgeKinds,
-              maxDepth: budget.maxDepth,
-              nodeIds: [input.sourceNodeId, input.targetNodeId],
-              resolutionStatuses: input.resolutionStatuses,
-            },
-            expected,
-          );
+        (budget) => ({
+          direction: input.direction,
+          edgeKinds: input.edgeKinds,
+          maxDepth: budget.maxDepth,
+          nodeIds: [input.sourceNodeId, input.targetNodeId],
+          resolutionStatuses: input.resolutionStatuses,
+        }),
+        (execution, snapshot, budget) => {
           const result = shortestPath(
             {
               budget,
@@ -1022,25 +998,19 @@ export function createIntelligenceToolService(
       );
     },
     async graphQuery(input, workspace, signal) {
+      const components = input.operation === "components";
       return withGraphRead(
         input,
         workspace,
         signal,
-        async (store, budget, expected) => {
-          const components = input.operation === "components";
-          const { execution, snapshot } = await loadGraphExecution(
-            store,
-            workspace,
-            budget,
-            {
-              direction: components ? "both" : input.direction,
-              edgeKinds: input.edgeKinds,
-              maxDepth: budget.maxDepth,
-              nodeIds: components ? undefined : input.startNodeIds,
-              resolutionStatuses: input.resolutionStatuses,
-            },
-            expected,
-          );
+        (budget) => ({
+          direction: components ? "both" : input.direction,
+          edgeKinds: input.edgeKinds,
+          maxDepth: budget.maxDepth,
+          nodeIds: components ? undefined : input.startNodeIds,
+          resolutionStatuses: input.resolutionStatuses,
+        }),
+        (execution, snapshot, budget) => {
           const request = {
             budget,
             cursor: input.cursor,

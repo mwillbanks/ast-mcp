@@ -3,7 +3,10 @@ import { type FSWatcher, watch } from "node:fs";
 import { lstat, mkdir, open, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
-import { acquireTransactionLock } from "./transaction-lock.ts";
+import {
+  acquireTransactionLock,
+  assertTransactionLockBudget,
+} from "./transaction-lock.ts";
 
 const ticketPattern = /^(\d{12})-(\d+)-(\d+)-[0-9a-f-]{36}$/u;
 const queueLimit = 256;
@@ -13,22 +16,6 @@ interface AdmissionOptions {
   deadline: number;
   signal?: AbortSignal;
   tryOnly?: boolean;
-}
-
-function checkBudget({ deadline, signal }: AdmissionOptions): void {
-  if (signal?.aborted)
-    throw Object.assign(
-      new Error("Transaction lock acquisition was cancelled"),
-      {
-        code: "lock_aborted",
-        retryable: false,
-      },
-    );
-  if (Date.now() >= deadline)
-    throw Object.assign(new Error("Transaction lock deadline expired"), {
-      code: "lock_deadline",
-      retryable: true,
-    });
 }
 
 async function removeTicket(file: string): Promise<void> {
@@ -119,7 +106,7 @@ async function enqueue(directory: string, options: AdmissionOptions) {
       });
     const predecessor = tickets.at(-1);
     const next = (predecessor?.sequence ?? 0) + 1;
-    checkBudget(options);
+    assertTransactionLockBudget(options.deadline, options.signal);
     const ticket = [
       String(next).padStart(12, "0"),
       process.pid,
@@ -156,7 +143,7 @@ export async function withCheckoutAdmission<T>(
   options: AdmissionOptions,
   operation: (releaseTicket: () => Promise<void>) => Promise<T>,
 ): Promise<T> {
-  checkBudget(options);
+  assertTransactionLockBudget(options.deadline, options.signal);
   const directory = checkoutLockPath + ".admission";
   const { ticket, predecessor: previousTicket } = await openQueue(
     directory,
@@ -198,7 +185,7 @@ export async function withCheckoutAdmission<T>(
       options.signal?.addEventListener("abort", wake, { once: true });
     }
     while (predecessor) {
-      checkBudget(options);
+      assertTransactionLockBudget(options.deadline, options.signal);
       if (!(await predecessorPresent(directory, predecessor))) {
         // A cancelled predecessor may leave an earlier ticket in the queue.
         predecessor = (await queueSnapshot(directory)).findLast(
@@ -218,7 +205,7 @@ export async function withCheckoutAdmission<T>(
       changed = Promise.withResolvers<void>();
     }
     const present = await ticketPresent(ticketPath);
-    checkBudget(options);
+    assertTransactionLockBudget(options.deadline, options.signal);
     if (!present)
       throw Object.assign(new Error("Checkout admission ticket was removed"), {
         code: "lock_fenced",

@@ -843,39 +843,6 @@ export class LanceIntelligenceStore {
     );
   }
 
-  async compactMutationMetadata(): Promise<void> {
-    this.assertWritable();
-    const tables = ["jobs", "coordinator_recovery"] as const;
-    const candidates: (typeof tables)[number][] = [];
-    for (const tableName of tables) {
-      if (
-        await withLatestTable(
-          this.connection,
-          tableName,
-          async (table) =>
-            (await table.stats()).fragmentStats.numSmallFragments >= 32,
-        )
-      )
-        candidates.push(tableName);
-    }
-    if (candidates.length === 0) return;
-    await this.coordinator.exclusive(
-      "compact mutation metadata",
-      async (lease) => {
-        for (const tableName of candidates) {
-          await withLatestTable(this.connection, tableName, async (table) => {
-            // Preserve historical versions and use the same writer fence as updates.
-            await this.coordinator.fence(lease, true);
-            await table.optimize({
-              cleanupOlderThan: new Date(0),
-              deleteUnverified: false,
-            });
-          });
-        }
-      },
-    );
-  }
-
   async putRows(
     tableName: LanceTableName,
     rows: readonly StorageRow[],
