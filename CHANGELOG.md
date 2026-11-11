@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.8.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.2...ast-mcp-v0.8.0) (2026-11-11)
+
+### ✨ Features
+
+- ship faster guarded writes and standalone builds ([#76](https://github.com/mwillbanks/ast-mcp/issues/76)) ([9cb33be](https://github.com/mwillbanks/ast-mcp/commit/9cb33be397885c2dd527ae2b09e57417874fa234))
+
 ## [0.7.2](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.1...ast-mcp-v0.7.2) (2026-11-05)
 
 ### 🐛 Fixes
