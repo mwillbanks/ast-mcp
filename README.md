@@ -50,7 +50,7 @@ A stale hash, ambiguous match, capped preview, unsupported route, or lost MCP co
 
 ## Distribution
 
-Available since NEXT_RELEASE. The npm package selects a compiled ESM bytecode executable on supported platforms. It embeds Bun and ships with its native runtime assets. The npm-installed `ast-mcp` command uses a Node launcher. Run `ast-mcp-bun` to invoke the packaged JavaScript bundle directly with an installed Bun runtime.
+Available since 0.9.0. The npm package selects a compiled ESM bytecode executable on supported platforms. It embeds Bun and ships with its native runtime assets. The npm-installed `ast-mcp` command uses a Node launcher. Run `ast-mcp-bun` to invoke the packaged JavaScript bundle directly with an installed Bun runtime.
 
 Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Formatting is optional and uses explicitly configured external commands; ast-mcp does not download formatters during file operations. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
 
