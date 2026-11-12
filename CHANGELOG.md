@@ -1,6 +1,6 @@
 # Changelog
 
-## NEXT_RELEASE
+## 0.9.0
 
 - Install native ESM bytecode builds from npm on six supported targets.
 - Publish versioned release notes and document index freshness controls.
