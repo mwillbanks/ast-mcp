@@ -49,10 +49,14 @@ async function run(argv: string[], cwd: string, env = process.env) {
   return stdout;
 }
 
-async function packument(archive: string, cwd: string) {
+async function packument(archive: string) {
   await verifyArchive(archive);
+  // GNU tar interprets Windows drive prefixes as remote archive hosts.
   const manifest = JSON.parse(
-    await run(["tar", "-xOzf", archive, "package/package.json"], cwd),
+    await run(
+      ["tar", "-xOzf", path.basename(archive), "package/package.json"],
+      path.dirname(archive),
+    ),
   );
   const integrity = new Bun.CryptoHasher("sha512");
   for await (const chunk of createReadStream(archive)) integrity.update(chunk);
@@ -63,13 +67,9 @@ async function packument(archive: string, cwd: string) {
   };
 }
 
-async function candidateRegistry(
-  rootArchive: string,
-  matrix: string,
-  cwd: string,
-) {
+async function candidateRegistry(rootArchive: string, matrix: string) {
   const artifacts = await Promise.all([
-    packument(rootArchive, cwd),
+    packument(rootArchive),
     ...Object.keys(platforms).map((target) =>
       packument(
         path.join(
@@ -77,7 +77,6 @@ async function candidateRegistry(
           `standalone-bun-${target}`,
           `ast-mcp-npm-${target}.tgz`,
         ),
-        cwd,
       ),
     ),
   ]);
@@ -167,7 +166,6 @@ try {
     registry = await candidateRegistry(
       path.resolve(input),
       path.resolve(matrix),
-      cwd,
     );
   }
   const version = registry?.version ?? input;

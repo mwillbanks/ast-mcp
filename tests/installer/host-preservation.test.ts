@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -451,17 +452,46 @@ test("explicit hook factory field deletion survives refresh and uninstall", asyn
     );
   }
 });
-test("exact legacy factory registrations migrate and remain removable", async () => {
+test("migrates verified package hooks without claiming factory-shaped user hooks", async () => {
   for (const target of ["codex", "copilot"] as const) {
-    const options = await fixture();
+    const fixtureOptions = await fixture();
+    const root = await realpath(fixtureOptions.root);
+    const options = { ...fixtureOptions, root };
     const file = path.join(
-      options.root,
+      root,
       target === "codex" ? ".codex/hooks.json" : ".github/hooks/ast-mcp.json",
     );
     await mkdir(path.dirname(file), { recursive: true });
+
+    const windows = process.platform === "win32";
+    const packageName = "@mwillbanks/ast-mcp";
+    const nativeName = `${packageName}-${windows ? "windows" : process.platform}-${process.arch}`;
+    const shim = `./node_modules/.bin/ast-mcp${windows ? ".cmd" : ""}`;
+    const bun = `./node_modules/.bin/ast-mcp-bun${windows ? ".cmd" : ""}`;
+    const native = `./node_modules/${nativeName}/ast-mcp-bytecode${windows ? ".exe" : ""}`;
+    for (const entry of [shim, bun, native]) {
+      const executable = path.resolve(root, entry);
+      await mkdir(path.dirname(executable), { recursive: true });
+      await writeFile(executable, "");
+      await chmod(executable, 0o755);
+    }
+    const main = path.join(root, "node_modules", packageName);
+    await mkdir(main, { recursive: true });
+    await writeFile(
+      path.join(main, "package.json"),
+      JSON.stringify({
+        name: packageName,
+        version: "1.2.3",
+        optionalDependencies: { [nativeName]: "1.2.3" },
+      }),
+    );
+    await writeFile(
+      path.join(root, "node_modules", nativeName, "package.json"),
+      JSON.stringify({ name: nativeName, version: "1.2.3" }),
+    );
+
     const event = target === "codex" ? "PreToolUse" : "preToolUse";
-    const command = 'bun "/legacy/ast-mcp.ts" hook';
-    const registration =
+    const factory = (command: string) =>
       target === "copilot"
         ? {
             command,
@@ -480,19 +510,39 @@ test("exact legacy factory registrations migrate and remain removable", async ()
               },
             ],
           };
+    const quotedHook = (entry: string) => `${JSON.stringify(entry)} hook`;
+    const custom = [
+      factory(quotedHook("/custom/ast-mcp-bun")),
+      factory(quotedHook("/custom/ast-mcp-bytecode.exe")),
+    ];
+    const factoryHooks = [
+      factory('bun "/legacy/ast-mcp.ts" hook'),
+      factory(quotedHook(bun)),
+      factory(quotedHook(native)),
+    ];
     await writeFile(
       file,
-      JSON.stringify({ hooks: { [event]: [registration] } }),
+      JSON.stringify({ hooks: { [event]: [...custom, ...factoryHooks] } }),
     );
     const installation = { ...options, targets: [target] };
-    await install(installation);
-    const hooks = JSON.parse(await readFile(file, "utf8")).hooks[event];
-    expect(hooks).toHaveLength(1);
-    expect(
-      target === "copilot" ? hooks[0].command : hooks[0].hooks[0].command,
-    ).not.toBe(command);
+    await update(installation);
+    const expected = [
+      ...custom,
+      factory(quotedHook(Bun.which("node") ? shim : bun)),
+    ];
+    const current = JSON.parse(await readFile(file, "utf8"));
+    expect(current.hooks[event]).toEqual(expected);
+    await update(installation);
+    expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
+      expected,
+    );
+
+    current.hooks[event] = [...custom, factory(quotedHook(native))];
+    await writeFile(file, JSON.stringify(current));
     await uninstall(installation);
-    expect(JSON.parse(await readFile(file, "utf8")).hooks).toBeUndefined();
+    expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
+      custom,
+    );
   }
 });
 

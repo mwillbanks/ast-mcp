@@ -24,6 +24,9 @@ const page = releasePage(version);
 const authoredNotes = "---\ntitle: NEXT_RELEASE\n---\n\nRelease notes.\n";
 const versionedNotes = authoredNotes.replace("NEXT_RELEASE", version);
 const draftChangelog = "# Changelog\n\n## NEXT_RELEASE\n\n- entry\n";
+const readme = "README.md";
+const draftReadme = "# AST-MCP\n\nAvailable since NEXT_RELEASE.\n";
+const versionedReadme = draftReadme.replace("NEXT_RELEASE", version);
 const sha = "a".repeat(40);
 const normalizedSha = "b".repeat(40);
 const formatted = draftChangelog.replace("NEXT_RELEASE", version);
@@ -346,6 +349,7 @@ function apiServer(
     [releaseManifest, JSON.stringify({ ".": version })],
     options.draft ? [releaseDraft, authoredNotes] : [page, versionedNotes],
   ]);
+  if (options.draft) files.set(readme, draftReadme);
   const requests: RequestRecord[] = [];
   const server = Bun.serve({
     port: 0,
@@ -505,6 +509,10 @@ describe("release normalization GitHub adapter", () => {
               contents: Buffer.from(versionedNotes).toString("base64"),
             },
             {
+              path: readme,
+              contents: Buffer.from(versionedReadme).toString("base64"),
+            },
+            {
               path: releaseChangelog,
               contents: Buffer.from(formatted).toString("base64"),
             },
@@ -521,6 +529,7 @@ describe("release normalization GitHub adapter", () => {
       ).toHaveLength(3);
       expect(h.files.has(releaseDraft)).toBe(false);
       expect(h.files.get(page)).toBe(versionedNotes);
+      expect(h.files.get(readme)).toBe(versionedReadme);
       expect(await runReleaseCi(env)).toEqual([normalizedSha]);
       expect(h.requests.filter((r) => r.path === "/graphql")).toHaveLength(1);
     } finally {
@@ -714,6 +723,7 @@ describe("authored release content", () => {
       [releaseManifest, JSON.stringify({ ".": version })],
       [releaseChangelog, draftChangelog + "\n" + history],
       [releaseDraft, authoredNotes],
+      [readme, draftReadme],
       [repoDoc, "Available since NEXT_RELEASE.\n"],
       [siteDoc, "Deprecated since NEXT_RELEASE. Removed since NEXT_RELEASE.\n"],
       [historicalPage, historicalNotes],
@@ -721,12 +731,13 @@ describe("authored release content", () => {
   }
   const identity = async (value: string) => value;
 
-  test("stamps both docs trees and leaves historical release bytes intact", async () => {
+  test("stamps the README and both docs trees while preserving historical release bytes", async () => {
     const source = files();
     const changes = await prepareReleaseContent(source, identity);
     expect(changes.additions).toEqual(
       new Map([
         [page, versionedNotes],
+        [readme, versionedReadme],
         [repoDoc, "Available since 0.9.0.\n"],
         [siteDoc, "Deprecated since 0.9.0. Removed since 0.9.0.\n"],
         [releaseChangelog, formatted + "\n" + history],

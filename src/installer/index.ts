@@ -23,7 +23,12 @@ import {
   parseInstallerArguments,
 } from "../helpers/installer";
 import { isManagedHook } from "../hooks/managed";
-import { npmNativeBinaries } from "../runtime/binary-resolution";
+import {
+  directoryBinaryCandidates,
+  executableNames,
+  isExecutable,
+  npmNativeBinaries,
+} from "../runtime/binary-resolution";
 import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
@@ -79,6 +84,7 @@ const cliEntry = path.join(
 );
 const installerRuntime = new AsyncLocalStorage<{
   cliEntry: string;
+  ownsPackageHook?: (command: string) => boolean;
   platform: NodeJS.Platform;
 }>();
 function stableGlobalCliEntry(
@@ -188,13 +194,54 @@ function configuredCliEntry(
     "No executable global ast-mcp package-manager alias was found. Install @mwillbanks/ast-mcp globally with Bun, npm, pnpm, or Yarn, then rerun the installer.",
   );
 }
-function cliEntryFor(root: string | undefined, _home: string) {
-  const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
+function scopedCliEntry(entry: string, root: string | undefined) {
   if (!root || /\.[cm]?[jt]s$/u.test(entry)) return entry;
   const relative = path.relative(root, entry);
   if (relative && pathWithin(root, entry))
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
+}
+
+function cliEntryFor(root: string | undefined, _home: string) {
+  return scopedCliEntry(
+    installerRuntime.getStore()?.cliEntry ?? cliEntry,
+    root,
+  );
+}
+
+function installerHookOwnership(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  let commands: Set<string> | undefined;
+  return (command: string) => {
+    if (!commands) {
+      const platform = options.platform ?? process.platform;
+      const local = options.scope === "local";
+      const directories = local
+        ? [path.join(root, "node_modules/.bin")]
+        : (options.globalBinDirectories ??
+          globalBinDirectories("ast-mcp", platform, home));
+      const aliases = (name: string) =>
+        directoryBinaryCandidates(
+          directories,
+          executableNames(name, platform),
+        ).filter((candidate) => isExecutable(candidate, platform));
+      const paths = [
+        ...aliases("ast-mcp-bun"),
+        ...aliases("ast-mcp").flatMap((alias) =>
+          npmNativeBinaries(alias, platform),
+        ),
+      ];
+      commands = new Set(
+        paths.map((entry) =>
+          hookCommand(scopedCliEntry(entry, local ? root : undefined)),
+        ),
+      );
+    }
+    return commands.has(command);
+  };
 }
 
 function cliInvocation(entry: string, args: string[]) {
@@ -494,12 +541,20 @@ function retainUnmanagedHooks(
   commands: string[],
 ): unknown[] {
   const factory = factoryHook(event, commands[0]!);
+  const ownsPackageHook = installerRuntime.getStore()?.ownsPackageHook;
+  const ownsCommand = (actual: unknown) =>
+    typeof actual === "string" &&
+    (commands.includes(actual) || ownsPackageHook?.(actual) === true);
   return prior.flatMap((item) => {
-    if (!commands.some((command) => isManagedHook(item, event, command)))
+    if (
+      !commands.some((command) =>
+        isManagedHook(item, event, command, ownsPackageHook),
+      )
+    )
       return [item];
     const group = item as Record<string, any>;
     if (event === "preToolUse")
-      return commands.includes(group.command) &&
+      return ownsCommand(group.command) &&
         isDeepStrictEqual({ ...group, command: commands[0] }, factory)
         ? []
         : [item];
@@ -508,9 +563,7 @@ function retainUnmanagedHooks(
     if (!isDeepStrictEqual(metadata, factoryMetadata)) return [item];
     const retained = (hooks as unknown[]).filter(
       (child) =>
-        !commands.includes(
-          (child as Record<string, unknown>)?.command as string,
-        ) ||
+        !ownsCommand((child as Record<string, unknown>)?.command) ||
         !isDeepStrictEqual(
           { ...(child as Record<string, unknown>), command: commands[0] },
           factory.hooks[0],
@@ -525,9 +578,10 @@ function refreshManagedHooks(
   command: string,
 ): unknown[] {
   const factory = factoryHook(event, command);
+  const ownsPackageHook = installerRuntime.getStore()?.ownsPackageHook;
   let found = false;
   const refreshed = prior.map((item) => {
-    if (!isManagedHook(item, event, command)) return item;
+    if (!isManagedHook(item, event, command, ownsPackageHook)) return item;
     const group = item as Record<string, any>;
     if (event === "preToolUse") {
       if (group.command === command) {
@@ -1265,6 +1319,7 @@ async function reconcile(
   return installerRuntime.run(
     {
       cliEntry: configuredCliEntry(options, root, home),
+      ownsPackageHook: installerHookOwnership(options, root, home),
       platform: options.platform ?? process.platform,
     },
     async () => {
@@ -1427,6 +1482,7 @@ async function uninstallLocked(options: InstallOptions) {
   return installerRuntime.run(
     {
       cliEntry: configuredCliEntry(options, root, home),
+      ownsPackageHook: installerHookOwnership(options, root, home),
       platform: options.platform ?? process.platform,
     },
     async () => {

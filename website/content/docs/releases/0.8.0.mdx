@@ -94,6 +94,25 @@ The first series is the baseline. The second series is the release promotion can
 | 1,000 files  |                          132.42 → 377.18 | 106.84 / 165.98 / 209.26 ms |  40.07 / 49.14 / 53.78 ms |              4,335 → 3,991 MiB |
 | 10,000 files |                          146.08 → 393.45 | 102.58 / 129.06 / 153.00 ms |  39.36 / 43.92 / 45.39 ms |              4,429 → 4,014 MiB |
 
+### Exact-read replay evidence
+
+Both variants ran on an Apple M5 Max with Bun 1.4.4, using source launch over stdio. The published rows use 16 clients and five interleaved rounds of 200 warm observations. The baseline was `0b18e8987c325fb6306c55f1028f52df837de284`. The timed candidate was a local promotion snapshot on that baseline with the promoted fixes, identified by `release-source-final.json`. The later [merged implementation](https://github.com/mwillbanks/ast-mcp/commit/9cb33be397885c2dd527ae2b09e57417874fa234) includes subsequent review changes.
+
+These are the recorded commands. Run them from the archived candidate checkout with its dependencies installed. Set `baseline` to the pinned baseline checkout with its dependencies installed, and `results` to the output directory.
+
+```bash
+common=(--launches=source,pre-fix --pre-fix="$baseline" --modes=stdio
+  --samples=1000 --runs=5 --cpu=process-tree)
+bun scripts/benchmark/experiment-replay.ts "${common[@]}" \
+  --workloads=exact,mixed,references --read-mode=bounded --clients=1,4,16 --size=1000 \
+  --output="$results/release-final-reads.json"
+bun scripts/benchmark/experiment-replay.ts "${common[@]}" \
+  --workloads=exact --clients=1,4,16 --size=10000 \
+  --output="$results/release-final-exact-10k.json"
+```
+
+The replay harness, source manifest, and raw samples remain in the local experiment archive. The public PR records the matched results and review discussion.
+
 [Matched replay and review evidence](https://github.com/mwillbanks/ast-mcp/pull/76)
 
 ## Native packs and distribution

@@ -12,7 +12,7 @@ import {
   isExecutable,
   npmNativeBinaries,
 } from "./binary-resolution";
-import { managedAstMcpHookEntry } from "./managed-hook";
+import { isPackageHookEntry, managedAstMcpHookEntry } from "./managed-hook";
 import {
   checkLatestVersion,
   compareVersions,
@@ -861,20 +861,26 @@ async function hookCurrent(
       : entries.flatMap((item: { hooks?: Array<{ command?: unknown }> }) =>
           (item.hooks ?? []).map((child) => child.command),
         );
-  const managed = commands
-    .map((command) => ({
-      command,
-      entry: managedAstMcpHookEntry(command),
-    }))
-    .filter(
-      (item): item is { command: string; entry: string } =>
-        typeof item.command === "string" && typeof item.entry === "string",
-    );
+  const managed: Array<{ command: string; entry: string; verified: boolean }> =
+    [];
+  for (const command of commands) {
+    const entry = managedAstMcpHookEntry(command);
+    if (typeof command !== "string" || entry === undefined) continue;
+    const packageHook = isPackageHookEntry(entry);
+    if (
+      packageHook &&
+      (command !== `${JSON.stringify(entry)} hook` ||
+        !(await astMcpEntry(entry, root, home)))
+    )
+      continue;
+    managed.push({ command, entry, verified: packageHook });
+  }
   if (managed.length !== 1) return false;
-  const [{ command, entry }] = managed;
+  const [{ command, entry, verified }] = managed;
   if (
-    command === `${JSON.stringify(entry)} hook` &&
-    (await astMcpEntry(entry, root, home))
+    verified ||
+    (command === `${JSON.stringify(entry)} hook` &&
+      (await astMcpEntry(entry, root, home)))
   )
     return true;
   const receipt = await sourceLaunchReceipt(root, home);

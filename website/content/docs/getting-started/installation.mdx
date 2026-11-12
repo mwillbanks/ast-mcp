@@ -79,6 +79,8 @@ bun run scripts/check-install.ts \
 
 Use `update` to reconcile managed surfaces and migrate version 1 configuration. Use `uninstall` to remove managed host surfaces while preserving configuration. `--root` remains deprecated for one release.
 
+If your Bun-only setup has no Node on `PATH`, run `ast-mcp-bun update` with the same scope and target you used to install.
+
 ```bash
 ./node_modules/.bin/ast-mcp update \
   --scope local --target all

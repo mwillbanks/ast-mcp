@@ -23,6 +23,7 @@ export function isReleaseInput(path: string): boolean {
   return (
     path === releaseManifest ||
     path === releaseChangelog ||
+    path === "README.md" ||
     path === releaseDraft ||
     (/^(?:docs\/|website\/content\/docs\/)/.test(path) &&
       /\.(?:mdx?|json|ya?ml|toml)$/i.test(path))

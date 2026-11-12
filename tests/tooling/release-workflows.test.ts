@@ -1137,10 +1137,11 @@ describe("release workflow contracts", () => {
       (s) => s.name === "Publish and verify the qualified npm archives",
     )?.run;
     expect(publish).toContain("scripts/release/publish-npm.ts");
-    expect(publish).toContain(
+    const legacy = publish?.split("\nelse\n")[1];
+    expect(legacy).toContain(
       'test "$digest" = "$(cat package-artifact/ast-mcp.tgz.sha256)"',
     );
-    expect(publish).toContain(
+    expect(legacy).toContain(
       "npm publish ./package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
     );
     expect(
@@ -1154,11 +1155,10 @@ describe("release workflow contracts", () => {
       ref: "${{ needs.release.outputs.tag_name }}",
       "persist-credentials": false,
     });
-    expect(
-      steps.find((s) => s.uses?.startsWith("actions/setup-node@"))?.with?.[
-        "node-version"
-      ],
-    ).toBe(24);
+    const node = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
+    expect(node?.with?.["node-version"]).toBe(24);
+    expect(node?.with?.["registry-url"]).toBeUndefined();
+    expect(steps.some((s) => s.env?.NODE_AUTH_TOKEN !== undefined)).toBe(false);
   });
   test("actions use major references", () => {
     for (const source of [ci, release, consumers])
