@@ -76,17 +76,14 @@ async function publish(
     "--registry",
     registry,
   ]);
-  if (exitCode !== 0) {
-    if (await verifyRegistry(archive, version, io.fetch)) return;
-    throw new Error(
-      `Could not publish ${archive.name}@${version}. New platform packages require an authenticated first publish of the qualified tarball by the npm scope owner.`,
-    );
-  }
-
   for (const delay of [0, 1_000, 2_000, 4_000, 8_000, 16_000]) {
     if (delay) await io.delay(delay);
     if (await verifyRegistry(archive, version, io.fetch)) return;
   }
+  if (exitCode !== 0)
+    throw new Error(
+      `Could not publish ${archive.name}@${version}. New platform packages require an authenticated first publish of the qualified tarball by the npm scope owner.`,
+    );
   throw new Error(`npm registry has yet to expose ${archive.name}@${version}`);
 }
 

@@ -855,21 +855,22 @@ async function hookCurrent(
   const entries = Array.isArray(hostConfig.hooks?.[event])
     ? hostConfig.hooks[event]
     : [];
-  const commands =
+  type Hook = { command?: unknown; type?: unknown };
+  const hooks: Hook[] =
     event === "preToolUse"
-      ? entries.map((item: { command?: unknown }) => item.command)
-      : entries.flatMap((item: { hooks?: Array<{ command?: unknown }> }) =>
-          (item.hooks ?? []).map((child) => child.command),
-        );
+      ? entries
+      : entries.flatMap((item: { hooks?: Hook[] }) => item.hooks ?? []);
   const managed: Array<{ command: string; entry: string; verified: boolean }> =
     [];
-  for (const command of commands) {
+  for (const hook of hooks) {
+    const command = hook?.command;
     const entry = managedAstMcpHookEntry(command);
     if (typeof command !== "string" || entry === undefined) continue;
     const packageHook = isPackageHookEntry(entry);
     if (
       packageHook &&
-      (command !== `${JSON.stringify(entry)} hook` ||
+      (hook.type !== "command" ||
+        command !== `${JSON.stringify(entry)} hook` ||
         !(await astMcpEntry(entry, root, home)))
     )
       continue;

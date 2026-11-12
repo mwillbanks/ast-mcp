@@ -193,6 +193,7 @@ test("fails closed on registry errors and an unverified publish failure", async 
   expect(failure.commands.map((command) => command[2])).toEqual([
     failure.archives[0]!.file,
   ]);
+  expect(failure.delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
 });
 
 test("recognizes a matching version published concurrently despite a nonzero npm exit", async () => {
@@ -201,6 +202,21 @@ test("recognizes a matching version published concurrently despite a nonzero npm
   await publishNpmRelease(fixture.args, fixture.io);
   expect(fixture.commands).toHaveLength(fixture.archives.length);
   expect(fixture.delays).toEqual([]);
+});
+
+test("waits for an accepted archive to appear after a nonzero npm exit", async () => {
+  const fixture = await releaseFixture();
+  fixture.setPublishCode(1);
+  fixture.deferPublishVisibility();
+  await publishNpmRelease(fixture.args, {
+    ...fixture.io,
+    delay: async (milliseconds) => {
+      await fixture.io.delay(milliseconds);
+      fixture.visible.add(fixture.archives[fixture.commands.length - 1]!.name);
+    },
+  });
+  expect(fixture.commands).toHaveLength(fixture.archives.length);
+  expect(fixture.delays).toEqual(fixture.archives.map(() => 1_000));
 });
 
 test("bounds registry visibility retries and leaves the main package unpublished", async () => {

@@ -475,7 +475,9 @@ test.each([...new Set<NodeJS.Platform>([process.platform, "win32"])])(
       const shim = `./node_modules/.bin/ast-mcp${windows ? ".CMD" : ""}`;
       const bun = `./node_modules/.bin/ast-mcp-bun${windows ? ".CMD" : ""}`;
       const native = `./node_modules/${nativeName}/ast-mcp-bytecode${windows ? ".exe" : ""}`;
-      const previousBun = windows ? bun.replace(/\.CMD$/u, ".cmd") : bun;
+      const previousBun = windows
+        ? bun.replace(/\.CMD$/u, ".cmd").replaceAll("/", "\\")
+        : bun;
       const previousNative = windows
         ? native.replace(/\.exe$/u, ".EXE")
         : native;

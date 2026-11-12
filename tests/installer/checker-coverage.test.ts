@@ -48,7 +48,6 @@ test("checker ignores unrelated package hook names and rejects duplicate install
       ? "./node_modules/.bin/ast-mcp-bun.cmd"
       : "./node_modules/.bin/ast-mcp-bun";
   const alias = path.resolve(root, entry);
-  const hooks = path.join(root, ".codex", "hooks.json");
   const installed = `${JSON.stringify(entry)} hook`;
   const unrelated = [
     '"/custom/ast-mcp-bun" hook',
@@ -57,7 +56,6 @@ test("checker ignores unrelated package hook names and rejects duplicate install
   const wrapped = `bun ${installed}`;
   const time = createMockTime();
   try {
-    await mkdir(path.dirname(hooks), { recursive: true });
     await mkdir(path.dirname(alias), { recursive: true });
     await writeFile(alias, "");
     await chmod(alias, 0o755);
@@ -65,32 +63,43 @@ test("checker ignores unrelated package hook names and rejects duplicate install
       async () => Response.json({ version: "1.2.3" }),
       { preconnect: () => {} },
     );
-    for (const [commands, expected] of [
-      [[installed, ...unrelated, wrapped], true],
-      [[installed, installed, ...unrelated], false],
-      [[...unrelated, wrapped], false],
-    ] as const) {
-      await writeFile(
-        hooks,
-        JSON.stringify({
-          hooks: {
-            PreToolUse: [
-              {
-                hooks: commands.map((command) => ({
-                  command,
-                  type: "command",
-                })),
-              },
-            ],
-          },
-        }),
-      );
-      const report = await checkInstall(
-        ["--root", root, "--target", "codex", "--transport", "http"],
+    const commandHook = (command: string) => ({ command, type: "command" });
+    const promptHook = { command: installed, type: "prompt" };
+    const missingType = { command: installed };
+    for (const target of ["codex", "copilot"] as const) {
+      const hooks = path.join(
         root,
-        { fetch: fetchVersion },
+        target === "codex" ? ".codex/hooks.json" : ".github/hooks/ast-mcp.json",
       );
-      expect(report.checks.hook).toBe(expected);
+      await mkdir(path.dirname(hooks), { recursive: true });
+      for (const [registrations, expected] of [
+        [
+          [
+            commandHook(installed),
+            ...unrelated.map(commandHook),
+            commandHook(wrapped),
+            promptHook,
+            missingType,
+          ],
+          true,
+        ],
+        [[commandHook(installed), commandHook(installed)], false],
+        [[...unrelated.map(commandHook), commandHook(wrapped)], false],
+        [[promptHook], false],
+        [[missingType], false],
+      ] as const) {
+        const document =
+          target === "codex"
+            ? { hooks: { PreToolUse: [{ hooks: registrations }] } }
+            : { hooks: { preToolUse: registrations } };
+        await writeFile(hooks, JSON.stringify(document));
+        const report = await checkInstall(
+          ["--root", root, "--target", target, "--transport", "http"],
+          root,
+          { fetch: fetchVersion },
+        );
+        expect(report.checks.hook).toBe(expected);
+      }
     }
     expect(time.pending()).toBe(0);
   } finally {

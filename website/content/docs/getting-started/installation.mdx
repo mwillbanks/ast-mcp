@@ -79,7 +79,7 @@ bun run scripts/check-install.ts \
 
 Use `update` to reconcile managed surfaces and migrate version 1 configuration. Use `uninstall` to remove managed host surfaces while preserving configuration. `--root` remains deprecated for one release.
 
-If your Bun-only setup has no Node on `PATH`, run `ast-mcp-bun update` with the same scope and target you used to install.
+If your Bun-only setup has no Node on `PATH`, use the alias that matches your installation. For a project install, run `./node_modules/.bin/ast-mcp-bun update --scope local --target all` from the project root. On Windows, run `.\node_modules\.bin\ast-mcp-bun.cmd update --scope local --target all`. For a global install, run `ast-mcp-bun update --scope global --target all`. Replace `all` with the target you originally installed.
 
 ```bash
 ./node_modules/.bin/ast-mcp update \

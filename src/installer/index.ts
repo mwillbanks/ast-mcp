@@ -220,7 +220,7 @@ function installerHookOwnership(
 ) {
   const platform = options.platform ?? process.platform;
   const key = (entry: string) =>
-    platform === "win32" ? entry.toLowerCase() : entry;
+    platform === "win32" ? path.win32.normalize(entry).toLowerCase() : entry;
   let entries: Set<string> | undefined;
   return (command: string) => {
     const entry = managedAstMcpHookEntry(command);
