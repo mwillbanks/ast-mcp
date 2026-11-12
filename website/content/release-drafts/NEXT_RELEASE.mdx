@@ -1,0 +1,14 @@
+---
+title: "NEXT_RELEASE"
+description: Install compiled AST-MCP builds from npm without a separate Bun runtime.
+---
+
+## Native npm installs
+
+`npm install -g @mwillbanks/ast-mcp` selects a compiled build on supported platforms. npm is used during installation. The executable embeds Bun, and managed MCP entries can run the executable directly.
+
+The npm package retains the Bun bundle for platforms without a matching compiled build. See the [installation guide](/docs/getting-started/installation/) for supported targets and the Alpine arm64 prerequisite.
+
+## Documentation
+
+The documentation now includes per-release notes and shows the index refresh and guarded write flows.

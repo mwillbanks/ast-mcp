@@ -13,6 +13,7 @@ import {
   checkInstall,
   smokeMcpStdio,
 } from "../../templates/skills/ast-mcp/scripts/check-install";
+import { createMockTime } from "../support/mock-time";
 
 test("installer reports input stream errors without losing diagnostics", async () => {
   const child = Object.assign(new EventEmitter(), {
@@ -37,6 +38,73 @@ test("installer reports input stream errors without losing diagnostics", async (
     child.stdin.destroy();
     child.stdout.destroy();
     child.stderr.destroy();
+  }
+});
+
+test("checker ignores unrelated package hook names and rejects duplicate installed hooks", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-hook-check-"));
+  const entry =
+    process.platform === "win32"
+      ? "./node_modules/.bin/ast-mcp-bun.cmd"
+      : "./node_modules/.bin/ast-mcp-bun";
+  const alias = path.resolve(root, entry);
+  const installed = `${JSON.stringify(entry)} hook`;
+  const unrelated = [
+    '"/custom/ast-mcp-bun" hook',
+    '"/custom/ast-mcp-bytecode.exe" hook',
+  ];
+  const wrapped = `bun ${installed}`;
+  const time = createMockTime();
+  try {
+    await mkdir(path.dirname(alias), { recursive: true });
+    await writeFile(alias, "");
+    await chmod(alias, 0o755);
+    const fetchVersion = Object.assign(
+      async () => Response.json({ version: "1.2.3" }),
+      { preconnect: () => {} },
+    );
+    const commandHook = (command: string) => ({ command, type: "command" });
+    const promptHook = { command: installed, type: "prompt" };
+    const missingType = { command: installed };
+    for (const target of ["codex", "copilot"] as const) {
+      const hooks = path.join(
+        root,
+        target === "codex" ? ".codex/hooks.json" : ".github/hooks/ast-mcp.json",
+      );
+      await mkdir(path.dirname(hooks), { recursive: true });
+      for (const [registrations, expected] of [
+        [
+          [
+            commandHook(installed),
+            ...unrelated.map(commandHook),
+            commandHook(wrapped),
+            promptHook,
+            missingType,
+          ],
+          true,
+        ],
+        [[commandHook(installed), commandHook(installed)], false],
+        [[...unrelated.map(commandHook), commandHook(wrapped)], false],
+        [[promptHook], false],
+        [[missingType], false],
+      ] as const) {
+        const document =
+          target === "codex"
+            ? { hooks: { PreToolUse: [{ hooks: registrations }] } }
+            : { hooks: { preToolUse: registrations } };
+        await writeFile(hooks, JSON.stringify(document));
+        const report = await checkInstall(
+          ["--root", root, "--target", target, "--transport", "http"],
+          root,
+          { fetch: fetchVersion },
+        );
+        expect(report.checks.hook).toBe(expected);
+      }
+    }
+    expect(time.pending()).toBe(0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    time.dispose();
   }
 });
 

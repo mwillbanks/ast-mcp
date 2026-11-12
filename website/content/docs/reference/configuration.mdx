@@ -205,7 +205,15 @@ api_key_env = "MODEL_API_KEY"
 
 For MCP sampling, replace the provider table with `kind = "mcp"`, `model = "your-model"`, and optional `server_id = "host"`. Enabling generation requires a provider. Omitting a provider keeps the resolved provider empty.
 
+### Index freshness
+
+Available since 0.8.0, `strictRead: true` is a per-request option on supported [index-backed tools](/docs/reference/tools/indexing). The default is `false`. Guarded writes acknowledge durable bytes while the scheduler refreshes the index in the background. During that interval, the default can serve the last complete generation and marks it stale.
+
+Enable strict reads when an index-backed answer must reflect recent committed edits. The tool waits within its request budget for the refresh and can return `intelligence_refresh_pending` when it cannot obtain a current generation. The wait adds latency during refresh or sustained writes. Direct source reads use the files and do not need this option.
+
 ### Native language packs
+
+Available since 0.8.0.
 
 | Field                            | Default   | Accepted values and behavior                                                                                                    |
 | -------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |

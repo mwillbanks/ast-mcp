@@ -10,8 +10,9 @@ import {
   executableNames,
   globalBinDirectories,
   isExecutable,
+  npmNativeBinaries,
 } from "./binary-resolution";
-import { managedAstMcpHookEntry } from "./managed-hook";
+import { isPackageHookEntry, managedAstMcpHookEntry } from "./managed-hook";
 import {
   checkLatestVersion,
   compareVersions,
@@ -763,13 +764,18 @@ async function matchingSourceLaunch(
 }
 
 function* installedBinaryCandidates(root: string | undefined, home: string) {
-  const names = executableNames("ast-mcp", process.platform);
+  const names = ["ast-mcp", "ast-mcp-bun"].flatMap((name) =>
+    executableNames(name, process.platform),
+  );
   for (const discover of root ? [false] : [false, true]) {
     const directories = root
       ? [path.join(root, "node_modules/.bin")]
       : globalBinDirectories("ast-mcp", process.platform, home, discover);
-    for (const candidate of directoryBinaryCandidates(directories, names))
-      if (isExecutable(candidate, process.platform)) yield candidate;
+    for (const candidate of directoryBinaryCandidates(directories, names)) {
+      if (!isExecutable(candidate, process.platform)) continue;
+      yield candidate;
+      yield* npmNativeBinaries(candidate);
+    }
   }
 }
 
@@ -849,26 +855,33 @@ async function hookCurrent(
   const entries = Array.isArray(hostConfig.hooks?.[event])
     ? hostConfig.hooks[event]
     : [];
-  const commands =
+  type Hook = { command?: unknown; type?: unknown };
+  const hooks: Hook[] =
     event === "preToolUse"
-      ? entries.map((item: { command?: unknown }) => item.command)
-      : entries.flatMap((item: { hooks?: Array<{ command?: unknown }> }) =>
-          (item.hooks ?? []).map((child) => child.command),
-        );
-  const managed = commands
-    .map((command) => ({
-      command,
-      entry: managedAstMcpHookEntry(command),
-    }))
-    .filter(
-      (item): item is { command: string; entry: string } =>
-        typeof item.command === "string" && typeof item.entry === "string",
-    );
+      ? entries
+      : entries.flatMap((item: { hooks?: Hook[] }) => item.hooks ?? []);
+  const managed: Array<{ command: string; entry: string; verified: boolean }> =
+    [];
+  for (const hook of hooks) {
+    const command = hook?.command;
+    const entry = managedAstMcpHookEntry(command);
+    if (typeof command !== "string" || entry === undefined) continue;
+    const packageHook = isPackageHookEntry(entry);
+    if (
+      packageHook &&
+      (hook.type !== "command" ||
+        command !== `${JSON.stringify(entry)} hook` ||
+        !(await astMcpEntry(entry, root, home)))
+    )
+      continue;
+    managed.push({ command, entry, verified: packageHook });
+  }
   if (managed.length !== 1) return false;
-  const [{ command, entry }] = managed;
+  const [{ command, entry, verified }] = managed;
   if (
-    command === `${JSON.stringify(entry)} hook` &&
-    (await astMcpEntry(entry, root, home))
+    verified ||
+    (command === `${JSON.stringify(entry)} hook` &&
+      (await astMcpEntry(entry, root, home)))
   )
     return true;
   const receipt = await sourceLaunchReceipt(root, home);

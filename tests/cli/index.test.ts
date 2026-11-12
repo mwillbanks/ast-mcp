@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 
+import { version } from "../../package.json";
 import { type CliHandlers, getCliHelp, runCli } from "../../src/cli";
 
 function harness() {
@@ -56,6 +57,15 @@ test("prints root help for no arguments and help aliases", async () => {
     expect(await runCli(args, handlers)).toBe(0);
     expect(stdout).toEqual([getCliHelp()]);
   }
+});
+
+test("prints the installed package version without dispatching", async () => {
+  const { calls, handlers, stderr, stdout } = harness();
+  expect(await runCli(["--version"], handlers)).toBe(0);
+  expect(stdout).toEqual([`${version}\n`]);
+  expect(calls).toEqual([]);
+  expect(await runCli(["--version", "extra"], handlers)).toBe(1);
+  expect(stderr[0]).toContain("--version does not accept arguments");
 });
 
 test("prints help for every subcommand without dispatching it", async () => {

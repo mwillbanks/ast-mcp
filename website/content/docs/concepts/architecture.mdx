@@ -6,27 +6,19 @@ icon: Network
 
 ast-mcp separates protocol handling from repository policy and mutation mechanics.
 
-```text
-MCP host
-  │
-  ├─ stdio transport ───────┐
-  └─ Streamable HTTP ───────┤
-                             ▼
-                       MCP server
-                             │
-           ┌─────────────────┴─────────────────┐
-           ▼                                   ▼
-  native intelligence tools                 file lifecycle tools
-           │                                   │
-           └──────────── root policy ──────────┘
-                                               │
-                                  patch state machine
-                                               │
-                           optional external formatter
-                                               │
-                                  deterministic file locks
-                                               │
-                                    atomic replacement
+```mermaid
+flowchart LR
+  host([MCP host]) --> stdio[stdio]
+  host --> http[Streamable HTTP]
+  stdio --> server[MCP server]
+  http --> server
+  server --> policy{Root policy}
+  policy --> reads[Code intelligence]
+  policy --> lifecycle[File lifecycle]
+  lifecycle --> patch[Prepare and format]
+  patch --> locks[Acquire locks]
+  locks --> commit[Commit source bytes]
+  commit --> refresh[Schedule index refresh]
 ```
 
 ## Protocol layer
@@ -49,7 +41,7 @@ Fallow analyzes every duplicated pair (`minOccurrences = 2`) so reusable behavio
 
 ## Distribution
 
-The package publishes one Bun-bundled `ast-mcp` executable with MCP, installer, hook, and skill export commands:
+The npm package exposes `ast-mcp` through the platform executable or the fallback Bun bundle. Both forms share these commands:
 
 - `ast-mcp mcp` starts stdio by default; `--transport http` starts Streamable HTTP
 - `ast-mcp hook` runs blocking host hooks

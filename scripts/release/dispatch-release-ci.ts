@@ -1,6 +1,14 @@
 import path from "node:path";
 
-const maximumChangelogBytes = 1024 * 1024;
+import {
+  isReleaseInput,
+  prepareReleaseContent,
+  type ReleaseFileChanges,
+} from "./prepare-release-content.ts";
+
+const maximumReleaseInputBytes = 1024 * 1024;
+const maximumReleaseInputs = 1_000;
+const releaseReadConcurrency = 8;
 const headVisibilityRetries = 20;
 const headVisibilityDelayMs = 250;
 
@@ -48,11 +56,11 @@ interface ReleasePullRequest {
 
 export interface ReleaseCiApi {
   pullRequest(number: number): Promise<ReleasePullRequest>;
-  changelog(sha: string): Promise<string>;
-  commitChangelog(
+  releaseFiles(sha: string): Promise<ReadonlyMap<string, string>>;
+  commitReleaseFiles(
     ref: string,
     expectedSha: string,
-    content: string,
+    changes: ReleaseFileChanges,
   ): Promise<string>;
   dispatch(ref: string, sha: string): Promise<void>;
 }
@@ -133,19 +141,14 @@ export async function dispatchReleaseCi(
     seen.add(number);
     const pr = await api.pullRequest(number);
     validatePullRequest(repository, number, pr);
-    const original = await api.changelog(pr.head.sha);
-    const formatted = await format(original);
-    // Oxfmt cannot combine --check and stdin. A second pass verifies canonical bytes.
-    if (!formatted || (await format(formatted)) !== formatted)
-      throw new Error(
-        "Formatted release changelog failed its formatting check",
-      );
+    const files = await api.releaseFiles(pr.head.sha);
+    const changes = await prepareReleaseContent(files, format);
     const current = await api.pullRequest(number);
     validatePullRequest(repository, number, current, pr.head);
     let expectedHead = pr.head;
-    if (formatted !== original) {
+    if (changes.additions.size > 0 || changes.deletions.length > 0) {
       const sha = commitOid(
-        await api.commitChangelog(pr.head.ref, pr.head.sha, formatted),
+        await api.commitReleaseFiles(pr.head.ref, pr.head.sha, changes),
       );
       expectedHead = { ...pr.head, sha };
       let normalized = await api.pullRequest(number);
@@ -167,22 +170,50 @@ export async function dispatchReleaseCi(
   return dispatched;
 }
 
-function changelogContents(value: unknown): string {
+function releaseInputContents(value: unknown, path: string): string {
   const file = object(value);
   if (
     file.type !== "file" ||
-    file.path !== "CHANGELOG.md" ||
+    file.path !== path ||
     file.encoding !== "base64" ||
     !Number.isSafeInteger(file.size) ||
     Number(file.size) < 0 ||
-    Number(file.size) > maximumChangelogBytes
+    Number(file.size) > maximumReleaseInputBytes
   )
-    throw new Error("Invalid release changelog metadata");
+    throw new Error("Invalid release input metadata: " + path);
   const encoded = string(file.content).replaceAll("\n", "");
   const bytes = Buffer.from(encoded, "base64");
   if (bytes.toString("base64") !== encoded || bytes.byteLength !== file.size)
-    throw new Error("Invalid release changelog encoding");
+    throw new Error("Invalid release input encoding: " + path);
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
+function releaseInputPaths(value: unknown): string[] {
+  const response = object(value);
+  if (response.truncated !== false || !Array.isArray(response.tree))
+    throw new Error("Release tree is incomplete");
+  const paths = new Set<string>();
+  for (const entry of response.tree) {
+    const file = object(entry);
+    const path = string(file.path);
+    if (!isReleaseInput(path)) continue;
+    if (
+      file.type !== "blob" ||
+      file.mode !== "100644" ||
+      !Number.isSafeInteger(file.size) ||
+      Number(file.size) < 0 ||
+      Number(file.size) > maximumReleaseInputBytes ||
+      path
+        .split("/")
+        .some((part) => part === "" || part === "." || part === "..") ||
+      paths.has(path)
+    )
+      throw new Error("Invalid release tree entry: " + path);
+    paths.add(path);
+    if (paths.size > maximumReleaseInputs)
+      throw new Error("Too many release inputs");
+  }
+  return [...paths].sort();
 }
 
 export async function runReleaseCi(
@@ -216,12 +247,32 @@ export async function runReleaseCi(
     async pullRequest(number) {
       return releasePullRequest(await (await rest(`pulls/${number}`)).json());
     },
-    async changelog(sha) {
-      return changelogContents(
-        await (await rest(`contents/CHANGELOG.md?ref=${sha}`)).json(),
+    async releaseFiles(sha) {
+      const paths = releaseInputPaths(
+        await (await rest(`git/trees/${sha}?recursive=1`)).json(),
       );
+      const files = new Map<string, string>();
+      for (
+        let start = 0;
+        start < paths.length;
+        start += releaseReadConcurrency
+      ) {
+        const batch = paths.slice(start, start + releaseReadConcurrency);
+        const results = await Promise.all(
+          batch.map(async (path) => {
+            const encoded = path.split("/").map(encodeURIComponent).join("/");
+            const response = await rest(`contents/${encoded}?ref=${sha}`);
+            return [
+              path,
+              releaseInputContents(await response.json(), path),
+            ] as const;
+          }),
+        );
+        for (const [path, content] of results) files.set(path, content);
+      }
+      return files;
     },
-    async commitChangelog(ref, expectedSha, content) {
+    async commitReleaseFiles(ref, expectedSha, changes) {
       const response = object(
         await (
           await request(env.GITHUB_GRAPHQL_URL ?? `${origin}/graphql`, {
@@ -235,14 +286,16 @@ export async function runReleaseCi(
                   branchName: ref,
                 },
                 expectedHeadOid: expectedSha,
-                message: { headline: "style: format generated changelog" },
+                message: { headline: "docs: stamp authored release content" },
                 fileChanges: {
-                  additions: [
-                    {
-                      path: "CHANGELOG.md",
+                  additions: Array.from(
+                    changes.additions,
+                    ([path, content]) => ({
+                      path,
                       contents: Buffer.from(content).toString("base64"),
-                    },
-                  ],
+                    }),
+                  ),
+                  deletions: changes.deletions.map((path) => ({ path })),
                 },
               },
             },
@@ -250,7 +303,7 @@ export async function runReleaseCi(
         ).json(),
       );
       if (response.errors !== undefined)
-        throw new Error("GitHub changelog commit was rejected");
+        throw new Error("GitHub release content commit was rejected");
       const data = object(response.data);
       const mutation = object(data.createCommitOnBranch);
       return commitOid(object(mutation.commit).oid);

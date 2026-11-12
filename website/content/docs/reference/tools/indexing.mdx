@@ -7,6 +7,8 @@ Publish a revision-scoped index, query evidence, and optionally generate cited a
 
 Parameters below come from registered MCP schemas. The examples show the `tools/call` payload's `name` and `arguments`; replace example paths, identities, hashes, and evidence with inspected values from your session. Workspace and graph identities shown are syntactically valid examples, not live handles.
 
+Available since 0.8.0, index-backed tools that expose `strictRead` default it to `false`. They can serve the last complete generation with a stale marker while refresh is pending. Set `strictRead: true` to require a current generation within the request budget. Waiting increases latency and can return `intelligence_refresh_pending` when writes continue or a refresh cannot finish in time. See [index freshness](/docs/reference/configuration#index-freshness).
+
 ## generate
 
 Optionally generates a cited answer from explicitly supplied, revision-scoped evidence.

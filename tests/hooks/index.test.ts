@@ -1,6 +1,54 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { decisionPayload, evaluateHook, runHook } from "../../src/hooks";
+import { isManagedHook, managedAstMcpHookEntry } from "../../src/hooks/managed";
+import {
+  isManagedHook as skillIsManagedHook,
+  managedAstMcpHookEntry as skillManagedHookEntry,
+} from "../../templates/skills/ast-mcp/scripts/managed-hook";
+
+test("recognizes direct Bun and native hook commands in both hook readers", () => {
+  for (const readHook of [managedAstMcpHookEntry, skillManagedHookEntry]) {
+    for (const entry of [
+      "./node_modules/.bin/ast-mcp-bun",
+      "C:\\Program Files\\npm\\ast-mcp-bun.cmd",
+      "./node_modules/@mwillbanks/ast-mcp-linux-x64/ast-mcp-bytecode",
+      "C:\\Program Files\\npm\\node_modules\\@mwillbanks\\ast-mcp-windows-x64\\ast-mcp-bytecode.exe",
+    ]) {
+      expect(readHook(`${JSON.stringify(entry)} hook`)).toBe(entry);
+      expect(readHook(`${JSON.stringify(entry)} mcp`)).toBeUndefined();
+    }
+    expect(readHook('"./custom/ast-mcp-bun-helper" hook')).toBeUndefined();
+  }
+});
+
+test("requires exact ownership evidence for direct Bun and native hooks", () => {
+  for (const ownsHook of [isManagedHook, skillIsManagedHook]) {
+    const selected = '"./node_modules/.bin/ast-mcp" hook';
+    const known = '"./node_modules/.bin/ast-mcp-bun" hook';
+    const custom = '"/custom/ast-mcp-bytecode.exe" hook';
+    const ownsPackageHook = (command: string) => command === known;
+    expect(
+      ownsHook({ type: "command", command: known }, "preToolUse", selected),
+    ).toBeFalse();
+    expect(
+      ownsHook(
+        { type: "command", command: known },
+        "preToolUse",
+        selected,
+        ownsPackageHook,
+      ),
+    ).toBeTrue();
+    expect(
+      ownsHook(
+        { hooks: [{ type: "command", command: custom }] },
+        "PreToolUse",
+        selected,
+        ownsPackageHook,
+      ),
+    ).toBeFalse();
+  }
+});
 
 describe("agent hook", () => {
   test("blocks direct edit tools", () => {

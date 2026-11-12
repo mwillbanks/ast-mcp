@@ -330,6 +330,45 @@ describe("installer", () => {
     }
   });
 
+  test("writes the direct Bun alias for local and global installs without Node", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-bun-root-"));
+    const home = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-bun-home-"));
+    created.push(root, home);
+    const globalDirectory = path.join(home, "bin");
+    const which = spyOn(Bun, "which").mockReturnValue(null);
+    try {
+      for (const [scope, bin, config] of [
+        ["local", path.join(root, "node_modules", ".bin"), root],
+        ["global", globalDirectory, home],
+      ] as const) {
+        const shim = await executable(path.join(bin, "ast-mcp"));
+        const direct = await executable(path.join(bin, "ast-mcp-bun"));
+        await install({
+          cliEntry: shim,
+          globalBinDirectories: [globalDirectory],
+          home,
+          root,
+          scope,
+          targets: ["codex"],
+          verifyLaunch: async () => {},
+        });
+        const entry =
+          scope === "local"
+            ? `./${path.relative(root, direct).split(path.sep).join("/")}`
+            : direct;
+        const { command, args } = commandForPlatform(entry, ["mcp"]);
+        const codex = Bun.TOML.parse(
+          await readFile(path.join(config, ".codex/config.toml"), "utf8"),
+        ) as {
+          mcp_servers: Record<string, { command: string; args: string[] }>;
+        };
+        expect(codex.mcp_servers["ast-mcp"]).toMatchObject({ command, args });
+      }
+    } finally {
+      which.mockRestore();
+    }
+  });
+
   test("rejects package-internal or missing global commands", async () => {
     const root = await mkdtemp(
       path.join(os.tmpdir(), "ast-mcp-global-missing-root-"),

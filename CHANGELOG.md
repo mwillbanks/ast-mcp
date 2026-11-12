@@ -1,5 +1,10 @@
 # Changelog
 
+## NEXT_RELEASE
+
+- Install native ESM bytecode builds from npm on six supported targets.
+- Publish versioned release notes and document index freshness controls.
+
 ## [0.8.0](https://github.com/mwillbanks/ast-mcp/compare/ast-mcp-v0.7.2...ast-mcp-v0.8.0) (2026-11-11)
 
 ### ✨ Features

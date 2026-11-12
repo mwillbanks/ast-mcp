@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +22,17 @@ import {
   jsonTransport,
   parseInstallerArguments,
 } from "../helpers/installer";
-import { isManagedHook } from "../hooks/managed";
+import {
+  isManagedHook,
+  isPackageHookEntry,
+  managedAstMcpHookEntry,
+} from "../hooks/managed";
+import {
+  directoryBinaryCandidates,
+  executableNames,
+  isExecutable,
+  npmNativeBinaries,
+} from "../runtime/binary-resolution";
 import {
   globalBinDirectories,
   resolveGlobalBinaryAlias,
@@ -31,6 +41,7 @@ import {
 import { withFencedFileLocks } from "../runtime/locks";
 import { pathWithin } from "../runtime/path-utils";
 import { commandForPlatform } from "../runtime/subprocess";
+import { bundledSkillRoot } from "../skills";
 import {
   enableCodexElicitation,
   parseCodexConfig,
@@ -77,6 +88,7 @@ const cliEntry = path.join(
 );
 const installerRuntime = new AsyncLocalStorage<{
   cliEntry: string;
+  ownsPackageHook?: (command: string) => boolean;
   platform: NodeJS.Platform;
 }>();
 function stableGlobalCliEntry(
@@ -109,15 +121,35 @@ function stableGlobalCliEntry(
   });
 }
 
+function resolvedCliAlias(alias: string, platform: NodeJS.Platform): string {
+  if (!/^ast-mcp-bytecode(?:[.]exe)?$/iu.test(path.basename(process.execPath)))
+    return alias;
+  const executable = realpathSync(process.execPath);
+  return (
+    npmNativeBinaries(alias, platform).find((candidate) =>
+      platform === "win32"
+        ? candidate.toLowerCase() === executable.toLowerCase()
+        : candidate === executable,
+    ) ?? alias
+  );
+}
+
 function configuredCliEntry(
   options: InstallOptions,
   root: string,
   home: string,
 ) {
   const platform = options.platform ?? process.platform;
+  const bunOnly = !Bun.which("node");
   if (options.scope === "local") {
+    const bunAlias =
+      bunOnly && resolveLocalBinaryAlias("ast-mcp-bun", root, platform);
     const alias = resolveLocalBinaryAlias("ast-mcp", root, platform);
-    if (alias) return alias;
+    if (alias) {
+      const resolved = resolvedCliAlias(alias, platform);
+      return resolved === alias && bunAlias ? bunAlias : resolved;
+    }
+    if (bunAlias) return bunAlias;
     if (existsSync(cliEntry)) return cliEntry;
     throw new Error(
       "No local ast-mcp executable or shipped CLI was found. Build or install ast-mcp, then rerun the installer.",
@@ -134,26 +166,95 @@ function configuredCliEntry(
       directories,
       platform,
     );
-    if (preferred) return preferred;
-    if (options.cliEntry && !discover && !options.globalBinDirectories)
+    if (preferred) {
+      const resolved = resolvedCliAlias(preferred, platform);
+      if (resolved !== preferred || !bunOnly) return resolved;
+    }
+    if (
+      options.cliEntry &&
+      !preferred &&
+      !discover &&
+      !options.globalBinDirectories
+    )
       continue;
     const resolved = resolveGlobalBinaryAlias("ast-mcp", {
       globalBinDirectories: directories,
       platform,
     });
+    if (resolved) {
+      const command = resolvedCliAlias(resolved, platform);
+      if (command !== resolved || !bunOnly) return command;
+    }
+    const bunAlias =
+      bunOnly &&
+      resolveGlobalBinaryAlias("ast-mcp-bun", {
+        globalBinDirectories: directories,
+        platform,
+      });
+    if (bunAlias) return bunAlias;
     if (resolved) return resolved;
   }
   throw new Error(
     "No executable global ast-mcp package-manager alias was found. Install @mwillbanks/ast-mcp globally with Bun, npm, pnpm, or Yarn, then rerun the installer.",
   );
 }
-function cliEntryFor(root: string | undefined, _home: string) {
-  const entry = installerRuntime.getStore()?.cliEntry ?? cliEntry;
+function scopedCliEntry(entry: string, root: string | undefined) {
   if (!root || /\.[cm]?[jt]s$/u.test(entry)) return entry;
   const relative = path.relative(root, entry);
   if (relative && pathWithin(root, entry))
     return `./${relative.split(path.sep).join("/")}`;
   return entry;
+}
+
+function cliEntryFor(root: string | undefined, _home: string) {
+  return scopedCliEntry(
+    installerRuntime.getStore()?.cliEntry ?? cliEntry,
+    root,
+  );
+}
+
+function installerHookOwnership(
+  options: InstallOptions,
+  root: string,
+  home: string,
+) {
+  const platform = options.platform ?? process.platform;
+  const key = (entry: string) =>
+    platform === "win32" ? path.win32.normalize(entry).toLowerCase() : entry;
+  let entries: Set<string> | undefined;
+  return (command: string) => {
+    const entry = managedAstMcpHookEntry(command);
+    if (
+      entry === undefined ||
+      !isPackageHookEntry(entry) ||
+      command !== hookCommand(entry)
+    )
+      return false;
+    if (!entries) {
+      const local = options.scope === "local";
+      const directories = local
+        ? [path.join(root, "node_modules/.bin")]
+        : (options.globalBinDirectories ??
+          globalBinDirectories("ast-mcp", platform, home));
+      const aliases = (name: string) =>
+        directoryBinaryCandidates(
+          directories,
+          executableNames(name, platform),
+        ).filter((candidate) => isExecutable(candidate, platform));
+      const paths = [
+        ...aliases("ast-mcp-bun"),
+        ...aliases("ast-mcp").flatMap((alias) =>
+          npmNativeBinaries(alias, platform),
+        ),
+      ];
+      entries = new Set(
+        paths.map((entry) =>
+          key(scopedCliEntry(entry, local ? root : undefined)),
+        ),
+      );
+    }
+    return entries.has(key(entry));
+  };
 }
 
 function cliInvocation(entry: string, args: string[]) {
@@ -453,12 +554,20 @@ function retainUnmanagedHooks(
   commands: string[],
 ): unknown[] {
   const factory = factoryHook(event, commands[0]!);
+  const ownsPackageHook = installerRuntime.getStore()?.ownsPackageHook;
+  const ownsCommand = (actual: unknown) =>
+    typeof actual === "string" &&
+    (commands.includes(actual) || ownsPackageHook?.(actual) === true);
   return prior.flatMap((item) => {
-    if (!commands.some((command) => isManagedHook(item, event, command)))
+    if (
+      !commands.some((command) =>
+        isManagedHook(item, event, command, ownsPackageHook),
+      )
+    )
       return [item];
     const group = item as Record<string, any>;
     if (event === "preToolUse")
-      return commands.includes(group.command) &&
+      return ownsCommand(group.command) &&
         isDeepStrictEqual({ ...group, command: commands[0] }, factory)
         ? []
         : [item];
@@ -467,9 +576,7 @@ function retainUnmanagedHooks(
     if (!isDeepStrictEqual(metadata, factoryMetadata)) return [item];
     const retained = (hooks as unknown[]).filter(
       (child) =>
-        !commands.includes(
-          (child as Record<string, unknown>)?.command as string,
-        ) ||
+        !ownsCommand((child as Record<string, unknown>)?.command) ||
         !isDeepStrictEqual(
           { ...(child as Record<string, unknown>), command: commands[0] },
           factory.hooks[0],
@@ -484,9 +591,10 @@ function refreshManagedHooks(
   command: string,
 ): unknown[] {
   const factory = factoryHook(event, command);
+  const ownsPackageHook = installerRuntime.getStore()?.ownsPackageHook;
   let found = false;
   const refreshed = prior.map((item) => {
-    if (!isManagedHook(item, event, command)) return item;
+    if (!isManagedHook(item, event, command, ownsPackageHook)) return item;
     const group = item as Record<string, any>;
     if (event === "preToolUse") {
       if (group.command === command) {
@@ -561,7 +669,7 @@ async function writeText(file: string, content: string) {
 
 async function instructions(file: string) {
   const block = (
-    await Bun.file(path.join(packageRoot, "templates/AGENTS.md")).text()
+    await Bun.file(path.join(bundledSkillRoot, "../../AGENTS.md")).text()
   ).trim();
   const old = await readInstallerText(file).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
@@ -1224,6 +1332,7 @@ async function reconcile(
   return installerRuntime.run(
     {
       cliEntry: configuredCliEntry(options, root, home),
+      ownsPackageHook: installerHookOwnership(options, root, home),
       platform: options.platform ?? process.platform,
     },
     async () => {
@@ -1386,6 +1495,7 @@ async function uninstallLocked(options: InstallOptions) {
   return installerRuntime.run(
     {
       cliEntry: configuredCliEntry(options, root, home),
+      ownsPackageHook: installerHookOwnership(options, root, home),
       platform: options.platform ?? process.platform,
     },
     async () => {

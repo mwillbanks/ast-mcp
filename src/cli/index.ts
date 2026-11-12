@@ -1,3 +1,4 @@
+import { version } from "../../package.json";
 import { CliOutputUsageError, parseOutputArguments } from "./output";
 
 export interface CliHandlers {
@@ -12,7 +13,9 @@ export interface CliHandlers {
   stdout?(text: string): void;
 }
 
-const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  doctor       Diagnose host setup, approvals, and release currency\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  pm           List, install, or diagnose native language packs\n  skills       Export or update manually installed skills\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n      --output <format>  Output: human, json, yaml, or toml\n  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
+const rootHelp = `ast-mcp - AST-aware Model Context Protocol server\n\nUsage:\n  ast-mcp <command> [options]\n\nCommands:\n  config       Validate, display, or migrate ast-mcp.toml configuration\n  doctor       Diagnose host setup, approvals, and release currency\n  install      Configure ast-mcp for one or more supported hosts\n  update       Refresh an existing ast-mcp configuration\n  uninstall    Remove ast-mcp-managed configuration\n  mcp          Start the stdio or Streamable HTTP MCP server\n  pm           List, install, or diagnose native language packs\n  skills       Export or update manually installed skills\n  hook         Run the pre-tool-use filesystem guard\n  help         Display help for a command\n\nOptions:\n      --output <format>  Output: human, json, yaml, or toml
+      --version          Display the installed AST-MCP version
+  -h, --help   Display help\n\nRun "ast-mcp help <command>" for command-specific help.\n`;
 
 const installerOptions = `Options:\n  -s, --scope <scope>       Installation scope: local or global (default: local)\n  -t, --target <target>     Host: codex, claude, copilot, or all (default: all)\n  -r, --root <path>         Deprecated root override (default: current directory)\n      --transport <mode>    MCP transport: stdio or http (default: stdio)\n      --host <address>      HTTP bind host (default: layered configuration)\n      --port <number>       HTTP bind port (default: layered configuration)\n      --service             Install and start a managed user HTTP service\n      --no-service          Stop and remove a managed user HTTP service\n      --output <format>     Output: human, json, yaml, or toml\n  -h, --help                Display help\n`;
 
@@ -153,6 +156,13 @@ export async function runCli(
     );
   if (!command || command === "--help" || command === "-h") {
     writeHelp(handlers);
+    return 0;
+  }
+  if (command === "--version") {
+    if (rest.length || parsed.output !== undefined)
+      return usageError(handlers, "--version does not accept arguments");
+    if (handlers.stdout) handlers.stdout(`${version}\n`);
+    else process.stdout.write(`${version}\n`);
     return 0;
   }
   if (command === "help") return runHelpCommand(rest, handlers);

@@ -100,7 +100,8 @@ An SSH service may not inherit Bun's Actions PATH. The recipe resolves Bun from 
 - Keep changes focused and explain the user-visible or boundary-level behavior.
 - Add regression coverage for changed security, path, transport, patch, installer, or lifecycle behavior.
 - Update canonical MCP skill resources, evaluation fixtures, and documentation when a public contract changes.
-- Use Conventional Commits so release-please can determine the next version and changelog.
+- Use Conventional Commits so Release Please can determine the next version.
+- Record user-facing changes in the relevant docs, the unreleased notes draft, and the changelog.
 - Do not commit generated `dist/`, `website/.output/`, or dependency directories.
 
 ## CI runner capacity recovery
@@ -113,4 +114,6 @@ To merge without starting release automation, include `[skip release]` in the re
 
 ## Releases
 
-Releases are automated from `main`. Release Please opens and maintains the release pull request. Before validation is dispatched, the workflow formats its generated `CHANGELOG.md` with the pinned Bun formatter and checks the result. If formatting changes the file, it creates a changelog-only commit against the expected release-branch head; if already formatted, it skips that commit. It dispatches CI for the resulting exact head SHA. Formatting failures, API errors, invalid release PRs, or concurrent head changes stop dispatch. Merging the release pull request creates the GitHub release and builds one package archive. Clean Bun and npm production installations qualify those exact bytes on macOS ARM64, Linux ARM64 GNU, Linux x64, and Windows x64. ARM64 consumers also test the Bun 1.4.3 runtime minimum. Archive checksum verification and all consumer jobs must pass before npm publication with provenance. The publish job downloads the qualified archive and does not rebuild it.
+Releases are automated from `main`. Release Please opens and maintains the release pull request. The release workflow stamps the authored changelog and documentation with the proposed version. It moves the release notes draft to its versioned page, then dispatches CI for that exact head. Invalid inputs, formatting failures, and concurrent head changes stop dispatch.
+
+Merging the release pull request builds the main npm tarball and six native tarballs. The workflow qualifies those artifacts on the supported targets and verifies their checksums. It publishes the platform packages before the main npm package and uses the versioned MDX page to generate GitHub release notes. See [CI and first npm publication](docs/ci.md#first-npm-publication-of-the-platform-packages) for the bootstrap and recovery procedure.

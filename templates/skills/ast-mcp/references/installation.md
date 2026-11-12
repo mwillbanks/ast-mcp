@@ -70,6 +70,10 @@ For a persistent global npm installation or upgrade:
 `npm install --global @mwillbanks/ast-mcp@latest`
 
 Use the discovered global `ast-mcp` executable for subsequent global commands.
+On supported platforms, npm installs the matching compiled executable with Bun embedded and can install with scripts disabled.
+The regular Bun bundle remains the fallback where a compiled package is unavailable.
+The npm-installed `ast-mcp` command uses a Node launcher. Use `ast-mcp-bun` to run the bundle directly with an installed Bun runtime.
+Alpine arm64 needs `gcompat` for the bundled Markdown parser.
 Do not configure ephemeral package-runner paths or internal package files.
 Yarn 2+ installations must use a project-local package.
 

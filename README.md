@@ -50,11 +50,11 @@ A stale hash, ambiguous match, capped preview, unsupported route, or lost MCP co
 
 ## Distribution
 
-The regular package requires Bun. Its `ast-mcp` CLI includes `install`, `update`, `uninstall`, `hook`, `mcp`, `pm`, and `skills` subcommands. It also includes explicit parser-worker bundles, the tree-sitter runtime WASM, a pinned grammar manifest, and every available grammar WASM under `dist/workers`. Host configurations reference the stable installed CLI, so native intelligence remains available for the installation lifetime.
+Available since NEXT_RELEASE. The npm package selects a compiled ESM bytecode executable on supported platforms. It embeds Bun and ships with its native runtime assets. The npm-installed `ast-mcp` command uses a Node launcher. Run `ast-mcp-bun` to invoke the packaged JavaScript bundle directly with an installed Bun runtime.
 
 Native Bun, tree-sitter, ast-grep, LanceDB, and Transformers components power code intelligence. JSON and JSONC configuration parsing uses Bun support without another parsing dependency. Formatting is optional and uses explicitly configured external commands; ast-mcp does not download formatters during file operations. Extracted-package tests exercise parse, index, status, retrieval, and guarded writes through both stdio and Streamable HTTP.
 
-GitHub Releases provides executables with embedded Bun and ESM bytecode for macOS arm64, Linux arm64 and x64 (glibc and musl), and Windows x64. Extract the matching archive and keep its `runtime/` directory beside the executable. Alpine arm64 requires `gcompat` for the bundled Markdown parser. Use the regular Bun package when no standalone archive matches your platform.
+GitHub Releases also provides archives for macOS arm64, Linux arm64 and x64 (glibc and musl), and Windows x64. Keep the extracted `runtime/` directory beside the executable. Alpine arm64 requires `gcompat` for the bundled Markdown parser.
 
 ## Install
 
@@ -194,7 +194,7 @@ Open each checkout with `workspace_open` before indexing or querying it. A works
 
 The default `global` placement shares content-addressed LanceDB artifacts across workspaces. Select `local`, `parent`, or `explicit` placement through `workspace_open` when isolation or a specific storage location is required. Cross-repository graph comparison requires `federation: true`; ordinary graph requests remain repository-scoped.
 
-Use `index` with `build`, `refresh`, `verify`, `collect`, or `status`. Use `index_status` for a read-only health view. `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` require explicit workspace IDs and return generation, evidence, coverage, freshness, and pagination metadata. LanceDB is the only persistent database.
+Use `index` with `build`, `refresh`, `verify`, `collect`, or `status`. Use `index_status` for a read-only health view. `graph_query`, `graph_path`, `graph_explain`, and `graph_diff` require explicit workspace IDs and return generation, evidence, coverage, freshness, and pagination metadata. LanceDB stores the index. A private SQLite journal supports guarded write recovery. Since 0.8.0, writes can acknowledge durable bytes before the index refresh finishes. Indexed reads can return a marked retained generation. Use `strictRead: true` to wait within the request budget.
 
 ## MCP configuration
 

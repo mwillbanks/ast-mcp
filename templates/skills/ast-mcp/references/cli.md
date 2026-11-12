@@ -23,6 +23,7 @@ Do not download an executable through an implicit package runner.
 
 Run `ast-mcp help <command>` or `ast-mcp <command> --help` for executable-specific help.
 Root `-h` and `--help` also display help.
+Run `ast-mcp --version` to display the installed version.
 Ordinary commands accept `--output human|json|yaml|toml`.
 Protocol commands `mcp` and `hook` reject `--output`; stdout belongs to their protocol.
 Usage errors return a nonzero exit.

@@ -64,6 +64,21 @@ test("prerendered pages hydrate, navigate, search, and retain deployment paths",
   expect(errors).toEqual([]);
 });
 
+test("release notes render diagrams and tables with reduced motion", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(base + "docs/releases/0.8.0");
+
+  const diagrams = page.locator(".docs-mermaid");
+  await expect(diagrams).toHaveCount(4);
+  await expect(diagrams.locator("svg")).toHaveCount(4);
+  await expect(page.getByRole("table")).toHaveCount(3);
+  const animatedPaths = diagrams.first().locator(".edge-animation-fast");
+  await expect(animatedPaths.first()).toHaveCSS("animation-name", "none");
+});
+
 test("every generated documentation URL has HTML and a static search index", async ({
   request,
 }) => {

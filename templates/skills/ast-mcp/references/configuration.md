@@ -36,6 +36,14 @@ Use the discovered schema for nested provider, embedding, storage, and formatter
 Do not invent settings or transfer fields from tool requests into configuration.
 Load [installation.md](installation.md) for migration and invalid-configuration recovery.
 
+## Index freshness
+
+The per-request `strictRead` option defaults to `false`.
+Use it on supported index-backed tools to wait for the scheduled generation within the request budget.
+Strict reads can be slower and can return `intelligence_refresh_pending`.
+Guarded writes acknowledge durable source bytes before the coalesced refresh finishes.
+LanceDB stores the index and SQLite records the write recovery journal.
+
 ## Native language packs
 
 Version 2 accepts `[language_packs]` and `[language_packs.versions]`.

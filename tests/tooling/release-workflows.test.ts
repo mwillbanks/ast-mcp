@@ -118,11 +118,39 @@ describe("standalone release contracts", () => {
     ]).toEqual(Array(3).fill("standalone-release-matrix"));
   });
 
+  test("qualifies the npm matrix before publication and verifies the registry", () => {
+    const publish = job(release, "publish");
+    expect(publish.needs).toEqual([
+      "release",
+      "validate",
+      "build",
+      "consumers",
+      "standalone",
+      "publish-standalone",
+    ]);
+    expect(publish.permissions?.["id-token"]).toBe("write");
+    expect(publish.steps?.map((step) => step.run).join("\n")).toContain(
+      "scripts/release/publish-npm.ts",
+    );
+    expect(job(release, "verify-registry")).toMatchObject({
+      needs: ["release", "publish"],
+      uses: "./.github/workflows/standalone.yml",
+      with: {
+        registry_version: "${{ needs.publish.outputs.registry_version }}",
+      },
+    });
+    expect(job(release, "publish-notes").needs).toContain("verify-registry");
+  });
+
   test("attaches only complete qualified assets to the tagged release", () => {
     expect(job(release, "standalone")).toMatchObject({
-      needs: "release",
+      needs: ["release", "build"],
       uses: "./.github/workflows/standalone.yml",
-      with: { ref: "${{ needs.release.outputs.tag_name }}" },
+      with: {
+        ref: "${{ needs.release.outputs.tag_name }}",
+        package_artifact_name: "release-candidate",
+        native_npm: "${{ needs.build.outputs.native_npm == 'true' }}",
+      },
     });
     const publication = job(release, "publish-standalone");
     expect(publication.needs).toEqual(["release", "validate", "standalone"]);
@@ -856,15 +884,10 @@ describe("release workflow contracts", () => {
     expect(job(release, "publish").if).toContain(
       "needs.validate.result == 'success'",
     );
-    expect(job(release, "publish").needs).toEqual([
-      "release",
-      "validate",
-      "build",
-      "consumers",
-    ]);
-    expect(job(release, "publish").if).toContain(
-      "needs.consumers.result == 'success'",
-    );
+    for (const qualifier of ["consumers", "standalone", "publish-standalone"])
+      expect(job(release, "publish").if).toContain(
+        "needs." + qualifier + ".result == 'success'",
+      );
     expect(job(ci, "release").if).toContain(
       "needs.package-consumers.result == 'success'",
     );
@@ -1110,29 +1133,32 @@ describe("release workflow contracts", () => {
       steps.find((s) => s.uses?.startsWith("actions/download-artifact@"))?.with
         ?.name,
     ).toBe("release-candidate");
-    expect(
-      steps.some((s) => s.run?.includes("Package archive checksum mismatch")),
-    ).toBe(true);
-    expect(
-      steps.some(
-        (s) =>
-          s.run ===
-          "npm publish ./package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
-      ),
-    ).toBe(true);
+    const publish = steps.find(
+      (s) => s.name === "Publish and verify the qualified npm archives",
+    )?.run;
+    expect(publish).toContain("scripts/release/publish-npm.ts");
+    const legacy = publish?.split("\nelse\n")[1];
+    expect(legacy).toContain(
+      'test "$digest" = "$(cat package-artifact/ast-mcp.tgz.sha256)"',
+    );
+    expect(legacy).toContain(
+      "npm publish ./package-artifact/ast-mcp.tgz --access public --provenance --ignore-scripts",
+    );
     expect(
       steps.some((s) =>
         /bun ci|bun run|bun pm pack|npm pack/.test(s.run ?? ""),
       ),
     ).toBe(false);
-    expect(steps.some((s) => s.uses?.startsWith("actions/checkout@"))).toBe(
-      false,
-    );
     expect(
-      steps.find((s) => s.uses?.startsWith("actions/setup-node@"))?.with?.[
-        "node-version"
-      ],
-    ).toBe(24);
+      steps.find((s) => s.uses?.startsWith("actions/checkout@"))?.with,
+    ).toMatchObject({
+      ref: "${{ needs.release.outputs.tag_name }}",
+      "persist-credentials": false,
+    });
+    const node = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
+    expect(node?.with?.["node-version"]).toBe(24);
+    expect(node?.with?.["registry-url"]).toBeUndefined();
+    expect(steps.some((s) => s.env?.NODE_AUTH_TOKEN !== undefined)).toBe(false);
   });
   test("actions use major references", () => {
     for (const source of [ci, release, consumers])

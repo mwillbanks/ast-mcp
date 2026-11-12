@@ -22,6 +22,8 @@ Start with structural inspection. Build an index when you need durable retrieval
 
 See the [Code Intelligence tool reference](/docs/reference/tools/code-intelligence) for each tool's parameters and output.
 
+Use `read_symbols` (available since 0.8.0) to request multiple exact symbol lookups over selected files. It returns definitions and direct callers with ordered per-symbol outcomes and shared request limits.
+
 ## A first workflow
 
 Open the checkout root. The returned `workspace.workspaceId` scopes later calls. Workspace handles and approval grants belong to the current server session. See the [workspace tool reference](/docs/reference/tools/workspaces) for open and status parameters.
@@ -163,7 +165,7 @@ These identities serve different scopes. Keep using the workspace ID returned by
 
 An index generation records the source state used to build it. Use `index_status` to inspect the latest generation and its bounded table counts. Use `index` with `action: "verify"` to verify the latest published generation, `"refresh"` to reanalyze changed source, or `"build"` to create a generation from the selected source.
 
-Guarded file mutations update intelligence freshness through the mutation lifecycle. A successful change may publish a new generation; a failed or incomplete mutation does not make an older generation current. Re-run `index_status` or `retrieve` to inspect freshness after edits. If a historical revision was selected, open the working revision before editing.
+Since 0.8.0, a guarded commit acknowledges durable source bytes before scheduled index refresh finishes. During refresh, `index_status` and `retrieve` can report a retained generation as stale. Use `strictRead: true` when you need a current generation and can spend part of the request budget waiting. For current source bytes, use direct file inspection. Open the working revision before editing a historical selection.
 
 Stale-workspace errors mean the stored handle no longer matches the selected checkout state. Reopen the workspace and repeat the operation with its returned ID. For configuration failures, see [connection diagnosis](/docs/guides/connection-diagnosis), the [configuration reference](/docs/reference/configuration), and the [configuration tools](/docs/reference/tools/configuration).
 
