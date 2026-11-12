@@ -16,9 +16,12 @@ import { install, uninstall, update } from "../../src/installer";
 
 const created: string[] = [];
 const oldCodexHome = process.env.CODEX_HOME;
+const oldPathExt = process.env.PATHEXT;
 afterEach(async () => {
   if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
   else process.env.CODEX_HOME = oldCodexHome;
+  if (oldPathExt === undefined) delete process.env.PATHEXT;
+  else process.env.PATHEXT = oldPathExt;
   await Promise.all(
     created.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -452,99 +455,108 @@ test("explicit hook factory field deletion survives refresh and uninstall", asyn
     );
   }
 });
-test("migrates verified package hooks without claiming factory-shaped user hooks", async () => {
-  for (const target of ["codex", "copilot"] as const) {
-    const fixtureOptions = await fixture();
-    const root = await realpath(fixtureOptions.root);
-    const options = { ...fixtureOptions, root };
-    const file = path.join(
-      root,
-      target === "codex" ? ".codex/hooks.json" : ".github/hooks/ast-mcp.json",
-    );
-    await mkdir(path.dirname(file), { recursive: true });
+test.each([...new Set<NodeJS.Platform>([process.platform, "win32"])])(
+  "migrates verified package hooks without claiming factory-shaped user hooks on %s",
+  async (platform) => {
+    const windows = platform === "win32";
+    if (windows) process.env.PATHEXT = ".EXE;.CMD";
+    for (const target of ["codex", "copilot"] as const) {
+      const fixtureOptions = await fixture();
+      const root = await realpath(fixtureOptions.root);
+      const options = { ...fixtureOptions, root, platform };
+      const file = path.join(
+        root,
+        target === "codex" ? ".codex/hooks.json" : ".github/hooks/ast-mcp.json",
+      );
+      await mkdir(path.dirname(file), { recursive: true });
 
-    const windows = process.platform === "win32";
-    const packageName = "@mwillbanks/ast-mcp";
-    const nativeName = `${packageName}-${windows ? "windows" : process.platform}-${process.arch}`;
-    const shim = `./node_modules/.bin/ast-mcp${windows ? ".cmd" : ""}`;
-    const bun = `./node_modules/.bin/ast-mcp-bun${windows ? ".cmd" : ""}`;
-    const native = `./node_modules/${nativeName}/ast-mcp-bytecode${windows ? ".exe" : ""}`;
-    for (const entry of [shim, bun, native]) {
-      const executable = path.resolve(root, entry);
-      await mkdir(path.dirname(executable), { recursive: true });
-      await writeFile(executable, "");
-      await chmod(executable, 0o755);
+      const packageName = "@mwillbanks/ast-mcp";
+      const nativeName = `${packageName}-${windows ? "windows" : platform}-${process.arch}`;
+      const shim = `./node_modules/.bin/ast-mcp${windows ? ".CMD" : ""}`;
+      const bun = `./node_modules/.bin/ast-mcp-bun${windows ? ".CMD" : ""}`;
+      const native = `./node_modules/${nativeName}/ast-mcp-bytecode${windows ? ".exe" : ""}`;
+      const previousBun = windows ? bun.replace(/\.CMD$/u, ".cmd") : bun;
+      const previousNative = windows
+        ? native.replace(/\.exe$/u, ".EXE")
+        : native;
+      for (const entry of [shim, bun, native]) {
+        const executable = path.resolve(root, entry);
+        await mkdir(path.dirname(executable), { recursive: true });
+        await writeFile(executable, "");
+        await chmod(executable, 0o755);
+      }
+      const main = path.join(root, "node_modules", packageName);
+      await mkdir(main, { recursive: true });
+      await writeFile(
+        path.join(main, "package.json"),
+        JSON.stringify({
+          name: packageName,
+          version: "1.2.3",
+          optionalDependencies: { [nativeName]: "1.2.3" },
+        }),
+      );
+      await writeFile(
+        path.join(root, "node_modules", nativeName, "package.json"),
+        JSON.stringify({ name: nativeName, version: "1.2.3" }),
+      );
+
+      const event = target === "codex" ? "PreToolUse" : "preToolUse";
+      const factory = (command: string) =>
+        target === "copilot"
+          ? {
+              command,
+              matcher: "bash|powershell|edit|create",
+              timeoutSec: 10,
+              type: "command",
+            }
+          : {
+              matcher: ".*",
+              hooks: [
+                {
+                  command,
+                  statusMessage: "Enforcing ast-mcp writes",
+                  timeout: 10,
+                  type: "command",
+                },
+              ],
+            };
+      const quotedHook = (entry: string) => `${JSON.stringify(entry)} hook`;
+      const custom = [
+        factory(quotedHook("/custom/ast-mcp-bun")),
+        factory(quotedHook("/custom/ast-mcp-bytecode.exe")),
+        ...(!windows ? [factory(quotedHook(bun.replace(/bun$/u, "BUN")))] : []),
+      ];
+      const factoryHooks = [
+        factory('bun "/legacy/ast-mcp.ts" hook'),
+        factory(quotedHook(previousBun)),
+        factory(quotedHook(previousNative)),
+      ];
+      await writeFile(
+        file,
+        JSON.stringify({ hooks: { [event]: [...custom, ...factoryHooks] } }),
+      );
+      const installation = { ...options, targets: [target] };
+      await update(installation);
+      const expected = [
+        ...custom,
+        factory(quotedHook(Bun.which("node") ? shim : bun)),
+      ];
+      const current = JSON.parse(await readFile(file, "utf8"));
+      expect(current.hooks[event]).toEqual(expected);
+      await update(installation);
+      expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
+        expected,
+      );
+
+      current.hooks[event] = [...custom, factory(quotedHook(previousNative))];
+      await writeFile(file, JSON.stringify(current));
+      await uninstall(installation);
+      expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
+        custom,
+      );
     }
-    const main = path.join(root, "node_modules", packageName);
-    await mkdir(main, { recursive: true });
-    await writeFile(
-      path.join(main, "package.json"),
-      JSON.stringify({
-        name: packageName,
-        version: "1.2.3",
-        optionalDependencies: { [nativeName]: "1.2.3" },
-      }),
-    );
-    await writeFile(
-      path.join(root, "node_modules", nativeName, "package.json"),
-      JSON.stringify({ name: nativeName, version: "1.2.3" }),
-    );
-
-    const event = target === "codex" ? "PreToolUse" : "preToolUse";
-    const factory = (command: string) =>
-      target === "copilot"
-        ? {
-            command,
-            matcher: "bash|powershell|edit|create",
-            timeoutSec: 10,
-            type: "command",
-          }
-        : {
-            matcher: ".*",
-            hooks: [
-              {
-                command,
-                statusMessage: "Enforcing ast-mcp writes",
-                timeout: 10,
-                type: "command",
-              },
-            ],
-          };
-    const quotedHook = (entry: string) => `${JSON.stringify(entry)} hook`;
-    const custom = [
-      factory(quotedHook("/custom/ast-mcp-bun")),
-      factory(quotedHook("/custom/ast-mcp-bytecode.exe")),
-    ];
-    const factoryHooks = [
-      factory('bun "/legacy/ast-mcp.ts" hook'),
-      factory(quotedHook(bun)),
-      factory(quotedHook(native)),
-    ];
-    await writeFile(
-      file,
-      JSON.stringify({ hooks: { [event]: [...custom, ...factoryHooks] } }),
-    );
-    const installation = { ...options, targets: [target] };
-    await update(installation);
-    const expected = [
-      ...custom,
-      factory(quotedHook(Bun.which("node") ? shim : bun)),
-    ];
-    const current = JSON.parse(await readFile(file, "utf8"));
-    expect(current.hooks[event]).toEqual(expected);
-    await update(installation);
-    expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
-      expected,
-    );
-
-    current.hooks[event] = [...custom, factory(quotedHook(native))];
-    await writeFile(file, JSON.stringify(current));
-    await uninstall(installation);
-    expect(JSON.parse(await readFile(file, "utf8")).hooks[event]).toEqual(
-      custom,
-    );
-  }
-});
+  },
+);
 
 test("unrecognized sidecars block refresh and survive uninstall without mutation", async () => {
   for (const target of ["claude", "copilot"] as const) {

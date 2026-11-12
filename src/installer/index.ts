@@ -22,7 +22,11 @@ import {
   jsonTransport,
   parseInstallerArguments,
 } from "../helpers/installer";
-import { isManagedHook } from "../hooks/managed";
+import {
+  isManagedHook,
+  isPackageHookEntry,
+  managedAstMcpHookEntry,
+} from "../hooks/managed";
 import {
   directoryBinaryCandidates,
   executableNames,
@@ -214,10 +218,19 @@ function installerHookOwnership(
   root: string,
   home: string,
 ) {
-  let commands: Set<string> | undefined;
+  const platform = options.platform ?? process.platform;
+  const key = (entry: string) =>
+    platform === "win32" ? entry.toLowerCase() : entry;
+  let entries: Set<string> | undefined;
   return (command: string) => {
-    if (!commands) {
-      const platform = options.platform ?? process.platform;
+    const entry = managedAstMcpHookEntry(command);
+    if (
+      entry === undefined ||
+      !isPackageHookEntry(entry) ||
+      command !== hookCommand(entry)
+    )
+      return false;
+    if (!entries) {
       const local = options.scope === "local";
       const directories = local
         ? [path.join(root, "node_modules/.bin")]
@@ -234,13 +247,13 @@ function installerHookOwnership(
           npmNativeBinaries(alias, platform),
         ),
       ];
-      commands = new Set(
+      entries = new Set(
         paths.map((entry) =>
-          hookCommand(scopedCliEntry(entry, local ? root : undefined)),
+          key(scopedCliEntry(entry, local ? root : undefined)),
         ),
       );
     }
-    return commands.has(command);
+    return entries.has(key(entry));
   };
 }
 
