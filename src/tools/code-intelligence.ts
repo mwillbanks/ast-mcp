@@ -28,6 +28,7 @@ import {
 import { LanceIntelligenceStore } from "../intelligence/storage/index.ts";
 import {
   currentWorkspace,
+  managedStorageFilter,
   readGitRevisionFile,
   type WorkspaceHandle,
 } from "../intelligence/workspace/index.ts";
@@ -344,10 +345,17 @@ async function revisionFilePaths(
       new Error(stderr || `Git failed with exit code ${code}`),
       { code: "workspace_git_failure", retryable: false },
     );
+  const isManaged = managedStorageFilter(
+    workspace.checkoutRoot,
+    workspace.storageDomain.storagePath,
+  );
   const files = Buffer.from(stdout)
     .toString("utf8")
     .split("\0")
-    .filter((file) => file.length > 0 && !isTransactionLockArtifact(file));
+    .filter(
+      (file) =>
+        file.length > 0 && !isTransactionLockArtifact(file) && !isManaged(file),
+    );
   if (files.length > MAX_CANDIDATE_PATHS)
     throw capacityError("File inventory exceeds 100000 paths");
   return files.sort();
@@ -425,14 +433,21 @@ async function requestedFiles(
     throwIfAborted(signal);
     return selectedRevisionPaths(input, root, workspace, repositoryPaths);
   }
+  const isManagedStorage = managedStorageFilter(
+    workspace?.checkoutRoot ?? root,
+    workspace?.storageDomain.storagePath,
+  );
+  const isManaged = (file: string) =>
+    isManagedStorage(file) || isTransactionLockArtifact(file, root);
   const explicit = explicitPaths(input);
   if (explicit.length) {
     const files: string[] = [];
     for (const value of explicit) {
       throwIfAborted(signal);
       const absolute = path.resolve(root, value);
-      if (isTransactionLockArtifact(absolute, root)) continue;
+      if (isManaged(absolute)) continue;
       const resolved = await resolveIntelligencePath(absolute);
+      if (isManaged(resolved)) continue;
       const metadata = await Bun.file(resolved)
         .stat()
         .catch(() => undefined);
@@ -446,7 +461,7 @@ async function requestedFiles(
           onlyFiles: true,
         })) {
           throwIfAborted(signal);
-          if (isTransactionLockArtifact(entry, root)) continue;
+          if (isManaged(entry)) continue;
           if (files.length >= MAX_CANDIDATE_PATHS)
             throw capacityError("File inventory exceeds 100000 paths");
           files.push(entry);
@@ -466,7 +481,7 @@ async function requestedFiles(
   })) {
     throwIfAborted(signal);
     if (
-      !isTransactionLockArtifact(entry, root) &&
+      !isManaged(entry) &&
       !entry.includes(`${path.sep}node_modules${path.sep}`) &&
       !entry.includes(`${path.sep}.git${path.sep}`) &&
       !entry.includes(`${path.sep}.ast-mcp${path.sep}`)
@@ -951,6 +966,43 @@ function capacityError(message: string) {
   });
 }
 
+type NativeAdmission = (signal: AbortSignal) => Promise<() => void>;
+
+/** Keep the production worker bound while absorbing simultaneous stdio sessions. */
+export function createSharedNativeAdmission(): NativeAdmission {
+  let running = 0;
+  const waiters = new Set<() => void>();
+  const release = () => {
+    const next = waiters.values().next().value;
+    if (next) {
+      waiters.delete(next);
+      next();
+    } else running--;
+  };
+  return async (signal) => {
+    throwIfAborted(signal);
+    if (running < MAX_ACTIVE_REQUESTS) {
+      running++;
+      return release;
+    }
+    if (waiters.size >= 64)
+      throw capacityError("Shared code intelligence request queue is full");
+    const pending = Promise.withResolvers<void>();
+    const ready = () => pending.resolve();
+    const abort = () => {
+      if (waiters.delete(ready)) pending.reject(abortError(signal));
+    };
+    waiters.add(ready);
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      await pending.promise;
+      return release;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  };
+}
+
 async function withAbort<T>(
   operation: Promise<T>,
   signal: AbortSignal,
@@ -1124,10 +1176,15 @@ async function executeNative(
   input: ToolInput,
   state: NativeExecutionState,
   signal: AbortSignal,
+  admission?: NativeAdmission,
 ) {
-  if (activeRequests >= MAX_ACTIVE_REQUESTS)
-    throw capacityError("Code intelligence request capacity is full");
-  activeRequests += 1;
+  let release: (() => void) | undefined;
+  if (admission) release = await admission(signal);
+  else {
+    if (activeRequests >= MAX_ACTIVE_REQUESTS)
+      throw capacityError("Code intelligence request capacity is full");
+    activeRequests += 1;
+  }
   let cpu: RequestCpu | undefined;
   try {
     throwIfAborted(signal);
@@ -1193,13 +1250,15 @@ async function executeNative(
     );
   } finally {
     cpu?.close();
-    activeRequests -= 1;
+    if (release) release();
+    else activeRequests -= 1;
   }
 }
 
 export default function registerNativeCodeIntelligenceTools(
   server: McpServer,
   execute: ConfiguredExecution = localExecution,
+  admission?: NativeAdmission,
 ) {
   const controllers = new Set<AbortController>();
   let closed = false;
@@ -1277,6 +1336,7 @@ export default function registerNativeCodeIntelligenceTools(
                       input,
                       state,
                       controller.signal,
+                      admission,
                     )) as Record<string, unknown>;
                     return withScopeMetadata(
                       payload,

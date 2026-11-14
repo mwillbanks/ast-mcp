@@ -144,14 +144,14 @@ describe("installer", () => {
     });
     const expected = commandForPlatform(
       `./${path.relative(root, alias).split(path.sep).join("/")}`,
-      ["mcp"],
+      ["mcp", "--shared-stdio"],
     );
     const codex = Bun.TOML.parse(
       await readFile(path.join(root, ".codex/config.toml"), "utf8"),
     ) as { mcp_servers: Record<string, { command: string; args: string[] }> };
     expect(codex.mcp_servers["ast-mcp"]?.command).toBe(expected.command);
     expect(codex.mcp_servers["ast-mcp"]?.args).toEqual(expected.args);
-    for (const file of [".mcp.json", ".github/mcp.json"]) {
+    for (const file of [".mcp.json", ".github/mcp.json", ".vscode/mcp.json"]) {
       const document = JSON.parse(
         await readFile(path.join(root, file), "utf8"),
       );
@@ -184,11 +184,15 @@ describe("installer", () => {
     const expected = `./${path.relative(root, resolved).split(path.sep).join("/")}`;
     expect(resolved.toLowerCase()).toBe(alias.toLowerCase());
     expect(expected.toLowerCase()).toEndWith(".cmd");
-    const invocation = commandForPlatform(expected, ["mcp"], "win32");
+    const invocation = commandForPlatform(
+      expected,
+      ["mcp", "--shared-stdio"],
+      "win32",
+    );
     const codex = await readFile(path.join(root, ".codex/config.toml"), "utf8");
     expect(codex).toContain(`command = ${JSON.stringify(invocation.command)}`);
-    expect(codex).toContain(`call ${expected} mcp`);
-    for (const file of [".mcp.json", ".github/mcp.json"]) {
+    expect(codex).toContain(`call ${expected} mcp --shared-stdio`);
+    for (const file of [".mcp.json", ".github/mcp.json", ".vscode/mcp.json"]) {
       const document = JSON.parse(
         await readFile(path.join(root, file), "utf8"),
       );
@@ -259,7 +263,7 @@ describe("installer", () => {
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];
     expect(globalCopilot.type).toBe("local");
-    const invocation = commandForPlatform(alias, ["mcp"]);
+    const invocation = commandForPlatform(alias, ["mcp", "--shared-stdio"]);
     expect(globalCopilot.args).toEqual(invocation.args);
     expect(globalCopilot.command).toBe(invocation.command);
     const codex = await readFile(path.join(home, ".codex/config.toml"), "utf8");
@@ -286,8 +290,12 @@ describe("installer", () => {
       scope: "global",
       targets: ["codex", "claude", "copilot"],
     });
-    const invocation = commandForPlatform(alias, ["mcp"], "win32");
-    expect(invocation.args.at(-1)).toBe(`call "${alias}" mcp`);
+    const invocation = commandForPlatform(
+      alias,
+      ["mcp", "--shared-stdio"],
+      "win32",
+    );
+    expect(invocation.args.at(-1)).toBe(`call "${alias}" mcp --shared-stdio`);
     const copilot = JSON.parse(
       await readFile(path.join(home, ".copilot/mcp-config.json"), "utf8"),
     ).mcpServers["ast-mcp"];
@@ -318,7 +326,7 @@ describe("installer", () => {
         scope: "global",
         targets: ["codex"],
       });
-      const invocation = commandForPlatform(alias, ["mcp"]);
+      const invocation = commandForPlatform(alias, ["mcp", "--shared-stdio"]);
       const codex = await readFile(
         path.join(home, ".codex/config.toml"),
         "utf8",
@@ -356,7 +364,10 @@ describe("installer", () => {
           scope === "local"
             ? `./${path.relative(root, direct).split(path.sep).join("/")}`
             : direct;
-        const { command, args } = commandForPlatform(entry, ["mcp"]);
+        const { command, args } = commandForPlatform(entry, [
+          "mcp",
+          "--shared-stdio",
+        ]);
         const codex = Bun.TOML.parse(
           await readFile(path.join(config, ".codex/config.toml"), "utf8"),
         ) as {

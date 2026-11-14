@@ -67,16 +67,18 @@ async function packument(archive: string) {
   };
 }
 
-async function candidateRegistry(rootArchive: string, matrix: string) {
+async function candidateRegistry(
+  rootArchive: string,
+  matrix: string,
+  target: Target,
+) {
   const artifacts = await Promise.all([
     packument(rootArchive),
-    ...Object.keys(platforms).map((target) =>
-      packument(
-        path.join(
-          matrix,
-          `standalone-bun-${target}`,
-          `ast-mcp-npm-${target}.tgz`,
-        ),
+    packument(
+      path.join(
+        matrix,
+        `standalone-bun-${target}`,
+        `ast-mcp-npm-${target}.tgz`,
       ),
     ),
   ]);
@@ -166,6 +168,7 @@ try {
     registry = await candidateRegistry(
       path.resolve(input),
       path.resolve(matrix),
+      target,
     );
   }
   const version = registry?.version ?? input;
@@ -300,7 +303,10 @@ try {
     ) as { mcp_servers?: Record<string, { args: string[]; command: string }> };
     const launch = config.mcp_servers?.["ast-mcp"];
     assert(launch, `Missing ${scope} Codex configuration`);
-    assert.deepEqual(launch.args, ["mcp"]);
+    assert.deepEqual(
+      launch.args,
+      mode === "candidate" ? ["mcp", "--shared-stdio"] : ["mcp"],
+    );
     const configured = path.resolve(configRoot, launch.command);
     assert.equal(await realpath(configured), await realpath(binary));
     assert.equal(
@@ -324,5 +330,19 @@ try {
   );
 } finally {
   if (registry) await registry.server.stop(true);
-  await rm(cwd, { force: true, recursive: true });
+  if (windows) {
+    // Use Node's bounded retries for transient Windows file locks.
+    await run(
+      [
+        node,
+        "--eval",
+        'require("node:fs").rmSync(process.argv[1], {force:true,recursive:true,maxRetries:10,retryDelay:100})',
+        "--",
+        cwd,
+      ],
+      tmpdir(),
+    );
+  } else {
+    await rm(cwd, { force: true, recursive: true });
+  }
 }

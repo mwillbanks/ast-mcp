@@ -406,6 +406,7 @@ export class LanceGraphRepository {
     workspaceInput?: WorkspaceHandle,
     options: {
       allowReadOnlySource?: boolean;
+      assertCurrent?: () => Promise<void>;
       reservation?: PublicationReservation;
     } = {},
   ): Promise<void> {
@@ -418,85 +419,95 @@ export class LanceGraphRepository {
       throw new Error("workspace_read_only");
     const storedSnapshot = encodeStoredSnapshot(snapshot);
     const persistedAt = this.store.currentTimestamp();
-    const putRows = (
-      tableName:
-        | "graph_edges"
-        | "graph_evidence"
-        | "graph_nodes"
-        | "graph_occurrences"
-        | "revision_membership",
-      rows: readonly Record<string, unknown>[],
-    ) =>
-      options.reservation
-        ? this.store.putReservedRows(options.reservation, tableName, rows)
-        : this.store.putRows(tableName, rows);
-    await putRows(
-      "graph_nodes",
-      storedSnapshot.nodes.map((node) => ({
-        canonical_name: node.canonicalName,
-        content_fingerprint: node.contentFingerprint,
-        created_at: persistedAt,
-        kind: node.kind,
-        node_id: node.nodeId,
-        properties_json: json(node.properties),
-      })),
-    );
-    await putRows(
-      "graph_occurrences",
-      storedSnapshot.occurrences.map((occurrence) => ({
-        created_at: persistedAt,
-        node_id: occurrence.nodeId,
-        occurrence_id: occurrence.occurrenceId,
-        path: occurrence.path,
-        range_json: json(occurrence.range),
-        role: occurrence.role,
-        source_artifact_id: occurrence.sourceArtifactId,
-      })),
-    );
-    await putRows(
-      "graph_edges",
-      storedSnapshot.edges.map((edge) => ({
-        content_fingerprint: edge.contentFingerprint,
-        created_at: persistedAt,
-        discriminator: edge.discriminator,
-        edge_id: edge.edgeId,
-        environment_fingerprint: edge.environmentFingerprint,
-        kind: edge.kind,
-        properties_json: json(edge.properties),
-        resolution_status: edge.resolutionStatus,
-        source_node_id: edge.sourceNodeId,
-        target_node_id: edge.targetNodeId,
-      })),
-    );
-    await putRows(
-      "graph_evidence",
-      storedSnapshot.evidence.map((evidence) => ({
-        confidence: evidence.confidence,
-        created_at: persistedAt,
-        edge_id: evidence.edgeId,
-        evidence_id: evidence.evidenceId,
-        extraction_method: evidence.extractionMethod,
-        extraction_version: evidence.extractionVersion,
-        extractor_fingerprint: evidence.extractorFingerprint,
-        occurrence_id: evidence.occurrenceId,
-        path: evidence.path,
-        range_json: json(evidence.range),
-        source_artifact_id: evidence.sourceArtifactId,
-      })),
-    );
-    await putRows(
-      "revision_membership",
-      storedSnapshot.memberships.map((membership) => {
-        return {
-          created_at: persistedAt,
-          entity_id: membership.entityId,
-          entity_kind: membership.entityKind,
-          generation_id: membership.generationId,
-          membership_id: membership.membershipId,
-          revision_id: membership.revisionId,
-        };
-      }),
-    );
+    const writes = [
+      {
+        tableName: "graph_nodes",
+        rows: () =>
+          storedSnapshot.nodes.map((node) => ({
+            canonical_name: node.canonicalName,
+            content_fingerprint: node.contentFingerprint,
+            created_at: persistedAt,
+            kind: node.kind,
+            node_id: node.nodeId,
+            properties_json: json(node.properties),
+          })),
+      },
+      {
+        tableName: "graph_occurrences",
+        rows: () =>
+          storedSnapshot.occurrences.map((occurrence) => ({
+            created_at: persistedAt,
+            node_id: occurrence.nodeId,
+            occurrence_id: occurrence.occurrenceId,
+            path: occurrence.path,
+            range_json: json(occurrence.range),
+            role: occurrence.role,
+            source_artifact_id: occurrence.sourceArtifactId,
+          })),
+      },
+      {
+        tableName: "graph_edges",
+        rows: () =>
+          storedSnapshot.edges.map((edge) => ({
+            content_fingerprint: edge.contentFingerprint,
+            created_at: persistedAt,
+            discriminator: edge.discriminator,
+            edge_id: edge.edgeId,
+            environment_fingerprint: edge.environmentFingerprint,
+            kind: edge.kind,
+            properties_json: json(edge.properties),
+            resolution_status: edge.resolutionStatus,
+            source_node_id: edge.sourceNodeId,
+            target_node_id: edge.targetNodeId,
+          })),
+      },
+      {
+        tableName: "graph_evidence",
+        rows: () =>
+          storedSnapshot.evidence.map((evidence) => ({
+            confidence: evidence.confidence,
+            created_at: persistedAt,
+            edge_id: evidence.edgeId,
+            evidence_id: evidence.evidenceId,
+            extraction_method: evidence.extractionMethod,
+            extraction_version: evidence.extractionVersion,
+            extractor_fingerprint: evidence.extractorFingerprint,
+            occurrence_id: evidence.occurrenceId,
+            path: evidence.path,
+            range_json: json(evidence.range),
+            source_artifact_id: evidence.sourceArtifactId,
+          })),
+      },
+      {
+        tableName: "revision_membership",
+        rows: () =>
+          storedSnapshot.memberships.map((membership) => {
+            return {
+              created_at: persistedAt,
+              entity_id: membership.entityId,
+              entity_kind: membership.entityKind,
+              generation_id: membership.generationId,
+              membership_id: membership.membershipId,
+              revision_id: membership.revisionId,
+            };
+          }),
+      },
+    ] as const;
+    if (options.reservation && options.assertCurrent) {
+      await this.store.putReservedRowsBatch(options.reservation, writes, {
+        assertCurrent: options.assertCurrent,
+      });
+      return;
+    }
+    for (const { tableName, rows } of writes) {
+      if (options.reservation)
+        await this.store.putReservedRows(
+          options.reservation,
+          tableName,
+          rows(),
+        );
+      else await this.store.putRows(tableName, rows());
+    }
   }
 
   async load(

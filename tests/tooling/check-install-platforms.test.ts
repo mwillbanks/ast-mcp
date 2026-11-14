@@ -115,6 +115,22 @@ test("checker accepts source launch receipts and rejects changed receipt metadat
     await writeFile(receipt, JSON.stringify(original));
     const config = path.join(root, ".codex/config.toml");
     const content = await readFile(config, "utf8");
+    // The ownership receipt also records the args. Change the actual launch.
+    const launch = content.match(/^args = .+$/m)?.[0];
+    expect(launch).toContain('"--shared-stdio"');
+    await writeFile(
+      config,
+      content.replace(launch!, launch!.replace(', "--shared-stdio"', "")),
+    );
+    expect((await checkInstall(args, home)).checks.mcp).toBeTrue();
+    await writeFile(
+      config,
+      content.replace(
+        launch!,
+        launch!.replace('"--shared-stdio"', '"--broker"'),
+      ),
+    );
+    expect((await checkInstall(args, home)).checks.mcp).toBeFalse();
     await writeFile(
       config,
       content.replace(/args = .+/, 'args = ["missing.ts", "mcp"]'),

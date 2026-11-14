@@ -81,6 +81,7 @@ export interface ConfigCorePatch {
       block_tools?: string[];
       enabled?: boolean;
     };
+    mutation_lock?: boolean;
     require_hash?: boolean;
   };
   telemetry?: { enabled?: boolean };
@@ -245,6 +246,7 @@ function applyConfigCorePatch(source: string, patch: ConfigCorePatch): string {
   next = applyObjectKeys(next, "telemetry", patch.telemetry);
   next = applyObjectKeys(next, "safety", {
     filesystem: patch.safety?.filesystem,
+    mutation_lock: patch.safety?.mutation_lock,
     require_hash: patch.safety?.require_hash,
   });
   next = applyObjectKeys(next, "safety.hook", patch.safety?.hook);

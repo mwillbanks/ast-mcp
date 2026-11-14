@@ -17,10 +17,18 @@ if (typeof process.send === "function") {
   }
 }
 
-const { runCli } = await import("../src/cli");
+export async function createGraphIntelligence(
+  observe: import("../src/server/project-runtimes.ts").SharedMutationIndexObserver,
+) {
+  const graph = await import("../src/server/graph-intelligence.ts");
+  return graph.createGraphIntelligence(observe);
+}
 
-try {
-  const exitCode = await runCli(process.argv.slice(2), {
+async function runMain(args: string[]) {
+  const { runSharedCli } = await import("../src/server/shared-cli.ts");
+  if (await runSharedCli(args)) return;
+  const { runCli } = await import("../src/cli");
+  const exitCode = await runCli(args, {
     doctor: async (args) => {
       const { runDoctorCli } = await import("../src/cli/doctor");
       return runDoctorCli(args);
@@ -54,8 +62,22 @@ try {
   });
 
   if (exitCode !== undefined) process.exitCode = exitCode;
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`ast-mcp: ${message}\n`);
-  process.exitCode = 1;
+}
+
+if (!Bun.ModuleGraph?.current) {
+  const { isMainThread, parentPort, workerData } =
+    await import("node:worker_threads");
+  if (!isMainThread && workerData?.kind === "ast-mcp-committed-retrieval") {
+    const { runCommittedRetrievalWorker } =
+      await import("../src/server/committed-retrieval-lanes.ts");
+    runCommittedRetrievalWorker(parentPort);
+  } else {
+    try {
+      await runMain(process.argv.slice(2));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`ast-mcp: ${message}\n`);
+      process.exitCode = 1;
+    }
+  }
 }

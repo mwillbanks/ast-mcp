@@ -126,6 +126,31 @@ describe("owned intelligence tool schemas", () => {
   });
 });
 
+test("an idle service closes supplied runtime dependencies exactly once", async () => {
+  const closed: string[] = [];
+  const service = createIntelligenceToolService({
+    dispatcher: {
+      async analyze() {
+        throw new Error("Unexpected analysis");
+      },
+      async close() {
+        closed.push("dispatcher");
+      },
+    },
+    parserPool: {
+      async parse() {
+        throw new Error("Unexpected parse");
+      },
+      async close(options) {
+        expect(options?.drain).toBe(true);
+        closed.push("parser");
+      },
+    },
+  });
+  await Promise.all([service.close?.(), service.close?.()]);
+  expect(closed.sort()).toEqual(["dispatcher", "parser"]);
+});
+
 test.each([100, 1])(
   "graph publication pin deadline is bounded at %i milliseconds",
   async (maxMilliseconds) => {

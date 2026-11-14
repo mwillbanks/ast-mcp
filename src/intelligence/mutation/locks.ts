@@ -12,6 +12,10 @@ import path from "node:path";
 
 import { sha256 } from "../../runtime/hash.ts";
 import {
+  acquireMutationCoordination,
+  canUseTemporaryMutationCoordination,
+} from "../../runtime/mutation-coordination.ts";
+import {
   canonicalizePath,
   canonicalizePathSync,
 } from "../../runtime/path-utils.ts";
@@ -877,26 +881,35 @@ async function withFencedFileLockDiscovery<Result>(
   const canonical = canonicalizePathSync(filePath);
   const identity = lockPathIdentity(canonical);
   return withQueue(identity, options, async () => {
-    const lease = await acquireFileLock(
-      canonical,
-      discovery && !options.sharedDatabasePath
-        ? {
-            ...options,
-            sharedDatabasePath: await discoverSharedDatabasePath(
-              canonical,
-              discovery,
-            ),
-          }
-        : options,
-    );
-    const heartbeatMs = Math.max(
-      25,
-      Math.floor((options.leaseMs ?? DEFAULT_LEASE_MS) / 3),
-    );
-    const heartbeat = setInterval(() => {
-      void lease.renew().catch(() => undefined);
-    }, heartbeatMs);
-    heartbeat.unref?.();
+    const temporary =
+      options.now === undefined &&
+      options.leaseMs === undefined &&
+      options.ownerId === undefined &&
+      options.sharedDatabasePath === undefined &&
+      canUseTemporaryMutationCoordination(canonical);
+    const lease = temporary
+      ? await acquireTemporaryFileLock(canonical, identity, options)
+      : await acquireFileLock(
+          canonical,
+          discovery && !options.sharedDatabasePath
+            ? {
+                ...options,
+                sharedDatabasePath: await discoverSharedDatabasePath(
+                  canonical,
+                  discovery,
+                ),
+              }
+            : options,
+        );
+    const heartbeat = temporary
+      ? undefined
+      : setInterval(
+          () => {
+            void lease.renew().catch(() => undefined);
+          },
+          Math.max(25, Math.floor((options.leaseMs ?? DEFAULT_LEASE_MS) / 3)),
+        );
+    heartbeat?.unref?.();
     try {
       return await operation(lease);
     } finally {
@@ -917,6 +930,57 @@ async function withFencedFileLockDiscovery<Result>(
       }
     }
   });
+}
+
+/** Interlock with installed releases that still publish a source-side lease. */
+export async function acquireLegacyFileGuard(
+  identity: string,
+  options: FileLockOptions,
+) {
+  const directory = await ensureMutationLockDirectory(await systemAccount());
+  return acquireTransactionLock(
+    path.join(directory, `file-${sha256(identity)}.sqlite`),
+    options,
+  );
+}
+
+async function acquireTemporaryFileLock(
+  canonical: string,
+  identity: string,
+  options: FileLockOptions,
+): Promise<FileLockLease> {
+  const lease = await acquireMutationCoordination(
+    "file:" + sha256(identity),
+    options,
+  );
+  const guard = await acquireLegacyFileGuard(identity, options).catch(
+    async (error: unknown) => {
+      await lease.release();
+      throw error;
+    },
+  );
+  const fence = async () => {
+    if (!canUseTemporaryMutationCoordination(canonical))
+      throw lockError("lock_fenced", "Local mutation ownership changed", false);
+    guard.fence();
+    await lease.fence();
+  };
+  return {
+    ...lease,
+    epoch: 1,
+    expiresAt: Number.POSITIVE_INFINITY,
+    fence,
+    lockPath: canonical,
+    ownerId: String(process.pid),
+    async release() {
+      try {
+        guard.release();
+      } finally {
+        await lease.release();
+      }
+    },
+    renew: fence,
+  };
 }
 
 export async function withFencedFileLocks<Result>(

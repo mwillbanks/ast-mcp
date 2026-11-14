@@ -331,6 +331,33 @@ async function fakeReader(
       tableVersions,
       workspaceId: scope.workspaceId,
     },
+    async searchChunks(
+      query: string,
+      predicate: string,
+      limit: number,
+      timeoutMs: () => number,
+    ) {
+      const connection = await lancedb.connect(store.storagePath);
+      try {
+        const table = await connection.openTable("chunks");
+        try {
+          await table.checkout(tableVersions[0]!.version);
+          try {
+            return await table
+              .search(query)
+              .where(predicate)
+              .limit(limit)
+              .toArray({ timeoutMs: timeoutMs() });
+          } catch {
+            return [];
+          }
+        } finally {
+          table.close();
+        }
+      } finally {
+        connection.close();
+      }
+    },
     rows: (table: Parameters<LanceIntelligenceStore["rows"]>[0]) =>
       store.rows(table),
   } as unknown as PinnedGenerationReader;
@@ -420,69 +447,24 @@ describe("retrieval chunk identity", () => {
   });
 });
 
-test("failed native table opens and pinned checkouts release their connections", async () => {
+test("a failed native FTS table open releases its connection", async () => {
   const { store, scope, workspace } = await harness("native-resource-cleanup");
-  const corpus = chunks();
-  await publishRetrievalChunks(store, scope, corpus, workspace);
-  const reader = await fakeReader(store, scope);
-  const chunkRows = await store.rows("chunks");
-  reader.rows = async (table) => (table === "chunks" ? chunkRows : []);
+  let closed = 0;
+  const connect = spyOn(lancedb, "connect").mockResolvedValue({
+    async openTable() {
+      throw new Error("FTS table open failed");
+    },
+    close() {
+      closed++;
+    },
+  } as never);
   try {
-    for (const stage of ["open", "checkout"]) {
-      let closedConnections = 0;
-      let closedTables = 0;
-      const connection = {
-        async openTable() {
-          if (stage === "open") throw new Error("native open failed");
-          return {
-            async checkout() {
-              throw new Error("native checkout failed");
-            },
-            close() {
-              closedTables++;
-            },
-          };
-        },
-        close() {
-          closedConnections++;
-        },
-      };
-      const connect = spyOn(lancedb, "connect").mockResolvedValue(
-        connection as never,
-      );
-      try {
-        await expect(
-          retrieve(
-            store,
-            reader,
-            { query: "publish", scope, semantic: false },
-            { graph: graphFor(scope, corpus), workspace },
-          ),
-        ).rejects.toThrow(`native ${stage} failed`);
-        expect(closedConnections).toBe(1);
-        expect(closedTables).toBe(stage === "checkout" ? 1 : 0);
-      } finally {
-        connect.mockRestore();
-      }
-    }
-    let closed = 0;
-    const connect = spyOn(lancedb, "connect").mockResolvedValue({
-      async openTable() {
-        throw new Error("FTS table open failed");
-      },
-      close() {
-        closed++;
-      },
-    } as never);
-    try {
-      await expect(
-        publishRetrievalChunks(store, scope, corpus, workspace),
-      ).rejects.toThrow("FTS table open failed");
-      expect(closed).toBe(1);
-    } finally {
-      connect.mockRestore();
-    }
+    await expect(
+      publishRetrievalChunks(store, scope, chunks(), workspace),
+    ).rejects.toThrow("FTS table open failed");
+    expect(closed).toBe(1);
   } finally {
+    connect.mockRestore();
     await store.shutdownCoordinator();
   }
 });
@@ -1085,6 +1067,7 @@ describe("LanceDB hybrid retrieval", () => {
     await publishRetrievalChunks(store, scope, corpus, workspace);
     expect(await store.rows("chunks")).toHaveLength(3);
     const reader = await fakeReader(store, scope);
+    const nativeSearch = spyOn(reader, "searchChunks");
     const response = await retrieve(
       store,
       reader,
@@ -1118,6 +1101,10 @@ describe("LanceDB hybrid retrieval", () => {
     expect(response.results[0]?.reasons.map(({ signal }) => signal)).toContain(
       "lexical",
     );
+    expect(nativeSearch).toHaveBeenCalledTimes(1);
+    expect(await nativeSearch.mock.results[0]?.value).toMatchObject([
+      { artifact_id: corpus[0]?.artifactId },
+    ]);
     expect(response.coverage.totalChunks).toBe(3);
     expect(response.coverage.eligibleChunks).toBe(1);
     expect(response.coverage.graphNodesVisited).toBe(2);
@@ -1253,9 +1240,11 @@ describe("LanceDB hybrid retrieval", () => {
     table.close();
     connection.close();
 
+    const reader = await fakeReader(store, scope);
+    const nativeSearch = spyOn(reader, "searchChunks");
     const response = await retrieve(
       store,
-      await fakeReader(store, scope),
+      reader,
       {
         deniedPaths: [],
         exactSymbols: [],
@@ -1265,6 +1254,8 @@ describe("LanceDB hybrid retrieval", () => {
       },
       { graph: graphFor(scope, corpus), workspace },
     );
+    expect(nativeSearch).toHaveBeenCalledTimes(1);
+    expect(await nativeSearch.mock.results[0]?.value).toEqual([]);
     expect(response.results).toHaveLength(1);
     expect(response.results[0]?.reasons.map(({ signal }) => signal)).toContain(
       "lexical",
@@ -1347,6 +1338,38 @@ describe("LanceDB hybrid retrieval", () => {
         workspace,
       }),
     ).rejects.toMatchObject({ code: "publication_finalized" });
+
+    const historical = await store.pinGeneration(generation, "old-lexical");
+    try {
+      const latest = await lancedb.connect(store.storagePath);
+      try {
+        const table = await latest.openTable("chunks");
+        try {
+          const chunkId = corpus[0]!.artifactId;
+          const predicate = "artifact_id = '" + chunkId + "'";
+          const previous = await table.version();
+          await table.delete(predicate);
+          expect(await table.version()).toBeGreaterThan(previous);
+          expect(await table.countRows(predicate)).toBe(0);
+          const hits = await historical.searchChunks(
+            "generation",
+            predicate,
+            2,
+            () => 5_000,
+          );
+          expect(hits.map((row) => row.artifact_id)).toEqual([chunkId]);
+        } finally {
+          table.close();
+        }
+      } finally {
+        latest.close();
+      }
+    } finally {
+      await historical.close();
+    }
+    await expect(
+      historical.searchChunks("generation", "true", 2, () => 5_000),
+    ).rejects.toMatchObject({ code: "mixed_generation" });
 
     const incomplete = await store.reservePublication({
       manifestArtifactId: createIdentity("revision-manifest", {
@@ -1491,26 +1514,52 @@ describe("LanceDB hybrid retrieval", () => {
     ]);
 
     const reader = await fakeReader(store, scope);
-    const response = await retrieve(
-      store,
-      reader,
-      {
-        deniedPaths: [],
-        exactSymbols: [],
-        includedPaths: ["docs"],
-        intent: "documentation",
-        languages: [],
-        query: "behavioral semantic context",
-        scope,
-        semantic: true,
+    const request = {
+      deniedPaths: [],
+      exactSymbols: [],
+      includedPaths: ["docs"],
+      intent: "documentation" as const,
+      languages: [],
+      query: "behavioral semantic context",
+      scope,
+      semantic: true,
+    };
+    const options = {
+      graph: graphFor(scope, corpus),
+      model: config,
+      queryVector: [1, 1],
+      workspace,
+    };
+    const response = await retrieve(store, reader, request, options);
+
+    const lostVersion = new Error("Pinned embedding version is unavailable");
+    let tableClosed = false;
+    let connectionClosed = false;
+    const reconnect = spyOn(lancedb, "connect").mockResolvedValueOnce({
+      async openTable(name: string) {
+        expect(name).toBe("embeddings");
+        return {
+          async checkout() {
+            throw lostVersion;
+          },
+          close() {
+            tableClosed = true;
+          },
+        };
       },
-      {
-        graph: graphFor(scope, corpus),
-        model: config,
-        queryVector: [1, 1],
-        workspace,
+      close() {
+        connectionClosed = true;
       },
-    );
+    } as never);
+    try {
+      await expect(
+        retrieve(store, reader, request, { ...options, textSearch: "local" }),
+      ).rejects.toBe(lostVersion);
+      expect(tableClosed).toBeTrue();
+      expect(connectionClosed).toBeTrue();
+    } finally {
+      reconnect.mockRestore();
+    }
     expect(response.coverage.semanticState).toBe("ready");
     expect(response.coverage.totalChunks).toBe(3);
     expect(response.coverage.corruptChunks).toBe(1);

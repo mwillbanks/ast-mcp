@@ -3,6 +3,7 @@ import path from "node:path";
 import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 
 import { configRequestPaths, withResolvedConfig } from "../config";
+import { configurationResolutionOptions } from "../config/identity";
 import { configRegistry, type ConfigSnapshot } from "../config/registry";
 import { toolFailure, toolSuccess } from "../helpers/mcp-schema";
 import type {
@@ -109,14 +110,23 @@ async function configuredWorkspace(
     requestScoped?: boolean;
   },
   fileOperation = false,
+  launchCwd?: string,
 ): Promise<{
   config: Awaited<ReturnType<typeof configRegistry.get>>;
   workspace: WorkspaceHandle;
 }> {
-  if (clientRoots.length)
-    await registry.selectDirectory(clientRoots, [input.directory]);
-  else if (!fileOperation) {
-    const hostConfig = await configRegistry.get();
+  let projectRoot: string | undefined;
+  if (clientRoots.length) {
+    projectRoot = await registry.selectDirectory(clientRoots, [
+      input.directory,
+    ]);
+  } else if (!fileOperation) {
+    const hostConfig = await configRegistry.get({ launchCwd });
+    if (
+      hostConfig.sources.project &&
+      canonicalPathWithin(hostConfig.projectRoot, input.directory)
+    )
+      projectRoot = hostConfig.projectRoot;
     await withResolvedConfig(hostConfig, () =>
       withApprovalContext(approval, async () => {
         assertReadableTree(hostConfig, input.directory);
@@ -126,20 +136,42 @@ async function configuredWorkspace(
   const resolution = {
     clientRoots,
     cwd: input.directory,
+    launchCwd,
     requestPaths: [input.directory],
   };
   const config = await configRegistry.get(resolution);
-  if (!fileOperation)
-    await withResolvedConfig(config, () =>
-      withApprovalContext(approval, async () => {
-        assertReadableTree(config, input.directory);
-      }),
-    );
+  if (config.sources.project) {
+    const configuredRoot = path.dirname(config.sources.project);
+    if (!projectRoot || canonicalPathWithin(projectRoot, configuredRoot))
+      projectRoot = configuredRoot;
+  }
+  if (projectRoot && !canonicalPathWithin(projectRoot, input.directory))
+    projectRoot = undefined;
   const workspace = await registry.open({
-    configurationGeneration: config.generation,
     directory: input.directory,
+    projectRoot,
     revision: input.revision,
-    storage: input.storage ?? config.intelligence.storage.placement,
+    async resolveRoot(root, directory) {
+      if (root !== directory) {
+        resolution.cwd = root;
+        resolution.requestPaths = [root];
+      }
+      const selected = await configRegistry.get(resolution);
+      if (!fileOperation)
+        await withResolvedConfig(selected, () =>
+          withApprovalContext(approval, async () => {
+            assertReadableTree(selected, root);
+          }),
+        );
+      const storageResolution = configurationResolutionOptions(selected);
+      return {
+        configurationGeneration: selected.generation,
+        env: storageResolution?.env,
+        home: storageResolution?.home,
+        platform: storageResolution?.platform,
+        storage: input.storage ?? selected.intelligence.storage.placement,
+      };
+    },
   });
   const current = await configRegistry.get(resolution);
   if (workspace.configurationGeneration !== current.generation)
@@ -182,6 +214,7 @@ function isFileOperation(tool: string): boolean {
 
 export interface ExecutionOptions {
   clientRootsTimeoutMs?: number;
+  launchCwd?: string;
   workspaceRegistry?: WorkspaceRegistry;
   requestScoped?: boolean;
 }
@@ -275,6 +308,7 @@ export function configuredExecution(
       const current = await configRegistry.get({
         clientRoots: roots,
         cwd: workspaceDirectory(workspace),
+        launchCwd: options.launchCwd,
         requestPaths: [workspaceDirectory(workspace)],
       });
       workspace = await registry.get(workspace.workspaceId, {
@@ -301,7 +335,10 @@ export function configuredExecution(
             suggestedNextCall: "workspace_open",
           },
         );
-      const config = await configRegistry.get({ requestPaths });
+      const config = await configRegistry.get({
+        launchCwd: options.launchCwd,
+        requestPaths,
+      });
       return withResolvedConfig(config, () => {
         telemetry?.select(config);
         return withApprovalContext(
@@ -321,7 +358,26 @@ export function configuredExecution(
       roots,
       { context, server, tool, requestScoped: options.requestScoped },
       isFileOperation(tool),
+      options.launchCwd,
     );
+    if (
+      workspace &&
+      (opened.workspace.checkoutRoot !== workspace.checkoutRoot ||
+        opened.workspace.configurationGeneration !==
+          workspace.configurationGeneration ||
+        opened.workspace.storageDomain.domainId !==
+          workspace.storageDomain.domainId ||
+        (JSON.stringify(opened.workspace.selectedRevision.selector) ===
+          JSON.stringify(workspace.selectedRevision.selector) &&
+          opened.workspace.workspaceId !== workspace.workspaceId))
+    )
+      throw new WorkspaceError(
+        "workspace_mismatch",
+        "The selected workspace changed while the request was opening",
+        { workspaceId: workspace.workspaceId },
+        true,
+        "workspace_open",
+      );
     workspace = opened.workspace;
     if (!isFileOperation(tool))
       registry.validateRequestPaths(workspace, requestPaths);
@@ -355,6 +411,7 @@ export function configuredExecution(
     const snapshot = await configRegistry.snapshot({
       clientRoots: await clientRoots(context),
       cwd: directory,
+      launchCwd: options.launchCwd,
       requestPaths: directory ? [directory] : undefined,
     });
     if (workspace && snapshot.generation !== workspace.configurationGeneration)
@@ -395,6 +452,8 @@ export function configuredExecution(
           tool: "workspace_open",
           requestScoped: options.requestScoped,
         },
+        false,
+        options.launchCwd,
       );
       telemetry?.select(opened.config);
       return opened.workspace;
@@ -432,7 +491,10 @@ export function configuredExecution(
     );
     if (!statuses.length)
       telemetry?.select(
-        await configRegistry.get({ clientRoots: await clientRoots(context) }),
+        await configRegistry.get({
+          clientRoots: await clientRoots(context),
+          launchCwd: options.launchCwd,
+        }),
       );
     return {
       selected: null,

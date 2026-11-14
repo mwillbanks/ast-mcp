@@ -1065,13 +1065,17 @@ describe("mutation recovery edges", () => {
     await initialized.release();
     expect(await Bun.file(lock).exists()).toBeFalse();
     await writeFile(lock, "stale");
-    await withFencedFileLocks([lock], async (leases) => {
-      expect(leases).toHaveLength(1);
-      await expect(
-        acquireFileLock(lock, { deadline: time.now() + 20 }),
-      ).rejects.toMatchObject({ code: "lock_deadline" });
-      await rm(lock);
-    });
+    await withFencedFileLocks(
+      [lock],
+      async (leases) => {
+        expect(leases).toHaveLength(1);
+        await expect(
+          acquireFileLock(lock, { deadline: time.now() + 20 }),
+        ).rejects.toMatchObject({ code: "lock_deadline" });
+        await rm(lock);
+      },
+      { now: time.now },
+    );
     expect(await Bun.file(lock).exists()).toBeFalse();
     expect(await Bun.file(`${lock}.ast-mcp.lock`).exists()).toBeFalse();
     expect(await mutationLockPath(path.join(root, ".hidden"))).toBe(
@@ -1900,7 +1904,6 @@ describe("mutation recovery edges", () => {
       workspace,
     });
     const lease = await acquireFileLock(filePath);
-    const sharedDatabasePath = await mutationSharedDatabasePath(filePath);
     const polling = deferred<void>();
     const originalAcquire = transactionLockRuntime.acquireTransactionLock;
     let registration: { mockRestore(): void } | undefined;
@@ -1908,10 +1911,7 @@ describe("mutation recovery edges", () => {
       transactionLockRuntime,
       "acquireTransactionLock",
     ).mockImplementation((identity, options) => {
-      if (
-        options?.sharedDatabasePath === sharedDatabasePath &&
-        options.signal
-      ) {
+      if (options?.signal) {
         const signal = options.signal;
         const add = signal.addEventListener.bind(signal);
         registration = spyOn(signal, "addEventListener").mockImplementation(

@@ -40,6 +40,18 @@ test("Windows checker matches alias casing without relaxing CMD arguments", () =
   configured[4] = expected[4]?.replace(".CMD", ".cmd") as string;
   expect(stdioArgsMatch(configured, expected, "win32")).toBeTrue();
   expect(stdioArgsMatch(configured, expected, "linux")).toBeFalse();
+  const shared = commandForPlatform(
+    alias,
+    ["mcp", "--shared-stdio"],
+    "win32",
+  ).args;
+  const sharedWithDifferentCase = [...shared];
+  sharedWithDifferentCase[4] = shared[4]!.replace(".CMD", ".cmd");
+  expect(stdioArgsMatch(sharedWithDifferentCase, shared, "win32")).toBeTrue();
+  expect(
+    stdioArgsMatch(sharedWithDifferentCase, expected, "win32"),
+  ).toBeFalse();
+  expect(stdioArgsMatch(configured, shared, "win32")).toBeFalse();
   expect(
     stdioArgsMatch(["/d", "/v:on", ...configured.slice(2)], expected, "win32"),
   ).toBeFalse();

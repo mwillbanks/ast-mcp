@@ -19,14 +19,20 @@ import type { PublicationGeneration } from "../../src/intelligence/contracts/sto
 import * as markers from "../../src/intelligence/mutation/experimental-deferred-refresh.ts";
 import * as freshness from "../../src/intelligence/mutation/freshness.ts";
 import { activeMutationLifecycle } from "../../src/intelligence/mutation/lifecycle.ts";
+import {
+  acquireLegacyFileGuard,
+  lockPathIdentity,
+} from "../../src/intelligence/mutation/locks.ts";
 import { privateMutationJournalLocation } from "../../src/intelligence/mutation/private-journal.ts";
 import {
   assertPublishedMutationGeneration,
   mutationTransactionLockPath,
   observeMutationIndex,
+  tryUnindexedPatchPublication,
   withDeferredIndexPublication,
   withFreshMutationRead,
   withLanceMutationLifecycle,
+  withMutationIndexObserver,
 } from "../../src/intelligence/mutation/service.ts";
 import type { MutationRefreshResult } from "../../src/intelligence/mutation/types.ts";
 import * as git from "../../src/intelligence/workspace/git.ts";
@@ -37,9 +43,35 @@ import {
 } from "../../src/intelligence/workspace/index.ts";
 import { withCheckoutAdmission } from "../../src/runtime/checkout-admission.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
+import {
+  acquireMutationCoordination,
+  canUseTemporaryMutationCoordination,
+} from "../../src/runtime/mutation-coordination.ts";
 import * as transactionLocks from "../../src/runtime/transaction-lock.ts";
 import { acquireTransactionLock } from "../../src/runtime/transaction-lock.ts";
 import { MOCK_EPOCH } from "../support/mock-time.ts";
+
+async function withAdmittedWriter<T>(
+  workspace: WorkspaceHandle,
+  transaction: string,
+  operation: () => Promise<T>,
+  tryOnly = false,
+): Promise<T> {
+  const options = { deadline: Date.now() + 10_000, tryOnly };
+  if (!canUseTemporaryMutationCoordination(workspace.checkoutRoot))
+    return withCheckoutAdmission(transaction, options, operation);
+
+  const lease = await acquireMutationCoordination(
+    "checkout:" + transaction,
+    options,
+  );
+  try {
+    await lease.fence();
+    return await operation();
+  } finally {
+    await lease.release();
+  }
+}
 
 const publishedAt = new Date(MOCK_EPOCH).toISOString();
 const pendingError = { code: "intelligence_refresh_pending", retryable: true };
@@ -263,16 +295,7 @@ test("explicit index build waits outside writer admission for another storage sc
         );
         void next.catch(() => undefined);
         await Promise.race([ready[1]!.promise, next]);
-        await withCheckoutAdmission(
-          transaction,
-          { deadline: Date.now() + 10_000, tryOnly: true },
-          async () => {
-            const writer = await acquireTransactionLock(transaction, {
-              tryOnly: true,
-            });
-            writer.release();
-          },
-        );
+        await withAdmittedWriter(workspace, transaction, async () => {}, true);
         abort.abort();
         await expect(cancelled).rejects.toMatchObject({ code: "lock_aborted" });
         release.resolve();
@@ -477,10 +500,8 @@ test("explicit refresh yields its publication fence to the admitted writer", asy
         withDeferredIndexPublication(workspace, async (finalize) => {
           if (!finalize)
             throw new Error("Working publication omitted its fence");
-          await withCheckoutAdmission(
-            transaction,
-            { deadline: Date.now() + 10_000 },
-            () => finalize(publish),
+          await withAdmittedWriter(workspace, transaction, () =>
+            finalize(publish),
           );
           return refreshResult(generation.generationId);
         }),
@@ -599,6 +620,31 @@ test("an interrupted unindexed SQLite mutation rolls back before subsequent read
       });
       expect(scheduled).toHaveLength(0);
 
+      if (canUseTemporaryMutationCoordination(filePath)) {
+        const interrupted = await markers.readRefreshState(transaction);
+        if (interrupted?.kind !== "pending")
+          throw new Error("Interrupted operation did not enroll a marker");
+        // A ready marker alone cannot bypass a nonterminal durable journal.
+        await markers.markRefreshReady(transaction, interrupted.epoch);
+        let recovered = false;
+        const operation = async () => {
+          throw new Error("An unfinished journal bypassed recovery");
+        };
+        const result = await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          async () => {
+            expect(await readFile(filePath, "utf8")).toBe(source);
+            expect(activeMutationLifecycle()).toBeDefined();
+            recovered = true;
+            return "regular path";
+          },
+        );
+        expect(result).toBe("regular path");
+        expect(recovered).toBeTrue();
+      }
+
       await withLanceMutationLifecycle(async () => {
         expect(await readFile(filePath, "utf8")).toBe(source);
         expect(await markers.readRefreshState(transaction)).toMatchObject({
@@ -611,6 +657,144 @@ test("an interrupted unindexed SQLite mutation rolls back before subsequent read
         });
       });
       expect(scheduled).toHaveLength(0);
+    },
+  );
+});
+
+test("an atomic unindexed patch does not bypass an older writer or replay an entered operation", async () => {
+  await withPublicationFixture(async ({ checkout, transaction, scheduled }) => {
+    const filePath = path.join(checkout, "atomic.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+    if (!canUseTemporaryMutationCoordination(filePath)) return;
+
+    const operation = async () => {
+      throw new Error("The opportunistic operation entered unexpectedly");
+    };
+    const fallback = async () => {
+      throw new Error("The fallback entered unexpectedly");
+    };
+    const guard = await acquireLegacyFileGuard(
+      lockPathIdentity(transaction),
+      {},
+    );
+    try {
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+    } finally {
+      guard.release();
+    }
+
+    const enteredError = Object.assign(new Error("Publication failed"), {
+      code: "lock_busy",
+    });
+    await expect(
+      tryUnindexedPatchPublication(
+        filePath,
+        undefined,
+        async (fence) => {
+          await fence();
+          throw enteredError;
+        },
+        fallback,
+      ),
+    ).rejects.toBe(enteredError);
+
+    expect(
+      await tryUnindexedPatchPublication(
+        filePath,
+        undefined,
+        async (fence) => {
+          await fence();
+          return undefined;
+        },
+        async () => "regular path",
+      ),
+    ).toBe("regular path");
+    expect(scheduled).toHaveLength(0);
+  });
+});
+
+test("index observers stay scoped to their asynchronous workspace operations", async () => {
+  await withPublicationFixture(async ({ alternate, workspace }) => {
+    const entered = Promise.withResolvers<void>();
+    const secondObserved = Promise.withResolvers<void>();
+    const first = withMutationIndexObserver(
+      async (selected) => {
+        expect(selected).toBe(workspace);
+        return { pending: false, generationId: "first" };
+      },
+      async () => {
+        entered.resolve();
+        await secondObserved.promise;
+        return observeMutationIndex(workspace);
+      },
+    );
+    try {
+      await entered.promise;
+      await withMutationIndexObserver(
+        async (selected) => {
+          expect(selected).toBe(alternate);
+          return { pending: true, epoch: "second" };
+        },
+        async () => {
+          expect(await observeMutationIndex(alternate)).toEqual({
+            pending: true,
+            epoch: "second",
+          });
+          secondObserved.resolve();
+          expect(await first).toEqual({
+            pending: false,
+            generationId: "first",
+          });
+        },
+      );
+      expect(await observeMutationIndex(workspace)).toEqual({ pending: false });
+    } finally {
+      secondObserved.resolve();
+      await first;
+    }
+  });
+});
+
+test("a scheduled refresh parses and publishes source through the checkout fence", async () => {
+  await withPublicationFixture(
+    async ({ checkout, transaction, workspace, scheduled }) => {
+      await writeFile(
+        path.join(checkout, "source.ts"),
+        "export const state = 1;\n",
+      );
+      const initial = publication(workspace, "initial");
+      await withDeferredIndexPublication(workspace, (finalize) =>
+        publishFixture(finalize, initial),
+      );
+      const clean = await markers.readRefreshState(transaction);
+      if (clean?.kind !== "clean")
+        throw new Error("Missing initial generation");
+      const pending = await markers.markRefreshPending(
+        transaction,
+        ["source.ts"],
+        clean.scope,
+        clean.storageScope,
+      );
+      expect(await observeMutationIndex(workspace)).toMatchObject({
+        pending: true,
+      });
+      const scheduledRefresh = scheduled.at(-1);
+      if (!scheduledRefresh) throw new Error("Missing background job");
+      expect(scheduledRefresh[1].epoch).toBe(pending.epoch);
+      await scheduledRefresh[2](pending);
+
+      const published = await markers.readRefreshState(transaction);
+      expect(published).toMatchObject({ kind: "clean", scope: pending.scope });
+      expect(published?.epoch).not.toBe(pending.epoch);
+      expect(published?.publishedGenerationId).toBeString();
+      expect(published?.publishedGenerationId).not.toBe(initial.generationId);
     },
   );
 });

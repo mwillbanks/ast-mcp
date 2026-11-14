@@ -823,6 +823,176 @@ describe("publication reservation protocol", () => {
     ).rejects.toThrow();
     await store.shutdownCoordinator();
   });
+  test("fenced batches reuse fresh leases but still check ownership before writes", async () => {
+    const domain = await storageDomain("background-fence");
+    let timestamp = Date.parse("2026-09-10T00:00:00.000Z");
+    const store = await LanceIntelligenceStore.open(domain, {
+      leaseDurationMs: 1_000,
+      now: () => new Date(timestamp),
+    });
+    const raw = await lancedb.connect(domain.storagePath, {
+      readConsistencyInterval: 0,
+    });
+    const leaseTable = await raw.openTable("coordinator_recovery");
+    try {
+      const { revisionId, workspaceId } = analyticsFixture(
+        [],
+        [],
+        "background-fence",
+      ).scope;
+      const request = {
+        manifestArtifactId: manifestId(revisionId),
+        requiredTables: ["artifacts", "chunks"] as const,
+        reservationKey: "background-fence",
+        revisionId,
+        workspaceId,
+      };
+      const leaseVersion = async () => {
+        await leaseTable.checkoutLatest();
+        return leaseTable.version();
+      };
+      await store.coordinator.exclusive("test fresh lease", async (lease) => {
+        const initialVersion = await leaseVersion();
+        const originalExpiry = lease.expiresAt;
+        await store.coordinator.fence(lease, true);
+        expect(await leaseVersion()).toBe(initialVersion);
+        expect(lease.expiresAt).toBe(originalExpiry);
+
+        timestamp += 500;
+        await store.coordinator.fence(lease, true);
+        expect(await leaseVersion()).toBeGreaterThan(initialVersion);
+        expect(lease.expiresAt).toBe(new Date(timestamp + 1_000).toISOString());
+      });
+
+      const reservation = await store.reservePublication(request);
+      const artifactId = createIdentity("source", { backgroundFence: true });
+      const stolenOwnerId = `coordinator:v1:${"2".repeat(64)}`;
+      await expect(
+        store.putReservedRowsBatch(
+          reservation,
+          [
+            {
+              tableName: "artifacts",
+              rows: [sourceRow(artifactId)],
+            },
+          ],
+          {
+            assertCurrent: async () => {
+              const [current] = await store.rows("coordinator_recovery");
+              if (current?.owner_id === stolenOwnerId) return;
+              await leaseTable.checkoutLatest();
+              await leaseTable.update({
+                values: {
+                  coordinator_id: stolenOwnerId,
+                  epoch: Number(current?.epoch) + 1,
+                  owner_id: stolenOwnerId,
+                },
+                where: "lease_key = 'writer'",
+              });
+            },
+          },
+        ),
+      ).rejects.toMatchObject({ code: "coordinator_unavailable" });
+      expect(
+        await store.count("artifacts", `artifact_id = '${artifactId}'`),
+      ).toBe(0);
+      expect(
+        await store.count(
+          "generation_artifacts",
+          `artifact_id = '${artifactId}'`,
+        ),
+      ).toBe(0);
+      const [stored] = await store.rows(
+        "publications",
+        `generation_id = '${reservation.generationId}'`,
+      );
+      expect(JSON.parse(String(stored?.table_versions_json))).toEqual([]);
+    } finally {
+      leaseTable.close();
+      raw.close();
+      await store.shutdownCoordinator();
+      await rm(domain.storagePath, { recursive: true, force: true });
+    }
+  });
+  test("retries a fenced batch without publishing incomplete producers", async () => {
+    const domain = await storageDomain("fenced-batch");
+    const store = await LanceIntelligenceStore.open(domain);
+    try {
+      const { revisionId, workspaceId } = analyticsFixture(
+        [],
+        [],
+        "fenced-batch",
+      ).scope;
+      const request = {
+        manifestArtifactId: manifestId(revisionId),
+        requiredTables: ["artifacts", "chunks", "graph_nodes"] as const,
+        reservationKey: "fenced-batch",
+        revisionId,
+        workspaceId,
+      };
+      const reservation = await store.reservePublication(request);
+      // Retain a producer checkpoint from outside the retried batch.
+      const before = await store.recordReservedTableVersion(
+        reservation,
+        "chunks",
+      );
+      const artifactId = createIdentity("source", { fencedBatch: true });
+      let allProducersStaged = false;
+      const writes = [
+        { tableName: "artifacts", rows: () => [sourceRow(artifactId)] },
+        {
+          tableName: "graph_nodes",
+          rows: () => {
+            allProducersStaged = true;
+            return [];
+          },
+        },
+      ] as const;
+      const superseded = new Error("fixture superseded before checkpoint");
+      await expect(
+        store.putReservedRowsBatch(reservation, writes, {
+          assertCurrent: async () => {
+            if (allProducersStaged) throw superseded;
+          },
+        }),
+      ).rejects.toBe(superseded);
+      expect(
+        await store.count(
+          "generation_artifacts",
+          `artifact_id = '${artifactId}'`,
+        ),
+      ).toBe(1);
+      await expect(
+        store.finalizePublication(reservation),
+      ).rejects.toMatchObject({
+        code: "publication_conflict",
+        details: { missingTables: ["artifacts", "graph_nodes"] },
+      });
+      expect(await store.latestGeneration(workspaceId)).toBeNull();
+
+      const resumed = await store.reservePublication(request);
+      expect(resumed).toEqual(before);
+      await store.putReservedRowsBatch(resumed, writes, {
+        assertCurrent: async () => {},
+      });
+      const generation = await store.finalizePublication(resumed);
+      expect(
+        generation.tableVersions.find(({ table }) => table === "chunks"),
+      ).toEqual(before.tableVersions.find(({ table }) => table === "chunks"));
+      const reader = await store.pinGeneration(generation, "fenced-batch-test");
+      try {
+        expect(
+          (await reader.rows("artifacts")).map((row) => row.artifact_id),
+        ).toEqual([artifactId]);
+        expect(await reader.rows("graph_nodes")).toEqual([]);
+      } finally {
+        await reader.close();
+      }
+    } finally {
+      await store.shutdownCoordinator();
+      await rm(domain.storagePath, { recursive: true, force: true });
+    }
+  });
   test("blocks finalization until delayed required producers are ready", async () => {
     const domain = await storageDomain("producer-readiness");
     const ordering: string[] = [];

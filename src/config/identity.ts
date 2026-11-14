@@ -31,6 +31,8 @@ export function configurationResolutionOptions(
 
 const environmentNames = [
   "APPDATA",
+  "LOCALAPPDATA",
+  "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
   "AST_MCP_PROJECT_ROOT",
   "AST_MCP_ROOTS",
@@ -60,6 +62,9 @@ export function captureResolutionOptions(
   }
   for (const name of ["APPDATA", "XDG_CONFIG_HOME"] as const) {
     if (env[name] !== undefined) env[name] = path.resolve(launchCwd, env[name]);
+  }
+  for (const name of ["LOCALAPPDATA", "XDG_CACHE_HOME"] as const) {
+    if (env[name]) env[name] = path.resolve(launchCwd, env[name]);
   }
   return {
     ...options,

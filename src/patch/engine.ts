@@ -11,6 +11,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import type { McpServer } from "@modelcontextprotocol/server";
+
 import { currentConfig } from "../config";
 import {
   beginMutation,
@@ -19,9 +21,10 @@ import {
   mutationOperationId,
   recordMutationCommit,
   recordMutationRollback,
+  tryUnindexedPatchPublication,
 } from "../intelligence/mutation/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
-import { approvalSessionId } from "../runtime/approval";
+import { receiptServerId, receiptSessionId } from "../runtime/approval";
 import {
   applyFileChattr,
   type FileChattr,
@@ -332,6 +335,18 @@ const expiredPreviewReceipts = new Set<string>();
 const reservedPreviewReceipts = new Map<string, symbol>();
 const previewReservation = new AsyncLocalStorage<symbol>();
 
+/** Closed MCP connections cannot reuse or retain uncommitted preview payloads. */
+export function clearPreviewReceipts(connection: McpServer): void {
+  const prefix = JSON.stringify(receiptServerId(connection));
+  for (const [token, receipt] of previewReceipts) {
+    if (!receipt.sessionId.startsWith("[" + prefix + ",")) continue;
+    // In-flight mutations still own their receipts until their outcome settles.
+    if (reservedPreviewReceipts.has(token)) continue;
+    clearTimeout(receipt.expiryTimer);
+    previewReceipts.delete(token);
+  }
+}
+
 interface ReceiptBatchState {
   completed: boolean;
   safeToRelease: boolean;
@@ -347,6 +362,17 @@ async function withReservedPreviewReceipts<T>(
     const token = (request as PatchBatchRequest).previewReceipt;
     return typeof token === "string" ? [token] : [];
   });
+  const sessionId = receiptSessionId();
+  const receipts = tokens.map(
+    (token) => [token, previewReceipts.get(token)] as const,
+  );
+  if (
+    receipts.some(([, receipt]) => receipt && receipt.sessionId !== sessionId)
+  )
+    throw receiptError(
+      "preview_receipt_session_mismatch",
+      "Preview receipt belongs to a different MCP session",
+    );
   if (
     new Set(tokens).size !== tokens.length ||
     tokens.some((token) => reservedPreviewReceipts.has(token))
@@ -355,9 +381,6 @@ async function withReservedPreviewReceipts<T>(
       "preview_receipt_reserved",
       "Preview receipt is already reserved by an active batch",
     );
-  const receipts = tokens.map(
-    (token) => [token, previewReceipts.get(token)] as const,
-  );
   for (const token of tokens) reservedPreviewReceipts.set(token, owner);
   try {
     return await previewReservation.run(owner, operation);
@@ -462,7 +485,7 @@ async function validatePreviewReceipt(filePath: string, token: string) {
       "preview_receipt_file_mismatch",
       "Preview receipt does not belong to this file",
     );
-  if (receipt.sessionId !== approvalSessionId())
+  if (receipt.sessionId !== receiptSessionId())
     throw receiptError(
       "preview_receipt_session_mismatch",
       "Preview receipt belongs to a different MCP session",
@@ -612,7 +635,7 @@ async function patchPreview(
   const config = await currentConfig();
   const receipt = randomUUID();
   const expiresAt = Date.now() + PREVIEW_RECEIPT_TTL_MS;
-  const sessionId = approvalSessionId();
+  const sessionId = receiptSessionId();
   const normalizedOperations = structuredClone({
     aiderBlocks: context.request.aiderBlocks,
     astRules: context.request.astRules,
@@ -1335,6 +1358,89 @@ async function processFileBatch<T, Prepared>(
         process.stderr.write("ast-mcp: file lock cleanup failed\n");
       },
     },
+  );
+}
+
+/**
+ * A single unformatted replacement can skip queued admission and a rollback
+ * journal. Contended or ineligible requests use the normal mutation batch.
+ */
+export async function tryPatchWithoutAdmission(
+  requests: PatchBatch,
+  signal: AbortSignal | undefined,
+  fallback?: () => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown> | undefined> {
+  const config = await currentConfig();
+  if (config.safety.mutationLock !== false || config.formatting.enabled)
+    return undefined;
+  const entries = Object.entries(requests);
+  if (entries.length !== 1) return undefined;
+  const [inputPath, request] = entries[0]!;
+  const receipt = request.previewReceipt
+    ? previewReceipts.get(request.previewReceipt)
+    : undefined;
+  if (
+    request.preview ||
+    request.chattr ||
+    request.sql ||
+    receipt?.chattr ||
+    receipt?.sqlBinding
+  )
+    return undefined;
+  const filePath = await resolveWritablePath(inputPath);
+  const metadata = await lstat(filePath).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    },
+  );
+  if (!metadata?.isFile()) return undefined;
+
+  return patchSignals.run(signal, () =>
+    tryUnindexedPatchPublication(
+      filePath,
+      signal,
+      async (checkoutFence) => {
+        let entered = false;
+        try {
+          return await withFencedFileLock(
+            filePath,
+            async (fileLease) => {
+              entered = true;
+              const receiptState: ReceiptBatchState = {
+                completed: false,
+                safeToRelease: true,
+              };
+              return withReservedPreviewReceipts(
+                [request],
+                receiptState,
+                async () => {
+                  const prepared = await preflightPatchBatch(filePath, request);
+                  const result = await applyPreparedPatch(
+                    filePath,
+                    request,
+                    prepared,
+                    async () => {
+                      signal?.throwIfAborted();
+                      await checkoutFence();
+                      await fileLease.fence();
+                    },
+                  );
+                  receiptState.completed = true;
+                  return { files: { [inputPath]: result } };
+                },
+              );
+            },
+            { signal, tryOnly: true },
+          );
+        } catch (error) {
+          if (!entered && (error as { code?: string })?.code === "lock_busy")
+            return undefined;
+          throw error;
+        }
+      },
+      fallback,
+    ),
   );
 }
 

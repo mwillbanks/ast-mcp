@@ -42,10 +42,14 @@ test("batch discovers each shared ancestor marker once and retains distinct file
     return original(...args);
   }) as typeof fs.lstat);
   try {
-    await withFencedFileLocks(files, async (leases) => {
-      expect(leases).toHaveLength(files.length);
-      for (const lease of leases) await lease.fence();
-    });
+    await withFencedFileLocks(
+      files,
+      async (leases) => {
+        expect(leases).toHaveLength(files.length);
+        for (const lease of leases) await lease.fence();
+      },
+      { now: () => 1_000 },
+    );
     expect(counts.get(path.join(root, ".git"))).toBe(1);
     expect(counts.get(path.join(source, ".git"))).toBe(1);
     expect([...counts.values()].every((count) => count === 1)).toBe(true);
@@ -93,6 +97,7 @@ test("batch preserves linked-worktree and nested repository boundaries and dedup
         expect(leases).toHaveLength(3);
         for (const lease of leases) await lease.fence();
       },
+      { now: () => 1_000 },
     );
     expect(pointerReads).toBe(1);
     expect(
@@ -118,21 +123,21 @@ test("subsequent batches revalidate changed configuration and Git markers", asyn
   await fs.writeFile(path.join(root, "ast-mcp.toml"), "");
   const file = path.join(child, "a.ts");
   try {
-    await withFencedFileLocks([file], async () => {});
+    await withFencedFileLocks([file], async () => {}, { now: () => 1_000 });
     expect(
       (await fs.readdir(path.join(root, ".ast-mcp-locks"))).filter((name) =>
         name.endsWith(".sqlite"),
       ),
     ).toHaveLength(1);
     await fs.writeFile(path.join(child, "ast-mcp.toml"), "");
-    await withFencedFileLocks([file], async () => {});
+    await withFencedFileLocks([file], async () => {}, { now: () => 1_000 });
     expect(
       (await fs.readdir(path.join(child, ".ast-mcp-locks"))).filter((name) =>
         name.endsWith(".sqlite"),
       ),
     ).toHaveLength(1);
     await fs.mkdir(path.join(child, ".git"));
-    await withFencedFileLocks([file], async () => {});
+    await withFencedFileLocks([file], async () => {}, { now: () => 1_000 });
     expect(
       (await fs.readdir(path.join(child, ".git", "ast-mcp-locks"))).filter(
         (name) => name.endsWith(".sqlite"),

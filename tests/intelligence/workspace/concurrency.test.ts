@@ -26,12 +26,17 @@ import {
   withConfig,
 } from "../../../src/config/index.ts";
 import { configRegistry } from "../../../src/config/registry.ts";
+import { markRefreshPending } from "../../../src/intelligence/mutation/experimental-deferred-refresh.ts";
 import { withFencedFileLocks } from "../../../src/intelligence/mutation/locks.ts";
+import { mutationTransactionLockPath } from "../../../src/intelligence/mutation/service.ts";
 import {
+  currentWorkspace,
   discoverGitWorkspace,
+  legacyStorageDomain,
   WorkspaceRegistry,
   withWorkspaceContext,
 } from "../../../src/intelligence/workspace/index.ts";
+import { sha256 } from "../../../src/runtime/hash.ts";
 import { canonicalPathWithin } from "../../../src/runtime/path-utils.ts";
 import { resolveWritablePath } from "../../../src/runtime/paths.ts";
 import {
@@ -174,14 +179,15 @@ test("simultaneous linked-worktree requests read and mutate only their checkout"
       storage: { kind: "local" },
     }),
   ]);
-  expect(mainLocal.storageDomain.domainId).toBe(
+  expect(mainLocal.storageDomain.domainId).not.toBe(
     linkedLocal.storageDomain.domainId,
   );
-  expect(
-    mainLocal.storageDomain.storagePath.startsWith(
-      mainWorkspace.repositoryRoot,
-    ),
-  ).toBe(true);
+  expect(mainLocal.storageDomain.storagePath).toBe(
+    path.join(mainWorkspace.checkoutRoot, ".ast-mcp", "intelligence"),
+  );
+  expect(linkedLocal.storageDomain.storagePath).toBe(
+    path.join(linkedWorkspace.checkoutRoot, ".ast-mcp", "intelligence"),
+  );
 
   const firstEntered = deferred<void>();
   const secondEntered = deferred<void>();
@@ -370,6 +376,96 @@ test("configuration invalidation during discovery rejects a stale handle and all
   } finally {
     WorkspaceRegistry.prototype.open = originalOpen;
   }
+});
+
+test("a tool call cannot silently switch away from its explicit storage workspace", async () => {
+  const root = await temporary("ast-mcp-workspace-storage-drift-");
+  const execute = configuredExecution(serverForRoot(root));
+  const workspace = await execute.openWorkspace!({ directory: root });
+  const legacy = legacyStorageDomain(root, { kind: "global" }, {})!;
+  const transactionPath = await mutationTransactionLockPath(root);
+  try {
+    await markRefreshPending(
+      transactionPath,
+      ["value.ts"],
+      sha256("legacy-config"),
+      sha256(legacy.domainId),
+      { indexRefresh: false, inFlight: true, journal: "sqlite-v1" },
+    );
+    let called = false;
+    const operation = async () => {
+      called = true;
+    };
+    for (const revision of [undefined, { kind: "working" }]) {
+      await expect(
+        execute({ workspaceId: workspace.workspaceId, revision }, operation),
+      ).rejects.toMatchObject({
+        code: "workspace_mismatch",
+        suggestedNextCall: "workspace_open",
+      });
+    }
+    expect(called).toBe(false);
+
+    const reopened = await execute.openWorkspace!({ directory: root });
+    expect(reopened.storageDomain).toEqual(legacy);
+    await execute({ workspaceId: reopened.workspaceId }, operation);
+    expect(called).toBe(true);
+  } finally {
+    await rm(transactionPath + ".refresh.json", { force: true });
+  }
+});
+
+test("a different requested revision keeps its explicit checkout and storage", async () => {
+  const root = await temporary("ast-mcp-workspace-revision-override-");
+  await git(root, ["init", "-b", "main"]);
+  await git(root, ["commit", "--allow-empty", "-m", "empty"]);
+  const oid = await git(root, ["rev-parse", "HEAD"]);
+  const execute = configuredExecution(serverForRoot(root));
+  const workspace = await execute.openWorkspace!({
+    directory: root,
+    storage: { kind: "local" },
+  });
+  const overridden = await execute(
+    { workspaceId: workspace.workspaceId, revision: { kind: "commit", oid } },
+    async () => currentWorkspace(),
+  );
+  expect(overridden).toMatchObject({
+    checkoutRoot: workspace.checkoutRoot,
+    storageDomain: workspace.storageDomain,
+    selectedRevision: { resolvedCommitOid: oid, readOnly: true },
+  });
+  expect(overridden?.workspaceId).not.toBe(workspace.workspaceId);
+});
+
+test("a repeated moving selector cannot retarget an explicit workspace", async () => {
+  const root = await temporary("ast-mcp-workspace-moved-selector-");
+  await git(root, ["init", "-b", "main"]);
+  await git(root, ["commit", "--allow-empty", "-m", "original"]);
+  const registry = new WorkspaceRegistry();
+  const execute = configuredExecution(serverForRoot(root), undefined, {
+    workspaceRegistry: registry,
+  });
+  const workspace = await execute.openWorkspace!({
+    directory: root,
+    storage: { kind: "local" },
+  });
+  const open = registry.open.bind(registry);
+  registry.open = async (options) => {
+    await git(root, ["commit", "--allow-empty", "-m", "new-head"]);
+    return open(options);
+  };
+  const operation = async () => {
+    throw new Error("The moved selector reached dispatch");
+  };
+  await expect(
+    execute(
+      { workspaceId: workspace.workspaceId, revision: { kind: "working" } },
+      operation,
+    ),
+  ).rejects.toMatchObject({
+    code: "workspace_mismatch",
+    suggestedNextCall: "workspace_open",
+  });
 });
 
 test("workspace_open without client roots uses explicit v2 host authorization", async () => {

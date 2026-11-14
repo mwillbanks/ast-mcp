@@ -76,6 +76,7 @@ const fileV1Schema = z
         allow_temp_directory: z.boolean().optional(),
         follow_symlinks: z.boolean().optional(),
         hook: hookSchema.optional(),
+        mutation_lock: z.boolean().optional(),
         require_hash: z.boolean().optional(),
       })
       .strict()
@@ -183,6 +184,7 @@ export interface ResolvedConfig {
     allowTempDirectory: boolean;
     followSymlinks: boolean;
     hook: { allowTools: string[]; blockTools: string[]; enabled: boolean };
+    mutationLock: boolean;
     requireHash: boolean;
   };
   sources: { project?: string; global?: string; environment: string[] };
@@ -316,6 +318,7 @@ interface InternalConfig {
       block_tools?: string[];
       enabled?: boolean;
     };
+    mutation_lock?: boolean;
     require_hash?: boolean;
   };
   telemetry?: { enabled?: boolean };
@@ -661,6 +664,7 @@ const leaves = [
   "safety.hook.allow_tools",
   "safety.hook.block_tools",
   "safety.hook.enabled",
+  "safety.mutation_lock",
   "safety.require_hash",
   "files.read.modes",
   "files.patch.strategies",
@@ -973,6 +977,7 @@ function defaultInternalConfig(
     safety: {
       filesystem: "restricted",
       hook: { allow_tools: [], block_tools: [], enabled: true },
+      mutation_lock: true,
       require_hash: true,
     },
     telemetry: { enabled: true },
@@ -1136,6 +1141,7 @@ function resolvedSafety(value: InternalConfig): ResolvedConfig["safety"] {
     ),
     followSymlinks: withDefault(value.safety?.follow_symlinks, false),
     hook: resolvedHook(value.safety),
+    mutationLock: value.safety?.mutation_lock ?? true,
     requireHash: withDefault(value.safety?.require_hash, true),
   };
 }
@@ -1387,10 +1393,19 @@ async function resolveForProject(
     cwd,
     (options.clientRoots?.length ?? 0) > 0,
   );
+  const projectValue = project.value ?? {};
+  // Only the user-global layer can opt out. A project can restore queuing.
+  const projectLayer =
+    projectValue.safety?.mutation_lock === false
+      ? {
+          ...projectValue,
+          safety: { ...projectValue.safety, mutation_lock: undefined },
+        }
+      : projectValue;
   const layers: ConfigLayer[] = [
     { name: "default", value: defaultInternalConfig(candidates, projectRoot) },
     { name: "global", value: global.value ?? {} },
-    { name: "project", value: project.value ?? {} },
+    { name: "project", value: projectLayer },
     { name: "environment", value: environment.value },
   ];
   const value = merge(...layers.map((item) => item.value));

@@ -59,6 +59,7 @@ for (const {
   const git = Bun.which("git");
   assert(git, "Git is required for workspace discovery");
   const windows = process.platform === "win32";
+  const shared = !windows && typeof Bun.ModuleGraph === "function";
   const env = {
     ...(windows
       ? {
@@ -86,6 +87,7 @@ for (const {
     return child.stdout.toString().trim();
   };
   const client = new Client({ name: "standalone-qualification", version: "1" });
+  const failures: unknown[] = [];
   try {
     await mkdir(emptyPath);
     if (!windows) await symlink(git, path.join(emptyPath, path.basename(git)));
@@ -132,9 +134,17 @@ policies = { read = "allow", write = "allow", delete = "allow" }
       );
     }
 
+    const gitRun = (...arguments_: string[]) => {
+      const child = Bun.spawnSync([git, ...arguments_], {
+        cwd,
+        timeout: 10_000,
+      });
+      assert.equal(child.exitCode, 0, child.stderr.toString());
+      return child.stdout.toString().trim();
+    };
     await client.connect(
       new StdioClientTransport({
-        args: [...args, "mcp"],
+        args: [...args, "mcp", ...(shared ? ["--shared-stdio"] : [])],
         command,
         cwd,
         env,
@@ -277,6 +287,68 @@ policies = { read = "allow", write = "allow", delete = "allow" }
       source.map(() => candidate),
     );
 
+    if (shared) {
+      await client.close();
+      gitRun("init", "-q");
+      await Bun.write(
+        path.join(cwd, ".git", "info", "exclude"),
+        "config/\nstore/\n",
+      );
+      gitRun(
+        "add",
+        "--",
+        ...filePaths,
+        "ast-mcp.toml",
+        "native.rs",
+        ...(pack ? ["pack.go"] : []),
+      );
+      gitRun(
+        "-c",
+        "core.hooksPath=" + emptyPath,
+        "-c",
+        "user.name=AST-MCP qualification",
+        "-c",
+        "user.email=qualification@example.test",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-qm",
+        "Create qualification revision",
+      );
+      const commit = gitRun("rev-parse", "HEAD");
+      await client.connect(
+        new StdioClientTransport({
+          args: [...args, "mcp", "--shared-stdio"],
+          command,
+          cwd,
+          env,
+          stderr: "inherit",
+        }),
+        { timeout: 10_000 },
+      );
+      const opened = await tool<{ workspace: { workspaceId: string } }>(
+        "workspace_open",
+        { directory: cwd, revision: { kind: "commit", oid: commit }, storage },
+      );
+      const historical = opened.workspace.workspaceId;
+      await tool("index", { action: "build", workspaceId: historical });
+      const requests = Array.from({ length: 4 }, () =>
+        tool<{ results: Array<{ path: string; text: string }> }>("retrieve", {
+          exactSymbols: ["publish"],
+          query: "publish",
+          semantic: false,
+          workspaceId: historical,
+        }),
+      );
+      for (const result of await Promise.all(requests))
+        assert(
+          result.results.some(
+            ({ path, text }) =>
+              path === "entry.ts" && text.includes("return value.trim();"),
+          ),
+        );
+    }
+
     console.log(
       JSON.stringify({
         name,
@@ -298,6 +370,7 @@ policies = { read = "allow", write = "allow", delete = "allow" }
           "native Rust match",
           "index",
           "retrieve",
+          ...(shared ? ["overlapping committed retrieve"] : []),
           "receipt commit",
           "exact bytes",
         ],
@@ -305,9 +378,20 @@ policies = { read = "allow", write = "allow", delete = "allow" }
       }),
     );
   } catch (error) {
-    throw new Error(`${name} parity failed`, { cause: error });
+    failures.push(new Error(`${name} parity failed`, { cause: error }));
   } finally {
-    await client.close();
-    await rm(cwd, { force: true, recursive: true });
+    try {
+      await client.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await rm(cwd, { force: true, recursive: true });
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, `${name} qualification failed`);
   }
 }

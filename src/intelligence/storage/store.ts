@@ -117,12 +117,13 @@ export interface ReservePublicationInput extends PublishInput {
 }
 
 export interface ReservedWriteOptions {
+  assertCurrent?: () => Promise<void>;
   immutable?: boolean;
 }
 
 export interface ReservedTableWrite {
   options?: ReservedWriteOptions;
-  rows: readonly StorageRow[];
+  rows: readonly StorageRow[] | (() => readonly StorageRow[]);
   tableName: PublicationGenerationTable;
 }
 
@@ -288,13 +289,28 @@ async function withLatestTable<T>(
   }
 }
 
+// These connections use readConsistencyInterval: 0. A fresh, unpinned
+// local handle refreshes on schema and query reads without checkoutLatest.
+async function withStrongReadTable<T>(
+  connection: Connection,
+  name: LanceTableName,
+  action: (table: Table) => Promise<T>,
+): Promise<T> {
+  const table = await connection.openTable(name);
+  try {
+    return await action(table);
+  } finally {
+    table.close();
+  }
+}
+
 async function storageRows(
   connection: Connection,
   tableName: LanceTableName,
   predicate?: string,
   options: { limit?: number; timeoutMs?: number } = {},
 ): Promise<readonly StorageRow[]> {
-  return withLatestTable(connection, tableName, async (table) => {
+  return withStrongReadTable(connection, tableName, async (table) => {
     assertCompatibleSchema(tableName, await table.schema());
     let query = table.query();
     if (predicate) query = query.where(predicate);
@@ -310,7 +326,7 @@ async function latestPublishedGeneration(
   workspaceId: string,
   timeoutMs = 5_000,
 ): Promise<PublicationGeneration | null> {
-  return withLatestTable(connection, "publications", async (table) => {
+  return withStrongReadTable(connection, "publications", async (table) => {
     assertCompatibleSchema("publications", await table.schema());
     const [row] = (await table
       .query()
@@ -394,11 +410,9 @@ export class PinnedGenerationReader {
     await this.store.releaseReaderPin(this.pin.pinId);
   }
 
-  async rows(
-    tableName: (typeof COMPLETE_GENERATION_TABLES)[number],
-    predicate?: string,
-    options: { limit?: number; timeoutMs?: number } = {},
-  ): Promise<readonly StorageRow[]> {
+  private async checkedTable(
+    tableName: PublicationGenerationTable,
+  ): Promise<Table> {
     await this.assertReadable();
     const table = this.tables.get(tableName);
     const expected = this.pin.tableVersions.find(
@@ -412,6 +426,32 @@ export class PinnedGenerationReader {
         { tableName },
       );
     }
+    return table;
+  }
+
+  async searchChunks(
+    query: string,
+    predicate: string,
+    limit: number,
+    timeoutMs: () => number,
+  ): Promise<readonly StorageRow[]> {
+    const table = await this.checkedTable("chunks");
+    try {
+      return await table.search(query).where(predicate).limit(limit).toArray({
+        timeoutMs: timeoutMs(),
+      });
+    } catch {
+      // Preserve lexical fallback when native full-text search is unavailable.
+      return [];
+    }
+  }
+
+  async rows(
+    tableName: (typeof COMPLETE_GENERATION_TABLES)[number],
+    predicate?: string,
+    options: { limit?: number; timeoutMs?: number } = {},
+  ): Promise<readonly StorageRow[]> {
+    const table = await this.checkedTable(tableName);
     let effectivePredicate = predicate;
     if (this.pin.publicationProtocol === "reservation-v2") {
       const links = this.tables.get("generation_artifacts");
@@ -481,8 +521,24 @@ export class LanceIntelligenceStore {
   }
 
   static async open(
-    domainInput: StorageDomain,
+    domain: StorageDomain,
     options: StoreOpenOptions = {},
+  ): Promise<LanceIntelligenceStore> {
+    return this.openStorage(domain, options, false);
+  }
+
+  // Historical lookups do not need the writer lane once initialization is
+  // complete. Missing initialization goes through the existing repair path.
+  static async openHistoricalRead(
+    domain: StorageDomain,
+  ): Promise<LanceIntelligenceStore> {
+    return this.openStorage(domain, {}, true);
+  }
+
+  private static async openStorage(
+    domainInput: StorageDomain,
+    options: StoreOpenOptions,
+    preferPinnedRead: boolean,
   ): Promise<LanceIntelligenceStore> {
     const domain = StorageDomainSchema.parse(domainInput);
     const storagePath = await assertSupportedStoragePath(domain.storagePath, {
@@ -509,6 +565,15 @@ export class LanceIntelligenceStore {
     const access = options.access ?? "read-write";
     let store: LanceIntelligenceStore | undefined;
     try {
+      if (preferPinnedRead) {
+        const pinned = new LanceIntelligenceStore(
+          connection,
+          domain,
+          undefined,
+          { ...options, access: "read-pinned" },
+        );
+        if (await pinned.canOpenHistoricalRead()) return pinned;
+      }
       const coordinator =
         access === "read-pinned"
           ? undefined
@@ -530,6 +595,68 @@ export class LanceIntelligenceStore {
       if (store) await store.shutdownCoordinator();
       else connection.close();
       throw error;
+    }
+  }
+
+  static async hasPublishedWorkspace(
+    domain: StorageDomain,
+    workspaceId: string,
+  ): Promise<boolean> {
+    const storagePath = await assertSupportedStoragePath(domain.storagePath);
+    const connection = await lancedb.connect(storagePath, {
+      readConsistencyInterval: 0,
+    });
+    try {
+      const names = await connection.tableNames();
+      return (
+        names.includes("publications") &&
+        (await latestPublishedGeneration(connection, workspaceId)) !== null
+      );
+    } finally {
+      connection.close();
+    }
+  }
+
+  /** A synthetic revision includes the canonical checkout's repository ID. */
+  static async hasPublishedSyntheticCheckout(
+    domain: StorageDomain,
+    checkout: { repositoryId: string; revisionId: string },
+  ): Promise<boolean> {
+    const storagePath = await assertSupportedStoragePath(domain.storagePath);
+    const connection = await lancedb.connect(storagePath, {
+      readConsistencyInterval: 0,
+    });
+    try {
+      const names = await connection.tableNames();
+      if (
+        !names.includes("publications") ||
+        !names.includes("revision_manifests")
+      )
+        return false;
+      const [publication] = await storageRows(
+        connection,
+        "publications",
+        [
+          "state = 'published'",
+          `storage_domain_id = ${sqlString(domain.domainId)}`,
+          `revision_id = ${sqlString(checkout.revisionId)}`,
+        ].join(" AND "),
+        { limit: 1, timeoutMs: 5_000 },
+      );
+      if (typeof publication?.manifest_artifact_id !== "string") return false;
+      const manifests = await storageRows(
+        connection,
+        "revision_manifests",
+        [
+          `artifact_id = ${sqlString(publication.manifest_artifact_id)}`,
+          `repository_id = ${sqlString(checkout.repositoryId)}`,
+          `revision_id = ${sqlString(checkout.revisionId)}`,
+        ].join(" AND "),
+        { limit: 1, timeoutMs: 5_000 },
+      );
+      return manifests.length !== 0;
+    } finally {
+      connection.close();
     }
   }
 
@@ -590,30 +717,94 @@ export class LanceIntelligenceStore {
     }
   }
 
-  private async initialize(): Promise<void> {
-    if (this.access !== "read-write") {
-      const names = new Set(await this.connection.tableNames());
-      if (!names.has("coordinator_recovery"))
+  private migrationIdentity(migration: string): string {
+    return createIdentity("migration", {
+      migration,
+      storageDomainId: this.domain.domainId,
+    });
+  }
+
+  private async verifyReadSchema(
+    allowInitialization = false,
+  ): Promise<boolean> {
+    const names = new Set(await this.connection.tableNames());
+    if (!allowInitialization && !names.has("coordinator_recovery"))
+      throw new StorageError(
+        "storage_unavailable",
+        "Read-only storage requires an initialized LanceDB directory",
+        false,
+      );
+    const verify = async (name: LanceTableName) => {
+      if (!names.has(name)) {
+        if (allowInitialization) return false;
         throw new StorageError(
           "storage_unavailable",
-          "Read-only storage requires an initialized LanceDB directory",
+          `Read-only LanceDB is missing table ${name}`,
           false,
         );
-      for (const tableName of ALL_TABLES) {
-        if (!names.has(tableName)) {
-          throw new StorageError(
-            "storage_unavailable",
-            `Read-only LanceDB is missing table ${tableName}`,
-            false,
-          );
-        }
-        const table = await latestTable(this.connection, tableName);
-        try {
-          assertCompatibleSchema(tableName, await table.schema());
-        } finally {
-          table.close();
-        }
       }
+      return withStrongReadTable(this.connection, name, async (table) => {
+        const schema = await table.schema();
+        if (allowInitialization && isLegacyPublicationTagSchema(name, schema))
+          return false;
+        assertCompatibleSchema(name, schema);
+        return true;
+      });
+    };
+    if (!allowInitialization) {
+      for (const name of ALL_TABLES) await verify(name);
+      return true;
+    }
+    // Only automatic historical reads overlap schema checks. Finish a
+    // complete batch before closing the connection or switching to the writer.
+    const width = 2;
+    for (let offset = 0; offset < ALL_TABLES.length; offset += width) {
+      const batch = ALL_TABLES.slice(offset, offset + width);
+      const verified = await Promise.allSettled(batch.map(verify));
+      for (const result of verified) {
+        if (result.status === "rejected") throw result.reason;
+        if (!result.value) return false;
+      }
+    }
+    return true;
+  }
+
+  private async canOpenHistoricalRead(): Promise<boolean> {
+    if (!(await this.verifyReadSchema(true))) return false;
+    const publicationTag = this.migrationIdentity(
+      "publication-generation-tag-v1",
+    );
+    const membership = this.migrationIdentity("generation-artifacts-v2");
+    const [migrations, retention] = await Promise.allSettled([
+      withStrongReadTable(this.connection, "migrations", (table) =>
+        table
+          .query()
+          .where(
+            `migration_id IN (${sqlString(publicationTag)}, ${sqlString(membership)})`,
+          )
+          .select(["migration_id", "state"])
+          .toArray(),
+      ),
+      withStrongReadTable(this.connection, "retention", (table) =>
+        table.countRows(),
+      ),
+    ]);
+    if (migrations.status === "rejected") throw migrations.reason;
+    if (retention.status === "rejected") throw retention.reason;
+    return (
+      retention.value > 0 &&
+      !migrations.value.some(
+        (row) => row.migration_id === publicationTag && row.state === "running",
+      ) &&
+      migrations.value.some(
+        (row) => row.migration_id === membership && row.state === "completed",
+      )
+    );
+  }
+
+  private async initialize(): Promise<void> {
+    if (this.access !== "read-write") {
+      await this.verifyReadSchema();
       return;
     }
 
@@ -646,10 +837,9 @@ export class LanceIntelligenceStore {
             table.close();
           }
         }
-        const migrationId = createIdentity("migration", {
-          migration: "publication-generation-tag-v1",
-          storageDomainId: this.domain.domainId,
-        });
+        const migrationId = this.migrationIdentity(
+          "publication-generation-tag-v1",
+        );
         const migrationTable = await latestTable(this.connection, "migrations");
         let existingMigration: Record<string, unknown> | undefined;
         try {
@@ -733,10 +923,9 @@ export class LanceIntelligenceStore {
           }
           await writeMigration("completed");
         }
-        const membershipMigrationId = createIdentity("migration", {
-          migration: "generation-artifacts-v2",
-          storageDomainId: this.domain.domainId,
-        });
+        const membershipMigrationId = this.migrationIdentity(
+          "generation-artifacts-v2",
+        );
         const completedMembershipMigration = await this.count(
           "migrations",
           `migration_id = ${sqlString(membershipMigrationId)} AND state = 'completed'`,
@@ -1085,6 +1274,7 @@ export class LanceIntelligenceStore {
     reservation: PublicationReservation,
     tableName: PublicationGenerationTable,
     artifactIds: readonly string[],
+    reuseFreshLease?: boolean,
   ): Promise<void> {
     const links = [...new Set(artifactIds)].map((artifactId) => ({
       artifact_id: artifactId,
@@ -1097,7 +1287,13 @@ export class LanceIntelligenceStore {
       }),
       table_name: tableName,
     }));
-    await this.writeRowsUnlocked(lease, "generation_artifacts", links, true);
+    await this.writeRowsUnlocked(
+      lease,
+      "generation_artifacts",
+      links,
+      true,
+      reuseFreshLease,
+    );
   }
 
   private async linkGenerationArtifactsUnlocked(
@@ -1105,6 +1301,7 @@ export class LanceIntelligenceStore {
     reservation: PublicationReservation,
     tableName: PublicationGenerationTable,
     rows: readonly StorageRow[],
+    reuseFreshLease?: boolean,
   ): Promise<void> {
     const primaryKey = TABLE_PRIMARY_KEYS[tableName];
     await this.linkGenerationArtifactIdsUnlocked(
@@ -1112,6 +1309,7 @@ export class LanceIntelligenceStore {
       reservation,
       tableName,
       rows.map((row) => String(row[primaryKey])),
+      reuseFreshLease,
     );
   }
 
@@ -1155,6 +1353,14 @@ export class LanceIntelligenceStore {
       reservation.tableVersions.map((pin) => [pin.table, pin.version]),
     );
     versions.set(tableName, version);
+    return this.checkpointReservedVersions(lease, reservation, versions);
+  }
+
+  private async checkpointReservedVersions(
+    lease: CoordinatorLease,
+    reservation: PublicationReservation,
+    versions: ReadonlyMap<string, number>,
+  ): Promise<PublicationReservation> {
     const updated = PublicationReservationSchema.parse({
       ...reservation,
       tableVersions: [...versions]
@@ -1360,6 +1566,7 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       `write reserved ${tableName}`,
       async (lease) => {
+        await options.assertCurrent?.();
         const reservation = await this.activeReservedTable(
           reservationInput,
           tableName,
@@ -1414,8 +1621,12 @@ export class LanceIntelligenceStore {
   async putReservedRowsBatch(
     reservationInput: PublicationReservation,
     writes: readonly ReservedTableWrite[],
+    options: { assertCurrent?: () => Promise<void> } = {},
   ): Promise<readonly WriteMetrics[]> {
     this.assertWritable();
+    // Background producers retain the writer transaction across the batch.
+    // Verify owner and expiry before each write; renew only near expiry.
+    const fencedBackgroundWrite = options.assertCurrent !== undefined;
     if (
       writes.length === 0 ||
       new Set(writes.map((write) => write.tableName)).size !== writes.length
@@ -1429,9 +1640,17 @@ export class LanceIntelligenceStore {
     return this.coordinator.exclusive(
       "write reserved table batch",
       async (lease) => {
+        await options.assertCurrent?.();
         let reservation = await this.activeReservation(reservationInput);
+        const versions = new Map(
+          reservation.tableVersions.map(({ table, version }) => [
+            table,
+            version,
+          ]),
+        );
         const metrics: WriteMetrics[] = [];
         for (const write of writes) {
+          await options.assertCurrent?.();
           if (!reservation.requiredTables.includes(write.tableName)) {
             throw new StorageError(
               "publication_conflict",
@@ -1443,7 +1662,9 @@ export class LanceIntelligenceStore {
               },
             );
           }
-          const tagged = write.rows.map((row) => {
+          const rows =
+            typeof write.rows === "function" ? write.rows() : write.rows;
+          const tagged = rows.map((row) => {
             if (
               (row.publication_generation_id !== undefined &&
                 row.publication_generation_id !== reservation.generationId) ||
@@ -1471,6 +1692,7 @@ export class LanceIntelligenceStore {
               write.tableName,
               tagged,
               write.options?.immutable ?? IMMUTABLE_TABLES.has(write.tableName),
+              fencedBackgroundWrite,
             ),
           );
           await this.linkGenerationArtifactsUnlocked(
@@ -1478,12 +1700,28 @@ export class LanceIntelligenceStore {
             reservation,
             write.tableName,
             tagged,
+            fencedBackgroundWrite,
           );
-          reservation = await this.updateReservedTableVersion(
-            lease,
-            reservation,
-            write.tableName,
-          );
+          if (options.assertCurrent) {
+            const version = await withLatestTable(
+              this.connection,
+              write.tableName,
+              (table) => table.version(),
+            );
+            versions.set(write.tableName, version);
+          } else {
+            reservation = await this.updateReservedTableVersion(
+              lease,
+              reservation,
+              write.tableName,
+            );
+          }
+        }
+        if (options.assertCurrent) {
+          // The background producer can replay the whole batch. All links
+          // must be durable before a producer version is marked complete.
+          await options.assertCurrent();
+          await this.checkpointReservedVersions(lease, reservation, versions);
         }
         return metrics;
       },
@@ -2213,22 +2451,37 @@ export class LanceIntelligenceStore {
 
     const tables = new Map<LanceTableName, Table>();
     try {
-      for (const versionPin of pin.tableVersions) {
-        const table = await this.connection.openTable(versionPin.table);
-        try {
-          await table.checkout(versionPin.version);
-          if ((await table.version()) !== versionPin.version) {
-            throw new StorageError(
-              "mixed_generation",
-              "LanceDB did not checkout the requested generation version",
-              false,
-              { table: versionPin.table, version: versionPin.version },
-            );
-          }
-          tables.set(versionPin.table, table);
-        } catch (error) {
-          table.close();
-          throw error;
+      // Overlap native reads in small batches. Settle every open before
+      // cleanup so the durable pin still protects all tables being checked.
+      const concurrency = 2;
+      for (
+        let offset = 0;
+        offset < pin.tableVersions.length;
+        offset += concurrency
+      ) {
+        const batch = pin.tableVersions.slice(offset, offset + concurrency);
+        const opened = await Promise.allSettled(
+          batch.map(async ({ table: name, version }) => {
+            const table = await this.connection.openTable(name);
+            try {
+              await table.checkout(version);
+              if ((await table.version()) !== version) {
+                throw new StorageError(
+                  "mixed_generation",
+                  "LanceDB did not checkout the requested generation version",
+                  false,
+                  { table: name, version },
+                );
+              }
+              tables.set(name, table);
+            } catch (error) {
+              table.close();
+              throw error;
+            }
+          }),
+        );
+        for (const result of opened) {
+          if (result.status === "rejected") throw result.reason;
         }
       }
       if (pin.publicationProtocol === "reservation-v2") {
@@ -2995,9 +3248,13 @@ export class LanceIntelligenceStore {
     tableName: LanceTableName,
     rows: readonly StorageRow[],
     immutable: boolean,
+    reuseFreshLease = false,
   ): Promise<WriteMetrics> {
     return this.writeRowsWithFence(tableName, rows, immutable, () =>
-      this.coordinator.fence(lease, !immutable && tableName === "jobs"),
+      this.coordinator.fence(
+        lease,
+        reuseFreshLease || (!immutable && tableName === "jobs"),
+      ),
     );
   }
 

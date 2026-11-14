@@ -14,10 +14,7 @@ import {
   ResolutionStatusSchema,
   WorkspaceIdSchema,
 } from "../intelligence/contracts/index.ts";
-import {
-  generateWithEvidence,
-  GenerationBudgetSchema,
-} from "../intelligence/generation/index.ts";
+import { GenerationBudgetSchema } from "../intelligence/generation/types.ts";
 import {
   createGraphAlgorithmExecutionContext,
   createGraphLoadState,
@@ -33,21 +30,17 @@ import {
   stronglyConnectedComponents,
   traverseGraph,
 } from "../intelligence/graph/index.ts";
-import {
+import type {
   IntelligenceRuntime,
-  type IntelligenceRuntimeOptions,
+  IntelligenceRuntimeOptions,
 } from "../intelligence/lifecycle/service.ts";
-import { refreshMutationIntelligence } from "../intelligence/mutation/freshness.ts";
 import {
   assertPublishedMutationGeneration,
   observeMutationIndex,
   withDeferredIndexPublication,
   withFreshMutationRead,
 } from "../intelligence/mutation/service.ts";
-import {
-  RetrievalBudgetSchema,
-  retrieve,
-} from "../intelligence/retrieval/index.ts";
+import { RetrievalBudgetSchema } from "../intelligence/retrieval/types.ts";
 import { LanceIntelligenceStore } from "../intelligence/storage/store.ts";
 import {
   currentWorkspace,
@@ -315,11 +308,16 @@ function algorithmSnapshot(snapshot: GraphSnapshot): GraphAlgorithmSnapshot {
 async function withStore<T>(
   workspace: WorkspaceHandle,
   operation: (store: LanceIntelligenceStore) => Promise<T>,
-  access: "read-only" | "read-pinned" | "read-write" = "read-write",
+  access:
+    | "read-only"
+    | "read-pinned"
+    | "read-write"
+    | "historical" = "read-write",
 ): Promise<T> {
-  const store = await LanceIntelligenceStore.open(workspace.storageDomain, {
-    access,
-  });
+  const store =
+    access === "historical"
+      ? await LanceIntelligenceStore.openHistoricalRead(workspace.storageDomain)
+      : await LanceIntelligenceStore.open(workspace.storageDomain, { access });
   try {
     return await operation(store);
   } finally {
@@ -699,10 +697,23 @@ async function readIndexStatus(
 export function createIntelligenceToolService(
   runtimeOptions: IntelligenceRuntimeOptions = {},
 ): IntelligenceToolService {
-  const runtime = new IntelligenceRuntime(runtimeOptions);
+  const loadRuntime = () =>
+    import("../intelligence/lifecycle/service.ts").then(
+      ({ IntelligenceRuntime }) => new IntelligenceRuntime(runtimeOptions),
+    );
+  let runtime: Promise<IntelligenceRuntime> | undefined;
+  let closed = false;
+  function indexRuntime() {
+    if (closed) throw new Error("intelligence_runtime_closed");
+    return (runtime ??= loadRuntime());
+  }
   return {
     async close() {
-      await runtime.close();
+      closed = true;
+      // Injected resources may already be live, even if no request used them.
+      if (runtimeOptions.parserPool || runtimeOptions.dispatcher)
+        runtime ??= loadRuntime();
+      await (await runtime)?.close();
     },
     async generate(input, workspace, dependencies, signal) {
       return withIndexRead(
@@ -740,6 +751,8 @@ export function createIntelligenceToolService(
             revisionId: workspace.selectedRevision.revisionId,
             workspaceId: latest.workspaceId,
           };
+          const { generateWithEvidence } =
+            await import("../intelligence/generation/service.ts");
           return generateWithEvidence(
             null,
             {
@@ -1052,6 +1065,10 @@ export function createIntelligenceToolService(
     },
     async index(input, workspace, signal) {
       if (input.action === "build" || input.action === "refresh") {
+        const [runtime, { refreshMutationIntelligence }] = await Promise.all([
+          indexRuntime(),
+          import("../intelligence/mutation/freshness.ts"),
+        ]);
         const result = await withDeferredIndexPublication(
           workspace,
           (finalize) =>
@@ -1161,22 +1178,23 @@ export function createIntelligenceToolService(
                   },
                   indexedWorkspace,
                 );
-                const config = await currentConfig();
                 const semantic =
-                  input.semantic ?? config.intelligence.retrieval.semantic;
+                  input.semantic ??
+                  (await currentConfig()).intelligence.retrieval.semantic;
                 let query:
                   | Awaited<ReturnType<IntelligenceRuntime["queryVector"]>>
                   | undefined;
-                try {
-                  query = await runtime.queryVector(
-                    input.query,
-                    semantic,
-                    workspace,
-                  );
-                } catch (error) {
-                  if (!semantic) throw error;
-                  query = undefined;
+                if (semantic) {
+                  try {
+                    query = await (
+                      await indexRuntime()
+                    ).queryVector(input.query, semantic, workspace);
+                  } catch {
+                    // Retrieval can still return lexical and graph evidence.
+                  }
                 }
+                const { retrieve } =
+                  await import("../intelligence/retrieval/query.ts");
                 return await retrieve(
                   store,
                   reader,
@@ -1204,7 +1222,11 @@ export function createIntelligenceToolService(
                 await reader.close();
               }
             },
-            expected ? "read-pinned" : "read-write",
+            expected
+              ? "read-pinned"
+              : workspace.selectedRevision.selector.kind === "commit"
+                ? "historical"
+                : "read-write",
           ),
       );
     },

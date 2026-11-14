@@ -31,7 +31,11 @@ Then manage local host surfaces through the stable repository-local executable:
 ./node_modules/.bin/ast-mcp uninstall --scope local --target all
 ```
 
-Stdio is the default. For Streamable HTTP, supply the endpoint and optionally manage it as a user service:
+Stdio is the default. On macOS and Linux, managed stdio entries use a bridge when Bun supports ModuleGraph. Windows and older Bun runtimes start dedicated stdio servers. Compatible launches for the same installation and account reuse the broker. Sessions keep separate roots and approvals, and each checkout has its own project intelligence runtime.
+
+Run `update` with the original scope and target to enable shared stdio for an existing managed registration. Reconnect the host afterward. Direct `ast-mcp mcp` commands still start a dedicated server.
+
+For Streamable HTTP, supply the endpoint and optionally manage it as a user service:
 
 ```bash
 ./node_modules/.bin/ast-mcp install \

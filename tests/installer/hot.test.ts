@@ -15,25 +15,27 @@ test("installer configures stable CLI subcommands for every local host", async (
     targets: ["codex", "claude", "copilot"],
   });
   try {
-    expect(
+    const launch = {
+      args: [
+        path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"),
+        "mcp",
+        "--shared-stdio",
+      ],
+      command: process.execPath,
+      cwd: folder,
+    };
+    const codex = Bun.TOML.parse(
       await readFile(path.join(folder, ".codex/config.toml"), "utf8"),
-    ).toContain(`command = ${JSON.stringify(process.execPath)}`);
+    ) as { mcp_servers: Record<string, unknown> };
+    expect(codex.mcp_servers["ast-mcp"]).toMatchObject(launch);
     const claude = JSON.parse(
       await readFile(path.join(folder, ".mcp.json"), "utf8"),
     );
-    expect(claude.mcpServers["ast-mcp"]).toMatchObject({
-      args: [path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"), "mcp"],
-      command: process.execPath,
-      cwd: folder,
-    });
+    expect(claude.mcpServers["ast-mcp"]).toMatchObject(launch);
     const copilot = JSON.parse(
       await readFile(path.join(folder, ".github/mcp.json"), "utf8"),
     );
-    expect(copilot.mcpServers["ast-mcp"]).toMatchObject({
-      args: [path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"), "mcp"],
-      command: process.execPath,
-      cwd: folder,
-    });
+    expect(copilot.mcpServers["ast-mcp"]).toMatchObject(launch);
   } finally {
     await rm(folder, { force: true, recursive: true });
     await rm(home, { force: true, recursive: true });

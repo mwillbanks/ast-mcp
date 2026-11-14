@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Share the AST-MCP server across compatible installer-managed stdio sessions on macOS and Linux. Update existing registrations to enable sharing.
+- Store new global intelligence data beside global configuration. Default local storage stays inside each checkout.
+
 ## 0.9.0
 
 - Install native ESM bytecode builds from npm on six supported targets.

@@ -254,7 +254,6 @@ async function pinnedTable(
 }
 
 async function lexicalRanks(
-  store: LanceIntelligenceStore,
   reader: PinnedGenerationReader,
   query: string,
   eligibleChunks: readonly DecodedChunk[],
@@ -273,33 +272,23 @@ async function lexicalRanks(
     reader.pin.publicationProtocol !== "reservation-v2"
       ? `publication_generation_id = ${sql(reader.pin.generationId)} AND ${artifactPredicate}`
       : artifactPredicate;
-  const { connection, table } = await pinnedTable(store, reader, "chunks");
-  try {
-    const rows = await table
-      .search(query)
-      .where(predicate)
-      .limit(limit)
-      .toArray({ timeoutMs: Math.max(1, deadline - clock()) });
-    const ranked: RankedSignal[] = [];
-    for (let rank = 0; rank < rows.length && rank < limit; rank += 1) {
-      if (clock() >= deadline) break;
-      const row = rows[rank];
-      if (!row) continue;
-      ranked.push({
-        artifactId: String(row.artifact_id),
-        rank: rank + 1,
-        score: Number(row._score ?? 1 / (rank + 1)),
-        signal: "lexical",
-      });
-    }
-    if (ranked.length > 0) return ranked;
-    return localBm25(query, eligibleChunks, limit, deadline, clock);
-  } catch {
-    return localBm25(query, eligibleChunks, limit, deadline, clock);
-  } finally {
-    table.close();
-    connection.close();
+  const rows = await reader.searchChunks(query, predicate, limit, () =>
+    Math.max(1, deadline - clock()),
+  );
+  const ranked: RankedSignal[] = [];
+  for (let rank = 0; rank < rows.length && rank < limit; rank += 1) {
+    if (clock() >= deadline) break;
+    const row = rows[rank];
+    if (!row) continue;
+    ranked.push({
+      artifactId: String(row.artifact_id),
+      rank: rank + 1,
+      score: Number(row._score ?? 1 / (rank + 1)),
+      signal: "lexical",
+    });
   }
+  if (ranked.length > 0) return ranked;
+  return localBm25(query, eligibleChunks, limit, deadline, clock);
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -1086,7 +1075,6 @@ export async function retrieve(
           clock,
         )
       : await lexicalRanks(
-          store,
           reader,
           request.query,
           rankableChunks,

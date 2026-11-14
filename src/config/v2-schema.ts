@@ -14,6 +14,12 @@ import {
 const schemaVersion = 2 as const;
 const pathPolicy = z.enum(["allow", "request", "deny"]);
 
+export const safetyCoreFields = {
+  filesystem: z.enum(["restricted", "unrestricted"]).optional(),
+  mutation_lock: z.boolean().optional(),
+  require_hash: z.boolean().optional(),
+};
+
 const storagePlacementSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("global") }).strict(),
   z.object({ kind: z.literal("local") }).strict(),
@@ -180,9 +186,8 @@ export const fileV2Schema = z
     paths: z.array(pathRuleV2Schema).max(256).optional(),
     safety: z
       .object({
-        filesystem: z.enum(["restricted", "unrestricted"]).optional(),
+        ...safetyCoreFields,
         hook: createHookSchema(128).optional(),
-        require_hash: z.boolean().optional(),
       })
       .strict()
       .optional(),

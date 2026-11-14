@@ -2,7 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import registerWorkspaceTools from "../intelligence/workspace/tools.ts";
 import type { Telemetry } from "../runtime/telemetry";
-import registerNativeCodeIntelligenceTools from "./code-intelligence";
+import registerNativeCodeIntelligenceTools, {
+  type createSharedNativeAdmission,
+} from "./code-intelligence";
 import registerConfigurationTools from "./configuration";
 import { configuredExecution, type ExecutionOptions } from "./configured";
 import registerDiagnosticTools from "./diagnostics";
@@ -16,6 +18,7 @@ export default function (
   server: McpServer,
   services: {
     intelligence?: IntelligenceToolService;
+    nativeAdmission?: ReturnType<typeof createSharedNativeAdmission>;
     telemetry?: Telemetry;
     execution?: ExecutionOptions;
     diagnostics?: {
@@ -35,7 +38,11 @@ export default function (
     return registerTool(...args);
   }) as McpServer["registerTool"];
   registerWorkspaceTools(server, execute);
-  registerNativeCodeIntelligenceTools(server, execute);
+  registerNativeCodeIntelligenceTools(
+    server,
+    execute,
+    services.nativeAdmission,
+  );
   registerConfigurationTools(server, execute);
   registerDiagnosticTools(server, {
     ...services.diagnostics,
