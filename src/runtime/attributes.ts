@@ -298,6 +298,13 @@ export interface FileChattr {
   };
 }
 
+export function publishesSharedFileAttributes(chattr?: FileChattr): boolean {
+  return (
+    (chattr?.chown !== undefined && chattr.chown.uid !== process.geteuid?.()) ||
+    ((chattr?.chmod ?? 0) & 0o022) !== 0
+  );
+}
+
 export function validateFileChattr(
   chattr: FileChattr | undefined,
 ): FileChattr | undefined {

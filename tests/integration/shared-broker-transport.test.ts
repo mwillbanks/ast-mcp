@@ -319,6 +319,43 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "broker ownership rejects a hard-linked coordination file",
+  async () => {
+    const directory = await brokerDirectory(randomUUID());
+    const fixture = path.join(directory, "unrelated.sqlite");
+    const guard = path.join(directory, "owner.sqlite");
+    const content = "unrelated contents";
+    try {
+      await fs.writeFile(fixture, content, { flag: "wx", mode: 0o600 });
+      await fs.link(fixture, guard);
+      await expect(tryBrokerGate(directory, "owner")).rejects.toThrow(
+        "Shared MCP broker coordination file is unsafe",
+      );
+      expect(await fs.readFile(fixture, "utf8")).toBe(content);
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "broker discovery rejects an existing non-private installation directory",
+  async () => {
+    const installationKey = randomUUID();
+    const directory = await brokerDirectory(installationKey);
+    try {
+      await fs.chmod(directory, 0o755);
+      await expect(brokerDirectory(installationKey)).rejects.toThrow(
+        "Shared MCP broker directory is not private",
+      );
+      expect((await fs.stat(directory)).mode & 0o777).toBe(0o755);
+    } finally {
+      await fs.rmdir(directory);
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
   "the bridge reconnects only after a pre-MCP disconnect retires an endpoint",
   async () => {
     const installationKey = randomUUID();
@@ -673,19 +710,29 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
-  "last EOF retires the endpoint before draining an unfinished session",
+  "last EOF retires the endpoint, drains sessions, and joins background work before closing projects",
   async () => {
     const installationKey = randomUUID();
     const directory = await brokerDirectory(installationKey);
     const listening = Promise.withResolvers<number>();
     const closing = Promise.withResolvers<void>();
     const cleanup = Promise.withResolvers<void>();
+    const joining = Promise.withResolvers<void>();
+    const joined = Promise.withResolvers<void>();
+    let projectsClosed = false;
     const stopped = new AbortController();
     const client = streams();
     const broker = runSharedBroker({
       installationKey,
       onListening: listening.resolve,
       signal: stopped.signal,
+      stopBackgroundWork() {
+        joining.resolve();
+        return joined.promise;
+      },
+      async closeProjectRuntimes() {
+        projectsClosed = true;
+      },
       async connectSession(transport) {
         transport.onmessage = () => {
           void transport.send({ jsonrpc: "2.0", id: 1, result: {} });
@@ -714,14 +761,68 @@ test.skipIf(process.platform === "win32")(
       await assertLeft(directory);
       expect(acknowledged).toBe(false);
       cleanup.resolve();
+      await joining.promise;
+      expect(projectsClosed).toBeFalse();
+      expect(acknowledged).toBeFalse();
+      joined.resolve();
       await bridge;
       await broker;
+      expect(projectsClosed).toBeTrue();
       expect(acknowledged).toBe(true);
     } finally {
       cleanup.resolve();
+      joined.resolve();
       client.close();
       stopped.abort();
       await Promise.allSettled([bridge, broker]);
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "the broker still closes projects and releases ownership if background shutdown rejects",
+  async () => {
+    const installationKey = randomUUID();
+    const directory = await brokerDirectory(installationKey);
+    const listening = Promise.withResolvers<number>();
+    const stopped = new AbortController();
+    const closing = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    const failure = new Error("Background shutdown failed");
+    const broker = runSharedBroker({
+      installationKey,
+      onListening: listening.resolve,
+      signal: stopped.signal,
+      connectSession() {
+        throw new Error("Unexpected session");
+      },
+      async stopBackgroundWork() {
+        throw failure;
+      },
+      closeProjectRuntimes() {
+        closing.resolve();
+        return closed.promise;
+      },
+    });
+    void broker.catch(() => undefined);
+    try {
+      await listening.promise;
+      stopped.abort();
+      await closing.promise;
+      expect(await tryBrokerGate(directory, "owner")).toBeUndefined();
+      closed.resolve();
+      await expect(broker).rejects.toBe(failure);
+      expect(await readEndpoint(directory)).toBeUndefined();
+      const release = await tryBrokerGate(directory, "owner");
+      try {
+        expect(release).toBeFunction();
+      } finally {
+        release?.();
+      }
+    } finally {
+      stopped.abort();
+      closed.resolve();
+      await Promise.allSettled([broker]);
     }
   },
 );

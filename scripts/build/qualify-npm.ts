@@ -172,6 +172,11 @@ try {
     );
   }
   const version = registry?.version ?? input;
+  // The last published build before shared stdio was 0.9.0. Candidate archives
+  // can still carry that version until the release workflow stamps them.
+  const sharedStdio =
+    registry !== undefined || Bun.semver.order(version, "0.9.0") > 0;
+  const launchArgs = sharedStdio ? ["mcp", "--shared-stdio"] : ["mcp"];
   const bin = path.join(cwd, "path");
   await mkdir(bin);
   if (!windows) {
@@ -303,10 +308,7 @@ try {
     ) as { mcp_servers?: Record<string, { args: string[]; command: string }> };
     const launch = config.mcp_servers?.["ast-mcp"];
     assert(launch, `Missing ${scope} Codex configuration`);
-    assert.deepEqual(
-      launch.args,
-      mode === "candidate" ? ["mcp", "--shared-stdio"] : ["mcp"],
-    );
+    assert.deepEqual(launch.args, launchArgs);
     const configured = path.resolve(configRoot, launch.command);
     assert.equal(await realpath(configured), await realpath(binary));
     assert.equal(
@@ -322,6 +324,7 @@ try {
       platformDirectory,
       "--bytecode-only",
       "--with-pm",
+      ...(sharedStdio ? [] : ["--direct-stdio"]),
     ],
     local,
   );

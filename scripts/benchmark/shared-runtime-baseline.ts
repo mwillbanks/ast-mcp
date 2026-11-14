@@ -576,55 +576,73 @@ function sampling(sessions: Session[], installationKey?: string) {
   let peakRssKiB = 0;
   let peakProcesses = 0;
   let pending: Promise<ProcessRow[] | undefined> | undefined;
+  function captureClients() {
+    for (const { transport } of sessions) {
+      if (!transport.pid) continue;
+      bridgeProcessIds.add(transport.pid);
+      observed.add(transport.pid);
+    }
+  }
   async function snapshot() {
-    await pending;
-    pending = processTable(installationKey).then((rows) => {
-      if (!rows) return undefined;
-      for (const { transport } of sessions) {
-        if (!transport.pid) continue;
-        bridgeProcessIds.add(transport.pid);
-        observed.add(transport.pid);
-      }
-      for (const row of rows) {
-        if (!row.broker) continue;
-        observed.add(row.pid);
-        brokerProcessIds.add(row.pid);
-      }
-      // Include new descendants and keep tracking them after their parent exits.
-      for (let previous = -1; previous !== observed.size;) {
-        previous = observed.size;
-        for (const row of rows)
-          if (observed.has(row.parent)) observed.add(row.pid);
-      }
-      const live = rows.filter((row) => observed.has(row.pid));
-      for (const row of live)
-        cpuByPid.set(
-          row.pid,
-          Math.max(cpuByPid.get(row.pid) ?? 0, row.cpuSeconds),
+    if (pending) return await pending;
+    captureClients();
+    pending = processTable(installationKey)
+      .then((rows) => {
+        if (!rows) return undefined;
+        for (const row of rows) {
+          if (!row.broker) continue;
+          observed.add(row.pid);
+          brokerProcessIds.add(row.pid);
+        }
+        // Include new descendants and keep tracking them after their parent exits.
+        for (let previous = -1; previous !== observed.size;) {
+          previous = observed.size;
+          for (const row of rows)
+            if (observed.has(row.parent)) observed.add(row.pid);
+        }
+        const live = rows.filter((row) => observed.has(row.pid));
+        for (const row of live)
+          cpuByPid.set(
+            row.pid,
+            Math.max(cpuByPid.get(row.pid) ?? 0, row.cpuSeconds),
+          );
+        peakRssKiB = Math.max(
+          peakRssKiB,
+          live.reduce((sum, row) => sum + row.rssKiB, 0),
         );
-      peakRssKiB = Math.max(
-        peakRssKiB,
-        live.reduce((sum, row) => sum + row.rssKiB, 0),
-      );
-      peakProcesses = Math.max(peakProcesses, live.length);
-      return live;
-    });
+        peakProcesses = Math.max(peakProcesses, live.length);
+        return live;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
     return await pending;
   }
   let samplerError: unknown;
   const timer = setInterval(() => {
     if (pending) return;
-    void snapshot()
-      .catch((error: unknown) => {
-        samplerError = error;
-      })
-      .finally(() => {
-        pending = undefined;
-      });
+    void snapshot().catch((error: unknown) => {
+      samplerError = error;
+    });
   }, 100);
   return {
-    async finish(cleanupMs: number) {
+    captureClients,
+    async beforeDisconnect() {
       clearInterval(timer);
+      await pending?.catch((error: unknown) => {
+        samplerError = error;
+      });
+      const live = await snapshot();
+      const liveIds = new Set(live?.map((row) => row.pid));
+      return (
+        bridgeProcessIds.size === sessions.length &&
+        sessions.every(({ transport }) => {
+          const pid = transport.pid;
+          return typeof pid === "number" && liveIds.has(pid);
+        })
+      );
+    },
+    async finish(cleanupMs: number) {
       const started = performance.now();
       const disconnected = await snapshot();
       let retained = disconnected;
@@ -752,14 +770,18 @@ async function measureCell(
         ),
       ),
     );
+    sampler.captureClients();
     const startup = starts.find((start) => start.status === "rejected");
     if (startup?.status === "rejected") throw startup.reason;
+    const groups = roots.map(({ root }) => ({
+      root,
+      peers: sessions
+        .entries()
+        .filter(([, session]) => session.root === root)
+        .toArray(),
+    }));
     if (indexed(workload)) {
-      for (const root of roots) {
-        const peers = sessions
-          .entries()
-          .filter(([, session]) => session.root === root.root)
-          .toArray();
+      for (const { root, peers } of groups) {
         const first = peers[0]?.[1];
         if (!first) continue;
 
@@ -769,7 +791,7 @@ async function measureCell(
           workspaceId: working,
         });
 
-        const oid = await git(root.root, ["rev-parse", "HEAD"]);
+        const oid = await git(root, ["rev-parse", "HEAD"]);
         const revision = { kind: "commit", oid } as const;
         for (const [index, session] of peers) {
           const storage =
@@ -821,22 +843,21 @@ async function measureCell(
       measurements.get("file_patch")?.filter((entry) => entry.ok).length ===
         clients * samples
     ) {
-      for (const root of roots) {
-        const index = sessions.findIndex(
-          (session) => session.root === root.root,
-        );
-        if (index < 0) continue;
-        const session = sessions[index]!;
+      for (const { peers } of groups) {
+        const session = peers[0]?.[1];
+        if (!session) continue;
         const working = await open(session, measurements);
-        await retrieveEvidence(
-          session,
-          measurements,
-          working,
-          "sample" + index,
-          "sample" + index + ".ts",
-          samples,
-          true,
-        );
+        for (const [index] of peers) {
+          await retrieveEvidence(
+            session,
+            measurements,
+            working,
+            "sample" + index,
+            "sample" + index + ".ts",
+            samples,
+            true,
+          );
+        }
       }
     }
     verifiedElapsedMs = performance.now() - started;
@@ -851,6 +872,12 @@ async function measureCell(
       errorCode = cause.code;
   } finally {
     try {
+      // Short cells can finish between periodic snapshots, and closing resets the client PID.
+      const attributedClients = await sampler
+        .beforeDisconnect()
+        .catch(() => false);
+      if (process.platform !== "win32" && !attributedClients)
+        error ??= "Could not attribute all client processes before disconnect";
       const disconnected = performance.now();
       const closed = await Promise.allSettled(
         sessions.map((session) =>
@@ -861,6 +888,8 @@ async function measureCell(
       if (closed.some((result) => result.status === "rejected"))
         error ??= "One or more sessions did not disconnect";
       processMetrics = await sampler.finish(cleanupMs);
+      if (process.platform !== "win32" && !processMetrics)
+        error ??= "Could not sample owned processes after disconnect";
       if (
         installationKey &&
         process.platform !== "win32" &&

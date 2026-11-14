@@ -13,6 +13,7 @@ import {
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { linuxDirectoryHasNoDefaultAcl } from "./linux-file-access.ts";
 import {
   macPathHasNoAcl,
   macVolumeEnforcesOwnership,
@@ -97,6 +98,33 @@ export function canUseTemporaryMutationCoordination(
   return process.platform === "darwin"
     ? type === 26 && macVolumeEnforcesOwnership(nearest)
     : localFilesystems.has(type >>> 0);
+}
+
+/** Confirm new files and missing parents cannot inherit shared write access. */
+export function canCreatePrivateMutationPath(canonical: string): boolean {
+  if ((process.umask() & 0o022) !== 0o022) return false;
+  // The Darwin scope check rejects ACLs on existing ancestors.
+  if (process.platform !== "linux") return true;
+  let directory = path.dirname(canonical);
+  while (true) {
+    try {
+      return (
+        lstatSync(directory).isDirectory() &&
+        linuxDirectoryHasNoDefaultAcl(directory)
+      );
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      const parent = path.dirname(directory);
+      if (parent === directory) return false;
+      directory = parent;
+    }
+  }
+}
+
+export function requiresSharedMutationRemoval(canonical: string): boolean {
+  // An owned file may qualify in a sticky directory that cannot stay private
+  // once its child name is removed.
+  return !canUseTemporaryMutationCoordination(path.dirname(canonical));
 }
 
 function coordinationError(code: string, message: string, retryable = false) {

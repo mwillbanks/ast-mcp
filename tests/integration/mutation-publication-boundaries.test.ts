@@ -1,10 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -18,10 +20,15 @@ import {
 import type { PublicationGeneration } from "../../src/intelligence/contracts/storage.ts";
 import * as markers from "../../src/intelligence/mutation/experimental-deferred-refresh.ts";
 import * as freshness from "../../src/intelligence/mutation/freshness.ts";
-import { activeMutationLifecycle } from "../../src/intelligence/mutation/lifecycle.ts";
+import {
+  activeMutationLifecycle,
+  withMutationLifecycle,
+} from "../../src/intelligence/mutation/lifecycle.ts";
 import {
   acquireLegacyFileGuard,
   lockPathIdentity,
+  mutationLockPath,
+  withFencedFileLock,
 } from "../../src/intelligence/mutation/locks.ts";
 import { privateMutationJournalLocation } from "../../src/intelligence/mutation/private-journal.ts";
 import {
@@ -42,6 +49,7 @@ import {
   type WorkspaceHandle,
 } from "../../src/intelligence/workspace/index.ts";
 import { withCheckoutAdmission } from "../../src/runtime/checkout-admission.ts";
+import { deleteFilesSafely } from "../../src/runtime/file-delete.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
 import {
   acquireMutationCoordination,
@@ -577,63 +585,134 @@ test("external overlay edits and configuration changes fence off staged publicat
   );
 });
 
-test("an interrupted unindexed SQLite mutation rolls back before subsequent reads", async () => {
-  await withPublicationFixture(
-    async ({ checkout, transaction, workspace, scheduled }) => {
-      const filePath = path.join(checkout, "partially-written.ts");
-      const source = "export const value = 1;\n";
-      const candidate = "export const value = 2;\n";
-      await writeFile(filePath, source);
-      const operationId = createIdentity("job", {
-        checkout,
-        label: "interrupted",
-      });
-      const interruption = new Error("Simulated writer interruption");
+test.skipIf(process.platform === "win32")(
+  "delete rolls back private files after removing their names from a sticky directory",
+  async () => {
+    await withPublicationFixture(async ({ checkout }) => {
+      const directory = path.join(checkout, "sticky");
+      await mkdir(directory);
+      await chmod(directory, 0o1777);
+      const first = path.join(directory, "first.txt");
+      const second = path.join(directory, "second.txt");
+      await writeFile(first, "first", { mode: 0o600 });
+      await writeFile(second, "second", { mode: 0o600 });
+      const completionFailure = new Error("Simulated failed delete completion");
+      const committed: string[] = [];
       await expect(
-        withLanceMutationLifecycle(async () => {
-          const lifecycle = activeMutationLifecycle();
-          if (!lifecycle) throw new Error("Write did not enroll SQLite");
-          await lifecycle.begin({
-            files: [
-              {
-                candidateSha256: sha256(candidate),
-                filePath,
-                sourceContentBase64: Buffer.from(source).toString("base64"),
-                sourceSha256: sha256(source),
-              },
-            ],
-            operationId,
-            tool: "file_patch",
-            workspace,
-          });
-          await writeFile(filePath, candidate);
-          await lifecycle.committed(operationId, {
-            filePath,
-            sha256: sha256(candidate),
-          });
-          throw interruption;
-        }),
-      ).rejects.toBe(interruption);
-      expect(await readFile(filePath, "utf8")).toBe(candidate);
-      expect(await observeMutationIndex(workspace)).toMatchObject({
-        pending: true,
-      });
-      expect(scheduled).toHaveLength(0);
+        withMutationLifecycle(
+          {
+            begin: async () => {},
+            committed: async (_id, file) => {
+              committed.push(file.filePath);
+            },
+            complete: async () => {
+              throw completionFailure;
+            },
+            failed: async () => {},
+            rolledBack: async () => {},
+          },
+          () =>
+            deleteFilesSafely({
+              [first]: { expectedSha256: sha256("first") },
+              [second]: { expectedSha256: sha256("second") },
+            }),
+        ),
+      ).rejects.toBe(completionFailure);
+      expect(committed).toEqual([first, second]);
+      expect(await readFile(first, "utf8")).toBe("first");
+      expect(await readFile(second, "utf8")).toBe("second");
+      expect((await stat(first)).mode & 0o777).toBe(0o600);
+      expect((await stat(second)).mode & 0o777).toBe(0o600);
+    });
+  },
+);
 
-      if (canUseTemporaryMutationCoordination(filePath)) {
+test.each([false, true])(
+  "an interrupted SQLite mutation rolls back before reads (shared source mode: %s)",
+  async (restoreSharedMode) => {
+    await withPublicationFixture(
+      async ({ checkout, transaction, workspace, scheduled }) => {
+        const filePath = path.join(checkout, "partially-written.ts");
+        const source = "export const value = 1;\n";
+        const candidate = "export const value = 2;\n";
+        const parent = path.join(checkout, "created-parent");
+        await mkdir(parent);
+        if (process.platform !== "win32")
+          await chmod(parent, restoreSharedMode ? 0o700 : 0o1777);
+        const created = path.join(parent, "created.ts");
+        await writeFile(filePath, source);
+        const sourceMode =
+          process.platform === "win32"
+            ? null
+            : restoreSharedMode
+              ? 0o664
+              : 0o600;
+        if (sourceMode !== null) await chmod(filePath, sourceMode);
+        const operationId = createIdentity("job", {
+          checkout,
+          label: "interrupted",
+        });
+        const interruption = new Error("Simulated writer interruption");
+        await expect(
+          withLanceMutationLifecycle(async () => {
+            const lifecycle = activeMutationLifecycle();
+            if (!lifecycle) throw new Error("Write did not enroll SQLite");
+            await lifecycle.begin({
+              files: [
+                {
+                  candidateSha256: sha256(candidate),
+                  filePath: created,
+                  sourceContentBase64: null,
+                  sourceSha256: null,
+                },
+                {
+                  candidateSha256: sha256(candidate),
+                  filePath,
+                  sourceContentBase64: Buffer.from(source).toString("base64"),
+                  sourceMode,
+                  sourceSha256: sha256(source),
+                },
+              ],
+              operationId,
+              tool: "file_patch",
+              workspace,
+            });
+            await writeFile(created, candidate, { mode: 0o600 });
+            await lifecycle.committed(operationId, {
+              filePath: created,
+              sha256: sha256(candidate),
+            });
+            await writeFile(filePath, candidate);
+            if (sourceMode !== null) await chmod(filePath, 0o644);
+            await lifecycle.committed(operationId, {
+              filePath,
+              sha256: sha256(candidate),
+            });
+            throw interruption;
+          }),
+        ).rejects.toBe(interruption);
+        expect(await readFile(filePath, "utf8")).toBe(candidate);
+        expect(await readFile(created, "utf8")).toBe(candidate);
+        expect(await observeMutationIndex(workspace)).toMatchObject({
+          pending: true,
+        });
+        expect(scheduled).toHaveLength(0);
+
         const interrupted = await markers.readRefreshState(transaction);
         if (interrupted?.kind !== "pending")
           throw new Error("Interrupted operation did not enroll a marker");
         // A ready marker alone cannot bypass a nonterminal durable journal.
         await markers.markRefreshReady(transaction, interrupted.epoch);
+        const eligible =
+          canUseTemporaryMutationCoordination(checkout) &&
+          canUseTemporaryMutationCoordination(filePath);
         let recovered = false;
-        const operation = async () => {
-          throw new Error("An unfinished journal bypassed recovery");
-        };
         const result = await tryUnindexedPatchPublication(
           filePath,
           undefined,
-          operation,
+          async () => {
+            throw new Error("An unfinished journal bypassed recovery");
+          },
           async () => {
             expect(await readFile(filePath, "utf8")).toBe(source);
             expect(activeMutationLifecycle()).toBeDefined();
@@ -641,31 +720,36 @@ test("an interrupted unindexed SQLite mutation rolls back before subsequent read
             return "regular path";
           },
         );
-        expect(result).toBe("regular path");
-        expect(recovered).toBeTrue();
-      }
+        expect(result).toBe(eligible ? "regular path" : undefined);
+        expect(recovered).toBe(eligible);
 
-      await withLanceMutationLifecycle(async () => {
-        expect(await readFile(filePath, "utf8")).toBe(source);
-        expect(await markers.readRefreshState(transaction)).toMatchObject({
-          indexRefresh: false,
-          inFlight: false,
-          journal: "sqlite-v1",
+        await withLanceMutationLifecycle(async () => {
+          expect(await readFile(filePath, "utf8")).toBe(source);
+          await expect(stat(created)).rejects.toMatchObject({ code: "ENOENT" });
+          if (sourceMode !== null)
+            expect((await stat(filePath)).mode & 0o777).toBe(sourceMode);
+          expect(await markers.readRefreshState(transaction)).toMatchObject({
+            indexRefresh: false,
+            inFlight: false,
+            journal: "sqlite-v1",
+          });
+          expect(await observeMutationIndex(workspace)).toMatchObject({
+            pending: false,
+          });
         });
-        expect(await observeMutationIndex(workspace)).toMatchObject({
-          pending: false,
-        });
-      });
-      expect(scheduled).toHaveLength(0);
-    },
-  );
-});
+        expect(scheduled).toHaveLength(0);
+      },
+    );
+  },
+);
 
 test("an atomic unindexed patch does not bypass an older writer or replay an entered operation", async () => {
   await withPublicationFixture(async ({ checkout, transaction, scheduled }) => {
     const filePath = path.join(checkout, "atomic.ts");
     await writeFile(filePath, "export const value = 1;\n");
-    if (!canUseTemporaryMutationCoordination(filePath)) return;
+    const eligible =
+      canUseTemporaryMutationCoordination(checkout) &&
+      canUseTemporaryMutationCoordination(filePath);
 
     const operation = async () => {
       throw new Error("The opportunistic operation entered unexpectedly");
@@ -688,6 +772,53 @@ test("an atomic unindexed patch does not bypass an older writer or replay an ent
       ).toBeUndefined();
     } finally {
       guard.release();
+    }
+
+    const createdAt = Date.now();
+    const sourceRecord = JSON.stringify({
+      createdAt,
+      epoch: 1,
+      expiresAt: createdAt + 60_000,
+      ownerId: "legacy-account",
+      pid: process.pid,
+      token: "legacy-token",
+    });
+    const fileRecord = await mutationLockPath(filePath);
+    const checkoutRecord = await mutationLockPath(transaction);
+    try {
+      // Neither record has a live SQLite holder. The lease itself still owns
+      // the scope until it expires, so a try-only operation must not enter.
+      await writeFile(fileRecord, sourceRecord, { flag: "wx" });
+      await writeFile(checkoutRecord, sourceRecord, { flag: "wx" });
+      await expect(
+        withFencedFileLock(filePath, operation, { tryOnly: true }),
+      ).rejects.toMatchObject({ code: "lock_busy" });
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+      expect(await readFile(fileRecord, "utf8")).toBe(sourceRecord);
+      expect(await readFile(checkoutRecord, "utf8")).toBe(sourceRecord);
+    } finally {
+      await rm(fileRecord, { force: true });
+      await rm(checkoutRecord, { force: true });
+    }
+
+    if (!eligible) {
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+      expect(scheduled).toHaveLength(0);
+      return;
     }
 
     const enteredError = Object.assign(new Error("Publication failed"), {

@@ -15,6 +15,12 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import { withConfig } from "../../src/config";
+import { writeFilesSafely } from "../../src/patch/engine";
+import { deleteFilesSafely } from "../../src/runtime/file-delete";
+import { renameFilesSafely } from "../../src/runtime/file-rename";
+import { sha256 } from "../../src/runtime/hash";
+import * as linuxFileAccess from "../../src/runtime/linux-file-access";
 import {
   createMacFileAccess,
   macPathHasNoAcl,
@@ -22,9 +28,11 @@ import {
 } from "../../src/runtime/mac-file-access";
 import {
   acquireMutationCoordination,
+  canCreatePrivateMutationPath,
   canUseTemporaryMutationCoordination,
   createTemporaryMutationCoordinator,
 } from "../../src/runtime/mutation-coordination";
+import { hermeticConfig } from "../support/hermetic-config";
 import { spawnLiveProcess } from "./support/live-process";
 
 const modulePath = import.meta
@@ -185,6 +193,49 @@ test.skipIf(unsupported)(
     }
   },
   15_000,
+);
+
+test.skipIf(unsupported)(
+  "private file creation, rename, and deletion do not leave source lock folders",
+  async () => {
+    const root = await mkdtemp(
+      path.join(await realpath("/tmp"), "ast-mcp-coordination-layout-"),
+    );
+    const source = path.join(root, "sources", "old.txt");
+    const target = path.join(root, "nested", "deeper", "new.txt");
+    const content = "source\n";
+    const expectedSha256 = sha256(content);
+    try {
+      const eligible =
+        canUseTemporaryMutationCoordination(root) &&
+        canCreatePrivateMutationPath(source);
+      await withConfig(hermeticConfig(root), async () => {
+        await writeFilesSafely({ [source]: { content } });
+        await renameFilesSafely({
+          [source]: { destination: target, expectedSha256 },
+        });
+        expect(await readFile(target, "utf8")).toBe(content);
+        if (eligible)
+          expect(await readdir(path.dirname(target))).toEqual(["new.txt"]);
+        await deleteFilesSafely({ [target]: { expectedSha256 } });
+      });
+
+      await expect(readFile(source)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(target)).rejects.toMatchObject({ code: "ENOENT" });
+      // A network/unsupported volume must keep the legacy shared protocol.
+      expect((await readdir(root)).includes(".ast-mcp-mutation-locks")).toBe(
+        !eligible,
+      );
+      if (eligible)
+        expect(
+          (await readdir(root, { recursive: true })).filter((entry) =>
+            entry.includes(".ast-mcp-mutation-locks"),
+          ),
+        ).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
 );
 
 test.skipIf(unsupported)(
@@ -459,7 +510,7 @@ test.skipIf(unsupported)(
 );
 
 test.skipIf(unsupported)(
-  "Linux selects only locally coordinated filesystem types",
+  "Linux checks local filesystem types and the nearest parent's default ACL",
   async () => {
     const directory = await mkdtemp(
       path.join(await realpath("/tmp"), "ast-mcp-coordinator-mount-type-"),
@@ -467,6 +518,8 @@ test.skipIf(unsupported)(
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
     const original = fs.statfsSync;
     const filesystem = spyOn(fs, "statfsSync");
+    const defaultAcl = spyOn(linuxFileAccess, "linuxDirectoryHasNoDefaultAcl");
+    const umask = spyOn(process, "umask");
     try {
       // Exercise Linux selection regardless of the host that runs this suite.
       Object.defineProperty(process, "platform", {
@@ -477,7 +530,19 @@ test.skipIf(unsupported)(
       expect(canUseTemporaryMutationCoordination(directory)).toBe(true);
       filesystem.mockReturnValueOnce({ ...original(directory), type: 0x6969 });
       expect(canUseTemporaryMutationCoordination(directory)).toBe(false);
+
+      const missing = path.join(directory, "uncreated", "new.txt");
+      umask.mockReturnValue(0o022);
+      defaultAcl.mockReturnValueOnce(true).mockReturnValueOnce(false);
+      expect(canCreatePrivateMutationPath(missing)).toBe(true);
+      expect(canCreatePrivateMutationPath(missing)).toBe(false);
+      expect(defaultAcl.mock.calls).toEqual([[directory], [directory]]);
+      umask.mockReturnValue(0o002);
+      expect(canCreatePrivateMutationPath(missing)).toBe(false);
+      expect(defaultAcl).toHaveBeenCalledTimes(2);
     } finally {
+      umask.mockRestore();
+      defaultAcl.mockRestore();
       filesystem.mockRestore();
       Object.defineProperty(process, "platform", platform);
       await rm(directory, { force: true, recursive: true });

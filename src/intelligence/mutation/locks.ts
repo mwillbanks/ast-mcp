@@ -32,9 +32,13 @@ export interface FileLockOptions {
   ownerId?: string;
   onReleaseError?: (error: unknown) => void;
   pollMs?: number;
+  /** Use the shared protocol before a write can make its target non-private. */
+  requireSharedCoordination?: boolean | ((canonical: string) => boolean);
   signal?: AbortSignal;
   sharedDatabasePath?: string;
   tryOnly?: boolean;
+  /** Validate operation-specific scope at admission and before side effects. */
+  validateTemporaryScope?: (canonical: string) => boolean;
 }
 
 export interface FileLockLease {
@@ -168,7 +172,10 @@ async function readRecord(lock: string): Promise<LockRecord | null> {
 }
 
 export async function mutationLockPath(filePath: string): Promise<string> {
-  const canonical = await canonicalizePath(filePath);
+  return sourceLockPath(await canonicalizePath(filePath));
+}
+
+async function sourceLockPath(canonical: string): Promise<string> {
   const targetDirectory = path.dirname(canonical);
   let directory = targetDirectory;
   while (true) {
@@ -881,26 +888,34 @@ async function withFencedFileLockDiscovery<Result>(
   const canonical = canonicalizePathSync(filePath);
   const identity = lockPathIdentity(canonical);
   return withQueue(identity, options, async () => {
+    const forceShared =
+      typeof options.requireSharedCoordination === "function"
+        ? options.requireSharedCoordination(canonical)
+        : options.requireSharedCoordination;
     const temporary =
+      !forceShared &&
       options.now === undefined &&
       options.leaseMs === undefined &&
       options.ownerId === undefined &&
       options.sharedDatabasePath === undefined &&
-      canUseTemporaryMutationCoordination(canonical);
-    const lease = temporary
-      ? await acquireTemporaryFileLock(canonical, identity, options)
-      : await acquireFileLock(
-          canonical,
-          discovery && !options.sharedDatabasePath
-            ? {
-                ...options,
-                sharedDatabasePath: await discoverSharedDatabasePath(
-                  canonical,
-                  discovery,
-                ),
-              }
-            : options,
-        );
+      canUseTemporaryMutationCoordination(canonical) &&
+      (options.validateTemporaryScope?.(canonical) ?? true)
+        ? await acquireTemporaryFileLock(canonical, identity, options)
+        : undefined;
+    const lease =
+      temporary ??
+      (await acquireFileLock(
+        canonical,
+        discovery && !options.sharedDatabasePath
+          ? {
+              ...options,
+              sharedDatabasePath: await discoverSharedDatabasePath(
+                canonical,
+                discovery,
+              ),
+            }
+          : options,
+      ));
     const heartbeat = temporary
       ? undefined
       : setInterval(
@@ -944,23 +959,58 @@ export async function acquireLegacyFileGuard(
   );
 }
 
+/** Hand existing source leases to the shared protocol without replacing them. */
+export async function tryAcquireTemporaryMutationGuard(
+  canonical: string,
+  options: FileLockOptions,
+) {
+  const guard = await acquireLegacyFileGuard(
+    lockPathIdentity(canonical),
+    options,
+  );
+  try {
+    // Shipped writers hold this SQLite guard before publishing their source lease.
+    // An older or orphaned record can exist without a live SQLite transaction.
+    const lock = await sourceLockPath(canonical);
+    try {
+      await lstat(lock);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return guard;
+      throw error;
+    }
+  } catch (error) {
+    guard.release();
+    throw error;
+  }
+  guard.release();
+  return undefined;
+}
+
 async function acquireTemporaryFileLock(
   canonical: string,
   identity: string,
   options: FileLockOptions,
-): Promise<FileLockLease> {
+): Promise<FileLockLease | undefined> {
   const lease = await acquireMutationCoordination(
     "file:" + sha256(identity),
     options,
   );
-  const guard = await acquireLegacyFileGuard(identity, options).catch(
-    async (error: unknown) => {
-      await lease.release();
-      throw error;
-    },
-  );
+  const guard = await tryAcquireTemporaryMutationGuard(
+    canonical,
+    options,
+  ).catch(async (error: unknown) => {
+    await lease.release();
+    throw error;
+  });
+  if (!guard) {
+    await lease.release();
+    return undefined;
+  }
   const fence = async () => {
-    if (!canUseTemporaryMutationCoordination(canonical))
+    if (
+      !canUseTemporaryMutationCoordination(canonical) ||
+      options.validateTemporaryScope?.(canonical) === false
+    )
       throw lockError("lock_fenced", "Local mutation ownership changed", false);
     guard.fence();
     await lease.fence();

@@ -122,7 +122,9 @@ export interface ReservedWriteOptions {
 }
 
 export interface ReservedTableWrite {
-  options?: ReservedWriteOptions;
+  options?: Pick<ReservedWriteOptions, "immutable"> & {
+    assertCurrent?: never;
+  };
   rows: readonly StorageRow[] | (() => readonly StorageRow[]);
   tableName: PublicationGenerationTable;
 }

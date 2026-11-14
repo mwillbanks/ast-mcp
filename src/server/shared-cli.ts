@@ -126,12 +126,14 @@ export async function runSharedCli(args: string[]): Promise<boolean> {
     await runSharedBroker({
       installationKey: key,
       lifetime: standaloneBrokerLifetime(),
+      stopBackgroundWork: stopMutationRefreshes,
       closeProjectRuntimes: async () => {
-        await Promise.all([
-          stopMutationRefreshes(),
+        const results = await Promise.allSettled([
           runtimes.close(),
           lanes.close(),
         ]);
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
       },
       connectSession: async (transport, launch) => {
         const server = createServer(

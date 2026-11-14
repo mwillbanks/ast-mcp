@@ -365,11 +365,11 @@ export function configuredExecution(
       (opened.workspace.checkoutRoot !== workspace.checkoutRoot ||
         opened.workspace.configurationGeneration !==
           workspace.configurationGeneration ||
-        opened.workspace.storageDomain.domainId !==
-          workspace.storageDomain.domainId ||
         (JSON.stringify(opened.workspace.selectedRevision.selector) ===
           JSON.stringify(workspace.selectedRevision.selector) &&
-          opened.workspace.workspaceId !== workspace.workspaceId))
+          (opened.workspace.storageDomain.domainId !==
+            workspace.storageDomain.domainId ||
+            opened.workspace.workspaceId !== workspace.workspaceId)))
     )
       throw new WorkspaceError(
         "workspace_mismatch",

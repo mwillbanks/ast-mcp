@@ -54,6 +54,10 @@ test("attribute batches restore earlier files when completion or application fai
   for (const failurePoint of ["apply", "complete"] as const) {
     const { root, first, second, files, handlers } = await fixture();
     const events: string[] = [];
+    if (process.platform !== "win32") {
+      await chmod(first, 0o644);
+      files[first]!.chattr.chmod = 0o664;
+    }
     const before = await Promise.all([stat(first), stat(second)]);
     const lifecycle: MutationLifecycle = {
       begin: async (plan) => {

@@ -11,15 +11,21 @@ if (
   !output ||
   options.some(
     (value) =>
-      !["--with-pm", "--compiled-only", "--bytecode-only"].includes(value),
+      ![
+        "--with-pm",
+        "--compiled-only",
+        "--bytecode-only",
+        "--direct-stdio",
+      ].includes(value),
   ) ||
   new Set(options).size !== options.length
 )
   throw new Error(
-    "Usage: bun run scripts/build/qualify-standalone.ts <build-directory> [--compiled-only] [--bytecode-only] [--with-pm]",
+    "Usage: bun run scripts/build/qualify-standalone.ts <build-directory> [--compiled-only] [--bytecode-only] [--with-pm] [--direct-stdio]",
   );
 const compiledOnly = options.includes("--compiled-only");
 const bytecodeOnly = options.includes("--bytecode-only");
+const directStdio = options.includes("--direct-stdio");
 
 const root = path.resolve(import.meta.dir, "../..");
 const executable = (name: string) =>
@@ -59,7 +65,8 @@ for (const {
   const git = Bun.which("git");
   assert(git, "Git is required for workspace discovery");
   const windows = process.platform === "win32";
-  const shared = !windows && typeof Bun.ModuleGraph === "function";
+  const shared =
+    !directStdio && !windows && typeof Bun.ModuleGraph === "function";
   const env = {
     ...(windows
       ? {

@@ -41,6 +41,7 @@ export interface SharedBrokerOptions {
     transport: BatchingStdioServerTransport,
     launch: BrokerLaunch,
   ): Promise<BrokerSession>;
+  stopBackgroundWork?(): Promise<void>;
   closeProjectRuntimes?(): Promise<void>;
   lifetime?: ReturnType<typeof standaloneBrokerLifetime>;
   signal?: AbortSignal;
@@ -242,7 +243,11 @@ function sessionRuntime(options: SharedBrokerOptions) {
       }
       const cutoff = performance.now() + drainMs;
       const finished = Promise.allSettled(pending).then(async () => {
-        await options.closeProjectRuntimes?.();
+        try {
+          await options.stopBackgroundWork?.();
+        } finally {
+          await options.closeProjectRuntimes?.();
+        }
         if (!finalSocket || finalSocket.destroyed) return;
         // Flush queued output before retiring either kind of broker.
         await new Promise<void>((resolve) =>

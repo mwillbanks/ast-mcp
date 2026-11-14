@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { McpServer } from "@modelcontextprotocol/server";
+
 import { captureResolutionOptions } from "../../src/config/identity.ts";
 import {
   createIdentity,
@@ -16,11 +18,13 @@ import { refreshMutationIntelligence } from "../../src/intelligence/mutation/fre
 import { mutationTransactionLockPath } from "../../src/intelligence/mutation/service.ts";
 import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts";
 import {
+  currentWorkspace,
   legacyStorageDomain,
   resolveStorageDomain,
   WorkspaceRegistry,
 } from "../../src/intelligence/workspace/index.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
+import { configuredExecution } from "../../src/tools/configured";
 
 async function fixture<T>(run: (root: string) => Promise<T>): Promise<T> {
   const root = await realpath(
@@ -390,6 +394,92 @@ test("a miss for one linked worktree overlay does not pin its storage domain", a
       expect(restored.storageDomain).toEqual(first.storageDomain);
     } finally {
       await store.shutdownCoordinator();
+    }
+  });
+});
+
+test("an explicit legacy working workspace can read a commit in its preferred domain", async () => {
+  await fixture(async (root) => {
+    const repository = path.join(root, "primary");
+    const linked = path.join(root, "linked");
+    await mkdir(repository);
+    git(repository, "init", "-b", "main");
+    await writeFile(
+      path.join(repository, "value.ts"),
+      "export const value = 1;\n",
+    );
+    git(repository, "add", "value.ts");
+    git(repository, "commit", "-m", "fixture");
+    git(repository, "worktree", "add", "-b", "linked", linked);
+
+    const server = new McpServer({ name: "storage-regression", version: "1" });
+    const execute = configuredExecution(server, undefined, {
+      launchCwd: linked,
+    });
+    const input = { directory: linked, storage: { kind: "local" } as const };
+    const initial = await execute.openWorkspace!(input);
+    const legacy = legacyStorageDomain(repository, input.storage, {})!;
+    const workspaceId = createWorkspaceId({
+      canonicalCheckoutRoot: initial.checkoutRoot,
+      configurationGeneration: initial.configurationGeneration,
+      dirtyOverlayId: initial.dirtyOverlayId,
+      repositoryId: initial.repositoryId,
+      revisionId: initial.selectedRevision.revisionId,
+      storageDomainId: legacy.domainId,
+    });
+    const legacyStore = await LanceIntelligenceStore.open(legacy);
+    try {
+      await legacyStore.publish({
+        manifestArtifactId: createIdentity("revision-manifest", {
+          workspaceId,
+        }),
+        revisionId: initial.selectedRevision.revisionId,
+        workspaceId,
+      });
+      const working = await execute.openWorkspace!(input);
+      expect(working.workspaceId).toBe(workspaceId);
+      expect(working.storageDomain).toEqual(legacy);
+      const selected = () => Promise.resolve(currentWorkspace());
+      const oid = working.git.headOid;
+      if (!oid) throw new Error("Fixture commit did not resolve to an OID");
+      const commit = await execute(
+        { workspaceId, revision: { kind: "commit", oid } },
+        selected,
+        undefined,
+        "map",
+      );
+      expect(commit?.checkoutRoot).toBe(working.checkoutRoot);
+      expect(commit?.configurationGeneration).toBe(
+        working.configurationGeneration,
+      );
+      expect(commit?.selectedRevision.selector).toEqual({
+        kind: "commit",
+        oid,
+      });
+      expect(commit?.writeEligibility.eligible).toBe(false);
+      expect(commit?.storageDomain).toEqual(initial.storageDomain);
+
+      const preferredStore = await LanceIntelligenceStore.open(
+        initial.storageDomain,
+      );
+      try {
+        await preferredStore.publish({
+          manifestArtifactId: createIdentity("revision-manifest", {
+            workspaceId: initial.workspaceId,
+          }),
+          revisionId: initial.selectedRevision.revisionId,
+          workspaceId: initial.workspaceId,
+        });
+      } finally {
+        await preferredStore.shutdownCoordinator();
+      }
+      await expect(
+        execute({ workspaceId }, selected, undefined, "map"),
+      ).rejects.toMatchObject({
+        code: "workspace_mismatch",
+      });
+    } finally {
+      await legacyStore.shutdownCoordinator();
     }
   });
 });

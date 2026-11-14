@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { link, lstat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -14,6 +15,11 @@ import {
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
+import {
+  canCreatePrivateMutationPath,
+  canUseTemporaryMutationCoordination,
+  requiresSharedMutationRemoval,
+} from "./mutation-coordination.ts";
 import {
   ensureParentDirectories,
   removeCreatedDirectories,
@@ -278,7 +284,7 @@ export async function renameFilesSafely(
     }),
   );
   const sources = new Set<string>();
-  const destinations = new Set<string>();
+  const destinations = new Map<string, string>();
   for (const { destinationPath, filePath } of entries) {
     if (sources.has(filePath))
       throw new Error(`file_rename source appears more than once: ${filePath}`);
@@ -287,7 +293,7 @@ export async function renameFilesSafely(
       throw new Error(
         `file_rename destination appears more than once: ${destinationPath}`,
       );
-    destinations.add(destinationPath);
+    destinations.set(destinationPath, filePath);
   }
 
   return withFileLocks(
@@ -470,6 +476,20 @@ export async function renameFilesSafely(
         }
       }
     },
-    { signal },
+    {
+      validateTemporaryScope: (canonical) => {
+        if (requiresSharedMutationRemoval(canonical)) return false;
+        const source = destinations.get(canonical);
+        if (!source) return true;
+        // A hard link inherits the source inode's permissions, not its parent's
+        // ACL. Check directory inheritance only when parents must be created.
+        return (
+          canUseTemporaryMutationCoordination(source) &&
+          (existsSync(dirname(canonical)) ||
+            canCreatePrivateMutationPath(canonical))
+        );
+      },
+      signal,
+    },
   );
 }

@@ -17,6 +17,7 @@ import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
 import {
   acquireMutationCoordination,
   canUseTemporaryMutationCoordination,
+  requiresSharedMutationRemoval,
 } from "../../runtime/mutation-coordination.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import {
@@ -71,7 +72,7 @@ import {
 } from "./journal.ts";
 import { activeMutationLifecycle, withMutationLifecycle } from "./lifecycle.ts";
 import {
-  acquireLegacyFileGuard,
+  tryAcquireTemporaryMutationGuard,
   lockPathIdentity,
   mutationSharedDatabasePath,
 } from "./locks.ts";
@@ -723,6 +724,12 @@ async function restoreMutationRecord(
     },
     {
       deadline: options.deadline ?? Date.now() + 10_000,
+      requireSharedCoordination: record.files.some(
+        ({ filePath, sourceMode, sourceSha256, sourceUid }) =>
+          (sourceMode !== null && (sourceMode & 0o022) !== 0) ||
+          (sourceUid !== null && sourceUid !== process.geteuid?.()) ||
+          (sourceSha256 === null && requiresSharedMutationRemoval(filePath)),
+      ),
       signal: options.signal,
     },
   );
@@ -1078,23 +1085,25 @@ async function withCheckoutMutationLease<T>(
         deadline,
       },
     );
-    let guard: Awaited<ReturnType<typeof acquireLegacyFileGuard>> | undefined;
+    let guard: Awaited<ReturnType<typeof tryAcquireTemporaryMutationGuard>>;
     try {
-      guard = await acquireLegacyFileGuard(lockPathIdentity(transactionPath), {
-        ...options,
-        deadline,
-      });
-      options.signal?.throwIfAborted();
-      const legacy = guard;
-      return await operation(async () => {
-        if (!canUseTemporaryMutationCoordination(workspace.checkoutRoot))
-          throw Object.assign(new Error("Local checkout ownership changed"), {
-            code: "lock_fenced",
-            retryable: false,
-          });
-        legacy.fence();
-        await lease.fence();
-      });
+      guard = await tryAcquireTemporaryMutationGuard(
+        await canonicalizePath(transactionPath),
+        { ...options, deadline },
+      );
+      if (guard) {
+        options.signal?.throwIfAborted();
+        const legacy = guard;
+        return await operation(async () => {
+          if (!canUseTemporaryMutationCoordination(workspace.checkoutRoot))
+            throw Object.assign(new Error("Local checkout ownership changed"), {
+              code: "lock_fenced",
+              retryable: false,
+            });
+          legacy.fence();
+          await lease.fence();
+        });
+      }
     } finally {
       try {
         guard?.release();
