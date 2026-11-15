@@ -18,27 +18,50 @@ type Handler = (
 ) => Promise<{ isError?: boolean; structuredContent?: unknown }>;
 
 test("owned intelligence services close once even when server shutdown fails", async () => {
-  for (const fail of [false, true]) {
+  for (const [used, fail] of [
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ]) {
     let serverCloses = 0;
     const runtimeClose = spyOn(IntelligenceRuntime.prototype, "close");
+    const work = spyOn(
+      IntelligenceRuntime.prototype,
+      "runIndexOperation",
+    ).mockRejectedValue(new Error("Index unavailable"));
+    const handlers = new Map<string, Handler>();
+    const workspace = {
+      workspaceId: "workspace:v1:" + "a".repeat(64),
+    } as WorkspaceHandle;
     const server = {
-      registerTool() {},
+      registerTool(name: string, _definition: unknown, handler: Handler) {
+        handlers.set(name, handler);
+      },
       async close() {
         serverCloses++;
         if (fail) throw new Error("server shutdown failed");
       },
     } as unknown as McpServer;
     registerIntelligenceTools(server, (async (_input, operation) =>
-      operation()) as ConfiguredExecution);
+      withWorkspaceContext(workspace, operation)) as ConfiguredExecution);
     try {
+      if (used) {
+        const result = await handlers.get("index")!(
+          { action: "build", workspaceId: workspace.workspaceId },
+          {},
+        );
+        expect(result.isError).toBe(true);
+      }
       const first = server.close();
       const second = server.close();
       expect(first).toBe(second);
       if (fail) await expect(first).rejects.toThrow("server shutdown failed");
       else await first;
       expect(serverCloses).toBe(1);
-      expect(runtimeClose).toHaveBeenCalledTimes(1);
+      expect(runtimeClose).toHaveBeenCalledTimes(used ? 1 : 0);
     } finally {
+      work.mockRestore();
       runtimeClose.mockRestore();
     }
   }

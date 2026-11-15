@@ -50,6 +50,7 @@ enabled = true # default; set false to opt out
 
 [safety]
 filesystem = "restricted" # restricted | unrestricted
+mutation_lock = true
 require_hash = true
 
 [[paths]]
@@ -122,6 +123,7 @@ The tables list every accepted version 2 field. Defaults apply when all configur
 | Field                                | Default          | Accepted values and behavior                                                                                                      |
 | ------------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `safety.filesystem`                  | `"restricted"`   | `restricted` enforces file boundaries; `unrestricted` bypasses file path and symlink policies after required activation approval. |
+| `safety.mutation_lock`               | `true`           | Queue guarded mutations. Only global configuration can opt out for eligible patches.                                              |
 | `safety.require_hash`                | `true`           | Require mutation hashes; supplied hashes are checked even when false.                                                             |
 | `safety.hook.enabled`                | `true`           | Enable the host routing hook. This is separate from server file authorization.                                                    |
 | `safety.hook.allow_tools`            | `[]`             | Additional allowed tool names; at most 128.                                                                                       |
@@ -184,6 +186,10 @@ Each formatter requires at least one extension or glob. Selectors use OR matchin
 | `intelligence.generation.provider.api_key_env` | Omitted                                               | HTTP-only environment-variable name, 1–256 characters; keep the secret out of TOML.                                          |
 | `intelligence.generation.provider.server_id`   | `"host"`                                              | MCP-only server identifier, 1–512 characters.                                                                                |
 
+New `global` intelligence stores use the `intelligence` directory beside the global `ast-mcp.toml`. New `local` stores use `.ast-mcp/intelligence` at the checkout root. Linked worktrees have separate local stores but retain the same repository identity. `parent` and `explicit` keep their configured placement.
+
+AST-MCP does not copy or delete existing stores during an upgrade. It can use the old global cache store when it contains LanceDB data and the new destination has no store. A linked worktree uses an old shared local store only when a prior publication or recovery record identifies that checkout.
+
 Storage placement and generation providers are discriminated choices. Configure only the fields permitted for the selected kind:
 
 ```toml
@@ -204,6 +210,14 @@ api_key_env = "MODEL_API_KEY"
 ```
 
 For MCP sampling, replace the provider table with `kind = "mcp"`, `model = "your-model"`, and optional `server_id = "host"`. Enabling generation requires a provider. Omitting a provider keeps the resolved provider empty.
+
+### Mutation coordination
+
+Stop prior-version AST-MCP writers before upgrading on a shared checkout. Let the prior version recover any interrupted writes before starting writers from the new version.
+
+Set `safety.mutation_lock = false` in global configuration to skip the queue for an eligible patch. It must change one existing file without formatting or an index update. All patches still use an internal publication fence. Hash checks, approvals, and atomic writes remain in effect. A project can restore queuing with `mutation_lock = true`; AST-MCP ignores project `false`. Check `config_status.safety.mutationLock` for the effective value.
+
+AST-MCP uses temporary, account-private coordination for account-owned roots on supported local POSIX filesystems. Windows, network filesystems, and other ineligible roots retain the interoperable write guards. Durable write recovery data stays in its existing location.
 
 ### Index freshness
 
@@ -250,7 +264,9 @@ An explicit `--output <format>` or `--output=<format>` overrides configuration. 
 
 ## Intelligence storage and models
 
-All index state uses LanceDB. Global placement shares content-addressed artifacts across repositories and revisions. Local placement stores data under one repository. Parent placement requires `levels`; explicit placement requires `path`. Relative explicit storage paths use the server process working directory, so prefer an absolute path. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
+All index state uses LanceDB. Global placement stores data beside the global configuration and shares content-addressed artifacts across repositories and revisions. Local placement uses one `.ast-mcp` directory per checkout or non-Git project. Parent placement requires `levels`; explicit placement requires `path`. Prefer an absolute explicit storage path. Cross-repository federation remains disabled unless `intelligence.federation.enabled = true`.
+
+The server keeps existing data in place. A checkout's recovery marker takes precedence over placement defaults. The server also reuses a matching legacy publication. If a Git checkout's configuration changes and no marker or exact workspace matches, reopen and rebuild its index. The server does not substitute a sibling worktree's publication.
 
 Semantic retrieval is optional. The default pinned Granite embedding profile is small and CPU-oriented. Override the model, revision, dimensions, dtype, pooling, device, workers, queue, batch size, and local artifact path together. Generation is disabled by default and never blocks structural tools. MCP providers use the active host sampling capability; HTTP providers require an explicit endpoint, model, and optional environment-variable name for the API key.
 

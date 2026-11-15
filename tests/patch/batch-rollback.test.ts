@@ -109,6 +109,110 @@ test("cancelled patch and write batches roll back completed commits and remain u
   }
 });
 
+test.skipIf(process.platform === "win32")(
+  "authorized group-write changes preserve batch commit and rollback fencing",
+  async () => {
+    for (const kind of ["write", "patch", "receipt"] as const) {
+      const root = await configuredRoot("ast-mcp-shared-mode-batch-");
+      const first = path.join(root, "first.txt");
+      const second = path.join(root, "second.txt");
+      try {
+        await writeFile(first, "before\n");
+        await chmod(first, 0o644);
+        await writeFile(second, "before\n");
+        await withConfig(hermeticConfig(root), async () => {
+          const expectedSha256 = sha256("before\n");
+          const requests = {
+            [first]: {
+              aiderBlocks: [{ search: "before", replace: "after" }],
+              chattr: { chmod: 0o664 },
+              expectedSha256,
+              patchStrategy: "aider_block" as const,
+            },
+            [second]: {
+              aiderBlocks: [{ search: "before", replace: "after" }],
+              expectedSha256,
+              patchStrategy: "aider_block" as const,
+            },
+          };
+          let receipts: Record<
+            string,
+            { expectedSha256: string; previewReceipt: string }
+          > = {};
+          if (kind === "receipt") {
+            const preview = await patchFiles(
+              Object.fromEntries(
+                Object.entries(requests).map(([file, request]) => [
+                  file,
+                  { ...request, preview: true },
+                ]),
+              ),
+            );
+            const files = preview.files as Record<
+              string,
+              { previewReceipt: string }
+            >;
+            receipts = Object.fromEntries(
+              [first, second].map((file) => [
+                file,
+                { expectedSha256, previewReceipt: files[file]!.previewReceipt },
+              ]),
+            );
+          }
+          const run = (signal?: AbortSignal) =>
+            kind === "write"
+              ? writeFilesSafely(
+                  {
+                    [first]: {
+                      content: "after\n",
+                      expectedSha256,
+                      chattr: { chmod: 0o664 },
+                    },
+                    [second]: { content: "after\n", expectedSha256 },
+                  },
+                  { signal },
+                )
+              : patchFiles(kind === "receipt" ? receipts : requests, {
+                  signal,
+                });
+          const controller = new AbortController();
+          const cancellation = new Error("cancel after changing file mode");
+          let restored = false;
+          await expect(
+            withMutationLifecycle(
+              {
+                begin: async () => {},
+                committed: async () => {
+                  expect((await stat(first)).mode & 0o777).toBe(0o664);
+                  expect(await readFile(second, "utf8")).toBe("before\n");
+                  controller.abort(cancellation);
+                },
+                complete: async () => null,
+                failed: async () => {},
+                rolledBack: async () => {
+                  restored = true;
+                },
+              },
+              () => run(controller.signal),
+            ),
+          ).rejects.toBe(cancellation);
+          expect(restored).toBeTrue();
+          expect((await stat(first)).mode & 0o777).toBe(0o644);
+          expect(await readFile(first, "utf8")).toBe("before\n");
+          expect(await readFile(second, "utf8")).toBe("before\n");
+
+          await run();
+          expect((await stat(first)).mode & 0o777).toBe(0o664);
+          expect(await readFile(first, "utf8")).toBe("after\n");
+          expect(await readFile(second, "utf8")).toBe("after\n");
+        });
+      } finally {
+        await rm(root, { force: true, recursive: true });
+      }
+    }
+  },
+);
+
 test("file batch lock waits honor deadlines and cancellation", async () => {
   const time = createMockTime();
   const root = await configuredRoot("ast-mcp-batch-lock-wait-");

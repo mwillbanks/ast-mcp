@@ -160,11 +160,28 @@ function directoryIn(home: string): string {
     );
   return path.join(home, ".ast-mcp-mutation-locks");
 }
+function canonicalPrivateDirectory(account: SystemAccount): string {
+  directoryIn(account.homedir);
+  return directoryIn(realpathSync.native(account.homedir));
+}
+
+export async function existingPrivateLockDirectory(
+  account: SystemAccount,
+): Promise<string | undefined> {
+  const directory = canonicalPrivateDirectory(account);
+  try {
+    assertPrivateDirectory(await lstat(directory), account);
+    return directory;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return undefined;
+  }
+}
+
 export async function ensurePrivateLockDirectory(
   account: SystemAccount,
 ): Promise<string> {
-  directoryIn(account.homedir);
-  const directory = directoryIn(realpathSync.native(account.homedir));
+  const directory = canonicalPrivateDirectory(account);
   try {
     await mkdir(directory, { mode: 0o700 });
   } catch (error) {

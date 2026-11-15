@@ -13,7 +13,11 @@ import {
   WorkspaceIdSchema,
 } from "../intelligence/contracts/index.ts";
 import { withLanceMutationLifecycle } from "../intelligence/mutation/index.ts";
-import { patchFiles, writeFilesSafely } from "../patch/engine";
+import {
+  patchFiles,
+  tryPatchWithoutAdmission,
+  writeFilesSafely,
+} from "../patch/engine";
 import {
   FILE_READ_MAX_BATCH,
   FILE_READ_MAX_BYTES,
@@ -284,11 +288,13 @@ export default function registerFileTools(
         return toolSuccess(
           await execute(
             { files, revision, workspaceId },
-            (signal) =>
-              withLanceMutationLifecycle(() => patchFiles(files, { signal }), {
-                signal,
-                preview,
-              }),
+            async (signal) => {
+              const patch = () => patchFiles(files, { signal });
+              return (
+                (await tryPatchWithoutAdmission(files, signal, patch)) ??
+                withLanceMutationLifecycle(patch, { signal, preview })
+              );
+            },
             context,
             "file_patch",
           ),

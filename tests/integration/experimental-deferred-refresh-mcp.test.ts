@@ -26,6 +26,10 @@ import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts"
 import { resolveStorageDomain } from "../../src/intelligence/workspace/storage.ts";
 import * as checkoutAdmission from "../../src/runtime/checkout-admission.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
+import {
+  acquireMutationCoordination,
+  canUseTemporaryMutationCoordination,
+} from "../../src/runtime/mutation-coordination.ts";
 import { acquireTransactionLock } from "../../src/runtime/transaction-lock.ts";
 import { createServer } from "../../src/server/index.ts";
 
@@ -365,19 +369,29 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
       const first = holdFinalization();
       const job = work(state);
       await first.enter(job);
-      await checkoutAdmission.withCheckoutAdmission(
-        key,
-        { deadline: Date.now() + 10_000 },
-        async () => {
-          first.release();
-          expect(await job).toBe("retry");
-          expect(await deferredRefresh.readRefreshState(key)).toEqual(state);
-          const claim = await acquireTransactionLock(key + ".refresh-job", {
-            tryOnly: true,
-          });
-          claim.release();
-        },
-      );
+      const assertBlockedPublication = async () => {
+        first.release();
+        expect(await job).toBe("retry");
+        expect(await deferredRefresh.readRefreshState(key)).toEqual(state);
+        const claim = await acquireTransactionLock(key + ".refresh-job", {
+          tryOnly: true,
+        });
+        claim.release();
+      };
+      if (canUseTemporaryMutationCoordination(checkout)) {
+        const owner = await acquireMutationCoordination("checkout:" + key);
+        try {
+          await assertBlockedPublication();
+        } finally {
+          await owner.release();
+        }
+      } else {
+        await checkoutAdmission.withCheckoutAdmission(
+          key,
+          { deadline: Date.now() + 10_000 },
+          assertBlockedPublication,
+        );
+      }
 
       const external = "export function externalMarker() { return 4; }";
       schedule.mockClear();
@@ -424,28 +438,19 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
       await staged.enter(build);
       const configPending = await deferredRefresh.readRefreshState(key);
       const configuration = path.join(checkout, "ast-mcp.toml");
-      const admit = checkoutAdmission.withCheckoutAdmission;
-      const admission = spyOn(
-        checkoutAdmission,
-        "withCheckoutAdmission",
-      ).mockImplementationOnce(async (...args) => {
-        const config = await readFile(configuration, "utf8");
-        await writeFile(
-          configuration,
-          config + '\n[workspace]\nworktrees = "ignore"\n',
-        );
-        return admit(...args);
+      // Change configuration after staging and before publication, regardless
+      // of which checkout coordinator acquires the finalization lease.
+      const config = await readFile(configuration, "utf8");
+      await writeFile(
+        configuration,
+        config + '\n[workspace]\nworktrees = "ignore"\n',
+      );
+      staged.release();
+      const result = await build;
+      expect(result.isError).toBeTrue();
+      expect(result.structuredContent).toMatchObject({
+        error: { code: "intelligence_refresh_pending", retryable: true },
       });
-      try {
-        staged.release();
-        const result = await build;
-        expect(result.isError).toBeTrue();
-        expect(result.structuredContent).toMatchObject({
-          error: { code: "intelligence_refresh_pending", retryable: true },
-        });
-      } finally {
-        admission.mockRestore();
-      }
       expect(configPending).toMatchObject({
         kind: "pending",
         publishedGenerationId: repaired.publishedGenerationId,
@@ -617,20 +622,44 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     writerGuard.release();
     const staging = Promise.withResolvers<void>();
     const releaseStaging = Promise.withResolvers<void>();
+    let stagedBatches = 0;
+    let completedCheckpoints = 0;
     releases.push(releaseStaging.resolve);
     const writeBatch = LanceIntelligenceStore.prototype.putReservedRowsBatch;
     const stagingSpy = spyOn(
       LanceIntelligenceStore.prototype,
       "putReservedRowsBatch",
-    ).mockImplementationOnce(async function (
+    ).mockImplementation(async function (
       this: LanceIntelligenceStore,
       ...args
     ) {
-      await this.coordinator.exclusive("hold reserved staging", async () => {
-        staging.resolve();
+      const [reservation, writes, options] = args;
+      const write = () =>
+        writeBatch.call(this, reservation, writes, {
+          assertCurrent: async () => {
+            await options?.assertCurrent?.();
+            completedCheckpoints++;
+          },
+        });
+      if (++stagedBatches !== 1) return write();
+      const coordinator = this.coordinator;
+      const exclusive = coordinator.exclusive.bind(coordinator);
+      const held = exclusive("hold reserved staging", async () => {
         await releaseStaging.promise;
       });
-      return writeBatch.apply(this, args);
+      const queuedWrite = spyOn(coordinator, "exclusive").mockImplementation(
+        (operation, action) => {
+          const pending = exclusive(operation, action);
+          if (operation === "write reserved table batch") staging.resolve();
+          return pending;
+        },
+      );
+      try {
+        return await write();
+      } finally {
+        queuedWrite.mockRestore();
+        await held;
+      }
     });
     stagingSpies.push(stagingSpy);
     background.releaseParse();
@@ -735,9 +764,12 @@ async function runFixture(root: string, mode: FixtureMode): Promise<void> {
     });
 
     releaseStaging.resolve();
-    await background.enter(firstJob);
-    background.release();
     await firstJob;
+    // The writer lane must check the epoch before starting any queued table.
+    expect(stagedBatches).toBe(1);
+    expect(completedCheckpoints).toBe(0);
+    stagingSpy.mockRestore();
+    background.release();
     expect(await deferredRefresh.readRefreshState(key)).toEqual(newer);
     const queued = schedule.mock.calls.findLast(
       ([, pending]) => pending.epoch === newer.epoch,

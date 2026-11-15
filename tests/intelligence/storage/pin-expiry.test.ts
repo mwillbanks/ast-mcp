@@ -1,12 +1,14 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import { createMockTime } from "../../support/mock-time.ts";
+import { createMockTime, deferred } from "../../support/mock-time.ts";
 beforeEach(() => {
   createMockTime();
 });
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { Connection } from "@lancedb/lancedb";
 
 import {
   createIdentity,
@@ -49,6 +51,60 @@ async function published(store: LanceIntelligenceStore) {
 }
 
 describe("reader pin expiration", () => {
+  test.each(["open-error", "expiry"] as const)(
+    "releases pinned tables after the outstanding open settles (%s)",
+    async (mode) => {
+      const storage = await domain();
+      let now = Date.parse("2026-09-10T00:00:00.000Z");
+      const store = await LanceIntelligenceStore.open(storage, {
+        now: () => new Date(now),
+      });
+      const publication = await published(store);
+      const [first, second] = publication.tableVersions;
+      const connection = (store as unknown as { connection: Connection })
+        .connection;
+      const openTable = connection.openTable.bind(connection);
+      const table = await openTable(second!.table);
+      const close = spyOn(table, "close");
+      const entered = deferred();
+      const continueOpen = deferred();
+      const failure = new Error("pinned table open failed");
+      const open = spyOn(connection, "openTable").mockImplementation(
+        async (...args) => {
+          if (args[0] === first!.table && mode === "open-error") throw failure;
+          if (args[0] !== second!.table) return openTable(...args);
+          entered.resolve();
+          await continueOpen.promise;
+          return table;
+        },
+      );
+      const pending = store.pinGeneration(publication, "open-race", 1000);
+      void pending.catch(() => {});
+      try {
+        await entered.promise;
+        expect(await store.count("reader_pins")).toBe(1);
+        expect(close).not.toHaveBeenCalled();
+        if (mode === "expiry") now += 1000;
+        continueOpen.resolve();
+        if (mode === "open-error") await expect(pending).rejects.toBe(failure);
+        else
+          await expect(pending).rejects.toBeInstanceOf(ReaderPinExpiredError);
+        expect(close).toHaveBeenCalledTimes(1);
+        expect(await store.count("reader_pins")).toBe(0);
+      } finally {
+        continueOpen.resolve();
+        await pending.then(
+          (reader) => reader.close(),
+          () => {},
+        );
+        open.mockRestore();
+        close.mockRestore();
+        await store.shutdownCoordinator();
+        await rm(storage.storagePath, { force: true, recursive: true });
+      }
+    },
+  );
+
   test("expires at the exact boundary and rejects every later read", async () => {
     const storage = await domain();
     let now = Date.parse("2026-09-10T00:00:00.000Z");

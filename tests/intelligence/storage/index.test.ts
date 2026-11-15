@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import { createMockTime } from "../../support/mock-time.ts";
+import { createMockTime, deferred } from "../../support/mock-time.ts";
 beforeEach(() => {
   createMockTime();
 });
@@ -668,6 +668,212 @@ describe("LanceDB intelligence storage", () => {
     await store.shutdownCoordinator();
   });
 
+  test("historical reads use the pin lane after initialization", async () => {
+    const domain = await storageDomain();
+    try {
+      const initialized =
+        await LanceIntelligenceStore.openHistoricalRead(domain);
+      expect(initialized.coordinator).toBeDefined();
+      await initialized.shutdownCoordinator();
+      const historical =
+        await LanceIntelligenceStore.openHistoricalRead(domain);
+      try {
+        expect(() => historical.coordinator).toThrow("no writer coordinator");
+        expect(
+          await historical.latestGeneration(
+            workspaceCoordinates(domain).workspaceId,
+          ),
+        ).toBeNull();
+      } finally {
+        await historical.shutdownCoordinator();
+      }
+    } finally {
+      await rm(domain.storagePath, { recursive: true, force: true });
+    }
+  });
+
+  test("settles a historical schema batch before closing the connection", async () => {
+    const domain = await storageDomain();
+    const initialized = await LanceIntelligenceStore.open(domain);
+    await initialized.shutdownCoordinator();
+    const connection = await lancedb.connect(domain.storagePath);
+    const openTable = connection.openTable.bind(connection);
+    const [first, second, next] = ALL_TABLES;
+    const sibling = await openTable(second!);
+    const events: string[] = [];
+    const closeSibling = sibling.close.bind(sibling);
+    const closeConnection = connection.close.bind(connection);
+    const siblingClosed = spyOn(sibling, "close").mockImplementation(() => {
+      events.push("sibling");
+      closeSibling();
+    });
+    const failure = new Error("injected schema table open failure");
+    const entered = deferred<void>();
+    const finishOpen = deferred<void>();
+    const connect = spyOn(lancedb, "connect").mockResolvedValue(connection);
+    const close = spyOn(connection, "close").mockImplementation(() => {
+      events.push("connection");
+      closeConnection();
+    });
+    const open = spyOn(connection, "openTable").mockImplementation(
+      async (...args) => {
+        if (args[0] === first) throw failure;
+        if (args[0] === second) {
+          entered.resolve();
+          await finishOpen.promise;
+          return sibling;
+        }
+        return openTable(...args);
+      },
+    );
+    const pending = LanceIntelligenceStore.openHistoricalRead(domain);
+    void pending.catch(() => {});
+    try {
+      await Promise.race([entered.promise, pending]);
+      expect(close).not.toHaveBeenCalled();
+      expect(open.mock.calls.some(([name]) => name === next)).toBe(false);
+      finishOpen.resolve();
+      await expect(pending).rejects.toBe(failure);
+      expect(events).toEqual(["sibling", "connection"]);
+    } finally {
+      finishOpen.resolve();
+      await pending.then(
+        (store) => store.shutdownCoordinator(),
+        () => {},
+      );
+      open.mockRestore();
+      if (siblingClosed.mock.calls.length === 0) closeSibling();
+      siblingClosed.mockRestore();
+      close.mockRestore();
+      connect.mockRestore();
+      await rm(domain.storagePath, { recursive: true, force: true });
+    }
+  });
+
+  test("waits for both historical readiness checks before closing on error", async () => {
+    const domain = await storageDomain();
+    const initialized = await LanceIntelligenceStore.open(domain);
+    await initialized.shutdownCoordinator();
+    const connection = await lancedb.connect(domain.storagePath);
+    const openTable = connection.openTable.bind(connection);
+    const retention = await openTable("retention");
+    const failure = new Error("injected native migration read failure");
+    const failed = deferred<void>();
+    const entered = deferred<void>();
+    const finishRead = deferred<void>();
+    const connect = spyOn(lancedb, "connect").mockResolvedValue(connection);
+    const close = spyOn(connection, "close");
+    let sawReadiness = false;
+    let retentionHandles = 0;
+    const count = spyOn(retention, "countRows").mockImplementation(async () => {
+      entered.resolve();
+      await finishRead.promise;
+      return 1;
+    });
+    const open = spyOn(connection, "openTable").mockImplementation(
+      async (...args) => {
+        if (args[0] === "migrations" && sawReadiness) {
+          failed.resolve();
+          throw failure;
+        }
+        if (args[0] === "migrations") sawReadiness = true;
+        if (args[0] === "retention" && ++retentionHandles === 2)
+          return retention;
+        return openTable(...args);
+      },
+    );
+    const pending = LanceIntelligenceStore.openHistoricalRead(domain);
+    void pending.catch(() => {});
+    try {
+      await Promise.all([failed.promise, entered.promise]);
+      expect(close).not.toHaveBeenCalled();
+      finishRead.resolve();
+      await expect(pending).rejects.toBe(failure);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      finishRead.resolve();
+      await pending.then(
+        (store) => store.shutdownCoordinator(),
+        () => {},
+      );
+      open.mockRestore();
+      count.mockRestore();
+      close.mockRestore();
+      connect.mockRestore();
+      await rm(domain.storagePath, { recursive: true, force: true });
+    }
+  });
+
+  test.each([
+    "legacy-schema",
+    "running-tag-migration",
+    "pending-membership",
+    "missing-retention",
+  ] as const)(
+    "historical reads use writer initialization for %s",
+    async (condition) => {
+      const domain = await storageDomain();
+      try {
+        const initialized = await LanceIntelligenceStore.open(domain);
+        await initialized.shutdownCoordinator();
+        const connection = await lancedb.connect(domain.storagePath);
+        try {
+          if (condition === "legacy-schema") {
+            const table = await connection.openTable("graph_nodes");
+            try {
+              await table.dropColumns(["publication_generation_id"]);
+            } finally {
+              table.close();
+            }
+          } else if (condition === "missing-retention") {
+            const table = await connection.openTable("retention");
+            try {
+              await table.delete("policy_id IS NOT NULL");
+            } finally {
+              table.close();
+            }
+          } else {
+            const table = await connection.openTable("migrations");
+            try {
+              if (condition === "pending-membership") {
+                await table.delete("state = 'completed'");
+              } else {
+                await table.add([
+                  {
+                    migration_id: createIdentity("migration", {
+                      migration: "publication-generation-tag-v1",
+                      storageDomainId: domain.domainId,
+                    }),
+                    completed_at: null,
+                    started_at: NOW,
+                    from_schema_version: "legacy",
+                    to_schema_version: INTELLIGENCE_SCHEMA_VERSION,
+                    state: "running",
+                    payload_json: "{}",
+                  },
+                ]);
+              }
+            } finally {
+              table.close();
+            }
+          }
+        } finally {
+          connection.close();
+        }
+        const reopened =
+          await LanceIntelligenceStore.openHistoricalRead(domain);
+        try {
+          expect(reopened.coordinator).toBeDefined();
+          expect(await reopened.count("retention")).toBe(1);
+        } finally {
+          await reopened.shutdownCoordinator();
+        }
+      } finally {
+        await rm(domain.storagePath, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("read-only verification rejects missing and corrupt Lance tables", async () => {
     for (const failure of ["missing", "schema"] as const) {
       const domain = await storageDomain();
@@ -688,6 +894,10 @@ describe("LanceDB intelligence storage", () => {
       ).rejects.toMatchObject({
         code: failure === "missing" ? "storage_unavailable" : "invalid_schema",
       });
+      if (failure === "schema")
+        await expect(
+          LanceIntelligenceStore.openHistoricalRead(domain),
+        ).rejects.toMatchObject({ code: "invalid_schema" });
       const movedPath = `${domain.storagePath}-closed`;
       await rename(domain.storagePath, movedPath);
       await rename(movedPath, domain.storagePath);

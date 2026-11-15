@@ -51,6 +51,7 @@ test("file access defaults allow temp paths while preserving workspace protectio
     allowTempDirectory: true,
     followSymlinks: false,
     hook: { allowTools: [], blockTools: [], enabled: true },
+    mutationLock: true,
     requireHash: true,
   });
   expect(config.paths).toEqual([]);

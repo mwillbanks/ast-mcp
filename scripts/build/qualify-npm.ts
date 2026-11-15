@@ -67,16 +67,18 @@ async function packument(archive: string) {
   };
 }
 
-async function candidateRegistry(rootArchive: string, matrix: string) {
+async function candidateRegistry(
+  rootArchive: string,
+  matrix: string,
+  target: Target,
+) {
   const artifacts = await Promise.all([
     packument(rootArchive),
-    ...Object.keys(platforms).map((target) =>
-      packument(
-        path.join(
-          matrix,
-          `standalone-bun-${target}`,
-          `ast-mcp-npm-${target}.tgz`,
-        ),
+    packument(
+      path.join(
+        matrix,
+        `standalone-bun-${target}`,
+        `ast-mcp-npm-${target}.tgz`,
       ),
     ),
   ]);
@@ -166,9 +168,15 @@ try {
     registry = await candidateRegistry(
       path.resolve(input),
       path.resolve(matrix),
+      target,
     );
   }
   const version = registry?.version ?? input;
+  // The last published build before shared stdio was 0.9.0. Candidate archives
+  // can still carry that version until the release workflow stamps them.
+  const sharedStdio =
+    registry !== undefined || Bun.semver.order(version, "0.9.0") > 0;
+  const launchArgs = sharedStdio ? ["mcp", "--shared-stdio"] : ["mcp"];
   const bin = path.join(cwd, "path");
   await mkdir(bin);
   if (!windows) {
@@ -300,7 +308,7 @@ try {
     ) as { mcp_servers?: Record<string, { args: string[]; command: string }> };
     const launch = config.mcp_servers?.["ast-mcp"];
     assert(launch, `Missing ${scope} Codex configuration`);
-    assert.deepEqual(launch.args, ["mcp"]);
+    assert.deepEqual(launch.args, launchArgs);
     const configured = path.resolve(configRoot, launch.command);
     assert.equal(await realpath(configured), await realpath(binary));
     assert.equal(
@@ -316,6 +324,7 @@ try {
       platformDirectory,
       "--bytecode-only",
       "--with-pm",
+      ...(sharedStdio ? [] : ["--direct-stdio"]),
     ],
     local,
   );
@@ -324,5 +333,19 @@ try {
   );
 } finally {
   if (registry) await registry.server.stop(true);
-  await rm(cwd, { force: true, recursive: true });
+  if (windows) {
+    // Use Node's bounded retries for transient Windows file locks.
+    await run(
+      [
+        node,
+        "--eval",
+        'require("node:fs").rmSync(process.argv[1], {force:true,recursive:true,maxRetries:10,retryDelay:100})',
+        "--",
+        cwd,
+      ],
+      tmpdir(),
+    );
+  } else {
+    await rm(cwd, { force: true, recursive: true });
+  }
 }

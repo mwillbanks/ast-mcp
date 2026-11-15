@@ -6,8 +6,10 @@ import {
   createRepositoryId,
   createWorkspaceId,
   INTELLIGENCE_SCHEMA_VERSION,
+  type ResolvedRevision,
   type RevisionSelector,
   RevisionSelectorSchema,
+  type StorageDomain,
   type StoragePlacement,
   StoragePlacementSchema,
   WorkspaceContextSchema,
@@ -16,21 +18,37 @@ import type { WorkspaceHandle } from "./context.ts";
 import { WorkspaceError } from "./errors.ts";
 import {
   discoverGitWorkspace,
+  type GitWorkspaceIdentity,
   gitDirtyOverlayId,
   gitWorkingState,
   resolveRevision,
 } from "./git.ts";
 import {
+  findExistingNestedStorageDomain,
+  legacyStorageDomain,
   resolveStorageDomain,
+  selectExistingStorageDomain,
   type StorageResolutionOptions,
 } from "./storage.ts";
 
-export interface WorkspaceOpenOptions extends StorageResolutionOptions {
+interface WorkspaceRootOptions extends StorageResolutionOptions {
   configurationGeneration: number;
-  directory: string;
-  revision?: RevisionSelector;
   storage?: StoragePlacement;
 }
+
+export type WorkspaceOpenOptions = {
+  directory: string;
+  projectRoot?: string;
+  revision?: RevisionSelector;
+} & (
+  | WorkspaceRootOptions
+  | (StorageResolutionOptions & {
+      resolveRoot(
+        root: string,
+        directory: string,
+      ): Promise<WorkspaceRootOptions>;
+    })
+);
 
 export interface WorkspaceRequest {
   revision?: RevisionSelector;
@@ -47,7 +65,6 @@ interface WorkspaceRecord {
   checkoutDevice: bigint;
   checkoutInode: bigint;
   openingDirectory: string;
-  storageOptions: StorageResolutionOptions;
   workspace: WorkspaceHandle;
 }
 
@@ -141,6 +158,42 @@ function matchedRoots(roots: string[], requestPaths: string[]): string[] {
 
 export class WorkspaceRegistry {
   readonly #workspaces = new Map<string, WorkspaceRecord>();
+  async #selectStorage(
+    git: GitWorkspaceIdentity,
+    placement: StoragePlacement,
+    options: StorageResolutionOptions & WorkspaceRootOptions,
+    repositoryId: string,
+    selectedRevision: ResolvedRevision,
+    dirtyOverlay: (domain: StorageDomain) => Promise<string | null>,
+  ): Promise<StorageDomain> {
+    const preferred = resolveStorageDomain(
+      git.repositoryRoot,
+      placement,
+      options,
+      git.checkoutRoot,
+    );
+    const legacy = legacyStorageDomain(git.repositoryRoot, placement, options);
+    if (!legacy || legacy.domainId === preferred.domainId)
+      return Promise.resolve(preferred);
+
+    return selectExistingStorageDomain(
+      preferred,
+      legacy,
+      git.checkoutRoot,
+      async (domain) =>
+        createWorkspaceId({
+          canonicalCheckoutRoot: git.checkoutRoot,
+          configurationGeneration: options.configurationGeneration,
+          dirtyOverlayId: await dirtyOverlay(domain),
+          repositoryId,
+          revisionId: selectedRevision.revisionId,
+          storageDomainId: domain.domainId,
+        }),
+      git.isGit
+        ? undefined
+        : { repositoryId, revisionId: selectedRevision.revisionId },
+    );
+  }
 
   async get(
     workspaceId: string,
@@ -204,7 +257,9 @@ export class WorkspaceRegistry {
         "workspace_open",
       );
     }
-    const git = await discoverGitWorkspace(canonical);
+    const git = await discoverGitWorkspace(canonical, {
+      readHead: workspace.selectedRevision.selector.kind === "working",
+    });
     const repositoryId = createRepositoryId({
       canonicalGitCommonDirectory: git.commonGitDirectory ?? git.repositoryRoot,
     });
@@ -213,11 +268,7 @@ export class WorkspaceRegistry {
       repositoryId,
       workspace.selectedRevision.selector,
     );
-    const storageDomain = resolveStorageDomain(
-      git.repositoryRoot,
-      workspace.storageDomain.placement,
-      record.storageOptions,
-    );
+    const storageDomain = workspace.storageDomain;
     const dirtyOverlayId =
       revision.selector.kind === "working"
         ? await gitDirtyOverlayId(
@@ -270,7 +321,59 @@ export class WorkspaceRegistry {
   async open(options: WorkspaceOpenOptions): Promise<WorkspaceHandle> {
     const openingDirectory = options.directory;
     const directory = await canonicalDirectory(openingDirectory);
-    const git = await discoverGitWorkspace(directory);
+    let git = await discoverGitWorkspace(directory);
+    const resolveRoot = (root: string) =>
+      "resolveRoot" in options ? options.resolveRoot(root, directory) : options;
+    let resolved: WorkspaceRootOptions | undefined;
+    let retained: StorageDomain | undefined;
+    if (!git.isGit && options.projectRoot) {
+      const project = await canonicalDirectory(options.projectRoot);
+      if (project !== directory && pathWithin(project, directory)) {
+        const parent = await discoverGitWorkspace(project);
+        if (!parent.isGit) {
+          resolved = await resolveRoot(directory);
+          const originalPlacement = resolved.storage ?? { kind: "global" };
+          const current = resolveStorageDomain(directory, originalPlacement, {
+            ...options,
+            ...resolved,
+          });
+          const legacy = legacyStorageDomain(directory, originalPlacement, {
+            ...options,
+            ...resolved,
+          });
+          const domains =
+            legacy && legacy.domainId !== current.domainId
+              ? [legacy, current]
+              : [current];
+          const repositoryId = createRepositoryId({
+            canonicalGitCommonDirectory: directory,
+          });
+          const revision = await resolveRevision(
+            git,
+            repositoryId,
+            options.revision,
+          );
+          retained = await findExistingNestedStorageDomain(
+            domains,
+            directory,
+            { repositoryId, revisionId: revision.revisionId },
+            (domain) =>
+              createWorkspaceId({
+                canonicalCheckoutRoot: directory,
+                configurationGeneration: resolved!.configurationGeneration,
+                dirtyOverlayId: null,
+                repositoryId,
+                revisionId: revision.revisionId,
+                storageDomainId: domain.domainId,
+              }),
+          );
+          if (!retained) {
+            git = parent;
+            resolved = undefined;
+          }
+        }
+      }
+    }
     if (git.isGit && git.checkoutRoot !== directory)
       throw new WorkspaceError(
         "workspace_mismatch",
@@ -279,6 +382,7 @@ export class WorkspaceRegistry {
         true,
         "workspace_open with the checkout root",
       );
+    resolved ??= await resolveRoot(git.checkoutRoot);
     const repositoryId = createRepositoryId({
       canonicalGitCommonDirectory: git.commonGitDirectory ?? git.repositoryRoot,
     });
@@ -288,25 +392,44 @@ export class WorkspaceRegistry {
       options.revision,
     );
     const placement = StoragePlacementSchema.parse(
-      options.storage ?? { kind: "global" },
+      resolved.storage ?? { kind: "global" },
     );
-    const storageDomain = resolveStorageDomain(
-      git.repositoryRoot,
-      placement,
-      options,
-    );
-    const dirtyOverlayId =
-      selectedRevision.selector.kind === "working"
-        ? await gitDirtyOverlayId(
-            git,
-            repositoryId,
-            selectedRevision.revisionId,
-            storageDomain.storagePath,
-          )
-        : null;
+    const overlays = new Map<string, Promise<string | null>>();
+    const dirtyOverlay = (domain: StorageDomain) => {
+      // Local storage inside the reserved directory is already excluded.
+      const includedStorage =
+        pathWithin(git.checkoutRoot, domain.storagePath) &&
+        !pathWithin(path.join(git.checkoutRoot, ".ast-mcp"), domain.storagePath)
+          ? domain.storagePath
+          : undefined;
+      const cached = overlays.get(includedStorage ?? "");
+      if (cached) return cached;
+      const overlay =
+        selectedRevision.selector.kind === "working"
+          ? gitDirtyOverlayId(
+              git,
+              repositoryId,
+              selectedRevision.revisionId,
+              includedStorage,
+            )
+          : Promise.resolve(null);
+      overlays.set(includedStorage ?? "", overlay);
+      return overlay;
+    };
+    const storageDomain =
+      retained ??
+      (await this.#selectStorage(
+        git,
+        placement,
+        { ...options, ...resolved },
+        repositoryId,
+        selectedRevision,
+        dirtyOverlay,
+      ));
+    const dirtyOverlayId = await dirtyOverlay(storageDomain);
     const coordinates = {
       canonicalCheckoutRoot: git.checkoutRoot,
-      configurationGeneration: options.configurationGeneration,
+      configurationGeneration: resolved.configurationGeneration,
       dirtyOverlayId,
       repositoryId,
       revisionId: selectedRevision.revisionId,
@@ -315,7 +438,7 @@ export class WorkspaceRegistry {
     const context = WorkspaceContextSchema.parse({
       canonicalRootAnchor: git.repositoryRoot,
       checkoutRoot: git.checkoutRoot,
-      configurationGeneration: options.configurationGeneration,
+      configurationGeneration: resolved.configurationGeneration,
       dirtyOverlayId,
       repositoryId,
       repositoryRoot: git.repositoryRoot,
@@ -336,12 +459,8 @@ export class WorkspaceRegistry {
     this.#workspaces.set(workspace.workspaceId, {
       checkoutDevice: BigInt(metadata.dev),
       checkoutInode: BigInt(metadata.ino),
-      openingDirectory,
-      storageOptions: {
-        env: options.env,
-        home: options.home,
-        platform: options.platform,
-      },
+      openingDirectory:
+        directory === git.checkoutRoot ? openingDirectory : git.checkoutRoot,
       workspace,
     });
     return workspace;
@@ -418,7 +537,10 @@ export class WorkspaceRegistry {
     const described = await Promise.all(
       workspaces.map(async (workspace) => ({
         ...workspace,
-        workingState: await gitWorkingState(workspace.git),
+        workingState: await gitWorkingState(
+          workspace.git,
+          workspace.storageDomain.storagePath,
+        ),
       })),
     );
     return {

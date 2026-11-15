@@ -32,11 +32,13 @@ This installs stdio definitions by default. To install Streamable HTTP definitio
 
 npm, pnpm, Yarn Classic, and Yarn 2+ project layouts are supported. Binary lookup checks ancestor package bins, package metadata, package-manager global bins, and `PATH`. ast-mcp never downloads formatter binaries during file operations.
 
-Targets are `codex`, `claude`, `copilot`, or `all`. Stdio definitions pass `mcp`. A local definition sets the project directory as `cwd`. The installer selects the launch path for the compiled executable or the Bun package. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration. Clients that support MCP Skills can discover the canonical skill from the server. Unsupported clients can use `ast-mcp skills export <destination>`; see the [skills guide](/docs/guides/skills).
+Targets are `codex`, `claude`, `copilot`, or `all`. Managed stdio definitions pass `mcp --shared-stdio`. Sharing runs on macOS and Linux with Bun ModuleGraph. Windows and older Bun runtimes use dedicated servers. A local definition sets the project directory as `cwd`. The installer selects the launch path for the compiled executable or the Bun package. Generated definitions omit MCP environment fields. Local installation creates project configuration. Global installation creates project-neutral user configuration. Clients that support MCP Skills can discover the canonical skill from the server. Unsupported clients can use `ast-mcp skills export <destination>`; see the [skills guide](/docs/guides/skills).
 
 ## Platform support
 
 Compiled npm targets are macOS arm64, Windows x64, and Linux arm64 and x64 with glibc or musl. Alpine arm64 requires `gcompat` for the bundled Markdown parser. Other targets can use the Bun bundle where Bun and the native dependencies are supported.
+
+On Windows, the native dependencies require the [Microsoft Visual C++ v14 Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist). Install it before starting AST-MCP if the host does not have it.
 
 Optional native parser or embedding artifacts report explicit capability errors when a platform package is unavailable.
 
@@ -51,6 +53,8 @@ bun run bin/ast-mcp.ts install \
   --scope local \
   --target all
 ```
+
+To enable shared stdio for an existing managed registration, run `ast-mcp update` with the original scope and target. Then reconnect the host's MCP servers. Updating the package alone does not change the launch arguments. Handwritten `ast-mcp mcp` commands still start a dedicated server.
 
 Restart or reconnect the host's MCP servers after installation. A configuration file cannot activate a server in an already-running host process. If startup fails or tools disappear, follow the [connection diagnosis guide](/docs/guides/connection-diagnosis).
 

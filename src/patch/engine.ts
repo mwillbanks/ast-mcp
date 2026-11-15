@@ -11,6 +11,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import type { McpServer } from "@modelcontextprotocol/server";
+
 import { currentConfig } from "../config";
 import {
   beginMutation,
@@ -19,12 +21,14 @@ import {
   mutationOperationId,
   recordMutationCommit,
   recordMutationRollback,
+  tryUnindexedPatchPublication,
 } from "../intelligence/mutation/index.ts";
 import { currentWorkspace } from "../intelligence/workspace/context.ts";
-import { approvalSessionId } from "../runtime/approval";
+import { receiptServerId, receiptSessionId } from "../runtime/approval";
 import {
   applyFileChattr,
   type FileChattr,
+  publishesSharedFileAttributes,
   resultingFileChattr,
   validateFileChattr,
 } from "../runtime/attributes";
@@ -44,6 +48,7 @@ import {
   withFencedFileLock,
   withFencedFileLocks,
 } from "../runtime/locks";
+import { canCreatePrivateMutationPath } from "../runtime/mutation-coordination";
 import {
   ensureParentDirectories,
   removeCreatedDirectories,
@@ -332,6 +337,18 @@ const expiredPreviewReceipts = new Set<string>();
 const reservedPreviewReceipts = new Map<string, symbol>();
 const previewReservation = new AsyncLocalStorage<symbol>();
 
+/** Closed MCP connections cannot reuse or retain uncommitted preview payloads. */
+export function clearPreviewReceipts(connection: McpServer): void {
+  const prefix = JSON.stringify(receiptServerId(connection));
+  for (const [token, receipt] of previewReceipts) {
+    if (!receipt.sessionId.startsWith("[" + prefix + ",")) continue;
+    // In-flight mutations still own their receipts until their outcome settles.
+    if (reservedPreviewReceipts.has(token)) continue;
+    clearTimeout(receipt.expiryTimer);
+    previewReceipts.delete(token);
+  }
+}
+
 interface ReceiptBatchState {
   completed: boolean;
   safeToRelease: boolean;
@@ -347,6 +364,17 @@ async function withReservedPreviewReceipts<T>(
     const token = (request as PatchBatchRequest).previewReceipt;
     return typeof token === "string" ? [token] : [];
   });
+  const sessionId = receiptSessionId();
+  const receipts = tokens.map(
+    (token) => [token, previewReceipts.get(token)] as const,
+  );
+  if (
+    receipts.some(([, receipt]) => receipt && receipt.sessionId !== sessionId)
+  )
+    throw receiptError(
+      "preview_receipt_session_mismatch",
+      "Preview receipt belongs to a different MCP session",
+    );
   if (
     new Set(tokens).size !== tokens.length ||
     tokens.some((token) => reservedPreviewReceipts.has(token))
@@ -355,9 +383,6 @@ async function withReservedPreviewReceipts<T>(
       "preview_receipt_reserved",
       "Preview receipt is already reserved by an active batch",
     );
-  const receipts = tokens.map(
-    (token) => [token, previewReceipts.get(token)] as const,
-  );
   for (const token of tokens) reservedPreviewReceipts.set(token, owner);
   try {
     return await previewReservation.run(owner, operation);
@@ -462,7 +487,7 @@ async function validatePreviewReceipt(filePath: string, token: string) {
       "preview_receipt_file_mismatch",
       "Preview receipt does not belong to this file",
     );
-  if (receipt.sessionId !== approvalSessionId())
+  if (receipt.sessionId !== receiptSessionId())
     throw receiptError(
       "preview_receipt_session_mismatch",
       "Preview receipt belongs to a different MCP session",
@@ -612,7 +637,7 @@ async function patchPreview(
   const config = await currentConfig();
   const receipt = randomUUID();
   const expiresAt = Date.now() + PREVIEW_RECEIPT_TTL_MS;
-  const sessionId = approvalSessionId();
+  const sessionId = receiptSessionId();
   const normalizedOperations = structuredClone({
     aiderBlocks: context.request.aiderBlocks,
     astRules: context.request.astRules,
@@ -916,6 +941,7 @@ function preparedCandidateSha256(prepared: unknown): string | null {
 async function preflightFileWrite(
   filePath: string,
   request: FileWriteRequest,
+  fence?: () => Promise<void>,
 ): Promise<PreparedWrite> {
   validateFileChattr(request.chattr);
   if (sourceParserPackOmitted(filePath)) {
@@ -943,9 +969,10 @@ async function preflightFileWrite(
   const createdDirectories: string[] = [];
   let primaryFailure: unknown;
   try {
-    await ensureParentDirectories(filePath, createdDirectories, async () =>
-      patchSignals.getStore()?.throwIfAborted(),
-    );
+    await ensureParentDirectories(filePath, createdDirectories, async () => {
+      patchSignals.getStore()?.throwIfAborted();
+      await fence?.();
+    });
     return {
       actual,
       content: await formatContent(filePath, request.content),
@@ -1143,7 +1170,11 @@ async function executeReservedFileBatch<T, Prepared>(
     prepared: Prepared,
     beforeReplace: () => Promise<void>,
   ) => Promise<Record<string, unknown>>,
-  preflight: (filePath: string, request: T) => Promise<Prepared>,
+  preflight: (
+    filePath: string,
+    request: T,
+    fence: () => Promise<void>,
+  ) => Promise<Prepared>,
   mutates: (request: T) => boolean,
   fence: () => Promise<void>,
   signal: AbortSignal | undefined,
@@ -1153,7 +1184,12 @@ async function executeReservedFileBatch<T, Prepared>(
   signal?.throwIfAborted();
   await using durableSnapshots = new FileSnapshotCollection();
   const snapshots = await captureBatchSnapshots(entries);
-  const prepared = await prepareFileBatch(entries, preflight, snapshots, stage);
+  const prepared = await prepareFileBatch(
+    entries,
+    (filePath, request) => preflight(filePath, request, fence),
+    snapshots,
+    stage,
+  );
   const files: Record<string, unknown> = {};
   const committed: CommittedBatchEntry[] = [];
   const workspace = currentWorkspace() ?? null;
@@ -1285,8 +1321,13 @@ async function processFileBatch<T, Prepared>(
     prepared: Prepared,
     beforeReplace: () => Promise<void>,
   ) => Promise<Record<string, unknown>>,
-  preflight: (filePath: string, request: T) => Promise<Prepared>,
+  preflight: (
+    filePath: string,
+    request: T,
+    fence: () => Promise<void>,
+  ) => Promise<Prepared>,
   mutates: (request: T) => boolean,
+  requiresSharedCoordination: (request: T) => boolean,
   options: FileLockOptions = {},
   stage?: BatchStaging<T, Prepared>,
 ): Promise<Record<string, unknown>> {
@@ -1331,10 +1372,98 @@ async function processFileBatch<T, Prepared>(
     {
       ...options,
       deadline: options.deadline ?? Date.now() + 10_000,
+      requireSharedCoordination:
+        entries.some(
+          ([, request]) =>
+            mutates(request) && requiresSharedCoordination(request),
+        ) || options.requireSharedCoordination,
       onReleaseError: () => {
         process.stderr.write("ast-mcp: file lock cleanup failed\n");
       },
     },
+  );
+}
+
+/**
+ * A single unformatted replacement can skip queued admission and a rollback
+ * journal. Contended or ineligible requests use the normal mutation batch.
+ */
+export async function tryPatchWithoutAdmission(
+  requests: PatchBatch,
+  signal: AbortSignal | undefined,
+  fallback?: () => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown> | undefined> {
+  const config = await currentConfig();
+  if (config.safety.mutationLock !== false || config.formatting.enabled)
+    return undefined;
+  const entries = Object.entries(requests);
+  if (entries.length !== 1) return undefined;
+  const [inputPath, request] = entries[0]!;
+  const receipt = request.previewReceipt
+    ? previewReceipts.get(request.previewReceipt)
+    : undefined;
+  if (
+    request.preview ||
+    request.chattr ||
+    request.sql ||
+    receipt?.chattr ||
+    receipt?.sqlBinding
+  )
+    return undefined;
+  const filePath = await resolveWritablePath(inputPath);
+  const metadata = await lstat(filePath).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    },
+  );
+  if (!metadata?.isFile()) return undefined;
+
+  return patchSignals.run(signal, () =>
+    tryUnindexedPatchPublication(
+      filePath,
+      signal,
+      async (checkoutFence) => {
+        let entered = false;
+        try {
+          return await withFencedFileLock(
+            filePath,
+            async (fileLease) => {
+              entered = true;
+              const receiptState: ReceiptBatchState = {
+                completed: false,
+                safeToRelease: true,
+              };
+              return withReservedPreviewReceipts(
+                [request],
+                receiptState,
+                async () => {
+                  const prepared = await preflightPatchBatch(filePath, request);
+                  const result = await applyPreparedPatch(
+                    filePath,
+                    request,
+                    prepared,
+                    async () => {
+                      signal?.throwIfAborted();
+                      await checkoutFence();
+                      await fileLease.fence();
+                    },
+                  );
+                  receiptState.completed = true;
+                  return { files: { [inputPath]: result } };
+                },
+              );
+            },
+            { signal, tryOnly: true },
+          );
+        } catch (error) {
+          if (!entered && (error as { code?: string })?.code === "lock_busy")
+            return undefined;
+          throw error;
+        }
+      },
+      fallback,
+    ),
   );
 }
 
@@ -1349,6 +1478,13 @@ export async function patchFiles(
       applyPreparedPatch,
       preflightPatchBatch,
       (request) => request.preview !== true,
+      (request) =>
+        publishesSharedFileAttributes(request.chattr) ||
+        publishesSharedFileAttributes(
+          request.previewReceipt
+            ? previewReceipts.get(request.previewReceipt)?.chattr
+            : undefined,
+        ),
       options,
       formatPatchBatch,
     ),
@@ -1365,7 +1501,8 @@ async function writeFileResolved(
   prepared?: PreparedWrite,
   beforeReplace?: () => Promise<void>,
 ): Promise<Record<string, unknown>> {
-  const candidate = prepared ?? (await preflightFileWrite(args.filePath, args));
+  const candidate =
+    prepared ?? (await preflightFileWrite(args.filePath, args, beforeReplace));
   const committed = await commit(
     args.filePath,
     candidate.content,
@@ -1391,8 +1528,14 @@ export async function writeFileSafely(args: {
   expectedSha256?: string;
 }): Promise<Record<string, unknown>> {
   const filePath = await resolveWritablePath(args.filePath);
-  return withFencedFileLock(filePath, (lease) =>
-    writeFileResolved({ ...args, filePath }, undefined, () => lease.fence()),
+  return withFencedFileLock(
+    filePath,
+    (lease) =>
+      writeFileResolved({ ...args, filePath }, undefined, () => lease.fence()),
+    {
+      requireSharedCoordination: publishesSharedFileAttributes(args.chattr),
+      validateTemporaryScope: canCreatePrivateMutationPath,
+    },
   );
 }
 
@@ -1417,7 +1560,8 @@ export async function writeFilesSafely(
         ),
       preflightFileWrite,
       () => true,
-      options,
+      (request) => publishesSharedFileAttributes(request.chattr),
+      { ...options, validateTemporaryScope: canCreatePrivateMutationPath },
     ),
   );
 }

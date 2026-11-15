@@ -5,8 +5,10 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { sha256 } from "../../runtime/hash.ts";
 import {
   ensurePrivateLockDirectory,
+  existingPrivateLockDirectory,
   systemAccount,
 } from "../../runtime/private-lock-directory.ts";
 import { syncDirectory } from "../../runtime/snapshot-blob.ts";
@@ -15,6 +17,7 @@ import {
   RepositoryRelativePathSchema,
   Sha256Schema,
 } from "../contracts/common.ts";
+import { lockPathIdentity } from "./locks.ts";
 
 const maxMarkerBytes = 64 * 1024;
 const maxDirtyPaths = 256;
@@ -154,6 +157,21 @@ export async function readRefreshState(
   transactionPath: string,
 ): Promise<RefreshState | null> {
   return readMarker(await markerLocation(transactionPath));
+}
+
+/** Inspect a canonical checkout's durable marker without creating state. */
+export async function readRefreshStateForCheckout(
+  checkoutRoot: string,
+): Promise<RefreshState | null> {
+  const account = await systemAccount();
+  const directory = await existingPrivateLockDirectory(account);
+  if (!directory) return null;
+  const key = sha256(lockPathIdentity(checkoutRoot));
+  return readMarker({
+    directory,
+    file: path.join(directory, `transaction-${key}.refresh.json`),
+    uid: account.uid,
+  });
 }
 
 function encodeMarker(state: RefreshState): string {
@@ -324,7 +342,10 @@ export async function markRefreshPublished(
 interface RefreshWork {
   state: PendingRefreshState;
   targetScope: string;
-  run: (state: PendingRefreshState) => Promise<void | "retry">;
+  run: (
+    state: PendingRefreshState,
+    signal?: AbortSignal,
+  ) => Promise<void | "retry">;
   retries: number;
   retryAt?: number;
 }
@@ -332,11 +353,30 @@ interface RefreshWork {
 interface ScheduledRefresh {
   pending?: RefreshWork;
   running?: RefreshWork;
+  completion?: Promise<void>;
   timer?: ReturnType<typeof setTimeout>;
   ceilingAt?: number;
 }
 
 const scheduled = new Map<string, ScheduledRefresh>();
+const shutdown = new AbortController();
+
+let stopping: Promise<void> | undefined;
+
+/** Discard debounced work; join active attempts before closing broker resources. */
+export function stopMutationRefreshes(): Promise<void> {
+  stopping ??= Promise.resolve().then(async () => {
+    const active: Promise<void>[] = [];
+    for (const slot of scheduled.values()) {
+      clearTimeout(slot.timer);
+      if (slot.completion) active.push(slot.completion);
+    }
+    scheduled.clear();
+    shutdown.abort();
+    await Promise.all(active);
+  });
+  return stopping;
+}
 
 export function mutationRefreshDueAt(state: PendingRefreshState): number {
   return Math.min(state.firstDirtyAt + maxWaitMs, state.lastDirtyAt + quietMs);
@@ -353,7 +393,7 @@ function armRefresh(key: string, slot: ScheduledRefresh): void {
       slot.pending = undefined;
       slot.ceilingAt = undefined;
       slot.running = pending;
-      void runRefresh(key, slot, pending);
+      slot.completion = runRefresh(key, slot, pending);
     },
     Math.max(
       0,
@@ -370,8 +410,9 @@ async function runRefresh(
   pending: RefreshWork,
 ): Promise<void> {
   try {
-    const outcome = await pending.run(pending.state);
+    const outcome = await pending.run(pending.state, shutdown.signal);
     if (
+      !shutdown.signal.aborted &&
       outcome === "retry" &&
       !slot.pending &&
       pending.retries < maxClaimRetries
@@ -382,10 +423,12 @@ async function runRefresh(
         retryAt: performance.now() + claimRetryMs,
       };
   } catch {
-    process.stderr.write("ast-mcp: deferred mutation refresh failed\n");
+    if (!shutdown.signal.aborted)
+      process.stderr.write("ast-mcp: deferred mutation refresh failed\n");
   } finally {
     slot.running = undefined;
-    if (slot.pending) armRefresh(key, slot);
+    slot.completion = undefined;
+    if (!shutdown.signal.aborted && slot.pending) armRefresh(key, slot);
     else scheduled.delete(key);
   }
 }
@@ -397,6 +440,7 @@ export function scheduleMutationRefresh(
   work: RefreshWork["run"],
   targetScope = state.scope,
 ): void {
+  if (stopping) return;
   let slot = scheduled.get(key);
   if (!slot) {
     if (scheduled.size >= maxScheduledCheckouts) {

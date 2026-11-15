@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, type FileHandle, rename, unlink } from "node:fs/promises";
@@ -13,6 +14,11 @@ import { withCheckoutAdmission } from "../../runtime/checkout-admission.ts";
 import { createDeadline } from "../../runtime/deadline.ts";
 import { sha256, sha256Handle } from "../../runtime/hash.ts";
 import { withFileLock, withFileLocks } from "../../runtime/locks.ts";
+import {
+  acquireMutationCoordination,
+  canUseTemporaryMutationCoordination,
+  requiresSharedMutationRemoval,
+} from "../../runtime/mutation-coordination.ts";
 import { canonicalizePath, pathWithin } from "../../runtime/path-utils.ts";
 import {
   ensurePrivateLockDirectory as ensureMutationLockDirectory,
@@ -65,7 +71,11 @@ import {
   LanceMutationJournal,
 } from "./journal.ts";
 import { activeMutationLifecycle, withMutationLifecycle } from "./lifecycle.ts";
-import { lockPathIdentity, mutationSharedDatabasePath } from "./locks.ts";
+import {
+  tryAcquireTemporaryMutationGuard,
+  lockPathIdentity,
+  mutationSharedDatabasePath,
+} from "./locks.ts";
 import { openNarrowLanceMutationJournal } from "./narrow-lance-journal.ts";
 import { openPrivateMutationJournal } from "./private-journal.ts";
 import type {
@@ -714,6 +724,12 @@ async function restoreMutationRecord(
     },
     {
       deadline: options.deadline ?? Date.now() + 10_000,
+      requireSharedCoordination: record.files.some(
+        ({ filePath, sourceMode, sourceSha256, sourceUid }) =>
+          (sourceMode !== null && (sourceMode & 0o022) !== 0) ||
+          (sourceUid !== null && sourceUid !== process.geteuid?.()) ||
+          (sourceSha256 === null && requiresSharedMutationRemoval(filePath)),
+      ),
       signal: options.signal,
     },
   );
@@ -1061,6 +1077,43 @@ async function withCheckoutMutationLease<T>(
     options.deadline instanceof Date
       ? options.deadline.getTime()
       : (options.deadline ?? Date.now() + 10_000);
+  if (canUseTemporaryMutationCoordination(workspace.checkoutRoot)) {
+    const lease = await acquireMutationCoordination(
+      "checkout:" + transactionPath,
+      {
+        ...options,
+        deadline,
+      },
+    );
+    let guard: Awaited<ReturnType<typeof tryAcquireTemporaryMutationGuard>>;
+    try {
+      guard = await tryAcquireTemporaryMutationGuard(
+        await canonicalizePath(transactionPath),
+        { ...options, deadline },
+      );
+      if (guard) {
+        options.signal?.throwIfAborted();
+        const legacy = guard;
+        return await operation(async () => {
+          if (!canUseTemporaryMutationCoordination(workspace.checkoutRoot))
+            throw Object.assign(new Error("Local checkout ownership changed"), {
+              code: "lock_fenced",
+              retryable: false,
+            });
+          legacy.fence();
+          await lease.fence();
+        });
+      }
+    } finally {
+      try {
+        guard?.release();
+      } finally {
+        await lease.release().catch(() => {
+          process.stderr.write("ast-mcp: checkout lock cleanup failed\n");
+        });
+      }
+    }
+  }
   const sharedDatabasePath = await mutationSharedDatabasePath(
     workspace.checkoutRoot,
   );
@@ -1370,7 +1423,7 @@ function enqueueRefresh(
   scheduleMutationRefresh(
     transactionPath,
     ticket,
-    async (): Promise<void | "retry"> => {
+    async (_state, signal): Promise<void | "retry"> => {
       const queued = await readRefreshState(transactionPath);
       if (!eligible(queued)) return;
       if (
@@ -1379,7 +1432,7 @@ function enqueueRefresh(
         Date.now() < mutationRefreshDueAt(queued)
       )
         return "retry";
-      using deadline = createDeadline(30_000);
+      using deadline = createDeadline(30_000, signal);
       const options = {
         deadline: Date.now() + 30_000,
         signal: deadline.signal,
@@ -1464,6 +1517,15 @@ function enqueueRefresh(
                   );
             if (!pending) return;
             attemptedEpoch = pending.epoch;
+            const assertCurrent = async () => {
+              const latest = await readRefreshState(transactionPath);
+              if (
+                !isCurrent(latest) ||
+                latest.inFlight !== false ||
+                latest.epoch !== pending.epoch
+              )
+                throw refreshPendingError();
+            };
             const parsers = new ParserWorkerPool({
               minWorkers: 0,
               maxWorkers: 1,
@@ -1483,6 +1545,7 @@ function enqueueRefresh(
                 (finalize) =>
                   withMutationStore(workspace, (store) =>
                     refreshMutationIntelligence({
+                      assertCurrent,
                       finalize,
                       parse: (request, parserOptions) =>
                         parsers.parse(request, parserOptions),
@@ -1555,9 +1618,24 @@ export interface MutationIndexObservation {
   generationId?: string;
 }
 
+type IndexReadRoute = (
+  workspace: WorkspaceHandle,
+) => Promise<MutationIndexObservation>;
+const indexReadRoute = new AsyncLocalStorage<IndexReadRoute>();
+
+export function withMutationIndexObserver<T>(
+  observer: IndexReadRoute,
+  operation: () => T,
+): T {
+  return indexReadRoute.run(observer, operation);
+}
+
 export async function observeMutationIndex(
   workspace: WorkspaceHandle,
+  resolvedConfig?: ResolvedConfig,
 ): Promise<MutationIndexObservation> {
+  const observer = indexReadRoute.getStore();
+  if (observer) return observer(workspace);
   if (workspace.selectedRevision.selector.kind !== "working")
     return { pending: false };
   const transactionPath = await mutationTransactionLockPath(
@@ -1571,7 +1649,7 @@ export async function observeMutationIndex(
     state.storageScope === refreshStorageScope(workspace)
   )
     return { epoch: state.epoch, pending: state.inFlight !== false };
-  const config = await currentConfig();
+  const config = resolvedConfig ?? (await currentConfig());
   const scope = refreshScope(workspace, configurationIdentity(config));
   if (state.scope !== scope) {
     enqueueRefresh(workspace, transactionPath, state, config);
@@ -1714,6 +1792,96 @@ export async function withDeferredIndexPublication(
   }
 }
 
+/**
+ * Admit only a single atomic publication without joining the checkout queue.
+ * Keep the same checkout fence as indexed writers so a build cannot begin
+ * between the unindexed check and source publication.
+ */
+export async function tryUnindexedPatchPublication<T>(
+  filePath: string,
+  signal: AbortSignal | undefined,
+  operation: (fence: () => Promise<void>) => Promise<T | undefined>,
+  fallback?: () => Promise<T>,
+): Promise<T | undefined> {
+  const workspace = currentWorkspace();
+  if (
+    !workspace?.writeEligibility.eligible ||
+    !pathWithin(workspace.checkoutRoot, filePath) ||
+    !canUseTemporaryMutationCoordination(workspace.checkoutRoot) ||
+    !canUseTemporaryMutationCoordination(filePath)
+  )
+    return undefined;
+
+  const transactionPath = await mutationTransactionLockPath(
+    workspace.checkoutRoot,
+  );
+  let entered = false;
+  try {
+    return await withCheckoutMutationLease(
+      workspace,
+      transactionPath,
+      { signal, tryOnly: true },
+      async (fence) => {
+        entered = true;
+        const marker = await readRefreshState(transactionPath);
+        const regular = (
+          mutationState?: Awaited<ReturnType<typeof readMutationState>>,
+        ) =>
+          fallback
+            ? runMutationLifecycle(
+                workspace,
+                transactionPath,
+                { signal },
+                fence,
+                fallback,
+                marker,
+                mutationState,
+              )
+            : undefined;
+        if (
+          marker &&
+          (marker.kind !== "pending" ||
+            marker.inFlight !== false ||
+            marker.indexRefresh !== false ||
+            marker.storageScope !== refreshStorageScope(workspace))
+        )
+          return regular();
+        const mutationState = await readMutationState(workspace);
+        if (
+          mutationState.repositoryIndexed ||
+          hasUnfinishedLegacyMutations(
+            mutationState.legacyPayloads,
+            workspace.workspaceId,
+            workspace.checkoutRoot,
+          )
+        )
+          return regular(mutationState);
+        if (marker?.journal) {
+          const unfinished = await withSelectedMutationJournal(
+            workspace,
+            transactionPath,
+            marker.journal,
+            async (journal) =>
+              (
+                await journal.unfinished(
+                  workspace.workspaceId,
+                  workspace.checkoutRoot,
+                )
+              ).length > 0,
+            { requireExisting: true },
+          );
+          if (unfinished) return regular(mutationState);
+        }
+        return (await operation(fence)) ?? regular(mutationState);
+      },
+    );
+  } catch (error) {
+    // Never fall back once the operation has entered the mutation boundary.
+    if (!entered && errorCode(error) === "lock_busy") return undefined;
+    throw error;
+  }
+}
+
 export async function withLanceMutationLifecycle<T>(
   operation: () => Promise<T>,
   options: CheckoutMutationOptions & { preview?: boolean } = {},
@@ -1730,71 +1898,88 @@ export async function withLanceMutationLifecycle<T>(
     workspace,
     transactionPath,
     options,
-    async (fence) => {
-      const state = await readRefreshState(transactionPath);
-      const storageScope = refreshStorageScope(workspace);
-      if (
-        state?.kind === "pending" &&
-        state.storageScope !== storageScope &&
-        state.inFlight !== false
-      )
-        throw refreshPendingError();
-
-      const sameStorage = state?.storageScope === storageScope ? state : null;
-      const previousOwner = sameStorage?.journal;
-      const mutationState = previousOwner
-        ? undefined
-        : await readMutationState(workspace);
-      if (previousOwner !== "sqlite-v1")
-        await recoverRefresh(
-          workspace,
-          transactionPath,
-          sameStorage ?? undefined,
-          options,
-          fence,
-          mutationState,
-        );
-      const repositoryIndexed = previousOwner
-        ? sameStorage?.kind !== "pending" || sameStorage.indexRefresh !== false
-        : Boolean(sameStorage || mutationState?.repositoryIndexed);
-      return withSelectedMutationJournal(
+    async (fence) =>
+      runMutationLifecycle(
         workspace,
         transactionPath,
-        "sqlite-v1",
-        async (journal) => {
-          const lifecycle = new LanceMutationLifecycle(
-            undefined,
-            workspace,
-            refreshMutationIntelligence,
-            {
-              ...options,
-              fence,
-              journal,
-              skipUnindexedRefresh: !repositoryIndexed,
-              refreshMarker: {
-                background: repositoryIndexed,
-                config: await currentConfig(),
-                journal: "sqlite-v1",
-                publishedGenerationId: mutationState?.publishedGenerationId,
-                transactionPath,
-              },
-            },
-          );
-          await lifecycle.recover();
-          if (
-            sameStorage?.kind === "pending" &&
-            sameStorage.indexRefresh === false &&
-            sameStorage.inFlight !== false
-          )
-            await markRefreshReady(transactionPath, sameStorage.epoch);
-          options.signal?.throwIfAborted();
-          return withMutationLifecycle(lifecycle, operation);
-        },
+        options,
+        fence,
+        operation,
+        await readRefreshState(transactionPath),
+      ),
+  );
+}
+
+async function runMutationLifecycle<T>(
+  workspace: WorkspaceHandle,
+  transactionPath: string,
+  options: CheckoutMutationOptions,
+  fence: () => Promise<void>,
+  operation: () => Promise<T>,
+  state: RefreshState | null,
+  knownState?: Awaited<ReturnType<typeof readMutationState>>,
+): Promise<T> {
+  const storageScope = refreshStorageScope(workspace);
+  if (
+    state?.kind === "pending" &&
+    state.storageScope !== storageScope &&
+    state.inFlight !== false
+  )
+    throw refreshPendingError();
+
+  const sameStorage = state?.storageScope === storageScope ? state : null;
+  const previousOwner = sameStorage?.journal;
+  const mutationState = previousOwner
+    ? undefined
+    : (knownState ?? (await readMutationState(workspace)));
+  if (previousOwner !== "sqlite-v1")
+    await recoverRefresh(
+      workspace,
+      transactionPath,
+      sameStorage ?? undefined,
+      options,
+      fence,
+      mutationState,
+    );
+  const repositoryIndexed = previousOwner
+    ? sameStorage?.kind !== "pending" || sameStorage.indexRefresh !== false
+    : Boolean(sameStorage || mutationState?.repositoryIndexed);
+  return withSelectedMutationJournal(
+    workspace,
+    transactionPath,
+    "sqlite-v1",
+    async (journal) => {
+      const lifecycle = new LanceMutationLifecycle(
+        undefined,
+        workspace,
+        refreshMutationIntelligence,
         {
-          requireExisting: previousOwner === "sqlite-v1",
-          journalMode: "delete",
+          ...options,
+          fence,
+          journal,
+          skipUnindexedRefresh: !repositoryIndexed,
+          refreshMarker: {
+            background: repositoryIndexed,
+            config: await currentConfig(),
+            journal: "sqlite-v1",
+            publishedGenerationId: mutationState?.publishedGenerationId,
+            transactionPath,
+          },
         },
       );
+      await lifecycle.recover();
+      if (
+        sameStorage?.kind === "pending" &&
+        sameStorage.indexRefresh === false &&
+        sameStorage.inFlight !== false
+      )
+        await markRefreshReady(transactionPath, sameStorage.epoch);
+      options.signal?.throwIfAborted();
+      return withMutationLifecycle(lifecycle, operation);
+    },
+    {
+      requireExisting: previousOwner === "sqlite-v1",
+      journalMode: "delete",
     },
   );
 }

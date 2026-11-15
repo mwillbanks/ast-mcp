@@ -14,6 +14,7 @@ import {
   RevisionSelectorSchema,
 } from "../contracts/index.ts";
 import { WorkspaceError } from "./errors.ts";
+import { managedStorageFilter } from "./storage.ts";
 
 export interface GitWorkspaceIdentity {
   branch: string | null;
@@ -178,18 +179,6 @@ export async function runGitRaw(
   }
 }
 
-async function runGitText(directory: string, args: string[]): Promise<string> {
-  const result = await runGitRaw(directory, args);
-  if (result.code !== 0) {
-    throw new WorkspaceError(
-      "workspace_git_failure",
-      result.stderr || `Git failed with exit code ${result.code}`,
-      { args, directory, exitCode: result.code },
-    );
-  }
-  return Buffer.from(result.stdout).toString("utf8").trim();
-}
-
 async function canonical(target: string): Promise<string> {
   return realpath(target).catch(() => path.resolve(target));
 }
@@ -209,16 +198,23 @@ function repositoryAnchor(
 
 export async function discoverGitWorkspace(
   directory: string,
+  { readHead = true }: { readHead?: boolean } = {},
 ): Promise<GitWorkspaceIdentity> {
   const selected = await canonical(directory);
-  const probe = await runGitRaw(selected, [
+  const args = [
     "rev-parse",
     "--is-inside-work-tree",
-  ]);
-  if (
-    probe.code !== 0 ||
-    Buffer.from(probe.stdout).toString("utf8").trim() !== "true"
-  ) {
+    "--path-format=absolute",
+    "--show-toplevel",
+    "--git-dir",
+    "--git-common-dir",
+  ];
+  const probe = await runGitRaw(selected, args);
+  const [inside, ...values] = Buffer.from(probe.stdout)
+    .toString("utf8")
+    .replace(/\r?\n$/u, "")
+    .split(/\r?\n/u);
+  if (inside !== "true") {
     return {
       branch: null,
       checkoutRoot: selected,
@@ -231,15 +227,12 @@ export async function discoverGitWorkspace(
     };
   }
 
-  const values = (
-    await runGitText(selected, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--show-toplevel",
-      "--git-dir",
-      "--git-common-dir",
-    ])
-  ).split("\n");
+  if (probe.code !== 0)
+    throw new WorkspaceError(
+      "workspace_git_failure",
+      probe.stderr || `Git failed with exit code ${probe.code}`,
+      { args, directory: selected, exitCode: probe.code },
+    );
   if (values.length !== 3) {
     throw new WorkspaceError(
       "workspace_git_failure",
@@ -247,26 +240,33 @@ export async function discoverGitWorkspace(
       { directory: selected, values },
     );
   }
-  const checkoutRoot = await canonical(values[0] as string);
-  const gitDirectory = await canonical(values[1] as string);
-  const commonGitDirectory = await canonical(values[2] as string);
-  const head = await runGitRaw(checkoutRoot, ["rev-parse", "--verify", "HEAD"]);
-  const branch = await runGitRaw(checkoutRoot, [
-    "symbolic-ref",
-    "--quiet",
-    "--short",
-    "HEAD",
+  const [checkoutRoot, gitDirectory, commonGitDirectory] = await Promise.all([
+    canonical(values[0]!),
+    canonical(values[1]!),
+    canonical(values[2]!),
   ]);
+  let head: GitResult | undefined;
+  let branch: GitResult | undefined;
+  if (readHead) {
+    const [headResult, branchResult] = await Promise.allSettled([
+      runGitRaw(checkoutRoot, ["rev-parse", "--verify", "HEAD"]),
+      runGitRaw(checkoutRoot, ["symbolic-ref", "--quiet", "--short", "HEAD"]),
+    ]);
+    if (headResult.status === "rejected") throw headResult.reason;
+    if (branchResult.status === "rejected") throw branchResult.reason;
+    head = headResult.value;
+    branch = branchResult.value;
+  }
   return {
     branch:
-      branch.code === 0
+      branch?.code === 0
         ? Buffer.from(branch.stdout).toString("utf8").trim() || null
         : null,
     checkoutRoot,
     commonGitDirectory,
     gitDirectory,
     headOid:
-      head.code === 0
+      head?.code === 0
         ? Buffer.from(head.stdout).toString("utf8").trim() || null
         : null,
     isGit: true,
@@ -588,11 +588,10 @@ export async function gitDirtyOverlayId(
   const records = parseGitPorcelainV1Z(result.stdout).filter(
     (record) => !isTransactionLockArtifact(record.path),
   );
-  const insideManagedStorage = (filePath: string) =>
-    excludedStorageRoot !== undefined &&
-    path.relative(git.checkoutRoot, excludedStorageRoot) !== "" &&
-    pathWithin(git.checkoutRoot, excludedStorageRoot) &&
-    pathWithin(excludedStorageRoot, path.join(git.checkoutRoot, filePath));
+  const insideManagedStorage = managedStorageFilter(
+    git.checkoutRoot,
+    excludedStorageRoot,
+  );
   const entries: DirtyEntry[] = [];
   for (const record of records) {
     if (!insideManagedStorage(record.path))
@@ -619,7 +618,10 @@ export async function gitDirtyOverlayId(
   });
 }
 
-export async function gitWorkingState(git: GitWorkspaceIdentity) {
+export async function gitWorkingState(
+  git: GitWorkspaceIdentity,
+  excludedStorageRoot?: string,
+) {
   if (!git.isGit)
     return { deleted: false, dirty: false, staged: false, untracked: false };
   const result = await runGitRaw(git.checkoutRoot, [
@@ -635,8 +637,12 @@ export async function gitWorkingState(git: GitWorkspaceIdentity) {
       { checkoutRoot: git.checkoutRoot },
     );
   }
+  const isManaged = managedStorageFilter(git.checkoutRoot, excludedStorageRoot);
   const records = parseGitPorcelainV1Z(result.stdout).filter(
-    (record) => !isTransactionLockArtifact(record.path),
+    (record) =>
+      !isTransactionLockArtifact(record.path) &&
+      (!isManaged(record.path) ||
+        (record.sourcePath !== undefined && !isManaged(record.sourcePath))),
   );
   return {
     deleted: records.some(

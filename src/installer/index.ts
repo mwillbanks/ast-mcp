@@ -356,7 +356,10 @@ function definition(
   endpoint?: HttpEndpoint,
 ) {
   if (transport === "http") return { type: "http", url: endpoint?.url };
-  const invocation = cliInvocation(cliEntryFor(root, home), ["mcp"]);
+  const invocation = cliInvocation(cliEntryFor(root, home), [
+    "mcp",
+    "--shared-stdio",
+  ]);
   return {
     args: invocation.args,
     command: invocation.command,
@@ -1340,7 +1343,10 @@ async function reconcile(
       validateReconcileOptions(options, transport);
       if (!global) await mkdir(root, { recursive: true });
       const launch: InstallerLaunch = {
-        ...cliInvocation(cliEntryFor(global ? undefined : root, home), ["mcp"]),
+        ...cliInvocation(
+          cliEntryFor(global ? undefined : root, home),
+          transport === "stdio" ? ["mcp", "--shared-stdio"] : ["mcp"],
+        ),
         ...(!global ? { cwd: root } : {}),
       };
       await (options.verifyLaunch ?? verifyMcpLaunch)(launch);

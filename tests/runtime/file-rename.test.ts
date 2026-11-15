@@ -58,6 +58,27 @@ test("file_rename atomically batches hash-guarded file moves", async () => {
   expect(await readFile(secondDestination, "utf8")).toBe("second\n");
 });
 
+test.skipIf(process.platform === "win32")(
+  "file_rename fences publication after the destination inherits shared mode",
+  async () => {
+    const root = await temporaryRoot();
+    const source = path.join(root, "source.txt");
+    const destination = path.join(root, "nested", "destination.txt");
+    await writeFile(source, "source\n");
+    await fsPromises.chmod(source, 0o664);
+
+    await renameFilesSafely({
+      [source]: { destination, expectedSha256: hash("source\n") },
+    });
+
+    await expect(fsPromises.lstat(source)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(destination, "utf8")).toBe("source\n");
+    expect((await fsPromises.stat(destination)).mode & 0o777).toBe(0o664);
+  },
+);
+
 test("file_rename rejects stale context before moving any file", async () => {
   const root = await temporaryRoot();
   const first = path.join(root, "first.txt");

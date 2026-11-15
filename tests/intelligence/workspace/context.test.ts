@@ -52,26 +52,37 @@ afterEach(async () => {
   );
 });
 
-test("storage placement uses one domain path per canonical repository anchor", async () => {
+test("storage placement keeps global, checkout, and repository anchors separate", async () => {
   const root = await temporary("ast-mcp-workspace-storage-");
   const home = path.join(root, "home");
   const repository = path.join(root, "group", "repository");
   await mkdir(repository, { recursive: true });
 
+  const checkout = path.join(root, "worktree");
+  const config = path.join(root, "user-config");
   const global = resolveStorageDomain(
     repository,
     { kind: "global" },
-    { env: {}, home },
+    { env: { XDG_CONFIG_HOME: config }, home, platform: "darwin" },
+    checkout,
+  );
+  const windowsGlobal = resolveStorageDomain(
+    repository,
+    { kind: "global" },
+    { env: { APPDATA: config }, home, platform: "win32" },
+    checkout,
   );
   const local = resolveStorageDomain(
     repository,
     { kind: "local" },
     { env: {}, home },
+    checkout,
   );
   const parent = resolveStorageDomain(
     repository,
     { kind: "parent", levels: 1 },
     { env: {}, home },
+    checkout,
   );
   const explicitPath = path.join(root, "explicit");
   const explicit = resolveStorageDomain(
@@ -80,11 +91,10 @@ test("storage placement uses one domain path per canonical repository anchor", a
     { env: {}, home },
   );
 
-  expect(global.storagePath).toBe(
-    path.join(home, ".cache", "ast-mcp", "intelligence"),
-  );
+  expect(global.storagePath).toBe(path.join(config, "ast-mcp", "intelligence"));
+  expect(windowsGlobal).toEqual(global);
   expect(local.storagePath).toBe(
-    path.join(repository, ".ast-mcp", "intelligence"),
+    path.join(checkout, ".ast-mcp", "intelligence"),
   );
   expect(parent.storagePath).toBe(
     path.join(root, "group", ".ast-mcp", "intelligence"),

@@ -28,7 +28,7 @@ Explicit invalidation advances the generation even when configuration is unchang
 | `intelligence` | `federation.enabled`, `generation.enabled`, `generation.provider`, `retrieval.semantic`, `retrieval.embedding`, `storage.placement`. |
 | `http`         | `host`, `port`, `session_sweep_interval_ms`, `session_timeout_ms`.                                                                   |
 | `mcp`          | `configuration.enabled`, `configuration.require_approval`.                                                                           |
-| `safety`       | `filesystem`, `require_hash`, `hook.enabled`, `hook.allow_tools`, `hook.block_tools`.                                                |
+| `safety`       | `filesystem`, `mutation_lock`, `require_hash`, `hook.enabled`, `hook.allow_tools`, `hook.block_tools`.                               |
 | `telemetry`    | `enabled`.                                                                                                                           |
 | `workspace`    | `roots`, `worktrees`.                                                                                                                |
 
@@ -76,6 +76,8 @@ Approved external rules remain separate from intelligence roots.
 `filesystem = "unrestricted"` bypasses path boundaries and symlink policies.
 It preserves OS permissions, hashes, atomic operations, and immutable revisions.
 Trusted global unrestricted authority survives a repeated project setting.
+
+`safety.mutation_lock` defaults to `true`. Only global `false` can skip the queue for a patch to one existing file without formatting or indexing. The internal publication fence and other write guards remain active. Project `true` can restore queuing. Project `false` is ignored. Read `config_status.safety.mutationLock` to check the effective value.
 Without that authority, evaluate scoped rules before requesting broad activation.
 Scoped allows, denies, and requests retain their normal behavior.
 Only unmatched baseline denial can request whole-filesystem activation.

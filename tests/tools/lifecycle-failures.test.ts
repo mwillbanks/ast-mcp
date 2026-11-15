@@ -15,6 +15,7 @@ import { LanceIntelligenceStore } from "../../src/intelligence/storage/store.ts"
 import { withWorkspaceContext } from "../../src/intelligence/workspace/context.ts";
 import { WorkspaceRegistry } from "../../src/intelligence/workspace/registry.ts";
 import * as attributes from "../../src/runtime/attributes";
+import * as coordination from "../../src/runtime/mutation-coordination.ts";
 import registerLifecycleTools from "../../src/tools/lifecycle.ts";
 import { hermeticConfig } from "../support/hermetic-config";
 
@@ -53,6 +54,10 @@ test("attribute batches restore earlier files when completion or application fai
   for (const failurePoint of ["apply", "complete"] as const) {
     const { root, first, second, files, handlers } = await fixture();
     const events: string[] = [];
+    if (process.platform !== "win32") {
+      await chmod(first, 0o644);
+      files[first]!.chattr.chmod = 0o664;
+    }
     const before = await Promise.all([stat(first), stat(second)]);
     const lifecycle: MutationLifecycle = {
       begin: async (plan) => {
@@ -262,9 +267,13 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
       directory: root,
       storage: { kind: "explicit", path: join(root, "storage") },
     });
-    const owner = await acquireFileLock(
-      await mutationTransactionLockPath(root),
+    const key = await mutationTransactionLockPath(root);
+    const temporary = coordination.canUseTemporaryMutationCoordination(
+      workspace.checkoutRoot,
     );
+    const owner = temporary
+      ? await coordination.acquireMutationCoordination("checkout:" + key)
+      : await acquireFileLock(key);
     const before = await stat(first);
     const open = spyOn(LanceIntelligenceStore, "open");
     const destination = join(root, "renamed.txt");
@@ -294,6 +303,15 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
         throw error;
       }
     });
+    const acquire = coordination.acquireMutationCoordination;
+    const admission = spyOn(
+      coordination,
+      "acquireMutationCoordination",
+    ).mockImplementation((...args) => {
+      const result = acquire(...args);
+      if (args[0] === "checkout:" + key) waiting.resolve();
+      return result;
+    });
     let operation: ReturnType<Handler> | undefined;
     try {
       operation = withWorkspaceContext(workspace, () =>
@@ -320,6 +338,7 @@ test.each(["file_chattr", "file_delete", "file_rename"] as const)(
         expect((await stat(first)).mode & 0o777).toBe(before.mode & 0o777);
       await owner.fence();
     } finally {
+      admission.mockRestore();
       exec.mockRestore();
       await owner.release();
       await operation;

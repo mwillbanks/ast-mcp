@@ -1,0 +1,20 @@
+---
+title: Next release
+description: Shared managed stdio sessions and checkout-local intelligence state.
+---
+
+## Shared stdio
+
+On macOS and Linux with a compatible Bun runtime, new installer-managed stdio registrations use a local broker. Windows and older Bun runtimes use a dedicated stdio server. Compatible host launches reuse the broker while keeping each MCP session's roots and approvals separate. Each checkout has its own Bun ModuleGraph intelligence runtime.
+
+To enable sharing for an existing managed registration, run `ast-mcp update` with the original scope and target, then reconnect the host. Updating the package alone does not change launch arguments. Direct `ast-mcp mcp` and Streamable HTTP still work as before.
+
+## Write coordination
+
+Temporary write coordination applies only to account-owned roots on supported local POSIX filesystems. It retains the guard that older versions also use, so those writers cannot overlap operations on the same file or checkout. Other roots continue to use the existing coordination. Durable journals and snapshots stay outside the temporary database.
+
+## Intelligence storage
+
+New global intelligence stores live beside the global configuration. New local stores use `.ast-mcp/intelligence` at the checkout root. Linked worktrees retain the same repository identity without sharing new local storage.
+
+AST-MCP does not move or delete legacy stores. See the [configuration reference](/docs/reference/configuration/) for the conditions under which AST-MCP uses an existing store.

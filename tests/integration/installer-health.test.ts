@@ -59,13 +59,22 @@ test("installer bounds cleanup separately from the initialization deadline", asy
   expect(performance.now() - started).toBeLessThan(2000);
 });
 
-test("installer verifies real initialization and required tool discovery", async () => {
-  await verifyMcpLaunch({
-    args: [path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"), "mcp"],
-    command: process.execPath,
-    cwd: path.resolve(import.meta.dir, "../.."),
+for (const [mode, options] of [
+  ["direct stdio", []],
+  ["managed stdio", ["--shared-stdio"]],
+] as const) {
+  test(`installer verifies initialization and tool discovery over ${mode}`, async () => {
+    await verifyMcpLaunch({
+      args: [
+        path.resolve(import.meta.dir, "../../bin/ast-mcp.ts"),
+        "mcp",
+        ...options,
+      ],
+      command: process.execPath,
+      cwd: path.resolve(import.meta.dir, "../.."),
+    });
   });
-});
+}
 
 test("installer rejects missing executables, early exit, and unresponsive commands", async () => {
   await expect(

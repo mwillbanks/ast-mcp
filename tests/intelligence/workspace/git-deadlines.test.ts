@@ -1,10 +1,14 @@
 import { beforeEach, expect, spyOn, test } from "bun:test";
 
-import { createMockTime, deferred } from "../../support/mock-time.ts";
+import {
+  createMockTime,
+  deferred,
+  flushMicrotasks,
+} from "../../support/mock-time.ts";
 beforeEach(() => {
   createMockTime();
 });
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -98,6 +102,180 @@ for (const mode of ["abort", "overflow"] as const)
       }
     },
   );
+
+function gitProbeResult(
+  exitCode: number | Promise<number>,
+  stdout: string,
+  stderr = "",
+) {
+  return {
+    exited: Promise.resolve(exitCode),
+    stdout: new Response(stdout).body!,
+    stderr: new Response(stderr).body!,
+  } as never;
+}
+
+test("workspace discovery accepts a complete CRLF Git identity", async () => {
+  const root = await realpath(process.cwd());
+  const gitDirectory = path.join(root, ".fixture-git");
+  const headOid = "a".repeat(40);
+  const spawn = spyOn(Bun, "spawn")
+    .mockReturnValueOnce(
+      gitProbeResult(
+        0,
+        ["true", root, gitDirectory, gitDirectory, ""].join("\r\n"),
+      ),
+    )
+    .mockReturnValueOnce(gitProbeResult(0, headOid + "\r\n"))
+    .mockReturnValueOnce(gitProbeResult(0, "fixture-branch\r\n"));
+  try {
+    expect(await discoverGitWorkspace(root)).toEqual({
+      branch: "fixture-branch",
+      checkoutRoot: root,
+      commonGitDirectory: gitDirectory,
+      gitDirectory,
+      headOid,
+      isGit: true,
+      isLinkedWorktree: false,
+      repositoryRoot: root,
+    });
+    expect(spawn).toHaveBeenCalledTimes(3);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+test("workspace discovery drains both probes before reporting the HEAD error", async () => {
+  const root = await realpath(process.cwd());
+  const gitDirectory = path.join(root, ".fixture-git");
+  const head = deferred<number>();
+  const branch = deferred<number>();
+  const headStarted = deferred();
+  const reason = new Error("HEAD query failed");
+  const spawn = spyOn(Bun, "spawn")
+    .mockReturnValueOnce(
+      gitProbeResult(
+        0,
+        ["true", root, gitDirectory, gitDirectory, ""].join("\n"),
+      ),
+    )
+    .mockImplementationOnce(() => {
+      headStarted.resolve();
+      return gitProbeResult(head.promise, "");
+    })
+    .mockReturnValueOnce(gitProbeResult(branch.promise, ""));
+  const discovery = discoverGitWorkspace(root);
+  const settled = discovery.then(
+    () => ({ error: undefined }),
+    (error: unknown) => ({ error }),
+  );
+  try {
+    await headStarted.promise;
+    expect(spawn).toHaveBeenCalledTimes(3);
+    const branchError = new Error("Branch query failed");
+    branch.reject(branchError);
+    await flushMicrotasks();
+    expect(await Promise.race([settled, Promise.resolve("pending")])).toBe(
+      "pending",
+    );
+    head.reject(reason);
+    expect((await settled).error).toBe(reason);
+  } finally {
+    head.resolve(0);
+    branch.resolve(0);
+    await settled;
+    spawn.mockRestore();
+  }
+});
+
+test("historical revalidation can discover checkout identity without reading HEAD", async () => {
+  const root = await realpath(process.cwd());
+  const gitDirectory = path.join(root, ".fixture-git");
+  const spawn = spyOn(Bun, "spawn").mockReturnValueOnce(
+    gitProbeResult(
+      0,
+      ["true", root, gitDirectory, gitDirectory, ""].join("\n"),
+    ),
+  );
+  try {
+    expect(await discoverGitWorkspace(root, { readHead: false })).toEqual({
+      branch: null,
+      checkoutRoot: root,
+      commonGitDirectory: gitDirectory,
+      gitDirectory,
+      headOid: null,
+      isGit: true,
+      isLinkedWorktree: false,
+      repositoryRoot: root,
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+test("workspace discovery treats a failed probe without output as non-Git", async () => {
+  const root = await realpath(process.cwd());
+  const spawn = spyOn(Bun, "spawn").mockReturnValueOnce(
+    gitProbeResult(128, "", "fatal: not a git repository"),
+  );
+  try {
+    expect(await discoverGitWorkspace(root)).toEqual({
+      branch: null,
+      checkoutRoot: root,
+      commonGitDirectory: null,
+      gitDirectory: null,
+      headOid: null,
+      isGit: false,
+      isLinkedWorktree: false,
+      repositoryRoot: root,
+    });
+    expect(spawn).toHaveBeenCalledTimes(1);
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+test.each([
+  {
+    exitCode: 128,
+    stdout: "true\n",
+    stderr: "fatal: cannot resolve working tree",
+    message: "fatal: cannot resolve working tree",
+    details: { exitCode: 128 },
+  },
+  {
+    exitCode: 128,
+    stdout: "true\n",
+    stderr: "",
+    message: "Git failed with exit code 128",
+    details: { exitCode: 128 },
+  },
+  {
+    exitCode: 0,
+    stdout: "true\n/checkout\n/checkout/.git\n",
+    stderr: "",
+    message: "Git returned incomplete workspace identity",
+    details: { values: ["/checkout", "/checkout/.git"] },
+  },
+])(
+  "workspace discovery fails closed when a Git worktree probe returns $message",
+  async ({ exitCode, stdout, stderr, message, details }) => {
+    const spawn = spyOn(Bun, "spawn").mockReturnValueOnce(
+      gitProbeResult(exitCode, stdout, stderr),
+    );
+    try {
+      await expect(discoverGitWorkspace(process.cwd())).rejects.toMatchObject({
+        code: "workspace_git_failure",
+        message,
+        details,
+      });
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      spawn.mockRestore();
+    }
+  },
+);
 
 test("persistent guard databases do not change workspace state or overlays", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-guard-state-"));

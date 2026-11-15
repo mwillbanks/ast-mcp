@@ -44,6 +44,32 @@ afterEach(async () => {
   );
 });
 
+test("only the global config can opt out of the mutation queue", async () => {
+  const root = await project("ast-mcp-mutation-lock-config-");
+  const home = path.join(root, "home");
+  const options = { cwd: root, env: {}, home, platform: "linux" as const };
+  const projectConfig = path.join(root, "ast-mcp.toml");
+  const global = globalConfigPath(options);
+  const setting = (enabled: boolean) =>
+    `version = 2\n[safety]\nmutation_lock = ${enabled}\n`;
+
+  await writeFile(projectConfig, setting(false));
+  const projectOnly = await resolveConfig(options);
+  expect(projectOnly.safety.mutationLock).toBe(true);
+  expect(projectOnly.provenance["safety.mutation_lock"]).toBe("default");
+
+  await mkdir(path.dirname(global), { recursive: true });
+  await writeFile(global, setting(false));
+  const globalOptOut = await resolveConfig(options);
+  expect(globalOptOut.safety.mutationLock).toBe(false);
+  expect(globalOptOut.provenance["safety.mutation_lock"]).toBe("global");
+
+  await writeFile(projectConfig, setting(true));
+  const projectOptIn = await resolveConfig(options);
+  expect(projectOptIn.safety.mutationLock).toBe(true);
+  expect(projectOptIn.provenance["safety.mutation_lock"]).toBe("project");
+});
+
 test("CLI output defaults and nested global/project precedence apply in both versions", async () => {
   const root = await project("ast-mcp-cli-output-config-");
   const home = path.join(root, "home");

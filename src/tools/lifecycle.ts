@@ -27,6 +27,7 @@ import { currentWorkspace } from "../intelligence/workspace/context.ts";
 import {
   applyFileChattr,
   type FileChattr,
+  publishesSharedFileAttributes,
   readFileChattrSnapshot,
   FileChattrSnapshots,
 } from "../runtime/attributes";
@@ -234,7 +235,12 @@ export default function registerLifecycleTools(
                         throw error;
                       }
                     },
-                    { signal },
+                    {
+                      requireSharedCoordination: entries.some(({ request }) =>
+                        publishesSharedFileAttributes(request.chattr),
+                      ),
+                      signal,
+                    },
                   );
                   return { files };
                 },

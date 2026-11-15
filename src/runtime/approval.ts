@@ -907,6 +907,16 @@ export function approvalSessionId(): string {
   return activeApproval.getStore()?.context?.sessionId ?? "local";
 }
 
+export function receiptServerId(server?: McpServer): string {
+  return serverId(server);
+}
+
+export function receiptSessionId(
+  server = activeApproval.getStore()?.server,
+): string {
+  return JSON.stringify([serverId(server), approvalSessionId()]);
+}
+
 export function clearSessionApprovals(
   sessionId?: string,
   server?: McpServer,

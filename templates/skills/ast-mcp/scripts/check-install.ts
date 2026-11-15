@@ -738,6 +738,8 @@ async function sourceLaunchReceipt(
     return undefined;
   }
 }
+const stdioLaunchArgs = [["mcp"], ["mcp", "--shared-stdio"]] as const;
+
 async function matchingSourceLaunch(
   entry: McpEntry,
   root: string | undefined,
@@ -750,17 +752,23 @@ async function matchingSourceLaunch(
     !path.isAbsolute(entry.command) ||
     !samePhysicalPath(entry.command, receipt.runtime, true) ||
     !Array.isArray(entry.args) ||
-    entry.args.length !== 2 ||
     typeof entry.args[0] !== "string" ||
     !path.isAbsolute(entry.args[0]) ||
     !samePhysicalPath(entry.args[0], receipt.script, true) ||
-    entry.args[1] !== "mcp" ||
     typeof entry.cwd !== "string" ||
     !path.isAbsolute(entry.cwd) ||
     !sameNativePath(entry.cwd, receipt.projectRoot)
   )
     return undefined;
-  return { command: receipt.runtime, args: [receipt.script, "mcp"] };
+  const configured = entry.args.slice(1);
+  const args = stdioLaunchArgs.find(
+    (tail) =>
+      configured.length === tail.length &&
+      tail.every((argument, index) => configured[index] === argument),
+  );
+  return args
+    ? { command: receipt.runtime, args: [receipt.script, ...args] }
+    : undefined;
 }
 
 function* installedBinaryCandidates(root: string | undefined, home: string) {
@@ -933,10 +941,12 @@ function sameCommand(left: unknown, right: string) {
 
 function batchAliasPath(commandLine: string) {
   const match =
-    /^call (?:(?:"([^"\0\r\n%!^]+)")|([A-Za-z0-9_./:\\=-]+)) mcp$/u.exec(
+    /^call (?:(?:"([^"\0\r\n%!^]+)")|([A-Za-z0-9_./:\\=-]+)) mcp( --shared-stdio)?$/u.exec(
       commandLine,
     );
-  return match?.[1] ?? match?.[2];
+  return match
+    ? { path: match[1] ?? match[2], shared: match[3] !== undefined }
+    : undefined;
 }
 
 export function stdioArgsMatch(
@@ -953,13 +963,14 @@ export function stdioArgsMatch(
       typeof argument !== "string"
     )
       return false;
-    const actualPath = batchAliasPath(argument);
-    const expectedPath = batchAliasPath(expected[index] as string);
+    const actualAlias = batchAliasPath(argument);
+    const expectedAlias = batchAliasPath(expected[index] as string);
     return (
-      actualPath !== undefined &&
-      expectedPath !== undefined &&
-      path.win32.normalize(actualPath).toLowerCase() ===
-        path.win32.normalize(expectedPath).toLowerCase()
+      actualAlias !== undefined &&
+      expectedAlias !== undefined &&
+      actualAlias.shared === expectedAlias.shared &&
+      path.win32.normalize(actualAlias.path).toLowerCase() ===
+        path.win32.normalize(expectedAlias.path).toLowerCase()
     );
   });
 }
@@ -970,7 +981,7 @@ function sameBatchAliasFile(
   root?: string,
 ) {
   if (typeof configuredArgument !== "string") return false;
-  const configuredAlias = batchAliasPath(configuredArgument);
+  const configuredAlias = batchAliasPath(configuredArgument)?.path;
   if (!configuredAlias) return false;
   return samePhysicalPath(
     root ? path.resolve(root, configuredAlias) : configuredAlias,
@@ -989,16 +1000,18 @@ async function matchingStdioBinary(
     const configured = root
       ? `./${path.relative(root, binary).split(path.sep).join("/")}`
       : binary;
-    const expected = commandForPlatform(configured, ["mcp"]);
-    if (
-      sameCommand(entry.command, expected.command) &&
-      stdioArgsMatch(entry.args, expected.args) &&
-      (entry.args.every(
-        (argument, index) => argument === expected.args[index],
-      ) ||
-        sameBatchAliasFile(entry.args.at(-1), binary, root))
-    )
-      return { command: binary, args: ["mcp"] };
+    for (const args of stdioLaunchArgs) {
+      const expected = commandForPlatform(configured, [...args]);
+      if (
+        sameCommand(entry.command, expected.command) &&
+        stdioArgsMatch(entry.args, expected.args) &&
+        (entry.args.every(
+          (argument, index) => argument === expected.args[index],
+        ) ||
+          sameBatchAliasFile(entry.args.at(-1), binary, root))
+      )
+        return { command: binary, args: [...args] };
+    }
   }
   return matchingSourceLaunch(entry, root, home);
 }

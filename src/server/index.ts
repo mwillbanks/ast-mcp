@@ -5,6 +5,7 @@ import {
 
 import packageJson from "../../package.json" with { type: "json" };
 import type { IntelligenceRuntimeOptions } from "../intelligence/lifecycle/service.ts";
+import { clearPreviewReceipts } from "../patch/engine.ts";
 import {
   clearSessionApprovals,
   recordApprovalTransportFailure,
@@ -13,12 +14,18 @@ import { createDeadline } from "../runtime/deadline";
 import { Telemetry, type TelemetryOptions } from "../runtime/telemetry";
 import { registerSkills } from "../skills";
 import tools from "../tools";
+import type { createSharedNativeAdmission } from "../tools/code-intelligence";
 import type { ExecutionOptions } from "../tools/configured";
-import { createIntelligenceToolService } from "../tools/intelligence.ts";
+import {
+  createIntelligenceToolService,
+  type IntelligenceToolService,
+} from "../tools/intelligence.ts";
 
 export interface ServerOptions {
   approvalTimeoutMs?: number;
   diagnosticsFetch?: typeof fetch;
+  intelligence?: IntelligenceToolService;
+  nativeAdmission?: ReturnType<typeof createSharedNativeAdmission>;
   transport?: "stdio" | "http" | "unknown";
 }
 
@@ -81,9 +88,11 @@ export function createServer(
   }) as typeof server.server.request;
 
   const telemetry = new Telemetry(telemetryOptions);
-  const intelligence = createIntelligenceToolService(intelligenceOptions);
+  const intelligence =
+    options.intelligence ?? createIntelligenceToolService(intelligenceOptions);
   tools(server, {
     intelligence,
+    nativeAdmission: options.nativeAdmission,
     telemetry,
     execution,
     diagnostics: {
@@ -100,8 +109,9 @@ export function createServer(
         await closeServer();
       } finally {
         clearSessionApprovals(undefined, server);
+        clearPreviewReceipts(server);
         try {
-          await intelligence.close?.();
+          if (!options.intelligence) await intelligence.close?.();
         } finally {
           await telemetry.close();
         }
@@ -115,7 +125,7 @@ export function createServer(
       process.stderr.write(
         `ast-mcp connection cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
       );
-      process.exitCode = 1;
+      if (!options.intelligence) process.exitCode = 1;
     });
   };
 

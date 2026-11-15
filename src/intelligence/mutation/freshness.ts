@@ -46,6 +46,7 @@ import {
   readGitRevisionFile,
   runGitRaw,
 } from "../workspace/git.ts";
+import { managedStorageFilter } from "../workspace/storage.ts";
 import type { MutationRefreshResult } from "./types.ts";
 
 const EXTRACTOR_VERSION = "ast-mcp.mutation-refresh.v1";
@@ -113,6 +114,7 @@ async function repositoryFiles(
 ): Promise<string[]> {
   const files: string[] = [];
   const canonicalExcludedRoot = await canonicalFilePath(excludedRoot);
+  const isManaged = managedStorageFilter(root, excludedRoot);
   const visit = async (directory: string): Promise<void> => {
     throwIfRefreshAborted(signal);
     const entries = await readdir(directory, { withFileTypes: true });
@@ -128,6 +130,7 @@ async function repositoryFiles(
       )
         continue;
       const candidate = path.join(directory, entry.name);
+      if (isManaged(candidate)) continue;
       if (entry.isDirectory()) {
         const canonicalCandidate = await canonicalFilePath(candidate);
         if (canonicalCandidate === canonicalExcludedRoot) continue;
@@ -275,6 +278,10 @@ async function revisionPaths(
 
   const paths: string[] = [];
   const skipped: string[] = [];
+  const isManaged = managedStorageFilter(
+    workspace.checkoutRoot,
+    workspace.storageDomain.storagePath,
+  );
   const zeroOid = /^0+$/;
   const intentToAdd = new Set<string>();
   if (index) {
@@ -314,6 +321,7 @@ async function revisionPaths(
     }
     const metadata = record.slice(0, tab).split(" ");
     const relativePath = record.slice(tab + 1);
+    if (isManaged(relativePath)) continue;
     if (index) {
       const [mode, oid, stage] = metadata;
       if (stage !== "0") {
@@ -367,26 +375,10 @@ async function selectedRevisionSources(
     return { skipped: [], sources };
   }
 
-  const storageRelative = path.relative(
-    workspace.checkoutRoot,
-    workspace.storageDomain.storagePath,
-  );
-  const excludedPrefix =
-    storageRelative &&
-    storageRelative !== ".." &&
-    !storageRelative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(storageRelative)
-      ? storageRelative.split(path.sep).join("/")
-      : null;
   const sources: RepositorySource[] = [];
   const selection = await revisionPaths(workspace, signal);
   for (const relativePath of selection.paths) {
     throwIfRefreshAborted(signal);
-    if (
-      relativePath === excludedPrefix ||
-      (excludedPrefix && relativePath.startsWith(`${excludedPrefix}/`))
-    )
-      continue;
     const absolutePath = path.join(workspace.checkoutRoot, relativePath);
     sources.push({
       absolutePath,
@@ -413,6 +405,7 @@ export interface IntelligenceRefreshDependencies {
   analyze?: (
     request: IntelligenceDispatchRequest,
   ) => Promise<IntelligenceAnalysis | null>;
+  assertCurrent?: () => Promise<void>;
   embedding?: {
     config: EmbeddingModelConfig;
     pool: EmbeddingWorkerPool;
@@ -909,6 +902,14 @@ export async function refreshMutationIntelligence(
     workspaceId: workspace.workspaceId,
   };
   throwIfRefreshAborted(input.signal);
+  // A superseded background attempt must not keep writing the old snapshot.
+  const checkCurrent = input.assertCurrent
+    ? async () => {
+        throwIfRefreshAborted(input.signal);
+        await input.assertCurrent?.();
+      }
+    : undefined;
+  await checkCurrent?.();
   const reusable = await store.reusablePublication(reservationInput);
   throwIfRefreshAborted(input.signal);
   if (reusable) {
@@ -923,49 +924,58 @@ export async function refreshMutationIntelligence(
       skippedFiles,
     };
   }
+  await input.assertCurrent?.();
   const reservation = await store.reservePublication(reservationInput);
 
   try {
     throwIfRefreshAborted(input.signal);
+    await input.assertCurrent?.();
     await store.putReservedRows(
       reservation,
       "relationships",
       uniqueRows(relationshipRows),
+      { assertCurrent: checkCurrent },
     );
     throwIfRefreshAborted(input.signal);
-    await store.putReservedRowsBatch(reservation, [
-      {
-        rows: uniqueRows(artifactRows),
-        tableName: "artifacts",
-      },
-      {
-        rows: uniqueRows(syntaxRows),
-        tableName: "syntax_facts",
-      },
-      {
-        rows: uniqueRows(chunkRows),
-        tableName: "chunks",
-      },
-      ...(dirtyOverlayRows.length > 0
-        ? ([{ rows: dirtyOverlayRows, tableName: "dirty_overlays" }] as const)
-        : []),
-      {
-        rows: [
-          {
-            artifact_id: manifestArtifactId,
-            created_at: indexedAt,
-            dirty_overlay_id: dirtyOverlayId,
-            entry_count: units.length,
-            logical_bytes: Buffer.byteLength(manifestPayload),
-            payload_json: manifestPayload,
-            repository_id: workspace.repositoryId,
-            revision_id: workspace.selectedRevision.revisionId,
-          },
-        ],
-        tableName: "revision_manifests",
-      },
-    ]);
+    await input.assertCurrent?.();
+    await store.putReservedRowsBatch(
+      reservation,
+      [
+        {
+          rows: uniqueRows(artifactRows),
+          tableName: "artifacts",
+        },
+        {
+          rows: uniqueRows(syntaxRows),
+          tableName: "syntax_facts",
+        },
+        {
+          rows: uniqueRows(chunkRows),
+          tableName: "chunks",
+        },
+        ...(dirtyOverlayRows.length > 0
+          ? ([{ rows: dirtyOverlayRows, tableName: "dirty_overlays" }] as const)
+          : []),
+        {
+          rows: [
+            {
+              artifact_id: manifestArtifactId,
+              created_at: indexedAt,
+              dirty_overlay_id: dirtyOverlayId,
+              entry_count: units.length,
+              logical_bytes: Buffer.byteLength(manifestPayload),
+              payload_json: manifestPayload,
+              repository_id: workspace.repositoryId,
+              revision_id: workspace.selectedRevision.revisionId,
+            },
+          ],
+          tableName: "revision_manifests",
+        },
+      ],
+      { assertCurrent: checkCurrent },
+    );
     throwIfRefreshAborted(input.signal);
+    await input.assertCurrent?.();
     const snapshot = graphFromResolution(resolution, {
       generationId: reservation.generationId,
       sourceDigests: Object.fromEntries(
@@ -975,9 +985,11 @@ export async function refreshMutationIntelligence(
     });
     await new LanceGraphRepository(store).persist(snapshot, workspace, {
       allowReadOnlySource: input.allowReadOnlySource,
+      assertCurrent: checkCurrent,
       reservation,
     });
     throwIfRefreshAborted(input.signal);
+    await input.assertCurrent?.();
     const embedding = input.embedding;
     if (embedding) {
       const embeddings = await publishChunkEmbeddings(

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { currentConfig, type ResolvedConfig } from "../config";
 import { configRegistry } from "../config/registry";
 import { cliSchema } from "../config/schema-common";
-import { formatterV2Schema } from "../config/v2-schema";
+import { formatterV2Schema, safetyCoreFields } from "../config/v2-schema";
 import {
   toolFailure,
   toolOutputSchema,
@@ -664,7 +664,7 @@ export default function registerConfigurationTools(
             .optional(),
           safety: z
             .object({
-              filesystem: z.enum(["restricted", "unrestricted"]).optional(),
+              ...safetyCoreFields,
               hook: z
                 .object({
                   allow_tools: z.array(z.string().min(1)).max(128).optional(),
@@ -673,7 +673,6 @@ export default function registerConfigurationTools(
                 })
                 .strict()
                 .optional(),
-              require_hash: z.boolean().optional(),
             })
             .strict()
             .optional(),

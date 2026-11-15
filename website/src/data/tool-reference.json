@@ -564,6 +564,9 @@
               },
               "type": "object"
             },
+            "mutation_lock": {
+              "type": "boolean"
+            },
             "require_hash": {
               "type": "boolean"
             }

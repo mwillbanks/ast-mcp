@@ -26,6 +26,7 @@ import { detectAstLanguage } from "../patch/languages";
 import { createDeadline } from "./deadline";
 import { sha256File } from "./hash";
 import { withFileLocks } from "./locks";
+import { requiresSharedMutationRemoval } from "./mutation-coordination.ts";
 import { assertReadableTree } from "./path-policy";
 import { pathWithin } from "./path-utils";
 import {
@@ -545,7 +546,7 @@ export async function deleteFilesSafely(
         throw error;
       }
     },
-    { signal },
+    { requireSharedCoordination: requiresSharedMutationRemoval, signal },
   );
   const roots = [...new Set(entries.map(({ root }) => root))].sort();
   let cleanup: { status: "deferred" | "failed"; code: string } | undefined;

@@ -1,10 +1,12 @@
 import { expect, spyOn, test } from "bun:test";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -18,15 +20,26 @@ import {
 import type { PublicationGeneration } from "../../src/intelligence/contracts/storage.ts";
 import * as markers from "../../src/intelligence/mutation/experimental-deferred-refresh.ts";
 import * as freshness from "../../src/intelligence/mutation/freshness.ts";
-import { activeMutationLifecycle } from "../../src/intelligence/mutation/lifecycle.ts";
+import {
+  activeMutationLifecycle,
+  withMutationLifecycle,
+} from "../../src/intelligence/mutation/lifecycle.ts";
+import {
+  acquireLegacyFileGuard,
+  lockPathIdentity,
+  mutationLockPath,
+  withFencedFileLock,
+} from "../../src/intelligence/mutation/locks.ts";
 import { privateMutationJournalLocation } from "../../src/intelligence/mutation/private-journal.ts";
 import {
   assertPublishedMutationGeneration,
   mutationTransactionLockPath,
   observeMutationIndex,
+  tryUnindexedPatchPublication,
   withDeferredIndexPublication,
   withFreshMutationRead,
   withLanceMutationLifecycle,
+  withMutationIndexObserver,
 } from "../../src/intelligence/mutation/service.ts";
 import type { MutationRefreshResult } from "../../src/intelligence/mutation/types.ts";
 import * as git from "../../src/intelligence/workspace/git.ts";
@@ -36,10 +49,37 @@ import {
   type WorkspaceHandle,
 } from "../../src/intelligence/workspace/index.ts";
 import { withCheckoutAdmission } from "../../src/runtime/checkout-admission.ts";
+import { deleteFilesSafely } from "../../src/runtime/file-delete.ts";
 import { sha256 } from "../../src/runtime/hash.ts";
+import {
+  acquireMutationCoordination,
+  canUseTemporaryMutationCoordination,
+} from "../../src/runtime/mutation-coordination.ts";
 import * as transactionLocks from "../../src/runtime/transaction-lock.ts";
 import { acquireTransactionLock } from "../../src/runtime/transaction-lock.ts";
 import { MOCK_EPOCH } from "../support/mock-time.ts";
+
+async function withAdmittedWriter<T>(
+  workspace: WorkspaceHandle,
+  transaction: string,
+  operation: () => Promise<T>,
+  tryOnly = false,
+): Promise<T> {
+  const options = { deadline: Date.now() + 10_000, tryOnly };
+  if (!canUseTemporaryMutationCoordination(workspace.checkoutRoot))
+    return withCheckoutAdmission(transaction, options, operation);
+
+  const lease = await acquireMutationCoordination(
+    "checkout:" + transaction,
+    options,
+  );
+  try {
+    await lease.fence();
+    return await operation();
+  } finally {
+    await lease.release();
+  }
+}
 
 const publishedAt = new Date(MOCK_EPOCH).toISOString();
 const pendingError = { code: "intelligence_refresh_pending", retryable: true };
@@ -263,16 +303,7 @@ test("explicit index build waits outside writer admission for another storage sc
         );
         void next.catch(() => undefined);
         await Promise.race([ready[1]!.promise, next]);
-        await withCheckoutAdmission(
-          transaction,
-          { deadline: Date.now() + 10_000, tryOnly: true },
-          async () => {
-            const writer = await acquireTransactionLock(transaction, {
-              tryOnly: true,
-            });
-            writer.release();
-          },
-        );
+        await withAdmittedWriter(workspace, transaction, async () => {}, true);
         abort.abort();
         await expect(cancelled).rejects.toMatchObject({ code: "lock_aborted" });
         release.resolve();
@@ -477,10 +508,8 @@ test("explicit refresh yields its publication fence to the admitted writer", asy
         withDeferredIndexPublication(workspace, async (finalize) => {
           if (!finalize)
             throw new Error("Working publication omitted its fence");
-          await withCheckoutAdmission(
-            transaction,
-            { deadline: Date.now() + 10_000 },
-            () => finalize(publish),
+          await withAdmittedWriter(workspace, transaction, () =>
+            finalize(publish),
           );
           return refreshResult(generation.generationId);
         }),
@@ -556,61 +585,347 @@ test("external overlay edits and configuration changes fence off staged publicat
   );
 });
 
-test("an interrupted unindexed SQLite mutation rolls back before subsequent reads", async () => {
+test.skipIf(process.platform === "win32")(
+  "delete rolls back private files after removing their names from a sticky directory",
+  async () => {
+    await withPublicationFixture(async ({ checkout }) => {
+      const directory = path.join(checkout, "sticky");
+      await mkdir(directory);
+      await chmod(directory, 0o1777);
+      const first = path.join(directory, "first.txt");
+      const second = path.join(directory, "second.txt");
+      await writeFile(first, "first", { mode: 0o600 });
+      await writeFile(second, "second", { mode: 0o600 });
+      const completionFailure = new Error("Simulated failed delete completion");
+      const committed: string[] = [];
+      await expect(
+        withMutationLifecycle(
+          {
+            begin: async () => {},
+            committed: async (_id, file) => {
+              committed.push(file.filePath);
+            },
+            complete: async () => {
+              throw completionFailure;
+            },
+            failed: async () => {},
+            rolledBack: async () => {},
+          },
+          () =>
+            deleteFilesSafely({
+              [first]: { expectedSha256: sha256("first") },
+              [second]: { expectedSha256: sha256("second") },
+            }),
+        ),
+      ).rejects.toBe(completionFailure);
+      expect(committed).toEqual([first, second]);
+      expect(await readFile(first, "utf8")).toBe("first");
+      expect(await readFile(second, "utf8")).toBe("second");
+      expect((await stat(first)).mode & 0o777).toBe(0o600);
+      expect((await stat(second)).mode & 0o777).toBe(0o600);
+    });
+  },
+);
+
+test.each([false, true])(
+  "an interrupted SQLite mutation rolls back before reads (shared source mode: %s)",
+  async (restoreSharedMode) => {
+    await withPublicationFixture(
+      async ({ checkout, transaction, workspace, scheduled }) => {
+        const filePath = path.join(checkout, "partially-written.ts");
+        const source = "export const value = 1;\n";
+        const candidate = "export const value = 2;\n";
+        const parent = path.join(checkout, "created-parent");
+        await mkdir(parent);
+        if (process.platform !== "win32")
+          await chmod(parent, restoreSharedMode ? 0o700 : 0o1777);
+        const created = path.join(parent, "created.ts");
+        await writeFile(filePath, source);
+        const sourceMode =
+          process.platform === "win32"
+            ? null
+            : restoreSharedMode
+              ? 0o664
+              : 0o600;
+        if (sourceMode !== null) await chmod(filePath, sourceMode);
+        const operationId = createIdentity("job", {
+          checkout,
+          label: "interrupted",
+        });
+        const interruption = new Error("Simulated writer interruption");
+        await expect(
+          withLanceMutationLifecycle(async () => {
+            const lifecycle = activeMutationLifecycle();
+            if (!lifecycle) throw new Error("Write did not enroll SQLite");
+            await lifecycle.begin({
+              files: [
+                {
+                  candidateSha256: sha256(candidate),
+                  filePath: created,
+                  sourceContentBase64: null,
+                  sourceSha256: null,
+                },
+                {
+                  candidateSha256: sha256(candidate),
+                  filePath,
+                  sourceContentBase64: Buffer.from(source).toString("base64"),
+                  sourceMode,
+                  sourceSha256: sha256(source),
+                },
+              ],
+              operationId,
+              tool: "file_patch",
+              workspace,
+            });
+            await writeFile(created, candidate, { mode: 0o600 });
+            await lifecycle.committed(operationId, {
+              filePath: created,
+              sha256: sha256(candidate),
+            });
+            await writeFile(filePath, candidate);
+            if (sourceMode !== null) await chmod(filePath, 0o644);
+            await lifecycle.committed(operationId, {
+              filePath,
+              sha256: sha256(candidate),
+            });
+            throw interruption;
+          }),
+        ).rejects.toBe(interruption);
+        expect(await readFile(filePath, "utf8")).toBe(candidate);
+        expect(await readFile(created, "utf8")).toBe(candidate);
+        expect(await observeMutationIndex(workspace)).toMatchObject({
+          pending: true,
+        });
+        expect(scheduled).toHaveLength(0);
+
+        const interrupted = await markers.readRefreshState(transaction);
+        if (interrupted?.kind !== "pending")
+          throw new Error("Interrupted operation did not enroll a marker");
+        // A ready marker alone cannot bypass a nonterminal durable journal.
+        await markers.markRefreshReady(transaction, interrupted.epoch);
+        const eligible =
+          canUseTemporaryMutationCoordination(checkout) &&
+          canUseTemporaryMutationCoordination(filePath);
+        let recovered = false;
+        const result = await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          async () => {
+            throw new Error("An unfinished journal bypassed recovery");
+          },
+          async () => {
+            expect(await readFile(filePath, "utf8")).toBe(source);
+            expect(activeMutationLifecycle()).toBeDefined();
+            recovered = true;
+            return "regular path";
+          },
+        );
+        expect(result).toBe(eligible ? "regular path" : undefined);
+        expect(recovered).toBe(eligible);
+
+        await withLanceMutationLifecycle(async () => {
+          expect(await readFile(filePath, "utf8")).toBe(source);
+          await expect(stat(created)).rejects.toMatchObject({ code: "ENOENT" });
+          if (sourceMode !== null)
+            expect((await stat(filePath)).mode & 0o777).toBe(sourceMode);
+          expect(await markers.readRefreshState(transaction)).toMatchObject({
+            indexRefresh: false,
+            inFlight: false,
+            journal: "sqlite-v1",
+          });
+          expect(await observeMutationIndex(workspace)).toMatchObject({
+            pending: false,
+          });
+        });
+        expect(scheduled).toHaveLength(0);
+      },
+    );
+  },
+);
+
+test("an atomic unindexed patch does not bypass an older writer or replay an entered operation", async () => {
+  await withPublicationFixture(async ({ checkout, transaction, scheduled }) => {
+    const filePath = path.join(checkout, "atomic.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+    const eligible =
+      canUseTemporaryMutationCoordination(checkout) &&
+      canUseTemporaryMutationCoordination(filePath);
+
+    const operation = async () => {
+      throw new Error("The opportunistic operation entered unexpectedly");
+    };
+    const fallback = async () => {
+      throw new Error("The fallback entered unexpectedly");
+    };
+    const guard = await acquireLegacyFileGuard(
+      lockPathIdentity(transaction),
+      {},
+    );
+    try {
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+    } finally {
+      guard.release();
+    }
+
+    const createdAt = Date.now();
+    const sourceRecord = JSON.stringify({
+      createdAt,
+      epoch: 1,
+      expiresAt: createdAt + 60_000,
+      ownerId: "legacy-account",
+      pid: process.pid,
+      token: "legacy-token",
+    });
+    const fileRecord = await mutationLockPath(filePath);
+    const checkoutRecord = await mutationLockPath(transaction);
+    try {
+      // Neither record has a live SQLite holder. The lease itself still owns
+      // the scope until it expires, so a try-only operation must not enter.
+      await writeFile(fileRecord, sourceRecord, { flag: "wx" });
+      await writeFile(checkoutRecord, sourceRecord, { flag: "wx" });
+      await expect(
+        withFencedFileLock(filePath, operation, { tryOnly: true }),
+      ).rejects.toMatchObject({ code: "lock_busy" });
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+      expect(await readFile(fileRecord, "utf8")).toBe(sourceRecord);
+      expect(await readFile(checkoutRecord, "utf8")).toBe(sourceRecord);
+    } finally {
+      await rm(fileRecord, { force: true });
+      await rm(checkoutRecord, { force: true });
+    }
+
+    if (!eligible) {
+      expect(
+        await tryUnindexedPatchPublication(
+          filePath,
+          undefined,
+          operation,
+          fallback,
+        ),
+      ).toBeUndefined();
+      expect(scheduled).toHaveLength(0);
+      return;
+    }
+
+    const enteredError = Object.assign(new Error("Publication failed"), {
+      code: "lock_busy",
+    });
+    await expect(
+      tryUnindexedPatchPublication(
+        filePath,
+        undefined,
+        async (fence) => {
+          await fence();
+          throw enteredError;
+        },
+        fallback,
+      ),
+    ).rejects.toBe(enteredError);
+
+    expect(
+      await tryUnindexedPatchPublication(
+        filePath,
+        undefined,
+        async (fence) => {
+          await fence();
+          return undefined;
+        },
+        async () => "regular path",
+      ),
+    ).toBe("regular path");
+    expect(scheduled).toHaveLength(0);
+  });
+});
+
+test("index observers stay scoped to their asynchronous workspace operations", async () => {
+  await withPublicationFixture(async ({ alternate, workspace }) => {
+    const entered = Promise.withResolvers<void>();
+    const secondObserved = Promise.withResolvers<void>();
+    const first = withMutationIndexObserver(
+      async (selected) => {
+        expect(selected).toBe(workspace);
+        return { pending: false, generationId: "first" };
+      },
+      async () => {
+        entered.resolve();
+        await secondObserved.promise;
+        return observeMutationIndex(workspace);
+      },
+    );
+    try {
+      await entered.promise;
+      await withMutationIndexObserver(
+        async (selected) => {
+          expect(selected).toBe(alternate);
+          return { pending: true, epoch: "second" };
+        },
+        async () => {
+          expect(await observeMutationIndex(alternate)).toEqual({
+            pending: true,
+            epoch: "second",
+          });
+          secondObserved.resolve();
+          expect(await first).toEqual({
+            pending: false,
+            generationId: "first",
+          });
+        },
+      );
+      expect(await observeMutationIndex(workspace)).toEqual({ pending: false });
+    } finally {
+      secondObserved.resolve();
+      await first;
+    }
+  });
+});
+
+test("a scheduled refresh parses and publishes source through the checkout fence", async () => {
   await withPublicationFixture(
     async ({ checkout, transaction, workspace, scheduled }) => {
-      const filePath = path.join(checkout, "partially-written.ts");
-      const source = "export const value = 1;\n";
-      const candidate = "export const value = 2;\n";
-      await writeFile(filePath, source);
-      const operationId = createIdentity("job", {
-        checkout,
-        label: "interrupted",
-      });
-      const interruption = new Error("Simulated writer interruption");
-      await expect(
-        withLanceMutationLifecycle(async () => {
-          const lifecycle = activeMutationLifecycle();
-          if (!lifecycle) throw new Error("Write did not enroll SQLite");
-          await lifecycle.begin({
-            files: [
-              {
-                candidateSha256: sha256(candidate),
-                filePath,
-                sourceContentBase64: Buffer.from(source).toString("base64"),
-                sourceSha256: sha256(source),
-              },
-            ],
-            operationId,
-            tool: "file_patch",
-            workspace,
-          });
-          await writeFile(filePath, candidate);
-          await lifecycle.committed(operationId, {
-            filePath,
-            sha256: sha256(candidate),
-          });
-          throw interruption;
-        }),
-      ).rejects.toBe(interruption);
-      expect(await readFile(filePath, "utf8")).toBe(candidate);
+      await writeFile(
+        path.join(checkout, "source.ts"),
+        "export const state = 1;\n",
+      );
+      const initial = publication(workspace, "initial");
+      await withDeferredIndexPublication(workspace, (finalize) =>
+        publishFixture(finalize, initial),
+      );
+      const clean = await markers.readRefreshState(transaction);
+      if (clean?.kind !== "clean")
+        throw new Error("Missing initial generation");
+      const pending = await markers.markRefreshPending(
+        transaction,
+        ["source.ts"],
+        clean.scope,
+        clean.storageScope,
+      );
       expect(await observeMutationIndex(workspace)).toMatchObject({
         pending: true,
       });
-      expect(scheduled).toHaveLength(0);
+      const scheduledRefresh = scheduled.at(-1);
+      if (!scheduledRefresh) throw new Error("Missing background job");
+      expect(scheduledRefresh[1].epoch).toBe(pending.epoch);
+      await scheduledRefresh[2](pending);
 
-      await withLanceMutationLifecycle(async () => {
-        expect(await readFile(filePath, "utf8")).toBe(source);
-        expect(await markers.readRefreshState(transaction)).toMatchObject({
-          indexRefresh: false,
-          inFlight: false,
-          journal: "sqlite-v1",
-        });
-        expect(await observeMutationIndex(workspace)).toMatchObject({
-          pending: false,
-        });
-      });
-      expect(scheduled).toHaveLength(0);
+      const published = await markers.readRefreshState(transaction);
+      expect(published).toMatchObject({ kind: "clean", scope: pending.scope });
+      expect(published?.epoch).not.toBe(pending.epoch);
+      expect(published?.publishedGenerationId).toBeString();
+      expect(published?.publishedGenerationId).not.toBe(initial.generationId);
     },
   );
 });
