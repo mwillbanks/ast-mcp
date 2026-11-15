@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,8 +6,112 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
 
+import { resolveConfig } from "../../src/config";
+import type * as Scheduler from "../../src/intelligence/mutation/experimental-deferred-refresh.ts";
+import type * as MutationService from "../../src/intelligence/mutation/service.ts";
+import { WorkspaceRegistry } from "../../src/intelligence/workspace/index.ts";
 import { createServer } from "../../src/server";
+import type * as GraphEntry from "../../src/server/graph-intelligence.ts";
 import { createSharedNativeAdmission } from "../../src/tools/code-intelligence";
+import { hermeticConfig } from "../support/hermetic-config.ts";
+import { createMockTime, deferred } from "../support/mock-time.ts";
+
+test.skipIf(typeof Bun.ModuleGraph !== "function")(
+  "project graphs route index observations and join active refreshes on close",
+  async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "ast-mcp-graph-drain-"));
+    const graph = new Bun.ModuleGraph();
+    try {
+      const resolution = hermeticConfig(root);
+      const config = await resolveConfig(resolution);
+      const workspace = await new WorkspaceRegistry().open({
+        configurationGeneration: 1,
+        directory: root,
+        storage: { kind: "local" },
+      });
+      const scheduler = await graph.import<typeof Scheduler>(
+        new URL(
+          "../../src/intelligence/mutation/experimental-deferred-refresh.ts",
+          import.meta.url,
+        ).href,
+      );
+      const mutation = await graph.import<typeof MutationService>(
+        new URL("../../src/intelligence/mutation/service.ts", import.meta.url)
+          .href,
+      );
+      const entry = await graph.import<typeof GraphEntry>(
+        new URL("../../src/server/graph-intelligence.ts", import.meta.url).href,
+      );
+      const time = createMockTime();
+      try {
+        await graph.run(async () => {
+          const { scheduleMutationRefresh, stopMutationRefreshes } = scheduler;
+          const observe = mock(async () => ({ pending: false }));
+          const service = await entry.createGraphIntelligence(observe);
+          const release = deferred();
+          const marker = {
+            kind: "pending",
+            epoch: "d7449186-3320-41d1-bf5d-2abd3d65c286",
+            firstDirtyAt: time.now(),
+            lastDirtyAt: time.now(),
+            inFlight: false,
+            paths: null,
+            scope: "a".repeat(64),
+            storageScope: "b".repeat(64),
+          } as const;
+          const ignored = mock(async () => "retry" as const);
+          let signal: AbortSignal | undefined;
+          let closed: Promise<void> | undefined;
+          try {
+            await service.run(config, resolution, workspace, async () => {
+              expect(await mutation.observeMutationIndex(workspace)).toEqual({
+                pending: false,
+              });
+              scheduleMutationRefresh(
+                "active",
+                marker,
+                async (_state, active) => {
+                  signal = active;
+                  await release.promise;
+                  return "retry";
+                },
+              );
+            });
+            expect(observe).toHaveBeenCalledWith(workspace, config);
+            await time.advanceBy(75);
+            expect(signal?.aborted).toBeFalse();
+            scheduleMutationRefresh("pending", marker, ignored);
+            expect(time.pending()).toBe(1);
+
+            let settled = false;
+            closed = service.close().finally(() => {
+              settled = true;
+            });
+            await time.advanceBy(75);
+            expect(signal?.aborted).toBeTrue();
+            expect(time.pending()).toBe(0);
+            expect(settled).toBeFalse();
+            scheduleMutationRefresh("late", marker, ignored);
+            release.resolve();
+            await closed;
+            await time.advanceBy(75);
+            expect(time.pending()).toBe(0);
+            expect(ignored).not.toHaveBeenCalled();
+          } finally {
+            release.resolve();
+            await stopMutationRefreshes();
+            await (closed ?? service.close());
+          }
+        });
+      } finally {
+        time.dispose();
+      }
+    } finally {
+      graph.dispose();
+      await rm(root, { force: true, recursive: true });
+    }
+  },
+);
 
 test("shared native admission queues sixteen requests and removes a cancelled head", async () => {
   const acquire = createSharedNativeAdmission();

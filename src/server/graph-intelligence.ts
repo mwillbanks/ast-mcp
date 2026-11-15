@@ -1,5 +1,6 @@
 import { withResolvedConfig } from "../config";
 import { bindConfigurationResolution } from "../config/identity.ts";
+import { stopMutationRefreshes } from "../intelligence/mutation/experimental-deferred-refresh.ts";
 import { withMutationIndexObserver } from "../intelligence/mutation/service.ts";
 import { withWorkspaceContext } from "../intelligence/workspace/context.ts";
 import { createIntelligenceToolService } from "../tools/intelligence.ts";
@@ -25,7 +26,11 @@ export async function createGraphIntelligence(
       );
     },
     close: async () => {
-      await service.close?.();
+      try {
+        await stopMutationRefreshes();
+      } finally {
+        await service.close?.();
+      }
     },
   };
 }
