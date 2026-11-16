@@ -236,7 +236,7 @@ jobs:
     needs: [release, validate, build, consumers, standalone, publish-standalone]
     if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' && needs.consumers.result == 'success' && needs.standalone.result == 'success' && needs.publish-standalone.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
