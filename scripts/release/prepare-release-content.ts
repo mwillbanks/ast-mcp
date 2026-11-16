@@ -1,6 +1,7 @@
 import {
   renderReleaseNotes,
   validateReleaseVersion,
+  versionReleaseDraft,
 } from "./render-release-notes.ts";
 
 export const releaseManifest = ".release-please-manifest.json";
@@ -75,14 +76,18 @@ export async function prepareReleaseContent(
       throw new Error(
         "Missing authored release draft or changelog for " + version,
       );
-    renderReleaseNotes(existing, version);
+    renderReleaseNotes(existing, version, page);
   } else {
     if (firstChangelogVersion(changelog) !== nextRelease)
       throw new Error("The first changelog section must be NEXT_RELEASE");
     if (history.includes(nextRelease))
       throw new Error("Release placeholder in historical changelog section");
-    const notes = stamp(draft, version, releaseDraft);
-    renderReleaseNotes(notes, version);
+    const notes = versionReleaseDraft(
+      stamp(draft, version, releaseDraft),
+      version,
+      releaseDraft,
+    );
+    renderReleaseNotes(notes, version, releaseDraft);
     additions.set(page, notes);
   }
 

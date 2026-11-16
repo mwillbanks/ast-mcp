@@ -753,6 +753,55 @@ describe("authored release content", () => {
     });
   });
 
+  test("derives the published title from the release manifest", async () => {
+    const source = files();
+    const nextVersion = "0.9.1";
+    const nextPage = releasePage(nextVersion);
+    const body = "\n## Release notes\n\nAvailable since NEXT_RELEASE.\n";
+    source.set(releaseManifest, JSON.stringify({ ".": nextVersion }));
+    source.set(
+      releaseDraft,
+      "---\ntitle: Next release\ndescription: Shared stdio.\n---\n" + body,
+    );
+
+    const changes = await prepareReleaseContent(source, identity);
+    expect(changes.additions.get(nextPage)).toBe(
+      "---\ntitle: 0.9.1\ndescription: Shared stdio.\n---\n" +
+        body.replace("NEXT_RELEASE", nextVersion),
+    );
+    for (const path of changes.deletions) source.delete(path);
+    for (const [path, content] of changes.additions) source.set(path, content);
+    expect(await prepareReleaseContent(source, identity)).toEqual({
+      additions: new Map(),
+      deletions: [],
+    });
+    source.set(nextPage, historicalNotes);
+    await expect(prepareReleaseContent(source, identity)).rejects.toThrow(
+      "title must match 0.9.1",
+    );
+  });
+
+  test("prepares the checked-in draft for release", async () => {
+    const root = new URL("../../", import.meta.url);
+    const draft = Bun.file(new URL(releaseDraft, root));
+    // Release preparation removes the draft from the generated release branch.
+    if (!(await draft.exists())) return;
+    const source = new Map([
+      [releaseManifest, JSON.stringify({ ".": "0.0.0" })],
+      [
+        releaseChangelog,
+        await Bun.file(new URL(releaseChangelog, root)).text(),
+      ],
+      [releaseDraft, await draft.text()],
+    ]);
+
+    const changes = await prepareReleaseContent(source, identity);
+    const page = changes.additions.get(releasePage("0.0.0"));
+    expect(page).toBeDefined();
+    expect(renderReleaseNotes(page!, "0.0.0")).not.toContain("NEXT_RELEASE");
+    expect(changes.deletions).toEqual([releaseDraft]);
+  });
+
   test.each([
     [page, versionedNotes, "already exists"],
     [releaseManifest, '{".":"../0.9.0"}', "Invalid AST-MCP release version"],
@@ -764,7 +813,21 @@ describe("authored release content", () => {
       "The first changelog section",
     ],
     [releaseChangelog, formatted, "The first changelog section"],
-    [releaseDraft, historicalNotes, "title must match"],
+    [
+      releaseDraft,
+      "Release notes.",
+      releaseDraft + ": Missing MDX front matter",
+    ],
+    [
+      releaseDraft,
+      "---\ntitle: [\n---\n\nRelease notes.\n",
+      releaseDraft + ": Invalid YAML front matter",
+    ],
+    [
+      releaseDraft,
+      "---\n- title\n---\n\nRelease notes.\n",
+      releaseDraft + ": MDX front matter must be a mapping",
+    ],
     [
       historicalPage,
       "Historical NEXT_RELEASE.",
