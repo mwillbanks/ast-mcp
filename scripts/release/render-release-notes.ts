@@ -19,31 +19,68 @@ function documentationLinks(line: string): string {
   );
 }
 
-function releaseBody(source: string, version: string): string {
-  const normalized = source.replaceAll("\r\n", "\n");
-  const metadata = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(normalized);
-  if (!metadata || /\bNEXT_RELEASE\b/.test(normalized))
-    throw new Error("Release notes require versioned MDX front matter");
-  const frontMatter: unknown = Bun.YAML.parse(metadata[1]!);
+function readReleaseNotes(source: string, sourcePath: string) {
+  const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  if (!header) throw new Error(sourcePath + ": Missing MDX front matter");
+
+  let frontMatter: unknown;
+  try {
+    frontMatter = Bun.YAML.parse(header[1]!);
+  } catch (cause) {
+    throw new Error(sourcePath + ": Invalid YAML front matter", { cause });
+  }
   if (
     !frontMatter ||
     typeof frontMatter !== "object" ||
+    Array.isArray(frontMatter)
+  )
+    throw new Error(sourcePath + ": MDX front matter must be a mapping");
+
+  return { frontMatter, body: source.slice(header[0].length) };
+}
+
+export function versionReleaseDraft(
+  source: string,
+  version: string,
+  sourcePath: string,
+): string {
+  const { frontMatter, body } = readReleaseNotes(source, sourcePath);
+  const yaml = Bun.YAML.stringify(
+    { ...frontMatter, title: validateReleaseVersion(version) },
+    null,
+    2,
+  );
+  return "---\n" + yaml.trimEnd() + "\n---\n" + body;
+}
+
+function releaseBody(
+  source: string,
+  version: string,
+  sourcePath: string,
+): string {
+  if (/\bNEXT_RELEASE\b/.test(source))
+    throw new Error(
+      sourcePath + ": Release notes require versioned MDX front matter",
+    );
+  const { frontMatter, body } = readReleaseNotes(source, sourcePath);
+  if (
     !("title" in frontMatter) ||
     (frontMatter.title !== version &&
       frontMatter.title !== "AST-MCP " + version)
   )
-    throw new Error("Release notes title must match " + version);
-  return normalized.slice(metadata[0].length);
+    throw new Error(sourcePath + ": Release notes title must match " + version);
+  return body.replaceAll("\r\n", "\n");
 }
 
 export function renderReleaseNotes(
   source: string,
   inputVersion: string,
+  sourcePath = "Release notes",
 ): string {
   const version = validateReleaseVersion(inputVersion);
   const lines: string[] = [];
   let fence: { delimiter: string; mermaid: boolean } | undefined;
-  for (const line of releaseBody(source, version).split("\n")) {
+  for (const line of releaseBody(source, version, sourcePath).split("\n")) {
     if (fence) {
       const trimmed = line.trim();
       if (!fence.mermaid) lines.push(line);
@@ -88,9 +125,9 @@ export async function releaseNotesCommand(
   const version = validateReleaseVersion(argument);
   if (extra.length)
     throw new Error("Usage: render-release-notes <version> [mdx-file]");
-  const source = open(
-    file ?? "website/content/docs/releases/" + version + ".mdx",
-  );
+  const sourcePath =
+    file ?? "website/content/docs/releases/" + version + ".mdx";
+  const source = open(sourcePath);
   if (!(await source.exists()))
     throw new Error("Release notes source is missing");
   const byteLimit = 1024 * 1024;
@@ -100,6 +137,7 @@ export async function releaseNotesCommand(
   return renderReleaseNotes(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     version,
+    sourcePath,
   );
 }
 
