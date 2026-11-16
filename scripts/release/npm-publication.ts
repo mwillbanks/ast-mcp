@@ -55,17 +55,8 @@ async function verifyRegistry(
   return true;
 }
 
-async function publish(
-  archive: Archive,
-  version: string,
-  io: PublicationIo,
-): Promise<void> {
-  if (await verifyRegistry(archive, version, io.fetch)) {
-    console.log(`Verified existing ${archive.name}@${version}`);
-    return;
-  }
-
-  const exitCode = await io.publish([
+function submit(archive: Archive, publish: PublicationIo["publish"]) {
+  return publish([
     "npm",
     "publish",
     path.resolve(archive.file),
@@ -76,15 +67,34 @@ async function publish(
     "--registry",
     registry,
   ]);
-  for (const delay of [0, 1_000, 2_000, 4_000, 8_000, 16_000]) {
-    if (delay) await io.delay(delay);
-    if (await verifyRegistry(archive, version, io.fetch)) return;
-  }
-  if (exitCode !== 0)
-    throw new Error(
-      `Could not publish ${archive.name}@${version}. New platform packages require an authenticated first publish of the qualified tarball by the npm scope owner.`,
+}
+
+type Submission = { archive: Archive; exitCode: number };
+
+async function verifyPublished(
+  submissions: Submission[],
+  version: string,
+  io: PublicationIo,
+): Promise<void> {
+  const interval = 20_000;
+  const maxWait = 20 * 60_000;
+  let pending = submissions;
+  for (let waited = 0; pending.length > 0; waited += interval) {
+    if (waited > 0) await io.delay(interval);
+    const visible = await Promise.all(
+      pending.map(({ archive }) => verifyRegistry(archive, version, io.fetch)),
     );
-  throw new Error(`npm registry has yet to expose ${archive.name}@${version}`);
+    pending = pending.filter((_, index) => !visible[index]);
+    if (waited === maxWait) break;
+  }
+  if (pending.length > 0) {
+    const packages = pending.map(({ archive, exitCode }) =>
+      exitCode === 0
+        ? `${archive.name}@${version}`
+        : `${archive.name}@${version} (npm publish exited ${exitCode})`,
+    );
+    throw new Error(`npm registry has yet to expose ${packages.join(", ")}`);
+  }
 }
 
 export async function publishNpmRelease(
@@ -117,6 +127,25 @@ export async function publishNpmRelease(
         ),
       ),
     );
-  for (const archive of archives) await publish(archive, version, io);
-  await publish(root, version, io);
+  archives.push(root);
+  const existing = await Promise.all(
+    archives.map((archive) => verifyRegistry(archive, version, io.fetch)),
+  );
+  let submissions: Submission[] = [];
+  for (const [index, archive] of archives.entries()) {
+    if (existing[index]) {
+      console.log(`Verified existing ${archive.name}@${version}`);
+      continue;
+    }
+    if (archive === root) {
+      // A nonzero exit can mean another run uploaded this exact version.
+      const failedPlatforms = submissions.filter(
+        ({ exitCode }) => exitCode !== 0,
+      );
+      await verifyPublished(failedPlatforms, version, io);
+      submissions = submissions.filter(({ exitCode }) => exitCode === 0);
+    }
+    submissions.push({ archive, exitCode: await submit(archive, io.publish) });
+  }
+  await verifyPublished(submissions, version, io);
 }

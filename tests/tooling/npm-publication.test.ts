@@ -142,7 +142,7 @@ test("publishes exact platform archives before the main package", async () => {
     ]),
   );
   expect(fixture.queries).toEqual(
-    fixture.archives.flatMap(({ name }) => [name, name]),
+    [...fixture.archives, ...fixture.archives].map(({ name }) => name),
   );
   expect(fixture.delays).toEqual([]);
 });
@@ -176,7 +176,7 @@ test("reuses exact registry versions and rejects differing digests", async () =>
   expect(fixture.commands).toEqual([]);
 });
 
-test("fails closed on registry errors and an unverified publish failure", async () => {
+test("fails closed on registry errors and reports unverified npm exits", async () => {
   const fixture = await releaseFixture();
   fixture.setRegistryError(new Response(null, { status: 503 }));
   await expect(publishNpmRelease(fixture.args, fixture.io)).rejects.toThrow(
@@ -185,18 +185,23 @@ test("fails closed on registry errors and an unverified publish failure", async 
   expect(fixture.commands).toEqual([]);
 
   const failure = await releaseFixture();
-  failure.setPublishCode(1);
+  const failedPlatform = failure.archives[0]!;
   failure.deferPublishVisibility();
-  await expect(publishNpmRelease(failure.args, failure.io)).rejects.toThrow(
-    "Could not publish " + failure.archives[0]!.name,
+  await expect(
+    publishNpmRelease(failure.args, {
+      ...failure.io,
+      publish: async (command) => {
+        await failure.io.publish(command);
+        return command[2] === failedPlatform.file ? 1 : 0;
+      },
+    }),
+  ).rejects.toThrow(`${failedPlatform.name}@${version} (npm publish exited 1)`);
+  expect(failure.commands.map((command) => command[2])).toEqual(
+    failure.archives.slice(0, -1).map(({ file }) => file),
   );
-  expect(failure.commands.map((command) => command[2])).toEqual([
-    failure.archives[0]!.file,
-  ]);
-  expect(failure.delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
 });
 
-test("recognizes a matching version published concurrently despite a nonzero npm exit", async () => {
+test("recognizes matching versions published concurrently despite nonzero npm exits", async () => {
   const fixture = await releaseFixture();
   fixture.setPublishCode(1);
   await publishNpmRelease(fixture.args, fixture.io);
@@ -204,29 +209,69 @@ test("recognizes a matching version published concurrently despite a nonzero npm
   expect(fixture.delays).toEqual([]);
 });
 
-test("waits for an accepted archive to appear after a nonzero npm exit", async () => {
+test("submits every missing archive before waiting for npm scans", async () => {
   const fixture = await releaseFixture();
-  fixture.setPublishCode(1);
+  const [existing, early, ...later] = fixture.archives;
+  fixture.visible.add(existing!.name);
   fixture.deferPublishVisibility();
+
   await publishNpmRelease(fixture.args, {
     ...fixture.io,
     delay: async (milliseconds) => {
       await fixture.io.delay(milliseconds);
-      fixture.visible.add(fixture.archives[fixture.commands.length - 1]!.name);
+      expect(fixture.commands.map((command) => command[2])).toEqual(
+        [early!, ...later].map(({ file }) => file),
+      );
+      if (fixture.delays.length === 1) {
+        fixture.visible.add(early!.name);
+      } else {
+        for (const { name } of later) fixture.visible.add(name);
+      }
     },
   });
-  expect(fixture.commands).toHaveLength(fixture.archives.length);
-  expect(fixture.delays).toEqual(fixture.archives.map(() => 1_000));
+
+  expect(fixture.delays).toEqual([20_000, 20_000]);
+  expect(
+    fixture.queries.filter((name) => name === existing!.name),
+  ).toHaveLength(1);
+  expect(fixture.queries.filter((name) => name === early!.name)).toHaveLength(
+    3,
+  );
+  expect(fixture.queries.filter((name) => name === base)).toHaveLength(4);
 });
 
-test("bounds registry visibility retries and leaves the main package unpublished", async () => {
+test("rejects a registry integrity mismatch after npm scans", async () => {
   const fixture = await releaseFixture();
   fixture.deferPublishVisibility();
-  await expect(publishNpmRelease(fixture.args, fixture.io)).rejects.toThrow(
-    "npm registry has yet to expose " + fixture.archives[0]!.name,
+  fixture.manifests.get(base)!.dist.integrity = "sha512-unexpected";
+  await expect(
+    publishNpmRelease(fixture.args, {
+      ...fixture.io,
+      delay: async () => {
+        for (const { name } of fixture.archives) fixture.visible.add(name);
+      },
+    }),
+  ).rejects.toThrow("npm registry artifact mismatch for " + base);
+  expect(fixture.commands).toHaveLength(fixture.archives.length);
+});
+
+test("bounds the shared registry wait and reports only missing archives", async () => {
+  const fixture = await releaseFixture();
+  fixture.deferPublishVisibility();
+  const missing = fixture.archives.at(-1)!;
+  await expect(
+    publishNpmRelease(fixture.args, {
+      ...fixture.io,
+      delay: async (milliseconds) => {
+        await fixture.io.delay(milliseconds);
+        for (const { name } of fixture.archives.slice(0, -1)) {
+          fixture.visible.add(name);
+        }
+      },
+    }),
+  ).rejects.toThrow(
+    "npm registry has yet to expose " + missing.name + "@1.2.3",
   );
-  expect(fixture.delays).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
-  expect(fixture.commands.map((command) => command[2])).toEqual([
-    fixture.archives[0]!.file,
-  ]);
+  expect(fixture.delays).toEqual(Array.from({ length: 60 }, () => 20_000));
+  expect(fixture.commands).toHaveLength(fixture.archives.length);
 });
