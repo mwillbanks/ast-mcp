@@ -19,7 +19,10 @@ export function isToolReference(toc: { url: string }[]): boolean {
 export function ToolTOC() {
   const items = useItems();
   const [fragment, setFragment] = useState<string | null>(null);
-  const navigation = useRef<{ id: string; settled: boolean } | null>(null);
+  const navigation = useRef<{
+    id: string;
+    settledScrollTop: number | null;
+  } | null>(null);
   const selectFragment = useCallback((id: string | null) => {
     const target = id ? document.getElementById(id) : null;
     const bounds = target?.getBoundingClientRect();
@@ -37,10 +40,11 @@ export function ToolTOC() {
           bounds.top < innerHeight &&
           bounds.bottom > 0)),
     );
+    const settledScrollTop = settled ? scroller.scrollTop : null;
     if (navigation.current?.id !== id) {
-      navigation.current = id ? { id, settled } : null;
+      navigation.current = id ? { id, settledScrollTop } : null;
     } else if (navigation.current && settled) {
-      navigation.current.settled = true;
+      navigation.current.settledScrollTop = settledScrollTop;
     }
     setFragment(id);
   }, []);
@@ -72,7 +76,11 @@ export function ToolTOC() {
       selectFragment(id || null);
     };
     const onScroll = () => {
-      if (navigation.current?.settled) selectFragment(null);
+      const current = navigation.current;
+      if (!current || current.settledScrollTop === null) return;
+      const scroller = document.scrollingElement ?? document.documentElement;
+      // History restoration can deliver scroll after its destination is captured.
+      if (scroller.scrollTop !== current.settledScrollTop) selectFragment(null);
     };
     const onScrollEnd = () => {
       const current = navigation.current;
@@ -81,7 +89,10 @@ export function ToolTOC() {
       const bounds = target?.getBoundingClientRect();
       if (!bounds || bounds.bottom <= 0 || bounds.top >= window.innerHeight) {
         selectFragment(null);
-      } else current.settled = true;
+      } else {
+        const scroller = document.scrollingElement ?? document.documentElement;
+        current.settledScrollTop = scroller.scrollTop;
+      }
     };
     followFragment();
     window.addEventListener("hashchange", followFragment);

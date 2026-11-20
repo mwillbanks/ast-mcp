@@ -16,7 +16,9 @@ async function holdTOCObservations(page: Page) {
     const NativeObserver = window.IntersectionObserver;
     let holding = true;
     let scrollEnds = 0;
+    let hashChanges = 0;
     document.addEventListener("scrollend", () => scrollEnds++);
+    window.addEventListener("hashchange", () => hashChanges++);
     const pending: (() => void)[] = [];
     const select: ((id: string) => void)[] = [];
     const control = {
@@ -25,6 +27,9 @@ async function holdTOCObservations(page: Page) {
       },
       get scrollEnds() {
         return scrollEnds;
+      },
+      get hashChanges() {
+        return hashChanges;
       },
       select(id: string) {
         for (const publish of select) publish(id);
@@ -260,8 +265,40 @@ test("tool TOC preserves fragment selection across delayed observations and hist
   await expect(subsection).toHaveAttribute("aria-current", "location");
   await expect(subsection).toHaveAttribute("data-active", "true");
 
+  const beforeBack = await page.evaluate(() => {
+    const control = (
+      window as unknown as Window & {
+        __tocObserver: { hashChanges: number; select(id: string): void };
+      }
+    ).__tocObserver;
+    control.select("optional-sql-candidate-validation");
+    return control.hashChanges;
+  });
   await page.goBack();
   await expect(page).toHaveURL(/#file_patch$/);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as Window & {
+              __tocObserver: { hashChanges: number };
+            }
+          ).__tocObserver.hashChanges,
+      ),
+    )
+    .toBeGreaterThan(beforeBack);
+  const restored = await page.evaluate(() => {
+    document
+      .getElementById("file_patch")!
+      .scrollIntoView({ behavior: "instant" });
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    const scroller = document.scrollingElement!;
+    const before = scroller.scrollTop;
+    document.dispatchEvent(new Event("scroll"));
+    return { before, after: scroller.scrollTop };
+  });
+  expect(restored.after).toBe(restored.before);
   await expect(patch).toHaveAttribute("aria-current", "location");
   await expect(patch).toHaveAttribute("data-active", "true");
   await page.goForward();

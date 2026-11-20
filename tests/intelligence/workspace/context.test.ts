@@ -10,6 +10,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -349,6 +350,31 @@ test("configuration cache identity excludes derived workspace, revision, and sto
   }
 });
 
+test.each(["dev", "ino"] as const)(
+  "cached handles preserve all 64 bits of checkout %s",
+  async (coordinate) => {
+    const root = await temporary("ast-mcp-workspace-identity-precision-");
+    const original = 1n << 53n;
+    let identity = original;
+    expect(Number(original)).toBe(Number(original + 1n));
+    const registry = new WorkspaceRegistry(async (target, options) => {
+      const metadata = await stat(target, options);
+      metadata[coordinate] = identity;
+      return metadata;
+    });
+    const workspace = await registry.open({
+      configurationGeneration: 1,
+      directory: root,
+    });
+    expect(await registry.get(workspace.workspaceId)).toBe(workspace);
+    identity = original + 1n;
+    await expect(registry.get(workspace.workspaceId)).rejects.toMatchObject({
+      code: "workspace_mismatch",
+      details: { drift: ["checkoutIdentity"] },
+    });
+  },
+);
+
 test("cached handles reject checkout replacement and removal", async () => {
   const parent = await temporary("ast-mcp-workspace-replacement-");
   const checkout = path.join(parent, "checkout");
@@ -360,8 +386,14 @@ test("cached handles reject checkout replacement and removal", async () => {
     directory: checkout,
   });
 
+  const original = await stat(checkout, { bigint: true });
   await rename(checkout, displaced);
   await mkdir(checkout);
+  const replacement = await stat(checkout, { bigint: true });
+  expect({ dev: replacement.dev, ino: replacement.ino }).not.toEqual({
+    dev: original.dev,
+    ino: original.ino,
+  });
   await expect(registry.get(workspace.workspaceId)).rejects.toMatchObject({
     code: "workspace_mismatch",
   });

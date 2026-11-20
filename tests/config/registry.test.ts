@@ -36,6 +36,38 @@ async function fixture() {
   return { root, first, second };
 }
 
+test("fingerprints preserve exact filesystem identity and configuration metadata", async () => {
+  const { root, first } = await fixture();
+  const registry = new ConfigRegistry();
+  const configPath = path.join(first, "ast-mcp.toml");
+  try {
+    const snapshot = await registry.snapshot({
+      cwd: first,
+      env: {},
+      home: path.join(root, "home"),
+    });
+    const directory = await stat(first, { bigint: true });
+    const config = await stat(configPath, { bigint: true });
+    expect(JSON.parse(snapshot.fingerprints[first]!)).toEqual([
+      "directory",
+      directory.dev.toString(),
+      directory.ino.toString(),
+      await realpath(first),
+    ]);
+    expect(JSON.parse(snapshot.fingerprints[configPath]!)).toEqual([
+      "file",
+      config.dev.toString(),
+      config.ino.toString(),
+      await realpath(configPath),
+      config.mtimeNs.toString(),
+      config.size.toString(),
+    ]);
+  } finally {
+    registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("reloading changed selections preserves unrelated and unchanged snapshots", async () => {
   const { root, first, second } = await fixture();
   const registry = new ConfigRegistry(60_000);
