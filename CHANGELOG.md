@@ -1,5 +1,9 @@
 # Changelog
 
+## NEXT_RELEASE
+
+- Require hosted performance benchmarks before publication. Include benchmark results in the GitHub release and documentation. Available since NEXT_RELEASE.
+
 ## 0.9.1
 
 - Share the AST-MCP server across compatible installer-managed stdio sessions on macOS and Linux. Update existing registrations to enable sharing. Available since 0.9.1.

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       recovery_tag:
-        description: Published release tag to validate and publish
+        description: Draft or published release tag to qualify and publish
         required: false
         type: string
     secrets:
@@ -12,6 +12,10 @@ on:
         required: true
 
 permissions: {}
+
+concurrency:
+  group: ast-mcp-release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -21,13 +25,17 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created || steps.recover.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name || steps.recover.outputs.tag_name }}
-      prs_created: ${{ steps.release.outputs.prs_created }}
-      prs: ${{ steps.release.outputs.prs }}
+      release_created: ${{ steps.candidate.outputs.release_created }}
+      tag_name: ${{ steps.candidate.outputs.tag_name }}
+      candidate_sha: ${{ steps.candidate.outputs.candidate_sha }}
+      release_id: ${{ steps.candidate.outputs.release_id }}
+      draft: ${{ steps.candidate.outputs.draft }}
+      legacy: ${{ steps.candidate.outputs.legacy }}
+      published_recovery: ${{ steps.candidate.outputs.published_recovery }}
+      prs_created: ${{ steps.release-pr.outputs.prs_created }}
+      prs: ${{ steps.release-pr.outputs.prs }}
     steps:
-      - name: Require main for release recovery
-        if: inputs.recovery_tag != ''
+      - name: Require main for release execution
         run: test "$GITHUB_REF" = refs/heads/main
       - uses: googleapis/release-please-action@v5
         id: release
@@ -36,37 +44,28 @@ jobs:
         with:
           # Workflow changes in the release target require a workflow-scoped token.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          skip-github-pull-request: true
       - uses: actions/checkout@v7
-        if: inputs.recovery_tag != '' || steps.release.outcome == 'failure'
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Recover an existing release
-        id: recover
-        if: inputs.recovery_tag != '' || steps.release.outcome == 'failure'
-        shell: bash
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Resolve immutable release candidate
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
+          CREATED_TAG: ${{ steps.release.outputs.tag_name }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
-          RELEASE_TAG: ${{ inputs.recovery_tag }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$RELEASE_TAG" ]]; then
-            RELEASE_TAG="ast-mcp-v$(jq -r .version package.json)"
-          fi
-          [[ "$RELEASE_TAG" =~ ^ast-mcp-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
-          test "$(jq -r .draft <<<"$release")" = false
-          target=$(jq -r .target_commitish <<<"$release")
-          tag_commit=$(git rev-list -n 1 "$RELEASE_TAG")
-          test "$tag_commit" = "$target"
-          git merge-base --is-ancestor "$tag_commit" HEAD
-          test "$(git show "$RELEASE_TAG:package.json" | jq -r .version)" = "${RELEASE_TAG#ast-mcp-v}"
-          if [[ -z "$RECOVERY_TAG" ]]; then
-            test "$tag_commit" = "$GITHUB_SHA"
-          fi
-          echo "release_created=true" >> "$GITHUB_OUTPUT"
-          echo "tag_name=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+        run: bun scripts/release/release-candidate.ts resolve
+      - uses: googleapis/release-please-action@v5
+        id: release-pr
+        if: inputs.recovery_tag == '' && steps.candidate.outputs.release_created != 'true' && steps.candidate.outputs.pending_draft != 'true'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          skip-github-release: true
 
   dispatch-ci:
     needs: release
@@ -106,7 +105,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          ref: ${{ needs.release.outputs.candidate_sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -143,7 +142,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          fetch-depth: 0
+          ref: ${{ needs.release.outputs.candidate_sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -155,18 +155,31 @@ jobs:
         run: bun run check
       - run: bun run skill:check
       - run: bun run evals:check
+      - name: Restore the published package archive
+        if: needs.release.outputs.published_recovery == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag_name }}
+          CANDIDATE_SHA: ${{ needs.release.outputs.candidate_sha }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+        run: bun scripts/release/release-candidate.ts restore-root "${RUNNER_TEMP}/package-artifact"
       - name: Build one package archive
         id: pack
         shell: bash
+        env:
+          PUBLISHED_RECOVERY: ${{ needs.release.outputs.published_recovery }}
         run: |
           mkdir -p "$RUNNER_TEMP/package-artifact"
-          if [[ -f scripts/build/pack-npm.ts ]]; then
+          if [[ "$PUBLISHED_RECOVERY" == true ]]; then
+            echo "native_npm=true" >> "$GITHUB_OUTPUT"
+          elif [[ -f scripts/build/pack-npm.ts ]]; then
             bun scripts/build/pack-npm.ts root "$RUNNER_TEMP/package-artifact/ast-mcp.tgz"
             echo "native_npm=true" >> "$GITHUB_OUTPUT"
           else
             bun pm pack --filename "$RUNNER_TEMP/package-artifact/ast-mcp.tgz"
             echo "native_npm=false" >> "$GITHUB_OUTPUT"
           fi
+          if [[ "$PUBLISHED_RECOVERY" == true ]]; then exit 0; fi
           bun -e 'const path = process.env.RUNNER_TEMP + "/package-artifact/ast-mcp.tgz"; await Bun.write(path + ".sha256", new Bun.CryptoHasher("sha256").update(await Bun.file(path).arrayBuffer()).digest("hex") + "\n")'
       - uses: actions/upload-artifact@v7
         with:
@@ -191,50 +204,106 @@ jobs:
       contents: read
     uses: ./.github/workflows/standalone.yml
     with:
-      ref: ${{ needs.release.outputs.tag_name }}
+      ref: ${{ needs.release.outputs.candidate_sha }}
       package_artifact_name: release-candidate
       native_npm: ${{ needs.build.outputs.native_npm == 'true' }}
+      recovery_tag: ${{ needs.release.outputs.published_recovery == 'true' && needs.release.outputs.tag_name || '' }}
+      recovery_release_id: ${{ needs.release.outputs.release_id }}
+
+  benchmarks:
+    needs: [release, validate, build, consumers, standalone]
+    if: ${{ needs.release.outputs.release_created == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: bun ci
+      - uses: actions/download-artifact@v8
+        with:
+          name: standalone-release-matrix
+          path: standalone-matrix
+      - name: Measure and gate the qualified release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.tag_name }}
+          CANDIDATE_SHA: ${{ needs.release.outputs.candidate_sha }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
+          RELEASE_DRAFT: ${{ needs.release.outputs.draft }}
+        run: bun scripts/release/release-candidate.ts benchmark standalone-matrix "${RUNNER_TEMP}/release-benchmarks"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: release-benchmark-evidence
+          path: ${{ runner.temp }}/release-benchmarks/*.json
+          if-no-files-found: ${{ needs.release.outputs.legacy == 'true' && 'ignore' || 'error' }}
+          retention-days: 30
+      - name: Summarize benchmark failure
+        if: failure()
+        run: |
+          echo '## Release benchmark gate failed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Publication is blocked. Inspect the failed step logs and release-benchmark-evidence artifact for workload, report, or archive diagnostics.' >> "$GITHUB_STEP_SUMMARY"
 
   publish-standalone:
-    needs: [release, validate, standalone]
+    needs: [release, validate, build, consumers, standalone, benchmarks]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
       - uses: actions/download-artifact@v8
         with:
           name: standalone-release-matrix
           path: standalone-matrix
-      - name: Verify and attach qualified standalone archives
-        shell: bash
+      - uses: actions/download-artifact@v8
+        if: needs.release.outputs.legacy != 'true'
+        with:
+          name: release-benchmark-evidence
+          path: release-benchmarks
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-candidate
+          path: package-artifact
+      - name: Attach qualified assets and promote the gated draft
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.tag_name }}
+          CANDIDATE_SHA: ${{ needs.release.outputs.candidate_sha }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+          RECOVERY_TAG: ${{ inputs.recovery_tag }}
         run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^ast-mcp-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")
-          for target in darwin-arm64 linux-arm64 linux-x64 linux-arm64-musl linux-x64-musl windows-x64; do
-            archive="ast-mcp-$target.tar.gz"
-            (
-              cd "standalone-matrix/standalone-bun-$target"
-              sha256sum --check --strict "$archive.sha256"
-              for asset in "$archive" "$archive.sha256"; do
-                existing=$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$release")
-                if [[ -n "$existing" ]]; then
-                  read -r digest _ < <(sha256sum "$asset")
-                  test "$existing" = "sha256:$digest"
-                else
-                  gh release upload "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY"
-                fi
-              done
-            )
-          done
+          bun scripts/release/release-candidate.ts attach standalone-matrix release-benchmarks/release-benchmarks.json package-artifact/ast-mcp.tgz
+          bun scripts/release/release-candidate.ts promote release-benchmarks/release-benchmarks.json
 
   publish:
-    needs: [release, validate, build, consumers, standalone, publish-standalone]
-    if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' && needs.consumers.result == 'success' && needs.standalone.result == 'success' && needs.publish-standalone.result == 'success' }}
+    needs:
+      [
+        release,
+        validate,
+        build,
+        consumers,
+        standalone,
+        benchmarks,
+        publish-standalone,
+      ]
+    if: ${{ needs.release.outputs.release_created == 'true' && needs.validate.result == 'success' && needs.consumers.result == 'success' && needs.standalone.result == 'success' && needs.benchmarks.result == 'success' && needs.publish-standalone.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -245,7 +314,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          ref: ${{ needs.release.outputs.candidate_sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -287,34 +356,35 @@ jobs:
       contents: read
     uses: ./.github/workflows/standalone.yml
     with:
-      ref: ${{ needs.release.outputs.tag_name }}
+      ref: ${{ needs.release.outputs.candidate_sha }}
       registry_version: ${{ needs.publish.outputs.registry_version }}
 
   publish-notes:
-    needs: [release, publish, verify-registry]
-    if: ${{ always() && needs.publish.result == 'success' && (needs.verify-registry.result == 'success' || needs.verify-registry.result == 'skipped') }}
+    needs: [release, publish, verify-registry, benchmarks]
+    if: ${{ always() && needs.publish.result == 'success' && needs.benchmarks.result == 'success' && (needs.verify-registry.result == 'success' || needs.verify-registry.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.tag_name }}
+          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
-      - name: Publish the authored release notes
-        shell: bash
+      - uses: actions/download-artifact@v8
+        if: needs.release.outputs.legacy != 'true'
+        with:
+          name: release-benchmark-evidence
+          path: release-benchmarks
+      - name: Publish authored notes and refresh benchmark documentation
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.tag_name }}
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^ast-mcp-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          version="${RELEASE_TAG#ast-mcp-v}"
-          if [[ -f scripts/release/render-release-notes.ts ]]; then
-            bun scripts/release/render-release-notes.ts "$version" > "$RUNNER_TEMP/release-notes.md"
-            gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
-          fi
+          CANDIDATE_SHA: ${{ needs.release.outputs.candidate_sha }}
+          RELEASE_ID: ${{ needs.release.outputs.release_id }}
+        run: bun scripts/release/release-candidate.ts notes release-benchmarks/release-benchmarks.json

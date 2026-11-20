@@ -9,7 +9,7 @@ on:
         required: false
         type: string
       recovery_tag:
-        description: Published release tag to validate and publish
+        description: Draft or published release tag to qualify and publish
         required: false
         type: string
   push:
@@ -21,7 +21,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ inputs.expected_sha || inputs.recovery_tag || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

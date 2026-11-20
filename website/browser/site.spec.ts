@@ -79,6 +79,26 @@ test("release notes render diagrams and tables with reduced motion", async ({
   await expect(animatedPaths.first()).toHaveCSS("animation-name", "none");
 });
 
+for (const [version, chartCount, tableCount] of [
+  ["0.9.0", 3, 3],
+  ["0.9.1", 2, 1],
+] as const) {
+  test(`release ${version} renders historical benchmark charts and tables`, async ({
+    page,
+  }) => {
+    const response = await page.goto(base + "docs/releases/" + version);
+    expect(response?.status()).toBe(200);
+    await expect(
+      page.getByRole("heading", { name: "Performance" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Benchmark comparison" }),
+    ).toBeVisible();
+    await expect(page.locator(".docs-mermaid svg")).toHaveCount(chartCount);
+    await expect(page.getByRole("table")).toHaveCount(tableCount);
+  });
+}
+
 test("every generated documentation URL has HTML and a static search index", async ({
   request,
 }) => {
