@@ -15,7 +15,7 @@ permissions: {}
 
 concurrency:
   group: ast-mcp-release
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   release:
@@ -105,8 +105,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.candidate_sha }}
+          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: ./.github/actions/checkout-release-candidate
+        with:
+          sha: ${{ needs.release.outputs.candidate_sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
@@ -143,8 +147,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ needs.release.outputs.candidate_sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: ./.github/actions/checkout-release-candidate
+        with:
+          sha: ${{ needs.release.outputs.candidate_sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
@@ -290,7 +297,7 @@ jobs:
           RECOVERY_TAG: ${{ inputs.recovery_tag }}
         run: |
           bun scripts/release/release-candidate.ts attach standalone-matrix release-benchmarks/release-benchmarks.json package-artifact/ast-mcp.tgz
-          bun scripts/release/release-candidate.ts promote release-benchmarks/release-benchmarks.json
+          bun scripts/release/release-candidate.ts promote standalone-matrix release-benchmarks/release-benchmarks.json package-artifact/ast-mcp.tgz
 
   publish:
     needs:
@@ -314,8 +321,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release.outputs.candidate_sha }}
+          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
+      - uses: ./.github/actions/checkout-release-candidate
+        with:
+          sha: ${{ needs.release.outputs.candidate_sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
@@ -360,8 +371,8 @@ jobs:
       registry_version: ${{ needs.publish.outputs.registry_version }}
 
   publish-notes:
-    needs: [release, publish, verify-registry, benchmarks]
-    if: ${{ always() && needs.publish.result == 'success' && needs.benchmarks.result == 'success' && (needs.verify-registry.result == 'success' || needs.verify-registry.result == 'skipped') }}
+    needs: [release, publish-standalone, benchmarks]
+    if: ${{ needs.publish-standalone.result == 'success' && needs.benchmarks.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -381,7 +392,7 @@ jobs:
         with:
           name: release-benchmark-evidence
           path: release-benchmarks
-      - name: Publish authored notes and refresh benchmark documentation
+      - name: Refresh benchmark documentation for the published release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release.outputs.tag_name }}

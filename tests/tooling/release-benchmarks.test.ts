@@ -69,12 +69,22 @@ function raw(paired = true) {
               latency: {
                 connect: phase(count, 100),
                 workflow: phase(count * 2, 100),
+                firstWorkflow: phase(count, 100),
                 disconnect: phase(count, 10),
                 ...(workload === "read"
                   ? { map: phase(count * 2, 50) }
                   : { file_patch: phase(count * 2, 50) }),
                 ...(workload === "indexed"
                   ? {
+                      index: phase(
+                        count + (layout === "same" ? 1 : Math.min(count, 3)),
+                        10,
+                      ),
+                      workspace_open: phase(
+                        count +
+                          2 * (layout === "same" ? 1 : Math.min(count, 3)),
+                        10,
+                      ),
                       committedRetrieval: phase(count * 2, 20),
                       strictWorkingRetrieval: phase(count, 20),
                     }
@@ -319,7 +329,12 @@ test("collect writes regression evidence before failing and verify/render use th
     output: (value: string) => {
       output.push(value);
     },
-    environment: { ImageOS: "ubuntu24", ImageVersion: "20261120.1" },
+    environment: {
+      ImageOS: "ubuntu24",
+      ImageVersion: "20261120.1",
+      GITHUB_RUN_ID: "123",
+      GITHUB_RUN_ATTEMPT: "1",
+    },
   };
   expect(
     await releaseBenchmarksCommand(
@@ -585,4 +600,185 @@ test("CLI adapters bound JSON input, persist evidence and report command failure
     stdout.mockRestore();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("preserves decimal threshold equality and rejects measurable excess", () => {
+  expect(compareMetric("workflowsPerSecond", 10.4, 8.84).regression).toBe(
+    false,
+  );
+  expect(compareMetric("workflowsPerSecond", 10.4, 8.83999999).regression).toBe(
+    true,
+  );
+  expect(compareMetric("workflowP95Ms", 200.2, 230.23).regression).toBe(false);
+  expect(compareMetric("workflowP95Ms", 200.2, 230.23000001).regression).toBe(
+    true,
+  );
+  expect(compareMetric("connectP95Ms", 0.1, 25.1).regression).toBe(false);
+  expect(compareMetric("connectP95Ms", 0.1, 25.10000001).regression).toBe(true);
+  expect(compareMetric("peakRssMiB", 0.1, 16.1).regression).toBe(false);
+  expect(compareMetric("peakRssMiB", 0.1, 16.10000001).regression).toBe(true);
+  expect(compareMetric("workflowsPerSecond", 2.4, 1.4).regression).toBe(false);
+  expect(compareMetric("workflowsPerSecond", 2.4, 1.39999999).regression).toBe(
+    true,
+  );
+});
+
+test("permits transient post-disconnect snapshots after successful final cleanup", () => {
+  const input = raw();
+  Object.assign(input.results[0]!.processMetrics, {
+    postDisconnectProcesses: [
+      { pid: 123, parent: 456, rssKiB: 128, role: "broker" },
+    ],
+    postDisconnectRssKiB: 128,
+  });
+  const result = collectReleaseBenchmarks(input, release, previous, provenance);
+  expect(result.passed).toBe(true);
+  expect(JSON.stringify(result)).not.toContain("postDisconnect");
+  const inconsistent = structuredClone(input);
+  inconsistent.results[0]!.processMetrics.postDisconnectRssKiB = 0;
+  expect(() =>
+    collectReleaseBenchmarks(inconsistent, release, previous, provenance),
+  ).toThrow("Post-disconnect RSS");
+  const invalidRole = structuredClone(input);
+  Object.assign(invalidRole.results[0]!.processMetrics, {
+    postDisconnectProcesses: [
+      { pid: 123, parent: 456, rssKiB: 128, role: "unknown" },
+    ],
+  });
+  expect(() =>
+    collectReleaseBenchmarks(invalidRole, release, previous, provenance),
+  ).toThrow("process role");
+  const retained = structuredClone(input);
+  Object.assign(retained.results[0]!.processMetrics, {
+    remainingProcessIds: [123],
+  });
+  expect(() =>
+    collectReleaseBenchmarks(retained, release, previous, provenance),
+  ).toThrow("retained processes");
+});
+
+test("requires every emitted setup and workload phase with exact attempt counts", () => {
+  for (const count of [1, 4, 16])
+    for (const layout of ["same", "mixed"]) {
+      const input = raw();
+      const cell = input.results.find(
+        (entry) =>
+          entry.clients === count &&
+          entry.layout === layout &&
+          entry.workload === "indexed",
+      )!;
+      const activeCheckouts = layout === "same" ? 1 : Math.min(count, 3);
+      expect(cell.latency.index?.attempts).toBe(count + activeCheckouts);
+      expect(cell.latency.workspace_open?.attempts).toBe(
+        count + activeCheckouts * 2,
+      );
+      for (const name of [
+        "index",
+        "workspace_open",
+        "committedRetrieval",
+        "strictWorkingRetrieval",
+        "firstWorkflow",
+      ]) {
+        const missing = structuredClone(input);
+        const target = missing.results.find(
+          (entry) =>
+            entry.clients === count &&
+            entry.layout === layout &&
+            entry.workload === "indexed",
+        )!;
+        const phases = target.latency as Record<string, unknown>;
+        delete phases[name];
+        expect(() =>
+          collectReleaseBenchmarks(missing, release, previous, provenance),
+        ).toThrow();
+      }
+      const wrongCount = structuredClone(input);
+      const target = wrongCount.results.find(
+        (entry) =>
+          entry.clients === count &&
+          entry.layout === layout &&
+          entry.workload === "indexed",
+      )!;
+      target.latency.index = phase(count + activeCheckouts + 1, 10);
+      expect(() =>
+        collectReleaseBenchmarks(wrongCount, release, previous, provenance),
+      ).toThrow("failed index");
+      target.latency.index = phase(count + activeCheckouts, 10);
+      target.latency.workspace_open = phase(
+        count + activeCheckouts * 2 + 1,
+        10,
+      );
+      expect(() =>
+        collectReleaseBenchmarks(wrongCount, release, previous, provenance),
+      ).toThrow("failed workspace open");
+    }
+  const missingFailureField = raw();
+  Object.assign(missingFailureField.results[0]!.latency.connect, {
+    slowestFailureMs: undefined,
+  });
+  expect(() =>
+    collectReleaseBenchmarks(
+      missingFailureField,
+      release,
+      previous,
+      provenance,
+    ),
+  ).toThrow("failed connect");
+});
+
+test("verifies comparison field values independently of JSON property order", () => {
+  const original = report();
+  const reordered = structuredClone(original);
+  Object.assign(reordered, {
+    comparisons: reordered.comparisons.map((entry) =>
+      Object.fromEntries(Object.entries(entry).reverse()),
+    ),
+  });
+  expect(
+    verifyReleaseBenchmarks(JSON.parse(JSON.stringify(reordered)), release),
+  ).toEqual(original);
+  const missing = structuredClone(reordered);
+  Object.assign(missing, {
+    comparisons: missing.comparisons.map(({ change, ...entry }) => entry),
+  });
+  expect(() => verifyReleaseBenchmarks(missing, release)).toThrow(
+    "comparisons",
+  );
+  const extra = structuredClone(reordered);
+  Object.assign(extra.comparisons[0]!, { unexpected: true });
+  expect(() => verifyReleaseBenchmarks(extra, release)).toThrow("comparisons");
+  const altered = structuredClone(reordered);
+  altered.comparisons[0]!.regression = true;
+  expect(() => verifyReleaseBenchmarks(altered, release)).toThrow(
+    "comparisons",
+  );
+});
+
+test("requires hosted runner metadata without placeholder fallbacks", () => {
+  for (const imageVersion of ["unknown", "local", "placeholder", "n/a", "   "])
+    expect(() =>
+      collectReleaseBenchmarks(raw(), release, previous, {
+        ...provenance,
+        imageVersion,
+      }),
+    ).toThrow();
+  for (const field of ["runId", "runAttempt"] as const)
+    for (const value of ["local", "unknown", "0", "-1", "1.5", ""])
+      expect(() =>
+        collectReleaseBenchmarks(raw(), release, previous, {
+          ...provenance,
+          [field]: value,
+        }),
+      ).toThrow();
+  expect(
+    collectReleaseBenchmarks(raw(), release, previous, {
+      ...provenance,
+      imageVersion: "ubuntu-image-build-42",
+    }).passed,
+  ).toBe(true);
+  const persisted = report();
+  persisted.runner.runId = "local";
+  expect(() => verifyReleaseBenchmarks(persisted, release)).toThrow(
+    "hosted image version and run metadata",
+  );
 });

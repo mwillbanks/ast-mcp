@@ -1,0 +1,24 @@
+name: Check out release candidate
+description: Select a release commit from the verified main event history
+inputs:
+  sha:
+    description: Exact candidate commit SHA
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CANDIDATE_SHA: ${{ inputs.sha }}
+      run: |
+        set -euo pipefail
+        if [[ "$GITHUB_REF" != refs/heads/main || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+          echo "Release checkout requires the main event commit" >&2
+          exit 1
+        fi
+        if [[ ! "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ "$(git cat-file -t "$CANDIDATE_SHA")" != commit ]] ||
+           ! git merge-base --is-ancestor "$CANDIDATE_SHA" "$GITHUB_SHA"; then
+          echo "Release candidate must be a commit in the main event history" >&2
+          exit 1
+        fi
+        git switch --detach "$CANDIDATE_SHA"

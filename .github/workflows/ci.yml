@@ -20,7 +20,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || inputs.recovery_tag || github.ref }}
+  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || (github.event_name == 'pull_request' && github.ref) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -93,6 +93,7 @@ jobs:
               - 'release-please-config.json'
               - '.release-please-manifest.json'
               - '.github/workflows/release.yml'
+              - '.github/actions/checkout-release-candidate/action.yml'
               - 'bin/**'
               - 'package.json'
               - 'scripts/**'

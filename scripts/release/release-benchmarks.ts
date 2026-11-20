@@ -73,7 +73,7 @@ function number(value: unknown, label: string, minimum = 0): number {
 function text(value: unknown, label: string): string {
   if (
     typeof value !== "string" ||
-    !value.length ||
+    !value.trim().length ||
     value.length > 200 ||
     /[\r\n|<>]/.test(value)
   )
@@ -113,6 +113,16 @@ function runner(value: unknown): Runner {
     !Number.isInteger(result.cpus)
   )
     throw new Error("Release benchmarks require the ubuntu-24.04 x64 runner");
+  if (
+    /^(?:unknown|local|none|null|undefined|n\/a|placeholder)$/i.test(
+      result.imageVersion.trim(),
+    ) ||
+    !/^[1-9]\d*$/.test(result.runId) ||
+    !/^[1-9]\d*$/.test(result.runAttempt)
+  )
+    throw new Error(
+      "Release benchmarks require hosted image version and run metadata",
+    );
   return result;
 }
 
@@ -132,6 +142,7 @@ function summary(value: unknown, expected: number, label: string): number {
     input.correct !== expected ||
     !Array.isArray(input.failures) ||
     input.failures.length ||
+    input.slowestFailureMs !== null ||
     Object.keys(object(input.failureCodes, "failure codes")).length
   )
     throw new Error("Incomplete or failed " + label);
@@ -211,13 +222,14 @@ export function compareMetric(
   const change = current - previous;
   const worsening = definition.lower ? change : -change;
   const changePercent = previous === 0 ? null : (change / previous) * 100;
+  const tolerance = Number.EPSILON * Math.max(1, previous, current) * 4;
   return {
     change,
     changePercent,
     regression:
       definition.floor !== null &&
-      worsening > definition.floor &&
-      (previous === 0 || worsening > previous * 0.15),
+      worsening - definition.floor > tolerance &&
+      (previous === 0 || worsening - previous * 0.15 > tolerance),
   };
 }
 
@@ -314,20 +326,45 @@ export function collectReleaseBenchmarks(
       !Array.isArray(process.remainingProcessIds) ||
       process.remainingProcessIds.length ||
       !Array.isArray(process.postDisconnectProcesses) ||
-      process.postDisconnectProcesses.length ||
       process.retainedRssKiB !== 0 ||
-      process.postDisconnectRssKiB !== 0 ||
       !Array.isArray(process.brokerProcessIds) ||
       process.brokerProcessIds.length !== 1
     )
       throw new Error("Invalid benchmark cell or retained processes");
     const count = number(cell.clients, "client count", 1);
     const expected = count * 2;
+    const disconnectedProcesses = process.postDisconnectProcesses as unknown[];
+    const disconnectedRss = disconnectedProcesses.reduce<number>(
+      (total, value) => {
+        const row = object(value, "post-disconnect process");
+        number(row.pid, "post-disconnect process ID", 1);
+        number(row.parent, "post-disconnect parent ID");
+        if (!["broker", "stdio", "worker"].includes(String(row.role)))
+          throw new Error("Invalid post-disconnect process role");
+        return total + number(row.rssKiB, "post-disconnect process RSS");
+      },
+      0,
+    );
+    if (
+      number(process.postDisconnectRssKiB, "post-disconnect RSS") !==
+      disconnectedRss
+    )
+      throw new Error(
+        "Post-disconnect RSS does not match the sampled processes",
+      );
+    summary(latency.firstWorkflow, count, "first workflow");
     if (previous === null && cell.variant !== "baseline")
       throw new Error("Unexpected initial benchmark variant");
     if (cell.workload === "read") summary(latency.map, expected, "map");
     else summary(latency.file_patch, expected, "file_patch");
     if (cell.workload === "indexed") {
+      const activeCheckouts = cell.layout === "same" ? 1 : Math.min(count, 3);
+      summary(latency.index, count + activeCheckouts, "index");
+      summary(
+        latency.workspace_open,
+        count + activeCheckouts * 2,
+        "workspace open",
+      );
       summary(latency.committedRetrieval, expected, "committed retrieval");
       summary(
         latency.strictWorkingRetrieval,
@@ -418,7 +455,21 @@ export function verifyReleaseBenchmarks(
   const observations = input.observations.map(observation);
   validateCells(observations, previous !== null);
   const values = comparisons(observations, previous !== null);
-  if (JSON.stringify(input.comparisons) !== JSON.stringify(values))
+  if (
+    !Array.isArray(input.comparisons) ||
+    input.comparisons.length !== values.length ||
+    !input.comparisons.every((value, index) => {
+      const actual = object(value, "benchmark comparison");
+      const expected = values[index]!;
+      const keys = Object.keys(expected) as Array<keyof Comparison>;
+      return (
+        Object.keys(actual).length === keys.length &&
+        keys.every(
+          (key) => Object.hasOwn(actual, key) && actual[key] === expected[key],
+        )
+      );
+    })
+  )
     throw new Error("Benchmark comparisons do not match observations");
   if (input.passed !== true || values.some((entry) => entry.regression))
     throw new Error("Release benchmark regression");
@@ -589,8 +640,8 @@ export async function releaseBenchmarksCommand(
         memoryBytes: number(host.memoryBytes, "memory", 1),
         image: env.ImageOS ?? "unknown",
         imageVersion: env.ImageVersion ?? "unknown",
-        runId: env.GITHUB_RUN_ID ?? "local",
-        runAttempt: env.GITHUB_RUN_ATTEMPT ?? "local",
+        runId: env.GITHUB_RUN_ID ?? "unknown",
+        runAttempt: env.GITHUB_RUN_ATTEMPT ?? "unknown",
       },
     );
     await io.write(third, JSON.stringify(report, null, 2) + "\n");

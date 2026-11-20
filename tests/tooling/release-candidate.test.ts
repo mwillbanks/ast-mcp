@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 
 import {
   candidateCommand,
@@ -103,9 +104,12 @@ describe("release candidate identity", () => {
 });
 
 type RunOptions = NonNullable<Parameters<CandidateIo["run"]>[1]>;
-const matrix = "/benchmark-fixture/matrix";
-const report = "/benchmark-fixture/evidence/release-benchmarks.json";
-const rootPackage = "/benchmark-fixture/packages/ast-mcp.tgz";
+const fixtureDirectory = path.resolve("benchmark-fixture");
+const matrix = path.join(fixtureDirectory, "matrix");
+const evidence = path.join(fixtureDirectory, "evidence");
+const report = path.join(evidence, "release-benchmarks.json");
+const packages = path.join(fixtureDirectory, "packages");
+const rootPackage = path.join(packages, "ast-mcp.tgz");
 const platforms = [
   "darwin-arm64",
   "linux-arm64",
@@ -132,14 +136,14 @@ function runtime() {
     [rootPackage + ".sha256", digest("root-package") + "\n"],
   ]);
   for (const platform of platforms) {
-    const directory = matrix + "/standalone-bun-" + platform;
+    const directory = path.join(matrix, "standalone-bun-" + platform);
     const archive = "ast-mcp-" + platform + ".tar.gz";
-    files.set(directory + "/" + archive, "standalone-" + platform);
+    files.set(path.join(directory, archive), "standalone-" + platform);
     files.set(
-      directory + "/" + archive + ".sha256",
+      path.join(directory, archive) + ".sha256",
       digest("standalone-" + platform) + "  " + archive + "\n",
     );
-    const npm = directory + "/ast-mcp-npm-" + platform + ".tgz";
+    const npm = path.join(directory, "ast-mcp-npm-" + platform + ".tgz");
     files.set(npm, "npm-" + platform);
     files.set(npm + ".sha256", digest("npm-" + platform) + "\n");
   }
@@ -181,6 +185,10 @@ function runtime() {
     checkoutSha: first,
     promotedTarget: first,
     manifestVersion: "0.9.2",
+    remoteTag: undefined as string | undefined,
+    remoteTagStatus: 200,
+    annotatedTag: false,
+    beforePromotion: undefined as (() => void) | undefined,
   };
   const ok = (output = "") => ({ code: 0, output, error: "" });
   const io: CandidateIo = {
@@ -253,6 +261,28 @@ function runtime() {
         return ok();
       }
       if (args[0] === "gh") {
+        if (args.includes("--include")) {
+          const status =
+            state.remoteTagStatus !== 200
+              ? state.remoteTagStatus
+              : state.remoteTag
+                ? 200
+                : 404;
+          return {
+            code: status === 200 ? 0 : 1,
+            output:
+              "HTTP/2.0 " +
+              status +
+              "\r\n\r\n" +
+              JSON.stringify({
+                object: {
+                  type: state.annotatedTag ? "tag" : "commit",
+                  sha: state.remoteTag,
+                },
+              }),
+            error: status === 403 ? "API denied" : "",
+          };
+        }
         if (args.includes("--paginate")) return ok(JSON.stringify([state.all]));
         if (args.includes("--method")) {
           if (state.apiFailure)
@@ -276,6 +306,12 @@ function runtime() {
             return ok(JSON.stringify(current));
           }
           if (method === "POST") return ok();
+          if (endpoint.includes("/git/tags/"))
+            return ok(
+              JSON.stringify({
+                object: { type: "commit", sha: state.remoteTag },
+              }),
+            );
           if (endpoint.includes("/commits/"))
             return ok(JSON.stringify({ sha: state.publishedSha }));
           return ok(JSON.stringify(current));
@@ -305,6 +341,7 @@ function runtime() {
             error: state.collectError,
           };
         }
+        if (args[2] === "render") state.beforePromotion?.();
         return ok(
           args[2] === "render"
             ? "## Benchmark comparison\n\nMeasured results."
@@ -334,12 +371,13 @@ function runtime() {
     );
   };
   const retain = () => {
+    current.assets = [];
     for (const [filename, content] of files)
       if (
-        filename.startsWith(matrix + "/") ||
-        filename.startsWith("/benchmark-fixture/packages/")
+        filename.startsWith(matrix + path.sep) ||
+        filename.startsWith(packages + path.sep)
       )
-        asset(current, filename.split("/").at(-1)!, content);
+        asset(current, path.basename(filename), content);
     asset(current, "release-benchmarks.json", "qualified-report");
   };
   return { state, io, asset, run, published, previousHosted, retain };
@@ -376,6 +414,21 @@ describe("release orchestration", () => {
     expect(fixture.state.files.get("/outputs")).toBe(
       "release_created=false\npending_draft=false\nrelease_created=false\npending_draft=true\n",
     );
+  });
+
+  test("only managed stable drafts prevent preparing another release", async () => {
+    for (const candidate of [
+      release({ tag_name: "ast-mcp-v0.9.1" }),
+      release({ tag_name: "ast-mcp-v0.9.3", prerelease: true }),
+      release({ tag_name: "another-v1.0.0" }),
+    ]) {
+      const fixture = runtime();
+      fixture.state.all = [candidate];
+      await fixture.run(["resolve"]);
+      expect(fixture.state.files.get("/outputs")).toContain(
+        "pending_draft=false",
+      );
+    }
   });
 
   test("failed creation, missing recovery and mismatched manifest block resolution", async () => {
@@ -417,7 +470,7 @@ describe("release orchestration", () => {
 
   test("the first hosted release measures its qualified archive and publishes the gate summary", async () => {
     const fixture = runtime();
-    await fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]);
+    await fixture.run(["benchmark", matrix, evidence]);
     const measure = fixture.state.calls.find(
       ({ args }) => args[1] === "scripts/benchmark/shared-runtime-baseline.ts",
     )!;
@@ -477,7 +530,7 @@ describe("release orchestration", () => {
   test("later releases verify the previous report and archive before interleaved comparison", async () => {
     const fixture = runtime();
     fixture.previousHosted();
-    await fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]);
+    await fixture.run(["benchmark", matrix, evidence]);
     const measure = fixture.state.calls.find(
       ({ args }) => args[1] === "scripts/benchmark/shared-runtime-baseline.ts",
     )!;
@@ -501,9 +554,9 @@ describe("release orchestration", () => {
   test("invalid workloads and failed thresholds preserve summaries and fail the gate", async () => {
     const fixture = runtime();
     fixture.state.benchmarkCode = 1;
-    await expect(
-      fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
-    ).rejects.toThrow("workloads failed");
+    await expect(fixture.run(["benchmark", matrix, evidence])).rejects.toThrow(
+      "workloads failed",
+    );
     expect(fixture.state.files.get("/summary")).toContain(
       "workload diagnostics",
     );
@@ -512,10 +565,11 @@ describe("release orchestration", () => {
     );
     fixture.state.benchmarkCode = 0;
     fixture.state.collectCode = 1;
+    fixture.state.files.delete(report);
     fixture.state.collectError = "Malformed observations: missing indexed cell";
-    await expect(
-      fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
-    ).rejects.toThrow("gate failed");
+    await expect(fixture.run(["benchmark", matrix, evidence])).rejects.toThrow(
+      "gate failed",
+    );
     expect(fixture.state.files.get(report)).toBe("qualified-report");
     expect(fixture.state.files.get("/summary")).toContain(
       fixture.state.collectError,
@@ -527,7 +581,7 @@ describe("release orchestration", () => {
     expect(collection.options.inheritStderr).toBeUndefined();
     delete fixture.io.env.GITHUB_STEP_SUMMARY;
     fixture.state.collectCode = 0;
-    await fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]);
+    await fixture.run(["benchmark", matrix, evidence]);
   });
 
   test("published recovery reuses a verified report and preserves authored historical notes", async () => {
@@ -538,7 +592,7 @@ describe("release orchestration", () => {
       "release-benchmarks.json",
       "qualified-report",
     );
-    await fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]);
+    await fixture.run(["benchmark", matrix, evidence]);
     expect(
       fixture.state.calls.some(
         ({ args }) =>
@@ -556,7 +610,7 @@ describe("release orchestration", () => {
     fixture.io.env.RELEASE_TAG = fixture.state.current.tag_name;
     fixture.state.tags.set(fixture.state.current.tag_name, first);
     fixture.state.current.assets = [];
-    await fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]);
+    await fixture.run(["benchmark", matrix, evidence]);
     await fixture.run(["notes", report]);
     expect(fixture.state.bodies).toEqual([]);
   });
@@ -564,23 +618,23 @@ describe("release orchestration", () => {
   test("identity or report failures stop published recovery", async () => {
     const fixture = runtime();
     fixture.published();
-    await expect(
-      fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
-    ).rejects.toThrow("Missing checksum");
+    await expect(fixture.run(["benchmark", matrix, evidence])).rejects.toThrow(
+      "Missing checksum",
+    );
     fixture.asset(
       fixture.state.current,
       "release-benchmarks.json",
       "qualified-report",
     );
     fixture.state.verifyFailure = true;
-    await expect(
-      fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
-    ).rejects.toThrow("invalid report");
+    await expect(fixture.run(["benchmark", matrix, evidence])).rejects.toThrow(
+      "invalid report",
+    );
     fixture.state.verifyFailure = false;
     fixture.state.tags.set(fixture.state.current.tag_name, second);
-    await expect(
-      fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
-    ).rejects.toThrow("identity changed");
+    await expect(fixture.run(["benchmark", matrix, evidence])).rejects.toThrow(
+      "identity changed",
+    );
   });
 
   test("archives require valid digests and safe extraction paths", async () => {
@@ -590,18 +644,22 @@ describe("release orchestration", () => {
     ]) {
       const fixture = runtime();
       fixture.state.files.set(
-        matrix + "/standalone-bun-linux-x64/ast-mcp-linux-x64.tar.gz.sha256",
+        path.join(
+          matrix,
+          "standalone-bun-linux-x64",
+          "ast-mcp-linux-x64.tar.gz.sha256",
+        ),
         contents!,
       );
       await expect(
-        fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
+        fixture.run(["benchmark", matrix, evidence]),
       ).rejects.toThrow(message!);
     }
     for (const entries of ["/escape", "runtime/../../escape"]) {
       const fixture = runtime();
       fixture.state.tarEntries = entries;
       await expect(
-        fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
+        fixture.run(["benchmark", matrix, evidence]),
       ).rejects.toThrow("Unsafe standalone");
     }
   });
@@ -616,7 +674,7 @@ describe("release orchestration", () => {
         fixture.state.previous.assets[0]!.digest = "sha256:" + "0".repeat(64);
       if (issue === "download") fixture.state.downloadFailure = true;
       await expect(
-        fixture.run(["benchmark", matrix, "/benchmark-fixture/evidence"]),
+        fixture.run(["benchmark", matrix, evidence]),
       ).rejects.toThrow(
         {
           target: "target and tag differ",
@@ -664,16 +722,16 @@ describe("release orchestration", () => {
 
   test("a draft requires every qualified asset and report before promotion", async () => {
     const fixture = runtime();
-    await expect(fixture.run(["promote", report])).rejects.toThrow(
-      "Qualified release assets",
-    );
+    await expect(
+      fixture.run(["promote", matrix, report, rootPackage]),
+    ).rejects.toThrow("Qualified release assets");
     fixture.retain();
     fixture.state.current.assets = fixture.state.current.assets.filter(
       (entry) => entry.name !== "release-benchmarks.json",
     );
-    await expect(fixture.run(["promote", report])).rejects.toThrow(
-      "report is missing",
-    );
+    await expect(
+      fixture.run(["promote", matrix, report, rootPackage]),
+    ).rejects.toThrow("report is missing");
     fixture.asset(
       fixture.state.current,
       "release-benchmarks.json",
@@ -682,17 +740,17 @@ describe("release orchestration", () => {
     fixture.state.current.assets = fixture.state.current.assets.filter(
       (entry) => entry.name !== "ast-mcp.tgz",
     );
-    await expect(fixture.run(["promote", report])).rejects.toThrow(
-      "npm release assets",
-    );
+    await expect(
+      fixture.run(["promote", matrix, report, rootPackage]),
+    ).rejects.toThrow("npm release assets");
     fixture.retain();
-    await fixture.run(["promote", report]);
+    await fixture.run(["promote", matrix, report, rootPackage]);
     expect(fixture.state.bodies[0]).toMatchObject({
       target_commitish: first,
       draft: false,
     });
     expect(fixture.state.bodies[0]!.body).toContain("## Benchmark comparison");
-    await fixture.run(["promote", report]);
+    await fixture.run(["promote", matrix, report, rootPackage]);
     expect(fixture.state.bodies).toHaveLength(1);
   });
 
@@ -702,7 +760,9 @@ describe("release orchestration", () => {
       fixture.retain();
       if (issue === "release") fixture.state.promotedTarget = second;
       else fixture.state.publishedSha = second;
-      await expect(fixture.run(["promote", report])).rejects.toThrow(
+      await expect(
+        fixture.run(["promote", matrix, report, rootPackage]),
+      ).rejects.toThrow(
         issue === "release"
           ? "Published release does not match"
           : "Published tag does not match",
@@ -710,27 +770,102 @@ describe("release orchestration", () => {
     }
   });
 
+  test("promotion rejects changed remote assets before publishing", async () => {
+    for (const name of [
+      "ast-mcp-linux-x64.tar.gz",
+      "ast-mcp-linux-x64.tar.gz.sha256",
+      "ast-mcp-npm-linux-x64.tgz",
+      "ast-mcp-npm-linux-x64.tgz.sha256",
+      "ast-mcp.tgz",
+      "ast-mcp.tgz.sha256",
+      "release-benchmarks.json",
+    ]) {
+      const fixture = runtime();
+      fixture.retain();
+      fixture.state.current.assets.find(
+        (asset) => asset.name === name,
+      )!.digest = "sha256:" + "0".repeat(64);
+      await expect(
+        fixture.run(["promote", matrix, report, rootPackage]),
+      ).rejects.toThrow("digest mismatch");
+      expect(fixture.state.bodies).toEqual([]);
+    }
+  });
+
+  test("promotion verifies existing remote tags and fails closed on lookup errors", async () => {
+    for (const annotated of [false, true]) {
+      const fixture = runtime();
+      fixture.retain();
+      fixture.state.remoteTag = first;
+      fixture.state.annotatedTag = annotated;
+      await fixture.run(["promote", matrix, report, rootPackage]);
+      expect(fixture.state.bodies).toHaveLength(1);
+    }
+    for (const issue of ["mismatch", "unavailable"]) {
+      const fixture = runtime();
+      fixture.retain();
+      fixture.state.remoteTag = second;
+      if (issue === "unavailable") fixture.state.remoteTagStatus = 403;
+      await expect(
+        fixture.run(["promote", matrix, report, rootPackage]),
+      ).rejects.toThrow(
+        issue === "mismatch"
+          ? "Remote release tag differs"
+          : "Cannot verify remote release tag",
+      );
+      expect(fixture.state.bodies).toEqual([]);
+    }
+  });
+
+  test("promotion revalidates draft identity and digests after rendering notes", async () => {
+    for (const issue of ["tag", "target", "published", "asset"]) {
+      const fixture = runtime();
+      fixture.retain();
+      fixture.io.env.RECOVERY_TAG = fixture.state.current.tag_name;
+      fixture.state.beforePromotion = () => {
+        if (issue === "tag") fixture.state.current.tag_name = "ast-mcp-v0.9.3";
+        if (issue === "target") fixture.state.current.target_commitish = second;
+        if (issue === "published") fixture.published();
+        if (issue === "asset") fixture.state.current.assets[0]!.digest = null;
+      };
+      await expect(
+        fixture.run(["promote", matrix, report, rootPackage]),
+      ).rejects.toThrow();
+      expect(fixture.state.bodies).toEqual([]);
+    }
+  });
+
   test("published recovery restores exact archives before existing qualifications", async () => {
     const fixture = runtime();
     fixture.published();
     fixture.retain();
-    await fixture.run(["restore-root", "/restored-root"]);
-    await fixture.run(["restore-matrix", "/restored-matrix"]);
-    expect(fixture.state.files.get("/restored-root/ast-mcp.tgz")).toBe(
-      "root-package",
-    );
+    const restoredRoot = path.join(fixtureDirectory, "restored-root");
+    const restoredMatrix = path.join(fixtureDirectory, "restored-matrix");
+    await fixture.run(["restore-root", restoredRoot]);
+    await fixture.run(["restore-matrix", restoredMatrix]);
+    expect(
+      fixture.state.files.get(path.join(restoredRoot, "ast-mcp.tgz")),
+    ).toBe("root-package");
     expect(
       fixture.state.files.get(
-        "/restored-matrix/standalone-bun-linux-x64/ast-mcp-npm-linux-x64.tgz",
+        path.join(
+          restoredMatrix,
+          "standalone-bun-linux-x64",
+          "ast-mcp-npm-linux-x64.tgz",
+        ),
       ),
     ).toBe("npm-linux-x64");
     expect(
       fixture.state.files.get(
-        "/restored-matrix/standalone-bun-darwin-arm64/ast-mcp-darwin-arm64.tar.gz",
+        path.join(
+          restoredMatrix,
+          "standalone-bun-darwin-arm64",
+          "ast-mcp-darwin-arm64.tar.gz",
+        ),
       ),
     ).toBe("standalone-darwin-arm64");
     const draft = runtime();
-    await expect(draft.run(["restore-root", "/restored-root"])).rejects.toThrow(
+    await expect(draft.run(["restore-root", restoredRoot])).rejects.toThrow(
       "managed published",
     );
   });
@@ -772,9 +907,9 @@ describe("release orchestration", () => {
     await expect(
       fixture.run(["attach", matrix, report, rootPackage]),
     ).rejects.toThrow("Legacy draft");
-    await expect(fixture.run(["promote", report])).rejects.toThrow(
-      "Legacy draft",
-    );
+    await expect(
+      fixture.run(["promote", matrix, report, rootPackage]),
+    ).rejects.toThrow("Legacy draft");
   });
 
   test("GitHub authorization failures stop orchestration before external changes", async () => {

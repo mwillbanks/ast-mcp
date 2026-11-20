@@ -207,7 +207,11 @@ export async function candidateCommand(
     releaseVersion(tag);
     const knownReleases = await releases();
     const pendingDraft = knownReleases.some(
-      (item) => item.draft && tagPattern.test(item.tag_name),
+      (item) =>
+        item.draft &&
+        !item.prerelease &&
+        tagPattern.test(item.tag_name) &&
+        !legacyRelease(item.tag_name),
     );
     const release = knownReleases.find((item) => item.tag_name === tag);
     if (!release) {
@@ -590,64 +594,108 @@ export async function candidateCommand(
     );
   }
 
-  async function promote(report: string): Promise<void> {
-    const { release, tag, sha } = await identity();
+  async function promote(
+    matrix: string,
+    report: string,
+    rootPackage: string,
+  ): Promise<void> {
+    const initial = await identity();
+    const { tag, sha } = initial;
     if (!legacyRelease(tag)) await benchmarkTool(["verify", report, tag, sha]);
-    const remote = (await releases()).find((item) => item.id === release.id);
-    if (!remote) throw new Error("Release disappeared");
-    for (const target of targets)
-      for (const suffix of [".tar.gz", ".tar.gz.sha256"])
-        if (
-          !remote.assets.some(
-            (asset) => asset.name === "ast-mcp-" + target + suffix,
-          )
-        )
-          throw new Error("Qualified release assets are missing");
-    if (
-      !legacyRelease(tag) &&
-      !remote.assets.some((asset) => asset.name === "release-benchmarks.json")
-    )
-      throw new Error("Release benchmark report is missing");
-    if (!legacyRelease(tag)) {
-      const required = [
-        "ast-mcp.tgz",
-        "ast-mcp.tgz.sha256",
-        ...targets.flatMap((target) => [
-          "ast-mcp-npm-" + target + ".tgz",
-          "ast-mcp-npm-" + target + ".tgz.sha256",
-        ]),
-      ];
-      if (
-        required.some(
-          (name) => !remote.assets.some((asset) => asset.name === name),
-        )
-      )
-        throw new Error("Qualified npm release assets are missing");
+    if (!initial.release.draft) return;
+    const body = await notes(report);
+    const files: string[] = [];
+    const npmFiles = [rootPackage, rootPackage + ".sha256"];
+    await verifyLocalArchive(rootPackage, false);
+    for (const target of targets) {
+      const directory = path.join(matrix, "standalone-bun-" + target);
+      const archive = path.join(directory, "ast-mcp-" + target + ".tar.gz");
+      const npm = path.join(directory, "ast-mcp-npm-" + target + ".tgz");
+      await verifyLocalArchive(archive);
+      await verifyLocalArchive(npm, false);
+      files.push(archive, archive + ".sha256");
+      npmFiles.push(npm, npm + ".sha256");
     }
-    if (remote.draft) {
-      const published = await api<CandidateRelease>(
-        "repos/" + repository() + "/releases/" + release.id,
-        "PATCH",
-        {
-          target_commitish: sha,
-          body: await notes(report),
-          draft: false,
-        },
-      );
-      if (
-        published.draft ||
-        published.tag_name !== tag ||
-        published.target_commitish !== sha
-      )
+    files.push(report, ...npmFiles);
+    const qualified = new Map<string, string>();
+    for (const filename of files) {
+      const hash = new Bun.CryptoHasher("sha256");
+      for await (const chunk of io.file(filename).stream()) hash.update(chunk);
+      qualified.set(path.basename(filename), "sha256:" + hash.digest("hex"));
+    }
+    const remoteTag = await io.run([
+      "gh",
+      "api",
+      "--include",
+      "repos/" + repository() + "/git/ref/tags/" + tag,
+    ]);
+    const status = /^HTTP\/[\d.]+\s+(\d+)/m.exec(remoteTag.output)?.[1];
+    if (status !== "404") {
+      if (remoteTag.code || status !== "200")
         throw new Error(
-          "Published release does not match the qualified candidate",
+          "Cannot verify remote release tag: " + remoteTag.error.trim(),
         );
-      const commit = await api<{ sha: string }>(
-        "repos/" + repository() + "/commits/" + encodeURIComponent(tag),
-      );
-      if (commit.sha !== sha)
-        throw new Error("Published tag does not match the qualified candidate");
+      let object = (
+        JSON.parse(
+          remoteTag.output
+            .split(/\r?\n\r?\n/)
+            .slice(1)
+            .join("\n\n"),
+        ) as {
+          object: { type: string; sha: string };
+        }
+      ).object;
+      for (let depth = 0; object.type === "tag" && depth < 8; depth++) {
+        if (!shaPattern.test(object.sha))
+          throw new Error("Invalid remote tag object");
+        object = (
+          await api<{ object: { type: string; sha: string } }>(
+            "repos/" + repository() + "/git/tags/" + object.sha,
+          )
+        ).object;
+      }
+      if (object.type !== "commit" || object.sha !== sha)
+        throw new Error(
+          "Remote release tag differs from the qualified candidate",
+        );
     }
+    const { release } = await identity();
+    if (
+      !release.draft ||
+      release.id !== initial.release.id ||
+      release.target_commitish !== initial.release.target_commitish
+    )
+      throw new Error("Draft release changed before promotion");
+    for (const [name, digest] of qualified) {
+      const assets = release.assets.filter((asset) => asset.name === name);
+      if (!assets.length) {
+        if (name === "release-benchmarks.json")
+          throw new Error("Release benchmark report is missing");
+        if (name.endsWith(".tgz") || name.endsWith(".tgz.sha256"))
+          throw new Error("Qualified npm release assets are missing");
+        throw new Error("Qualified release assets are missing");
+      }
+      if (assets.length !== 1 || assets[0]!.digest !== digest)
+        throw new Error("Qualified release asset digest mismatch: " + name);
+    }
+    const published = await api<CandidateRelease>(
+      "repos/" + repository() + "/releases/" + release.id,
+      "PATCH",
+      { target_commitish: sha, body, draft: false },
+    );
+    if (
+      published.draft ||
+      published.tag_name !== tag ||
+      published.target_commitish !== sha
+    )
+      throw new Error(
+        "Published release does not match the qualified candidate",
+      );
+    const commit = await api<{ sha: string }>(
+      "repos/" + repository() + "/commits/" + encodeURIComponent(tag),
+    );
+    if (commit.sha !== sha)
+      throw new Error("Published tag does not match the qualified candidate");
   }
 
   async function publishNotes(report: string): Promise<void> {
@@ -690,7 +738,7 @@ export async function candidateCommand(
   }
 
   const [action, first, second, third, ...extra] = args;
-  if (extra.length || (third && action !== "attach"))
+  if (extra.length || (third && action !== "attach" && action !== "promote"))
     throw new Error("Unexpected release candidate arguments");
   switch (action) {
     case "resolve":
@@ -705,8 +753,9 @@ export async function candidateCommand(
         throw new Error("attach requires matrix and report and root package");
       return attach(first, second, third);
     case "promote":
-      if (!first || second) throw new Error("promote requires report");
-      return promote(first);
+      if (!first || !second || !third)
+        throw new Error("promote requires matrix and report and root package");
+      return promote(first, second, third);
     case "restore-root":
     case "restore-matrix":
       if (!first || second) throw new Error("restore requires directory");
