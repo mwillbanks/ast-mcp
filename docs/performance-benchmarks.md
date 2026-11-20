@@ -1,5 +1,7 @@
 # File-operation benchmark decisions
 
+For release comparisons, see the [release notes](https://mwillbanks.github.io/ast-mcp/docs/releases/0.9.1/) and [release benchmark gate](ci.md#release-benchmark-gate).
+
 ## Purpose and evidence scope
 
 Use this record to reproduce performance experiments and reassess algorithm choices.

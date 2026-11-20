@@ -1,10 +1,5 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
-
-import { createMockTime, deferred } from "../../support/mock-time.ts";
-beforeEach(() => {
-  createMockTime();
-});
-import { mkdtemp, rm } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,12 +14,16 @@ import {
   type StorageDomain,
 } from "../../../src/intelligence/contracts/storage.ts";
 import {
-  LanceIntelligenceStore,
+  type LanceIntelligenceStore,
   ReaderPinExpiredError,
 } from "../../../src/intelligence/storage/index.ts";
+import { deferred } from "../../support/mock-time.ts";
+import { StorageFixture } from "./fixture.ts";
 
-async function domain(): Promise<StorageDomain> {
-  const storagePath = await mkdtemp(join(tmpdir(), "ast-mcp-pin-expiry-"));
+async function domain(fixtures: StorageFixture): Promise<StorageDomain> {
+  const storagePath = await fixtures.directory(
+    join(tmpdir(), "ast-mcp-pin-expiry-"),
+  );
   return {
     domainId: createStorageDomainId({
       engine: "lancedb",
@@ -54,9 +53,10 @@ describe("reader pin expiration", () => {
   test.each(["open-error", "expiry"] as const)(
     "releases pinned tables after the outstanding open settles (%s)",
     async (mode) => {
-      const storage = await domain();
+      await using fixtures = new StorageFixture();
+      const storage = await domain(fixtures);
       let now = Date.parse("2026-09-10T00:00:00.000Z");
-      const store = await LanceIntelligenceStore.open(storage, {
+      const store = await fixtures.open(storage, {
         now: () => new Date(now),
       });
       const publication = await published(store);
@@ -65,20 +65,20 @@ describe("reader pin expiration", () => {
         .connection;
       const openTable = connection.openTable.bind(connection);
       const table = await openTable(second!.table);
-      const close = spyOn(table, "close");
+      const close = fixtures.spyOn(table, "close");
       const entered = deferred();
       const continueOpen = deferred();
       const failure = new Error("pinned table open failed");
-      const open = spyOn(connection, "openTable").mockImplementation(
-        async (...args) => {
+      const open = fixtures
+        .spyOn(connection, "openTable")
+        .mockImplementation(async (...args) => {
           if (args[0] === first!.table && mode === "open-error") throw failure;
           if (args[0] !== second!.table) return openTable(...args);
           entered.resolve();
           await continueOpen.promise;
           return table;
-        },
-      );
-      const pending = store.pinGeneration(publication, "open-race", 1000);
+        });
+      const pending = fixtures.pin(store, publication, "open-race", 1000);
       void pending.catch(() => {});
       try {
         await entered.promise;
@@ -106,12 +106,14 @@ describe("reader pin expiration", () => {
   );
 
   test("expires at the exact boundary and rejects every later read", async () => {
-    const storage = await domain();
+    await using fixtures = new StorageFixture();
+    const storage = await domain(fixtures);
     let now = Date.parse("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(storage, {
+    const store = await fixtures.open(storage, {
       now: () => new Date(now),
     });
-    const reader = await store.pinGeneration(
+    const reader = await fixtures.pin(
+      store,
       await published(store),
       "boundary",
       1_000,
@@ -131,12 +133,14 @@ describe("reader pin expiration", () => {
   });
 
   test("releases an expired pin during retention and remains released after restart", async () => {
-    const storage = await domain();
+    await using fixtures = new StorageFixture();
+    const storage = await domain(fixtures);
     let now = Date.parse("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(storage, {
+    const store = await fixtures.open(storage, {
       now: () => new Date(now),
     });
-    const reader = await store.pinGeneration(
+    const reader = await fixtures.pin(
+      store,
       await published(store),
       "retention",
       1_000,
@@ -156,7 +160,7 @@ describe("reader pin expiration", () => {
     await reader.close();
     await store.shutdownCoordinator();
 
-    const reopened = await LanceIntelligenceStore.open(storage, {
+    const reopened = await fixtures.open(storage, {
       now: () => new Date(now),
     });
     expect(await reopened.count("reader_pins")).toBe(0);
@@ -164,12 +168,14 @@ describe("reader pin expiration", () => {
   });
 
   test("releases a pin when close races with expiration", async () => {
-    const storage = await domain();
+    await using fixtures = new StorageFixture();
+    const storage = await domain(fixtures);
     let now = Date.parse("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(storage, {
+    const store = await fixtures.open(storage, {
       now: () => new Date(now),
     });
-    const reader = await store.pinGeneration(
+    const reader = await fixtures.pin(
+      store,
       await published(store),
       "close",
       1_000,

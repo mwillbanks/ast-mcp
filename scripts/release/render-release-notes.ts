@@ -10,6 +10,13 @@ export function validateReleaseVersion(value: unknown): string {
   return value;
 }
 
+export function usesHostedBenchmarks(inputVersion: string): boolean {
+  const [major, minor, patch] = validateReleaseVersion(inputVersion)
+    .split(".")
+    .map(Number);
+  return major! > 0 || minor! > 9 || (minor === 9 && patch! > 1);
+}
+
 function documentationLinks(line: string): string {
   const destinations = new RegExp(relativeDestination, "g");
   return line.replaceAll(
@@ -79,21 +86,32 @@ export function renderReleaseNotes(
 ): string {
   const version = validateReleaseVersion(inputVersion);
   const lines: string[] = [];
-  let fence: { delimiter: string; mermaid: boolean } | undefined;
+  let fence: { delimiter: string; mermaid?: string[] } | undefined;
   for (const line of releaseBody(source, version, sourcePath).split("\n")) {
     if (fence) {
       const trimmed = line.trim();
-      if (!fence.mermaid) lines.push(line);
-      if (
+      const closing =
         trimmed.startsWith(fence.delimiter) &&
-        [...trimmed].every((character) => character === fence!.delimiter[0])
-      )
-        fence = undefined;
+        [...trimmed].every((character) => character === fence!.delimiter[0]);
+      if (fence.mermaid) {
+        fence.mermaid.push(line);
+        if (closing) {
+          const diagram = fence.mermaid.slice(1, -1).find((row) => row.trim());
+          if (diagram && /^xychart(?:-beta)?(?:\s|$)/.test(diagram.trim()))
+            lines.push(...fence.mermaid);
+        }
+      } else {
+        lines.push(line);
+      }
+      if (closing) fence = undefined;
       continue;
     }
     const opening = fenceOpening.exec(line);
     if (opening) {
-      fence = { delimiter: opening[1]!, mermaid: opening[2] === "mermaid" };
+      fence = {
+        delimiter: opening[1]!,
+        mermaid: opening[2] === "mermaid" ? [line] : undefined,
+      };
       if (!fence.mermaid) lines.push(line);
       continue;
     }

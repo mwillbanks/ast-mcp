@@ -1,13 +1,13 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import {
-  createMockTime,
-  deferred,
-  type MockTime,
-} from "../../support/mock-time.ts";
-let time: MockTime;
+import { deferred } from "../../support/mock-time.ts";
+import { StorageClock } from "./clock.ts";
+let time: StorageClock;
 beforeEach(() => {
-  time = createMockTime();
+  time = new StorageClock();
+});
+afterEach(() => {
+  time.assertDrained();
 });
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -25,6 +25,17 @@ import {
 } from "../../../src/intelligence/storage/index.ts";
 import { snapshotStorageDirectory } from "../../../src/intelligence/storage/relocation.ts";
 import { acquireTransactionLock } from "../../../src/runtime/transaction-lock.ts";
+
+function openStore(
+  domain: StorageDomain,
+  options: Parameters<typeof LanceIntelligenceStore.open>[1] = {},
+) {
+  return LanceIntelligenceStore.open(domain, {
+    now: time.date,
+    scheduleHeartbeat: time.scheduleHeartbeat,
+    ...options,
+  });
+}
 
 function gate() {
   let resolve!: () => void;
@@ -51,7 +62,7 @@ async function fixture() {
     schemaVersion: "ast-mcp.intelligence.v1",
     storagePath,
   };
-  const store = await LanceIntelligenceStore.open(domain, {
+  const store = await openStore(domain, {
     leaseDurationMs: 3_000,
   });
   return {
@@ -108,7 +119,7 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
       return waited;
     }) as Promise<void>["catch"]);
     let opened = false;
-    reopening = LanceIntelligenceStore.open(domain).then((next) => {
+    reopening = openStore(domain).then((next) => {
       opened = true;
       return next;
     });
@@ -145,7 +156,7 @@ test("reopening waits for a draining coordinator before acquiring its replacemen
 
 test("repeated store shutdown cannot release another store's coordinator reference", async () => {
   const { store, domain, cleanup } = await fixture();
-  const peer = await LanceIntelligenceStore.open(domain);
+  const peer = await openStore(domain);
   try {
     await Promise.all([
       store.shutdownCoordinator(),
@@ -162,7 +173,7 @@ test("repeated store shutdown cannot release another store's coordinator referen
 
 test("closing a peer drains its queued write before disposing its connection", async () => {
   const { store, domain, cleanup } = await fixture();
-  const peer = await LanceIntelligenceStore.open(domain);
+  const peer = await openStore(domain);
   const entered = gate();
   const finish = gate();
   const held = store.serializeMigration("block peer", async () => {
@@ -277,13 +288,13 @@ describe("Storage coordinator failures", () => {
     );
     const connection = await lancedb.connect(domain.storagePath);
     try {
-      await expect(LanceIntelligenceStore.open(domain)).rejects.toMatchObject({
+      await expect(openStore(domain)).rejects.toMatchObject({
         code: "coordinator_unavailable",
       });
       expect(await connection.tableNames()).toEqual([]);
       expect(await snapshotStorageDirectory(domain.storagePath)).toEqual([]);
       owner.release();
-      const store = await LanceIntelligenceStore.open(domain);
+      const store = await openStore(domain);
       await store.shutdownCoordinator();
     } finally {
       owner.release();
@@ -294,7 +305,7 @@ describe("Storage coordinator failures", () => {
 
   test("competing persistent lease rows fail closed and remain recoverable after repair", async () => {
     const { domain, cleanup } = await fixture();
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await openStore(domain);
     const connection = await lancedb.connect(domain.storagePath, {
       readConsistencyInterval: 0,
     });
@@ -323,7 +334,7 @@ describe("Storage coordinator failures", () => {
 
   test("coordinator table failures close their native handle before reporting the error", async () => {
     const { domain, cleanup } = await fixture();
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await openStore(domain);
     const connection = (
       store.coordinator as unknown as { connection: lancedb.Connection }
     ).connection;
@@ -346,7 +357,7 @@ describe("Storage coordinator failures", () => {
 
   test("openers replace a coordinator even when its closing promise rejects", async () => {
     const { domain, cleanup } = await fixture();
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await openStore(domain);
     const connection = (
       store.coordinator as unknown as { connection: lancedb.Connection }
     ).connection;

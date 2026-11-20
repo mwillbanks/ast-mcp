@@ -1,15 +1,9 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-
-import { createMockTime } from "../../support/mock-time.ts";
-beforeEach(() => {
-  createMockTime();
-});
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import * as lancedb from "@lancedb/lancedb";
 import { Schema } from "apache-arrow";
 
 import { analyzeGraph } from "../../../src/intelligence/analytics/analytics.ts";
@@ -31,16 +25,17 @@ import {
 } from "../../../src/intelligence/contracts/storage.ts";
 import { GraphSnapshotSchema } from "../../../src/intelligence/graph/types.ts";
 import { toLanceSchema } from "../../../src/intelligence/storage/arrow.ts";
-import {
-  LanceIntelligenceStore,
-  type StorageRow,
-} from "../../../src/intelligence/storage/index.ts";
+import type { StorageRow } from "../../../src/intelligence/storage/index.ts";
 import { TABLE_SCHEMAS } from "../../../src/intelligence/storage/schemas.ts";
 import type { WorkspaceHandle } from "../../../src/intelligence/workspace/context.ts";
 import { analyticsFixture } from "../../fixtures/intelligence/analytics/fixture.ts";
+import { StorageFixture } from "./fixture.ts";
 
-async function storageDomain(suffix = "primary"): Promise<StorageDomain> {
-  const storagePath = await mkdtemp(
+async function storageDomain(
+  fixtures: StorageFixture,
+  suffix = "primary",
+): Promise<StorageDomain> {
+  const storagePath = await fixtures.directory(
     join(tmpdir(), `ast-mcp-publication-${suffix}-`),
   );
   return {
@@ -111,13 +106,14 @@ function sourceRow(id: string): StorageRow {
 
 describe("publication reservation protocol", () => {
   test("selects the newest published generation beyond 1,000 rows", async () => {
-    const domain = await storageDomain("generation-history");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "generation-history");
     const { revisionId, workspaceId } = analyticsFixture(
       ["guide"],
       [],
       "generation-history",
     ).scope;
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await fixtures.open(domain);
     try {
       const seed = await store.publish({
         manifestArtifactId: manifestId(revisionId),
@@ -154,7 +150,7 @@ describe("publication reservation protocol", () => {
       };
       const older = "2026-09-10T00:00:00.000Z";
       const newest = rowFor(1_001, "2099-09-10T00:00:00.000Z");
-      const connection = await lancedb.connect(domain.storagePath);
+      const connection = await fixtures.connect(domain.storagePath);
       try {
         const table = await connection.openTable("publications");
         try {
@@ -181,13 +177,14 @@ describe("publication reservation protocol", () => {
   });
 
   test("rejects malformed publication reservation contracts", async () => {
+    await using fixtures = new StorageFixture();
     expect(
       RequiredPublicationTablesSchema.safeParse(["artifacts", "artifacts"])
         .success,
     ).toBeFalse();
 
-    const domain = await storageDomain("contract-validation");
-    const store = await LanceIntelligenceStore.open(domain);
+    const domain = await storageDomain(fixtures, "contract-validation");
+    const store = await fixtures.open(domain);
     const base = analyticsFixture(["contract"], [], "contract-validation");
     const revisionId = base.scope.revisionId;
     const reservation = await store.reservePublication({
@@ -230,13 +227,14 @@ describe("publication reservation protocol", () => {
   });
 
   test("reserves, writes analytics, finalizes, pins, and reloads after restart", async () => {
-    const domain = await storageDomain();
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
     const base = analyticsFixture(
       ["guide", "api"],
       [{ source: "guide", target: "api" }],
       "reserved-analytics",
     );
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await fixtures.open(domain);
     const reservation = await store.reservePublication({
       manifestArtifactId: manifestId(base.scope.revisionId),
       requiredTables: ["communities", "summaries"],
@@ -286,7 +284,7 @@ describe("publication reservation protocol", () => {
       }),
     ).toEqual(generation);
 
-    const reader = await store.pinGeneration(generation, "analytics-reader");
+    const reader = await fixtures.pin(store, generation, "analytics-reader");
     expect(await repository.load(reader, workspace(snapshot))).toEqual(
       result.communities,
     );
@@ -303,7 +301,7 @@ describe("publication reservation protocol", () => {
     await reader.close();
     await store.shutdownCoordinator();
 
-    const reopened = await LanceIntelligenceStore.open(domain);
+    const reopened = await fixtures.open(domain);
     const restartedReader = await reopened.pinLatestGeneration(
       base.scope.workspaceId,
       "restart-reader",
@@ -320,10 +318,11 @@ describe("publication reservation protocol", () => {
   });
 
   test("rejects mismatched, abandoned, finalized, and cross-domain writes", async () => {
-    const domain = await storageDomain("guards");
-    const secondDomain = await storageDomain("other");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "guards");
+    const secondDomain = await storageDomain(fixtures, "other");
     const base = analyticsFixture(["one"], [], "guards");
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await fixtures.open(domain);
     const reservation = await store.reservePublication({
       manifestArtifactId: manifestId(base.scope.revisionId),
       requiredTables: ["artifacts"],
@@ -410,9 +409,9 @@ describe("publication reservation protocol", () => {
     ).rejects.toMatchObject({ code: "publication_finalized" });
 
     await expect(
-      store.pinGeneration(reservation as unknown as typeof generation, "bad"),
+      fixtures.pin(store, reservation as unknown as typeof generation, "bad"),
     ).rejects.toThrow();
-    const otherStore = await LanceIntelligenceStore.open(secondDomain);
+    const otherStore = await fixtures.open(secondDomain);
     await expect(
       otherStore.putReservedRows(reservation, "artifacts", [
         sourceRow(createIdentity("source", { cross: true })),
@@ -449,6 +448,7 @@ describe("publication reservation protocol", () => {
   });
 
   test("skips malformed matching reuse candidates", async () => {
+    await using fixtures = new StorageFixture();
     const base = analyticsFixture(["malformed"], [], "malformed-candidates");
     const request = {
       manifestArtifactId: manifestId(base.scope.revisionId),
@@ -458,8 +458,8 @@ describe("publication reservation protocol", () => {
       workspaceId: base.scope.workspaceId,
     };
 
-    const activeStore = await LanceIntelligenceStore.open(
-      await storageDomain("malformed-active"),
+    const activeStore = await fixtures.open(
+      await storageDomain(fixtures, "malformed-active"),
     );
     const active = await activeStore.reservePublication(request);
     const activeRow = (
@@ -498,8 +498,8 @@ describe("publication reservation protocol", () => {
     expect(await activeStore.reservePublication(request)).toEqual(active);
     await activeStore.shutdownCoordinator();
 
-    const publishedStore = await LanceIntelligenceStore.open(
-      await storageDomain("malformed-published"),
+    const publishedStore = await fixtures.open(
+      await storageDomain(fixtures, "malformed-published"),
     );
     const reservation = await publishedStore.reservePublication(request);
     await publishedStore.putReservedRows(reservation, "artifacts", [
@@ -546,9 +546,10 @@ describe("publication reservation protocol", () => {
   });
 
   test("recovers stale reservations and retention removes abandoned records", async () => {
-    const domain = await storageDomain("recovery");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "recovery");
     let current = new Date("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(domain, {
+    const store = await fixtures.open(domain, {
       now: () => current,
     });
     const revisionId = createIdentity("revision", { stale: true });
@@ -565,7 +566,7 @@ describe("publication reservation protocol", () => {
     ]);
     await store.shutdownCoordinator();
     current = new Date("2026-09-10T00:00:01.000Z");
-    const reopened = await LanceIntelligenceStore.open(domain, {
+    const reopened = await fixtures.open(domain, {
       now: () => current,
     });
     const recovery = await reopened.recover();
@@ -596,9 +597,10 @@ describe("publication reservation protocol", () => {
   });
 
   test("retries terminal attempts without mutating shared artifacts", async () => {
-    const domain = await storageDomain("retry-membership");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "retry-membership");
     let current = new Date("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(domain, {
+    const store = await fixtures.open(domain, {
       now: () => current,
     });
     const revisionId = createIdentity("revision", { retry: true });
@@ -679,7 +681,7 @@ describe("publication reservation protocol", () => {
       ),
     ).toBe(2);
 
-    const reader = await store.pinGeneration(generation, "retry-reader");
+    const reader = await fixtures.pin(store, generation, "retry-reader");
     expect(await reader.rows("artifacts")).toHaveLength(1);
     await reader.close();
 
@@ -712,11 +714,12 @@ describe("publication reservation protocol", () => {
   });
 
   test("rejects reusable publications from another storage domain", async () => {
-    const local = await LanceIntelligenceStore.open(
-      await storageDomain("reuse-local"),
+    await using fixtures = new StorageFixture();
+    const local = await fixtures.open(
+      await storageDomain(fixtures, "reuse-local"),
     );
-    const foreign = await LanceIntelligenceStore.open(
-      await storageDomain("reuse-foreign"),
+    const foreign = await fixtures.open(
+      await storageDomain(fixtures, "reuse-foreign"),
     );
     const base = analyticsFixture(["reuse"], [], "cross-domain-reuse");
     const inputFingerprint = "a".repeat(64);
@@ -748,8 +751,9 @@ describe("publication reservation protocol", () => {
   });
 
   test("upgrades legacy tagged immutable content without removing its tag", async () => {
-    const store = await LanceIntelligenceStore.open(
-      await storageDomain("legacy-tag-upgrade"),
+    await using fixtures = new StorageFixture();
+    const store = await fixtures.open(
+      await storageDomain(fixtures, "legacy-tag-upgrade"),
     );
     const base = analyticsFixture(["legacy"], [], "legacy-tag-upgrade");
     const legacyGenerationId = createIdentity("generation", {
@@ -783,7 +787,8 @@ describe("publication reservation protocol", () => {
     expect(stored[0]?.publication_generation_id).toBe(legacyGenerationId);
 
     const generation = await store.finalizePublication(reservation);
-    const reader = await store.pinGeneration(
+    const reader = await fixtures.pin(
+      store,
       generation,
       "legacy-upgrade-reader",
     );
@@ -793,9 +798,10 @@ describe("publication reservation protocol", () => {
   });
 
   test("rejects invalid reservation identities and stale tokens before writes", async () => {
-    const domain = await storageDomain("stale");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "stale");
     let current = new Date("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(domain, {
+    const store = await fixtures.open(domain, {
       now: () => current,
     });
     const revisionId = createIdentity("revision", { staleToken: true });
@@ -824,13 +830,14 @@ describe("publication reservation protocol", () => {
     await store.shutdownCoordinator();
   });
   test("fenced batches reuse fresh leases but still check ownership before writes", async () => {
-    const domain = await storageDomain("background-fence");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "background-fence");
     let timestamp = Date.parse("2026-09-10T00:00:00.000Z");
-    const store = await LanceIntelligenceStore.open(domain, {
+    const store = await fixtures.open(domain, {
       leaseDurationMs: 1_000,
       now: () => new Date(timestamp),
     });
-    const raw = await lancedb.connect(domain.storagePath, {
+    const raw = await fixtures.connect(domain.storagePath, {
       readConsistencyInterval: 0,
     });
     const leaseTable = await raw.openTable("coordinator_recovery");
@@ -915,8 +922,9 @@ describe("publication reservation protocol", () => {
     }
   });
   test("retries a fenced batch without publishing incomplete producers", async () => {
-    const domain = await storageDomain("fenced-batch");
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "fenced-batch");
+    const store = await fixtures.open(domain);
     try {
       const { revisionId, workspaceId } = analyticsFixture(
         [],
@@ -979,7 +987,7 @@ describe("publication reservation protocol", () => {
       expect(
         generation.tableVersions.find(({ table }) => table === "chunks"),
       ).toEqual(before.tableVersions.find(({ table }) => table === "chunks"));
-      const reader = await store.pinGeneration(generation, "fenced-batch-test");
+      const reader = await fixtures.pin(store, generation, "fenced-batch-test");
       try {
         expect(
           (await reader.rows("artifacts")).map((row) => row.artifact_id),
@@ -994,9 +1002,10 @@ describe("publication reservation protocol", () => {
     }
   });
   test("blocks finalization until delayed required producers are ready", async () => {
-    const domain = await storageDomain("producer-readiness");
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "producer-readiness");
     const ordering: string[] = [];
-    const store = await LanceIntelligenceStore.open(domain, {
+    const store = await fixtures.open(domain, {
       now: () => {
         ordering.push("now");
         return new Date("2026-09-10T00:00:00.000Z");
@@ -1070,6 +1079,7 @@ describe("publication reservation protocol", () => {
   });
 
   test("rejects malformed and inconsistent published manifest payloads", async () => {
+    await using fixtures = new StorageFixture();
     const cases = [
       {
         expectedCode: "mixed_generation",
@@ -1116,9 +1126,10 @@ describe("publication reservation protocol", () => {
 
     for (const scenario of cases) {
       const domain = await storageDomain(
+        fixtures,
         `manifest-${scenario.name.replaceAll(" ", "-")}`,
       );
-      const store = await LanceIntelligenceStore.open(domain);
+      const store = await fixtures.open(domain);
       const repositoryId = createIdentity("repository", {
         scenario: scenario.name,
       });
@@ -1217,8 +1228,9 @@ describe("publication reservation protocol", () => {
   });
 
   test("migrates populated pre-publication schemas once and preserves rows", async () => {
-    const domain = await storageDomain("legacy-schema");
-    const connection = await lancedb.connect(domain.storagePath);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures, "legacy-schema");
+    const connection = await fixtures.connect(domain.storagePath);
     const legacySchema = new Schema(
       TABLE_SCHEMAS.artifacts.fields.filter(
         (field) => field.name !== "publication_generation_id",
@@ -1233,7 +1245,7 @@ describe("publication reservation protocol", () => {
     legacyTable.close();
     connection.close();
 
-    const store = await LanceIntelligenceStore.open(domain);
+    const store = await fixtures.open(domain);
     const migrated = await store.rows(
       "artifacts",
       `artifact_id = '${artifactId}'`,
@@ -1259,7 +1271,7 @@ describe("publication reservation protocol", () => {
     );
     await store.shutdownCoordinator();
 
-    const reopened = await LanceIntelligenceStore.open(domain);
+    const reopened = await fixtures.open(domain);
     expect(await reopened.count("migrations", "state = 'completed'")).toBe(2);
     expect(
       await reopened.count("artifacts", `artifact_id = '${artifactId}'`),

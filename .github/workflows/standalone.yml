@@ -13,12 +13,19 @@ on:
       package_artifact_name:
         description: Exact main npm package artifact from the release build
         type: string
+      recovery_tag:
+        description: Reuse exact qualified archives from a managed published release
+        type: string
+      recovery_release_id:
+        description: Immutable GitHub release identifier for recovery
+        type: string
       registry_version:
         description: Verify this published version instead of building candidate archives
         type: string
   pull_request:
     paths:
       - ".github/workflows/standalone.yml"
+      - ".github/actions/checkout-release-candidate/action.yml"
       - ".github/workflows/release.yml"
       - "bin/**"
       - "scripts/build/**"
@@ -38,15 +45,37 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        if: inputs.ref == ''
         with:
-          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
+      - uses: actions/checkout@v7
+        if: inputs.ref != ''
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/checkout-release-candidate
+        if: inputs.ref != ''
+        with:
+          sha: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
       - name: Install locked build and target dependencies
+        if: inputs.recovery_tag == ''
         run: bun ci --os='*' --cpu='*' --libc='*'
+      - name: Restore exact published standalone and npm archives
+        if: inputs.recovery_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.recovery_tag }}
+          CANDIDATE_SHA: ${{ inputs.ref }}
+          RELEASE_ID: ${{ inputs.recovery_release_id }}
+        run: bun scripts/release/release-candidate.ts restore-matrix "$RUNNER_TEMP"
       - name: Compile ESM bytecode and archive runtime assets
+        if: inputs.recovery_tag == ''
         shell: bash
         env:
           NATIVE_NPM: ${{ github.event_name == 'pull_request' || inputs.native_npm }}
@@ -112,9 +141,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        if: inputs.ref == ''
         with:
-          ref: ${{ inputs.ref || github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+      - uses: actions/checkout@v7
+        if: inputs.ref != ''
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/checkout-release-candidate
+        if: inputs.ref != ''
+        with:
+          sha: ${{ inputs.ref }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json

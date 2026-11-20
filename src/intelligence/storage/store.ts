@@ -1001,7 +1001,7 @@ export class LanceIntelligenceStore {
           await writeMembershipMigration("completed", migratedLinks);
         }
         if ((await this.count("retention")) === 0) {
-          const now = new Date().toISOString();
+          const now = this.now().toISOString();
           const policyId = createIdentity("retention-policy", {
             storageDomainId: this.domain.domainId,
           });
@@ -2667,7 +2667,7 @@ export class LanceIntelligenceStore {
               },
               where:
                 `lease_key = 'writer' AND owner_id = ${sqlString(lease.ownerId)} ` +
-                `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(new Date().toISOString())}`,
+                `AND epoch = ${lease.epoch} AND lease_expires_at > ${sqlString(this.now().toISOString())}`,
             });
           },
         );
@@ -2727,7 +2727,7 @@ export class LanceIntelligenceStore {
         // Keep the pin snapshot valid through deletion. Pin writers never take
         // the storage writer lock, so staging cannot delay them.
         using pinLock = await this.lockReaderPins();
-        const now = options.now ?? new Date();
+        const now = options.now ?? this.now();
         const retentionRows = await this.rows("retention");
         const retention = [...retentionRows].sort(
           (left, right) =>

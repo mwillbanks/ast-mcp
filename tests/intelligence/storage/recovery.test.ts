@@ -1,9 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-
-import { createMockTime } from "../../support/mock-time.ts";
-beforeEach(() => {
-  createMockTime({ now: Date.parse("2026-09-10T00:00:00.000Z") });
-});
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   mkdtemp,

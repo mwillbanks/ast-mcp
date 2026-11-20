@@ -1,9 +1,11 @@
-import { afterEach, jest } from "bun:test";
+import { jest } from "bun:test";
 
 const activeClocks = new Set<() => void>();
-afterEach(() => {
+
+/** Called by the suite preload after it closes test-owned runtime resources. */
+export function disposeMockTimes(): void {
   for (const dispose of activeClocks) dispose();
-});
+}
 
 /** Fixed epoch shared by deterministic test clocks. */
 export const MOCK_EPOCH = 1_700_000_000_000;

@@ -1,10 +1,5 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
-
-import { createMockTime, deferred } from "../../support/mock-time.ts";
-beforeEach(() => {
-  createMockTime();
-});
-import { mkdtemp, rename, rm } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
+import { rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,14 +34,18 @@ import {
   LanceIntelligenceStore,
   TABLE_SCHEMAS,
 } from "../../../src/intelligence/storage/index.ts";
+import { deferred } from "../../support/mock-time.ts";
+import { StorageFixture } from "./fixture.ts";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 const C = "c".repeat(64);
 const NOW = "2026-09-10T00:00:00.000Z";
 
-async function storageDomain(): Promise<StorageDomain> {
-  const storagePath = await mkdtemp(join(tmpdir(), "ast-mcp-storage-"));
+async function storageDomain(fixtures: StorageFixture): Promise<StorageDomain> {
+  const storagePath = await fixtures.directory(
+    join(tmpdir(), "ast-mcp-storage-"),
+  );
   return {
     domainId: createStorageDomainId({
       engine: "lancedb",
@@ -84,8 +83,9 @@ function workspaceCoordinates(domain: StorageDomain, suffix = "0") {
 
 describe("LanceDB intelligence storage", () => {
   test("creates and reopens all explicit Arrow schemas", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     expect(Object.keys(TABLE_SCHEMAS).sort()).toEqual([...ALL_TABLES].sort());
     expect(() =>
       assertCompatibleSchema(
@@ -105,7 +105,7 @@ describe("LanceDB intelligence storage", () => {
     ) as Record<LanceTableName, number>;
     expect(await store.tableCounts()).toEqual(expectedCounts);
 
-    const reopened = await LanceIntelligenceStore.open(domain);
+    const reopened = await fixtures.open(domain);
     expect(await reopened.tableCounts()).toEqual(await store.tableCounts());
     await store.shutdownCoordinator();
     expect(
@@ -113,7 +113,7 @@ describe("LanceDB intelligence storage", () => {
     ).toBe("open");
     await reopened.shutdownCoordinator();
 
-    const afterShutdown = await LanceIntelligenceStore.open(domain);
+    const afterShutdown = await fixtures.open(domain);
     expect(
       await afterShutdown.serializeMigration("reopened", async () => "open"),
     ).toBe("open");
@@ -121,7 +121,8 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("inspects legacy mutations and repository manifests without joining the index writer lane", async () => {
-    const domain = await storageDomain();
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
     const coordinates = workspaceCoordinates(domain);
     const scope = { ...coordinates, checkoutRoot: "/repos/0" };
     const pristine = { repositoryIndexed: false, legacyPayloads: [] };
@@ -129,7 +130,7 @@ describe("LanceDB intelligence storage", () => {
       expect(
         await LanceIntelligenceStore.readMutationState(domain, scope),
       ).toMatchObject(pristine);
-      const store = await LanceIntelligenceStore.open(domain);
+      const store = await fixtures.open(domain);
       try {
         const manifest = {
           dirtyOverlayId: null,
@@ -201,8 +202,9 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("roundtrips every persistent record family", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     const { repositoryId, revisionId, workspaceId } =
       workspaceCoordinates(domain);
     const sourceId = sourceArtifactIdentity({ contentDigest: A });
@@ -478,8 +480,9 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("bounds table counts by row and deadline", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     await store.putRows(
       "artifacts",
       ["bounded-a", "bounded-b", "bounded-c"].map((name, index) => ({
@@ -514,8 +517,9 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("deduplicates physical artifacts across revisions, workspaces, renames, and repositories", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     const sourceId = sourceArtifactIdentity({ contentDigest: A });
     const sourceRow = {
       artifact_id: sourceId,
@@ -600,8 +604,9 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("adds only changed content-derived artifacts for a changed function", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     const firstSourceId = sourceArtifactIdentity({ contentDigest: A });
     const secondSourceId = sourceArtifactIdentity({ contentDigest: B });
     const firstSyntaxId = syntaxFactsArtifactIdentity({
@@ -669,14 +674,13 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("historical reads use the pin lane after initialization", async () => {
-    const domain = await storageDomain();
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
     try {
-      const initialized =
-        await LanceIntelligenceStore.openHistoricalRead(domain);
+      const initialized = await fixtures.openHistoricalRead(domain);
       expect(initialized.coordinator).toBeDefined();
       await initialized.shutdownCoordinator();
-      const historical =
-        await LanceIntelligenceStore.openHistoricalRead(domain);
+      const historical = await fixtures.openHistoricalRead(domain);
       try {
         expect(() => historical.coordinator).toThrow("no writer coordinator");
         expect(
@@ -693,30 +697,36 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("settles a historical schema batch before closing the connection", async () => {
-    const domain = await storageDomain();
-    const initialized = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const initialized = await fixtures.open(domain);
     await initialized.shutdownCoordinator();
-    const connection = await lancedb.connect(domain.storagePath);
+    const connection = await fixtures.connect(domain.storagePath);
     const openTable = connection.openTable.bind(connection);
     const [first, second, next] = ALL_TABLES;
     const sibling = await openTable(second!);
     const events: string[] = [];
     const closeSibling = sibling.close.bind(sibling);
     const closeConnection = connection.close.bind(connection);
-    const siblingClosed = spyOn(sibling, "close").mockImplementation(() => {
-      events.push("sibling");
-      closeSibling();
-    });
+    const siblingClosed = fixtures
+      .spyOn(sibling, "close")
+      .mockImplementation(() => {
+        events.push("sibling");
+        closeSibling();
+      });
     const failure = new Error("injected schema table open failure");
     const entered = deferred<void>();
     const finishOpen = deferred<void>();
-    const connect = spyOn(lancedb, "connect").mockResolvedValue(connection);
-    const close = spyOn(connection, "close").mockImplementation(() => {
+    const connect = fixtures
+      .spyOn(lancedb, "connect")
+      .mockResolvedValue(connection);
+    const close = fixtures.spyOn(connection, "close").mockImplementation(() => {
       events.push("connection");
       closeConnection();
     });
-    const open = spyOn(connection, "openTable").mockImplementation(
-      async (...args) => {
+    const open = fixtures
+      .spyOn(connection, "openTable")
+      .mockImplementation(async (...args) => {
         if (args[0] === first) throw failure;
         if (args[0] === second) {
           entered.resolve();
@@ -724,9 +734,8 @@ describe("LanceDB intelligence storage", () => {
           return sibling;
         }
         return openTable(...args);
-      },
-    );
-    const pending = LanceIntelligenceStore.openHistoricalRead(domain);
+      });
+    const pending = fixtures.openHistoricalRead(domain);
     void pending.catch(() => {});
     try {
       await Promise.race([entered.promise, pending]);
@@ -751,27 +760,33 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("waits for both historical readiness checks before closing on error", async () => {
-    const domain = await storageDomain();
-    const initialized = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const initialized = await fixtures.open(domain);
     await initialized.shutdownCoordinator();
-    const connection = await lancedb.connect(domain.storagePath);
+    const connection = await fixtures.connect(domain.storagePath);
     const openTable = connection.openTable.bind(connection);
     const retention = await openTable("retention");
     const failure = new Error("injected native migration read failure");
     const failed = deferred<void>();
     const entered = deferred<void>();
     const finishRead = deferred<void>();
-    const connect = spyOn(lancedb, "connect").mockResolvedValue(connection);
-    const close = spyOn(connection, "close");
+    const connect = fixtures
+      .spyOn(lancedb, "connect")
+      .mockResolvedValue(connection);
+    const close = fixtures.spyOn(connection, "close");
     let sawReadiness = false;
     let retentionHandles = 0;
-    const count = spyOn(retention, "countRows").mockImplementation(async () => {
-      entered.resolve();
-      await finishRead.promise;
-      return 1;
-    });
-    const open = spyOn(connection, "openTable").mockImplementation(
-      async (...args) => {
+    const count = fixtures
+      .spyOn(retention, "countRows")
+      .mockImplementation(async () => {
+        entered.resolve();
+        await finishRead.promise;
+        return 1;
+      });
+    const open = fixtures
+      .spyOn(connection, "openTable")
+      .mockImplementation(async (...args) => {
         if (args[0] === "migrations" && sawReadiness) {
           failed.resolve();
           throw failure;
@@ -780,9 +795,8 @@ describe("LanceDB intelligence storage", () => {
         if (args[0] === "retention" && ++retentionHandles === 2)
           return retention;
         return openTable(...args);
-      },
-    );
-    const pending = LanceIntelligenceStore.openHistoricalRead(domain);
+      });
+    const pending = fixtures.openHistoricalRead(domain);
     void pending.catch(() => {});
     try {
       await Promise.all([failed.promise, entered.promise]);
@@ -812,11 +826,12 @@ describe("LanceDB intelligence storage", () => {
   ] as const)(
     "historical reads use writer initialization for %s",
     async (condition) => {
-      const domain = await storageDomain();
+      await using fixtures = new StorageFixture();
+      const domain = await storageDomain(fixtures);
       try {
-        const initialized = await LanceIntelligenceStore.open(domain);
+        const initialized = await fixtures.open(domain);
         await initialized.shutdownCoordinator();
-        const connection = await lancedb.connect(domain.storagePath);
+        const connection = await fixtures.connect(domain.storagePath);
         try {
           if (condition === "legacy-schema") {
             const table = await connection.openTable("graph_nodes");
@@ -860,8 +875,7 @@ describe("LanceDB intelligence storage", () => {
         } finally {
           connection.close();
         }
-        const reopened =
-          await LanceIntelligenceStore.openHistoricalRead(domain);
+        const reopened = await fixtures.openHistoricalRead(domain);
         try {
           expect(reopened.coordinator).toBeDefined();
           expect(await reopened.count("retention")).toBe(1);
@@ -875,11 +889,12 @@ describe("LanceDB intelligence storage", () => {
   );
 
   test("read-only verification rejects missing and corrupt Lance tables", async () => {
+    await using fixtures = new StorageFixture();
     for (const failure of ["missing", "schema"] as const) {
-      const domain = await storageDomain();
-      const store = await LanceIntelligenceStore.open(domain);
+      const domain = await storageDomain(fixtures);
+      const store = await fixtures.open(domain);
       await store.shutdownCoordinator();
-      const connection = await lancedb.connect(domain.storagePath);
+      const connection = await fixtures.connect(domain.storagePath);
       await connection.dropTable("graph_nodes");
       if (failure === "schema") {
         const table = await connection.createEmptyTable(
@@ -890,14 +905,14 @@ describe("LanceDB intelligence storage", () => {
       }
       connection.close();
       await expect(
-        LanceIntelligenceStore.open(domain, { access: "read-only" }),
+        fixtures.open(domain, { access: "read-only" }),
       ).rejects.toMatchObject({
         code: failure === "missing" ? "storage_unavailable" : "invalid_schema",
       });
       if (failure === "schema")
-        await expect(
-          LanceIntelligenceStore.openHistoricalRead(domain),
-        ).rejects.toMatchObject({ code: "invalid_schema" });
+        await expect(fixtures.openHistoricalRead(domain)).rejects.toMatchObject(
+          { code: "invalid_schema" },
+        );
       const movedPath = `${domain.storagePath}-closed`;
       await rename(domain.storagePath, movedPath);
       await rename(movedPath, domain.storagePath);
@@ -905,8 +920,9 @@ describe("LanceDB intelligence storage", () => {
   });
 
   test("keeps cross-repository syntax shared and resolution environment-specific", async () => {
-    const domain = await storageDomain();
-    const store = await LanceIntelligenceStore.open(domain);
+    await using fixtures = new StorageFixture();
+    const domain = await storageDomain(fixtures);
+    const store = await fixtures.open(domain);
     const sourceId = sourceArtifactIdentity({ contentDigest: A });
     const syntaxId = syntaxFactsArtifactIdentity({
       languageId: "typescript",

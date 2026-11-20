@@ -9,7 +9,7 @@ on:
         required: false
         type: string
       recovery_tag:
-        description: Published release tag to validate and publish
+        description: Draft or published release tag to qualify and publish
         required: false
         type: string
   push:
@@ -20,8 +20,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || inputs.recovery_tag || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ inputs.expected_sha || (github.event_name == 'pull_request' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
@@ -93,6 +93,7 @@ jobs:
               - 'release-please-config.json'
               - '.release-please-manifest.json'
               - '.github/workflows/release.yml'
+              - '.github/actions/checkout-release-candidate/action.yml'
               - 'bin/**'
               - 'package.json'
               - 'scripts/**'

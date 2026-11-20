@@ -61,9 +61,19 @@ The full summary assumes that reviewed workflow definition; a PR can edit both i
 This workflow does not provide an independent governance boundary against changes to that definition.
 Tokens remain read-only; validation does not use privileged `pull_request_target` execution.
 
+## Release benchmark gate
+
+Release Please opens a draft for each candidate. Package and standalone qualification check out the exact candidate commit. A dedicated Ubuntu 24.04 x64 job benchmarks the qualified Linux binary before GitHub and npm publication.
+
+The first hosted run creates the baseline. Later jobs rerun the preceding stable release on the same runner. Five interleaved rounds measure two samples per client for read, guarded-write, and indexed workflows. Each round uses one, four, and sixteen clients across shared and mixed checkouts.
+
+A regression must exceed both 15% and the absolute floor for its metric. The floors are 25 ms for connection or workflow p95, 16 MiB for peak summed process-tree RSS, and one workflow per second for throughput. Invalid measurements or retained processes also block publication. The Actions summary records failed comparisons. Each published release stores its report in `release-benchmarks.json`, which supplies the tables and charts for both release pages.
+
+Rerun a failed workflow to benchmark the same commit. After merging a fix, dispatch CI on main with the draft tag in `recovery_tag`. CI qualifies and benchmarks the new commit for that version. A published release uses its attached benchmark report and qualified archives for recovery. Local macOS backfills describe the historical releases and use separate measurements.
+
 ## First npm publication of the platform packages
 
-Use the `standalone-release-matrix` artifact from the qualified tagged release run. It contains one `ast-mcp-npm-<target>.tgz` and checksum per target. Verify all six checksums and confirm the package versions match the tag.
+Use the `standalone-release-matrix` artifact from the qualified release run. It contains one `ast-mcp-npm-<target>.tgz` and checksum per target. Verify all six checksums and confirm the package versions match the tag.
 
 The npm scope owner completes each first publish with their authenticated npm session and account verification. Publish the exact artifact with `npm publish <tarball> --ignore-scripts --access public`. Keep registry credentials out of GitHub. Configure each package's trusted publisher for `mwillbanks/ast-mcp` and the caller workflow `ci.yml`, matching the main package. Configure it during the two days before its first automated publish so it can [validate before it expires](https://docs.npmjs.com/trusted-publishers/#trusted-publisher-configuration-expiry).
 

@@ -1,7 +1,9 @@
-import "./mock-time";
+import { afterEach } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+import { disposeMockTimes } from "./mock-time";
 
 const isolatedHome = path.join(os.tmpdir(), `ast-mcp-test-home-${process.pid}`);
 
@@ -25,6 +27,29 @@ writeFileSync(
 Object.defineProperty(os, "homedir", {
   configurable: true,
   value: () => isolatedHome,
+});
+
+// Load runtime modules only after the isolated environment is installed.
+const { configRegistry } = await import("../../src/config/registry");
+
+afterEach(() => {
+  const failures: unknown[] = [];
+  try {
+    configRegistry.close();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    disposeMockTimes();
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "Test resource and clock cleanup failed",
+    );
 });
 
 process.on("exit", () => {

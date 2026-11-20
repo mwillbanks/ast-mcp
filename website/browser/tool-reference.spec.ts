@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 import tools from "../src/data/tool-reference.json";
 
@@ -10,6 +10,73 @@ const categories = [
   "code-intelligence",
   "indexing",
 ];
+
+async function holdTOCObservations(page: Page) {
+  await page.addInitScript(() => {
+    const NativeObserver = window.IntersectionObserver;
+    let holding = true;
+    let scrollEnds = 0;
+    let hashChanges = 0;
+    document.addEventListener("scrollend", () => scrollEnds++);
+    window.addEventListener("hashchange", () => hashChanges++);
+    const pending: (() => void)[] = [];
+    const select: ((id: string) => void)[] = [];
+    const control = {
+      get queued() {
+        return pending.length;
+      },
+      get scrollEnds() {
+        return scrollEnds;
+      },
+      get hashChanges() {
+        return hashChanges;
+      },
+      select(id: string) {
+        for (const publish of select) publish(id);
+      },
+      deliver() {
+        for (const deliver of pending.splice(0)) deliver();
+      },
+      release() {
+        holding = false;
+        control.deliver();
+      },
+    };
+    Object.assign(window, { __tocObserver: control });
+    window.IntersectionObserver = class extends NativeObserver {
+      constructor(
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
+        super((entries, observer) => {
+          if (holding && options?.threshold === 0.9) {
+            pending.push(() => callback(entries, observer));
+          } else callback(entries, observer);
+        }, options);
+        if (options?.threshold === 0.9) {
+          select.push((id) => {
+            const entries = Array.from(
+              document.querySelectorAll("h2[id], h3[id]"),
+              (target): IntersectionObserverEntry => {
+                const bounds = target.getBoundingClientRect();
+                return {
+                  target,
+                  boundingClientRect: bounds,
+                  intersectionRect: bounds,
+                  rootBounds: new DOMRect(0, 0, innerWidth, innerHeight),
+                  intersectionRatio: target.id === id ? 1 : 0,
+                  isIntersecting: target.id === id,
+                  time: 0,
+                };
+              },
+            );
+            callback(entries, this);
+          });
+        }
+      }
+    };
+  });
+}
 
 test("canonical tool pages prerender every registered heading and parameter table", async ({
   page,
@@ -132,6 +199,197 @@ test("legacy tool TOC keeps combined tool headings and nests subsections beneath
   await expect(
     page.locator("h3#optional-sql-candidate-validation"),
   ).toBeInViewport();
+});
+
+test("tool TOC preserves fragment selection across delayed observations and history", async ({
+  page,
+}) => {
+  await holdTOCObservations(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(base + "docs/tools/file-system#file_patch");
+  const toc = page.getByRole("navigation", { name: "Tools on this page" });
+  const patch = toc.locator('a[href="#file_patch"]');
+  const subsection = toc.getByRole("link", {
+    name: "Optional SQL candidate validation",
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as Window & {
+              __tocObserver: { queued: number };
+            }
+          ).__tocObserver.queued,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await expect(patch).toHaveAttribute("aria-current", "location");
+  await expect(patch).toHaveAttribute("data-active", "true");
+
+  await subsection.evaluate((link) =>
+    link.addEventListener("click", (event) => event.preventDefault(), {
+      once: true,
+    }),
+  );
+  await subsection.click();
+  await expect(page).toHaveURL(/#file_patch$/);
+  await expect(patch).toHaveAttribute("aria-current", "location");
+  await subsection.evaluate((link) => {
+    window.addEventListener("click", (event) => event.preventDefault(), {
+      once: true,
+    });
+    link.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      }),
+    );
+  });
+  await expect(page).toHaveURL(/#file_patch$/);
+  await expect(patch).toHaveAttribute("aria-current", "location");
+
+  await subsection.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/#optional-sql-candidate-validation$/);
+  await expect(subsection).toHaveAttribute("aria-current", "location");
+  await expect(subsection).toHaveAttribute("data-active", "true");
+  await page.evaluate(() =>
+    (
+      window as unknown as Window & {
+        __tocObserver: { deliver(): void };
+      }
+    ).__tocObserver.deliver(),
+  );
+  await expect(subsection).toHaveAttribute("aria-current", "location");
+  await expect(subsection).toHaveAttribute("data-active", "true");
+
+  const beforeBack = await page.evaluate(() => {
+    const control = (
+      window as unknown as Window & {
+        __tocObserver: { hashChanges: number; select(id: string): void };
+      }
+    ).__tocObserver;
+    control.select("optional-sql-candidate-validation");
+    return control.hashChanges;
+  });
+  await page.goBack();
+  await expect(page).toHaveURL(/#file_patch$/);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as Window & {
+              __tocObserver: { hashChanges: number };
+            }
+          ).__tocObserver.hashChanges,
+      ),
+    )
+    .toBeGreaterThan(beforeBack);
+  const restored = await page.evaluate(() => {
+    document
+      .getElementById("file_patch")!
+      .scrollIntoView({ behavior: "instant" });
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    const scroller = document.scrollingElement!;
+    const before = scroller.scrollTop;
+    document.dispatchEvent(new Event("scroll"));
+    return { before, after: scroller.scrollTop };
+  });
+  expect(restored.after).toBe(restored.before);
+  await expect(patch).toHaveAttribute("aria-current", "location");
+  await expect(patch).toHaveAttribute("data-active", "true");
+  await page.goForward();
+  await expect(page).toHaveURL(/#optional-sql-candidate-validation$/);
+  await expect(subsection).toHaveAttribute("aria-current", "location");
+  await expect(subsection).toHaveAttribute("data-active", "true");
+
+  await page.evaluate(() =>
+    (
+      window as unknown as Window & {
+        __tocObserver: { release(): void };
+      }
+    ).__tocObserver.release(),
+  );
+  await page.mouse.move(700, 400);
+  await page.mouse.wheel(0, -100_000);
+  const first = toc.locator('a[href="#file_hash"]');
+  await expect(first).toHaveAttribute("aria-current", "location");
+  await expect(first).toHaveAttribute("data-active", "true");
+  await expect(subsection).not.toHaveAttribute("aria-current", "location");
+  await expect(subsection).toHaveAttribute("data-active", "false");
+
+  await subsection.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/#optional-sql-candidate-validation$/);
+  await expect(subsection).toHaveAttribute("aria-current", "location");
+  await expect(subsection).toHaveAttribute("data-active", "true");
+  await expect(toc.locator('[aria-current="location"]')).toHaveCount(1);
+});
+
+test("tool TOC releases a settled initial fragment on the first manual scroll", async ({
+  page,
+}) => {
+  await holdTOCObservations(page);
+  let releaseScripts!: () => void;
+  const scriptsReady = new Promise<void>((resolve) => {
+    releaseScripts = resolve;
+  });
+  await page.route("**/*", async (route) => {
+    if (route.request().resourceType() === "script") await scriptsReady;
+    await route.continue();
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const heading = page.locator("h2#file_patch");
+  try {
+    await page.goto(base + "docs/tools/file-system#file_patch", {
+      waitUntil: "commit",
+    });
+    await expect(heading).toBeInViewport();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              window as unknown as Window & {
+                __tocObserver: { scrollEnds: number };
+              }
+            ).__tocObserver.scrollEnds,
+        ),
+      )
+      .toBeGreaterThan(0);
+  } finally {
+    releaseScripts();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  const toc = page.getByRole("navigation", { name: "Tools on this page" });
+  const patch = toc.locator('a[href="#file_patch"]');
+  await expect(patch).toHaveAttribute("aria-current", "location");
+  const initialTop = await heading.evaluate(
+    (element) => element.getBoundingClientRect().top,
+  );
+  await page.mouse.move(700, 400);
+  await page.mouse.wheel(0, -40);
+  await expect
+    .poll(() =>
+      heading.evaluate((element) => element.getBoundingClientRect().top),
+    )
+    .toBeGreaterThan(initialTop);
+  await expect(heading).toBeInViewport();
+  await page.evaluate(() =>
+    (
+      window as unknown as Window & {
+        __tocObserver: { select(id: string): void };
+      }
+    ).__tocObserver.select("file_write"),
+  );
+  const observed = toc.locator('a[href="#file_write"]');
+  await expect(observed).toHaveAttribute("aria-current", "location");
+  await expect(observed).toHaveAttribute("data-active", "true");
+  await expect(patch).not.toHaveAttribute("aria-current", "location");
+  await expect(patch).toHaveAttribute("data-active", "false");
 });
 
 test("mobile TOC and nested parameter controls remain usable without horizontal page overflow", async ({

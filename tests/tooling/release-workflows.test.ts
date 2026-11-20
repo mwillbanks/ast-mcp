@@ -43,6 +43,7 @@ type Job = {
 };
 type Workflow = {
   on: Record<string, unknown>;
+  concurrency?: Record<string, string>;
   permissions?: Record<string, string>;
   jobs: Record<string, Job>;
 };
@@ -126,6 +127,7 @@ describe("standalone release contracts", () => {
       "build",
       "consumers",
       "standalone",
+      "benchmarks",
       "publish-standalone",
     ]);
     expect(publish.permissions?.["id-token"]).toBe("write");
@@ -139,7 +141,11 @@ describe("standalone release contracts", () => {
         registry_version: "${{ needs.publish.outputs.registry_version }}",
       },
     });
-    expect(job(release, "publish-notes").needs).toContain("verify-registry");
+    expect(job(release, "publish-notes").needs).toEqual([
+      "release",
+      "publish-standalone",
+      "benchmarks",
+    ]);
   });
 
   test("attaches only complete qualified assets to the tagged release", () => {
@@ -147,32 +153,35 @@ describe("standalone release contracts", () => {
       needs: ["release", "build"],
       uses: "./.github/workflows/standalone.yml",
       with: {
-        ref: "${{ needs.release.outputs.tag_name }}",
+        ref: "${{ needs.release.outputs.candidate_sha }}",
         package_artifact_name: "release-candidate",
         native_npm: "${{ needs.build.outputs.native_npm == 'true' }}",
       },
     });
     const publication = job(release, "publish-standalone");
-    expect(publication.needs).toEqual(["release", "validate", "standalone"]);
-    expect(publication.permissions).toEqual({ contents: "write" });
-    const attach = publication.steps?.find((step) => step.run)?.run;
-    expect(attach).toContain("ast-mcp-v[0-9]");
-    expect(
-      attach
-        ?.match(/for target in ([^;]+); do/)?.[1]
-        ?.split(" ")
-        .sort(),
-    ).toEqual([
-      "darwin-arm64",
-      "linux-arm64",
-      "linux-arm64-musl",
-      "linux-x64",
-      "linux-x64-musl",
-      "windows-x64",
+    expect(publication.needs).toEqual([
+      "release",
+      "validate",
+      "build",
+      "consumers",
+      "standalone",
+      "benchmarks",
     ]);
-    expect(attach).toContain('sha256sum --check --strict "$archive.sha256"');
-    expect(attach).toContain('for asset in "$archive" "$archive.sha256"');
-    expect(attach).toContain('gh release upload "$RELEASE_TAG" "$asset"');
+    expect(publication.permissions).toEqual({ contents: "write" });
+    const attach = publication.steps?.find(
+      (step) =>
+        step.name === "Attach qualified assets and promote the gated draft",
+    );
+    expect(attach?.run).toContain("release-candidate.ts attach");
+    expect(attach?.run).toContain(
+      "release-candidate.ts promote standalone-matrix release-benchmarks/release-benchmarks.json package-artifact/ast-mcp.tgz",
+    );
+    expect(attach?.env?.CANDIDATE_SHA).toBe(
+      "${{ needs.release.outputs.candidate_sha }}",
+    );
+    expect(attach?.env?.RELEASE_ID).toBe(
+      "${{ needs.release.outputs.release_id }}",
+    );
   });
 });
 
@@ -637,7 +646,7 @@ describe("release workflow contracts", () => {
           type: "string",
         },
         recovery_tag: {
-          description: "Published release tag to validate and publish",
+          description: "Draft or published release tag to qualify and publish",
           required: false,
           type: "string",
         },
@@ -866,6 +875,17 @@ describe("release workflow contracts", () => {
     github.event_name = "pull_request";
     expect(check()).toBe(false);
   });
+  test("main runs and recoveries retain their qualification requests", () => {
+    expect(ci.concurrency).toEqual({
+      group:
+        "ci-${{ github.workflow }}-${{ inputs.expected_sha || (github.event_name == 'pull_request' && github.ref) || github.run_id }}",
+      "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+    });
+    expect(release.concurrency).toEqual({
+      group: "ast-mcp-release",
+      queue: "max",
+    });
+  });
   test("release recovery uses the registered CI workflow", () => {
     expect(job(ci, "release").if).toContain("github.event_name == 'push'");
     expect(job(ci, "release").if).toContain("inputs.recovery_tag != ''");
@@ -892,54 +912,144 @@ describe("release workflow contracts", () => {
       "needs.package-consumers.result == 'success'",
     );
   });
-  test("release recovery verifies a published tag before validation", () => {
+  test("release resolution fixes the candidate identity before qualification", () => {
     const creator = job(release, "release");
-    const steps = creator.steps ?? [];
-    const requireMain = steps.find((step) =>
-      step.run?.includes('test "$GITHUB_REF" = refs/heads/main'),
+    const resolve = creator.steps?.find(
+      (step) => step.run === "bun scripts/release/release-candidate.ts resolve",
     );
-    expect(requireMain?.if).toBe("inputs.recovery_tag != ''");
-    const action = steps.find((step) =>
-      step.uses?.startsWith("googleapis/release-please-action@"),
+    expect(resolve?.env?.RECOVERY_TAG).toBe("${{ inputs.recovery_tag }}");
+    expect(resolve?.env?.CREATED_TAG).toBe(
+      "${{ steps.release.outputs.tag_name }}",
     );
-    expect(action?.if).toBe("inputs.recovery_tag == ''");
-    expect(action?.["continue-on-error"]).toBe(true);
-    const checkout = steps.find((step) =>
-      step.uses?.startsWith("actions/checkout@"),
+    expect(creator.outputs?.candidate_sha).toContain(
+      "steps.candidate.outputs.candidate_sha",
     );
-    expect(steps.indexOf(checkout!)).toBeGreaterThan(steps.indexOf(action!));
-    expect(checkout?.if).toContain("steps.release.outcome == 'failure'");
-    expect(checkout?.with?.["fetch-depth"]).toBe(0);
-    expect(checkout?.with?.["persist-credentials"]).toBe(false);
-    const recover = steps.find((step) => step.env?.RELEASE_TAG);
-    expect(recover?.if).toContain("steps.release.outcome == 'failure'");
-    expect(recover?.env?.RELEASE_TAG).toBe("${{ inputs.recovery_tag }}");
-    expect(recover?.env?.RECOVERY_TAG).toBe("${{ inputs.recovery_tag }}");
-    expect(recover?.run).toContain('if [[ -z "$RECOVERY_TAG" ]]');
-    expect(recover?.run).not.toContain("${{ inputs.recovery_tag }}");
-    for (const required of [
-      "jq -r .draft",
-      "jq -r .target_commitish",
-      "git rev-list -n 1",
-      "git merge-base --is-ancestor",
-      'git show "$RELEASE_TAG:package.json"',
-      'test "$tag_commit" = "$GITHUB_SHA"',
-    ])
-      expect(recover?.run).toContain(required);
-    expect(creator.outputs?.release_created).toContain(
-      "steps.recover.outputs.release_created",
+    expect(creator.outputs?.release_id).toContain(
+      "steps.candidate.outputs.release_id",
     );
-    expect(creator.outputs?.tag_name).toContain(
-      "steps.recover.outputs.tag_name",
+    expect(
+      creator.steps?.some(
+        (step) => step.run === 'test "$GITHUB_REF" = refs/heads/main',
+      ),
+    ).toBe(true);
+  });
+  test("qualifiers select the exact candidate from the trusted main checkout", async () => {
+    const candidateAction = "./.github/actions/checkout-release-candidate";
+    for (const [source, name, sha] of [
+      [release, "validate", "${{ needs.release.outputs.candidate_sha }}"],
+      [release, "build", "${{ needs.release.outputs.candidate_sha }}"],
+      [release, "publish", "${{ needs.release.outputs.candidate_sha }}"],
+      [standalone, "build", "${{ inputs.ref }}"],
+      [standalone, "qualify", "${{ inputs.ref }}"],
+      [consumers, "consumers", "${{ inputs.release_sha }}"],
+    ] as const) {
+      const steps = job(source, name).steps ?? [];
+      const selection = steps.findIndex(
+        (step) => step.uses === candidateAction,
+      );
+      expect(selection).toBeGreaterThan(0);
+      expect(steps[selection - 1]?.uses).toStartWith("actions/checkout@");
+      expect(steps[selection - 1]?.with).toMatchObject({
+        ref: "${{ github.sha }}",
+        "fetch-depth": 0,
+        "persist-credentials": false,
+      });
+      expect(steps[selection]?.with?.sha).toBe(sha);
+      expect(steps[selection + 1]?.uses).toStartWith(
+        source === consumers ? "actions/setup-node@" : "oven-sh/setup-bun@",
+      );
+      if (source === consumers) {
+        expect(steps[selection]?.if).toBe("inputs.release_sha != ''");
+        expect(steps[selection - 1]?.if).toBe("inputs.release_sha != ''");
+        expect(steps[selection - 2]).toMatchObject({
+          if: "inputs.release_sha == ''",
+          with: { ref: "${{ inputs.checkout_ref || github.sha }}" },
+        });
+      }
+      if (source === standalone) {
+        expect(steps[selection]?.if).toBe("inputs.ref != ''");
+        expect(steps[selection - 1]?.if).toBe("inputs.ref != ''");
+        expect(steps[selection - 2]).toMatchObject({
+          if: "inputs.ref == ''",
+          with: { ref: "${{ github.event.pull_request.head.sha }}" },
+        });
+      }
+    }
+    const action = Bun.YAML.parse(
+      await Bun.file(
+        new URL(
+          "../../.github/actions/checkout-release-candidate/action.yml",
+          import.meta.url,
+        ),
+      ).text(),
+    ) as { runs: { steps: Step[] } };
+    const guard = action.runs.steps[0];
+    expect(guard?.env?.CANDIDATE_SHA).toBe("${{ inputs.sha }}");
+    expect(guard?.run).toContain('"$GITHUB_REF" != refs/heads/main');
+    expect(guard?.run).toContain('"$(git rev-parse HEAD)" != "$GITHUB_SHA"');
+    expect(guard?.run).toContain("^[0-9a-f]{40}$");
+    expect(guard?.run).toMatch(
+      /git merge-base --is-ancestor[^\n]*[\s\S]+git switch --detach/,
     );
   });
-  test("only dispatch concrete job grants actions write", () => {
+  test("benchmarks gate every publication and preserve failure evidence", () => {
+    const benchmark = job(release, "benchmarks");
+    expect(benchmark.needs).toEqual([
+      "release",
+      "validate",
+      "build",
+      "consumers",
+      "standalone",
+    ]);
+    expect(benchmark.permissions).toEqual({ contents: "read" });
+    const measure = benchmark.steps?.find((step) =>
+      step.run?.includes("release-candidate.ts benchmark"),
+    );
+    expect(measure?.env?.CANDIDATE_SHA).toBe(
+      "${{ needs.release.outputs.candidate_sha }}",
+    );
+    expect(measure?.env?.RELEASE_DRAFT).toBe(
+      "${{ needs.release.outputs.draft }}",
+    );
+    expect(job(release, "release").outputs?.draft).toBe(
+      "${{ steps.candidate.outputs.draft }}",
+    );
+    expect(
+      benchmark.steps?.find((step) =>
+        step.uses?.startsWith("actions/upload-artifact@"),
+      )?.if,
+    ).toBe("always()");
+    const failure = benchmark.steps?.find((step) =>
+      step.run?.includes("Release benchmark gate failed"),
+    );
+    expect(failure?.if).toBe("failure()");
+    expect(failure?.run).toContain("$GITHUB_STEP_SUMMARY");
+    expect(failure?.run).toContain("release-benchmark-evidence");
+    expect(benchmark.steps?.at(-1)).toBe(failure);
+    for (const name of ["publish-standalone", "publish", "publish-notes"])
+      expect(job(release, name).needs).toContain("benchmarks");
+    expect(job(release, "publish").if).toContain(
+      "needs.benchmarks.result == 'success'",
+    );
+    expect(job(release, "publish-notes").if).toContain(
+      "needs.benchmarks.result == 'success'",
+    );
+    expect(job(release, "publish-notes").if).toContain(
+      "needs.publish-standalone.result == 'success'",
+    );
+    expect(
+      job(release, "publish-notes").steps?.find((step) =>
+        step.run?.includes("release-candidate.ts notes"),
+      ),
+    ).toBeDefined();
+  });
+  test("only release dispatch and documentation refresh grant actions write", () => {
     expect(release.permissions).toEqual({});
     expect(
       Object.entries(release.jobs)
-        .filter(([, j]) => j.permissions?.actions === "write")
+        .filter(([, value]) => value.permissions?.actions === "write")
         .map(([name]) => name),
-    ).toEqual(["dispatch-ci"]);
+    ).toEqual(["dispatch-ci", "publish-notes"]);
     expect(job(release, "dispatch-ci").permissions).toEqual({
       contents: "write",
       "pull-requests": "read",
@@ -951,11 +1061,49 @@ describe("release workflow contracts", () => {
     expect(job(ci, "release").permissions?.actions).toBe("write");
     expect(ci.permissions?.actions).toBeUndefined();
   });
+  test("pending drafts prevent Release Please from preparing another version", () => {
+    const steps = job(release, "release").steps ?? [];
+    const actions = steps.filter((step) =>
+      step.uses?.startsWith("googleapis/release-please-action@"),
+    );
+    expect(actions).toHaveLength(2);
+    expect(actions[0]?.with?.["skip-github-pull-request"]).toBe(true);
+    expect(actions[1]?.with?.["skip-github-release"]).toBe(true);
+    expect(actions[1]?.if).toContain(
+      "steps.candidate.outputs.release_created != 'true'",
+    );
+    expect(actions[1]?.if).toContain(
+      "steps.candidate.outputs.pending_draft != 'true'",
+    );
+    expect(job(release, "release").outputs?.prs_created).toContain(
+      "steps.release-pr.outputs.prs_created",
+    );
+  });
+  test("managed recovery requalifies the original package and matrix archives", () => {
+    const restore = job(release, "build").steps?.find((step) =>
+      step.run?.includes("release-candidate.ts restore-root"),
+    );
+    expect(restore?.if).toBe(
+      "needs.release.outputs.published_recovery == 'true'",
+    );
+    const restoreMatrix = job(standalone, "build").steps?.find((step) =>
+      step.run?.includes("release-candidate.ts restore-matrix"),
+    );
+    expect(restoreMatrix?.if).toBe("inputs.recovery_tag != ''");
+    expect(
+      job(standalone, "build").steps?.find((step) =>
+        step.name?.startsWith("Compile ESM bytecode"),
+      )?.if,
+    ).toBe("inputs.recovery_tag == ''");
+    expect(job(release, "standalone").with?.recovery_tag).toContain(
+      "needs.release.outputs.published_recovery == 'true'",
+    );
+  });
   test("creator uses a workflow-scoped token and passes PR metadata", () => {
     expect(release.on.workflow_call).toEqual({
       inputs: {
         recovery_tag: {
-          description: "Published release tag to validate and publish",
+          description: "Draft or published release tag to qualify and publish",
           required: false,
           type: "string",
         },
@@ -971,7 +1119,7 @@ describe("release workflow contracts", () => {
         s.uses?.startsWith("googleapis/release-please-action@"),
       )?.with?.token,
     ).toBe("${{ secrets.RELEASE_PLEASE_TOKEN }}");
-    expect(creator.outputs?.prs).toBe("${{ steps.release.outputs.prs }}");
+    expect(creator.outputs?.prs).toBe("${{ steps.release-pr.outputs.prs }}");
     const dispatch = job(release, "dispatch-ci").steps?.find(
       (s) => s.run === "bun scripts/release/dispatch-release-ci.ts",
     );
@@ -1050,7 +1198,15 @@ describe("release workflow contracts", () => {
       required: false,
       type: "string",
     });
+    expect(inputs.release_sha).toMatchObject({
+      required: false,
+      type: "string",
+    });
     expect(inputs.matrix).toMatchObject({ required: false, type: "string" });
+    expect(job(release, "consumers").with?.release_sha).toBe(
+      "${{ needs.release.outputs.candidate_sha }}",
+    );
+    expect(job(ci, "package-consumers").with?.release_sha).toBeUndefined();
     expect(job(ci, "package-consumers").with?.matrix).toBe(
       "${{ needs.changes.outputs.consumer_matrix }}",
     );
@@ -1100,12 +1256,6 @@ describe("release workflow contracts", () => {
       "windows-2025",
     ]);
 
-    for (const name of ["validate", "build"])
-      expect(
-        job(release, name).steps?.find((s) =>
-          s.uses?.startsWith("actions/checkout@"),
-        )?.with?.ref,
-      ).toBe("${{ needs.release.outputs.tag_name }}");
     const producer = job(release, "build").steps ?? [];
     expect(producer.filter((s) => s.run?.includes("bun pm pack")).length).toBe(
       1,
@@ -1149,22 +1299,20 @@ describe("release workflow contracts", () => {
         /bun ci|bun run|bun pm pack|npm pack/.test(s.run ?? ""),
       ),
     ).toBe(false);
-    expect(
-      steps.find((s) => s.uses?.startsWith("actions/checkout@"))?.with,
-    ).toMatchObject({
-      ref: "${{ needs.release.outputs.tag_name }}",
-      "persist-credentials": false,
-    });
     const node = steps.find((s) => s.uses?.startsWith("actions/setup-node@"));
     expect(node?.with?.["node-version"]).toBe(24);
     expect(node?.with?.["registry-url"]).toBeUndefined();
     expect(steps.some((s) => s.env?.NODE_AUTH_TOKEN !== undefined)).toBe(false);
   });
-  test("actions use major references", () => {
-    for (const source of [ci, release, consumers])
+  test("external actions use major references", () => {
+    for (const source of [ci, release, consumers, standalone])
       for (const candidate of Object.values(source.jobs))
-        for (const step of candidate.steps ?? [])
-          if (step.uses) expect(step.uses).toMatch(/^[\w.-]+\/[\w./-]+@v\d+$/);
+        for (const step of candidate.steps ?? []) {
+          if (!step.uses) continue;
+          if (step.uses.startsWith("./"))
+            expect(step.uses).toMatch(/^\.\/\.github\/actions\/[\w-]+$/);
+          else expect(step.uses).toMatch(/^[\w.-]+\/[\w./-]+@v\d+$/);
+        }
   });
 });
 test("Release Please preserves identity with professional copy", async () => {

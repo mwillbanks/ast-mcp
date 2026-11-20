@@ -16,6 +16,11 @@ export interface CoordinatorOptions {
   now?: () => Date;
   onLeaseLost?: (error: unknown) => void;
   random?: () => number;
+  /** Schedule recurring lease maintenance and return its cancellation function. */
+  scheduleHeartbeat?: (
+    callback: () => void,
+    milliseconds: number,
+  ) => () => void;
   sleep?: (milliseconds: number) => Promise<void>;
 }
 
@@ -43,6 +48,14 @@ interface LeaseRow extends Record<string, unknown> {
 }
 
 const coordinators = new Map<string, StorageCoordinator>();
+
+const defaultScheduleHeartbeat = (
+  callback: () => void,
+  milliseconds: number,
+) => {
+  const timer = setInterval(callback, milliseconds);
+  return () => clearInterval(timer);
+};
 
 const defaultSleep = (milliseconds: number) =>
   new Promise<void>((resolvePromise) => {
@@ -192,7 +205,9 @@ export class StorageCoordinator {
         const lease = await this.acquireOrRenew();
         let heartbeatError: unknown;
         let heartbeatInFlight: Promise<void> = Promise.resolve();
-        const heartbeat = setInterval(
+        const scheduleHeartbeat =
+          this.options.scheduleHeartbeat ?? defaultScheduleHeartbeat;
+        const stopHeartbeat = scheduleHeartbeat(
           () => {
             heartbeatInFlight = heartbeatInFlight
               .then(() => this.fence(lease))
@@ -214,7 +229,7 @@ export class StorageCoordinator {
           await this.assertOwnership(lease);
           return result;
         } finally {
-          clearInterval(heartbeat);
+          stopHeartbeat();
           await heartbeatInFlight;
         }
       }),

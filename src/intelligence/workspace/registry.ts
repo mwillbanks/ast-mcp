@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -89,14 +90,6 @@ async function existingRealpath(target: string): Promise<string | undefined> {
   }
 }
 
-async function existingStat(target: string) {
-  try {
-    return await stat(target);
-  } catch {
-    return undefined;
-  }
-}
-
 async function canonicalDirectory(directory: string): Promise<string> {
   if (!path.isAbsolute(directory)) {
     throw new WorkspaceError(
@@ -158,6 +151,13 @@ function matchedRoots(roots: string[], requestPaths: string[]): string[] {
 
 export class WorkspaceRegistry {
   readonly #workspaces = new Map<string, WorkspaceRecord>();
+
+  constructor(
+    private readonly statCheckout: (
+      target: string,
+      options: { bigint: true },
+    ) => Promise<BigIntStats> = stat,
+  ) {}
   async #selectStorage(
     git: GitWorkspaceIdentity,
     placement: StoragePlacement,
@@ -244,7 +244,9 @@ export class WorkspaceRegistry {
         "workspace_open",
       );
     }
-    const metadata = await existingStat(canonical);
+    const metadata = await this.statCheckout(canonical, { bigint: true }).catch(
+      () => undefined,
+    );
     if (!metadata?.isDirectory()) {
       throw new WorkspaceError(
         "workspace_not_found",
@@ -281,8 +283,8 @@ export class WorkspaceRegistry {
     const mismatches = {
       checkoutIdentity:
         canonical !== workspace.checkoutRoot ||
-        BigInt(metadata.dev) !== record.checkoutDevice ||
-        BigInt(metadata.ino) !== record.checkoutInode,
+        metadata.dev !== record.checkoutDevice ||
+        metadata.ino !== record.checkoutInode,
       checkoutRoot: git.checkoutRoot !== workspace.checkoutRoot,
       commonGitDirectory:
         git.commonGitDirectory !== workspace.git.commonGitDirectory,
@@ -455,10 +457,12 @@ export class WorkspaceRegistry {
       git,
       openedAt: new Date().toISOString(),
     };
-    const metadata = await stat(workspace.checkoutRoot);
+    const metadata = await this.statCheckout(workspace.checkoutRoot, {
+      bigint: true,
+    });
     this.#workspaces.set(workspace.workspaceId, {
-      checkoutDevice: BigInt(metadata.dev),
-      checkoutInode: BigInt(metadata.ino),
+      checkoutDevice: metadata.dev,
+      checkoutInode: metadata.ino,
       openingDirectory:
         directory === git.checkoutRoot ? openingDirectory : git.checkoutRoot,
       workspace,

@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
+import os from "node:os";
 
+import { configRegistry } from "../../src/config/registry";
 import { createMockTime, deferred, MOCK_EPOCH } from "../support/mock-time";
 
 test("clock advances sleeps and intervals without host waiting", async () => {
@@ -44,6 +46,20 @@ test("automatic cleanup restores clock ownership between tests", () => {
   expect(restored.now()).toBe(MOCK_EPOCH);
   restored.dispose();
 });
+test("preload closes singleton configuration before checking the test clock", async () => {
+  configRegistry.close();
+  const time = createMockTime();
+  const home = os.homedir();
+  const snapshot = await configRegistry.snapshot({
+    cwd: home,
+    env: {},
+    home,
+  });
+  expect(snapshot.healthy).toBeTrue();
+  expect(time.pending()).toBe(1);
+  // The preload owns the singleton and must close it before automatic clock disposal.
+});
+
 test("async timer chains advance at explicit phase boundaries", async () => {
   const time = createMockTime();
   const started = time.monotonic();

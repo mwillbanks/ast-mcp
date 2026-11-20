@@ -44,16 +44,18 @@ async function fingerprint(
   filePath: string,
   role: FingerprintRole,
 ): Promise<string> {
-  const metadata = await stat(filePath).catch(() => undefined);
+  const metadata = await stat(filePath, { bigint: true }).catch(
+    () => undefined,
+  );
   if (!metadata) return "missing";
   const physicalPath = await realpath(filePath).catch(() => undefined);
   return JSON.stringify([
     metadata.isDirectory() ? "directory" : "file",
-    metadata.dev,
-    metadata.ino,
+    metadata.dev.toString(),
+    metadata.ino.toString(),
     physicalPath,
     ...(role === "configuration" || (role === "boundary" && metadata.isFile())
-      ? [metadata.mtimeMs, metadata.size]
+      ? [metadata.mtimeNs.toString(), metadata.size.toString()]
       : []),
   ]);
 }
