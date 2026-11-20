@@ -203,6 +203,7 @@ jobs:
     uses: ./.github/workflows/package-consumers.yml
     with:
       artifact_name: release-candidate
+      release_sha: ${{ needs.release.outputs.candidate_sha }}
 
   standalone:
     needs: [release, build]

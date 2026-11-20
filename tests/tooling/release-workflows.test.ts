@@ -941,6 +941,7 @@ describe("release workflow contracts", () => {
       [release, "publish", "${{ needs.release.outputs.candidate_sha }}"],
       [standalone, "build", "${{ inputs.ref }}"],
       [standalone, "qualify", "${{ inputs.ref }}"],
+      [consumers, "consumers", "${{ inputs.release_sha }}"],
     ] as const) {
       const steps = job(source, name).steps ?? [];
       const selection = steps.findIndex(
@@ -954,7 +955,17 @@ describe("release workflow contracts", () => {
         "persist-credentials": false,
       });
       expect(steps[selection]?.with?.sha).toBe(sha);
-      expect(steps[selection + 1]?.uses).toStartWith("oven-sh/setup-bun@");
+      expect(steps[selection + 1]?.uses).toStartWith(
+        source === consumers ? "actions/setup-node@" : "oven-sh/setup-bun@",
+      );
+      if (source === consumers) {
+        expect(steps[selection]?.if).toBe("inputs.release_sha != ''");
+        expect(steps[selection - 1]?.if).toBe("inputs.release_sha != ''");
+        expect(steps[selection - 2]).toMatchObject({
+          if: "inputs.release_sha == ''",
+          with: { ref: "${{ inputs.checkout_ref || github.sha }}" },
+        });
+      }
       if (source === standalone) {
         expect(steps[selection]?.if).toBe("inputs.ref != ''");
         expect(steps[selection - 1]?.if).toBe("inputs.ref != ''");
@@ -1187,7 +1198,15 @@ describe("release workflow contracts", () => {
       required: false,
       type: "string",
     });
+    expect(inputs.release_sha).toMatchObject({
+      required: false,
+      type: "string",
+    });
     expect(inputs.matrix).toMatchObject({ required: false, type: "string" });
+    expect(job(release, "consumers").with?.release_sha).toBe(
+      "${{ needs.release.outputs.candidate_sha }}",
+    );
+    expect(job(ci, "package-consumers").with?.release_sha).toBeUndefined();
     expect(job(ci, "package-consumers").with?.matrix).toBe(
       "${{ needs.changes.outputs.consumer_matrix }}",
     );
