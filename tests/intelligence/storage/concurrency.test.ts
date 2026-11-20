@@ -1,13 +1,13 @@
-import { beforeEach, spyOn } from "bun:test";
+import { afterEach, beforeEach, spyOn } from "bun:test";
 
-import {
-  createMockTime,
-  deferred,
-  type MockTime,
-} from "../../support/mock-time.ts";
-let time: MockTime;
+import { createMockTime, deferred } from "../../support/mock-time.ts";
+import { StorageClock } from "./clock.ts";
+let time: StorageClock;
 beforeEach(() => {
-  time = createMockTime();
+  time = new StorageClock();
+});
+afterEach(() => {
+  time.assertDrained();
 });
 import { describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
@@ -32,6 +32,17 @@ import {
   StorageError,
   withLanceRetry,
 } from "../../../src/intelligence/storage/index.ts";
+
+function openStore(
+  domain: StorageDomain,
+  options: Parameters<typeof LanceIntelligenceStore.open>[1] = {},
+) {
+  return LanceIntelligenceStore.open(domain, {
+    now: time.date,
+    scheduleHeartbeat: time.scheduleHeartbeat,
+    ...options,
+  });
+}
 
 const NOW = "2026-09-10T00:00:00.000Z";
 
@@ -96,7 +107,7 @@ describe("LanceDB storage coordination", () => {
 
   test("serializes bounded concurrent append workers without duplicate artifacts", async () => {
     const storage = await domain();
-    const store = await LanceIntelligenceStore.open(storage, {
+    const store = await openStore(storage, {
       leaseDurationMs: 60_000,
     });
     const writes = Array.from({ length: 100 }, (_, index) =>
@@ -119,7 +130,7 @@ describe("LanceDB storage coordination", () => {
 
   test("pins old and new complete generations without mixed table versions", async () => {
     const storage = await domain();
-    const store = await LanceIntelligenceStore.open(storage);
+    const store = await openStore(storage);
     const workspaceId = createIdentity("workspace", { name: "reader" });
     const revisionId = createIdentity("revision", { name: "reader" });
     const manifestArtifactId = createIdentity("revision-manifest", {
@@ -155,7 +166,7 @@ describe("LanceDB storage coordination", () => {
 
   test("serializes publication and index mutations", async () => {
     const storage = await domain();
-    const store = await LanceIntelligenceStore.open(storage);
+    const store = await openStore(storage);
     const input = {
       manifestArtifactId: createIdentity("revision-manifest", { name: "same" }),
       revisionId: createIdentity("revision", { name: "same" }),
@@ -179,7 +190,7 @@ describe("LanceDB storage coordination", () => {
     const leaseLoss = new Promise<unknown>((resolve) => {
       reportLeaseLoss = resolve;
     });
-    const store = await LanceIntelligenceStore.open(storage, {
+    const store = await openStore(storage, {
       leaseDurationMs: 1_000,
       onLeaseLost: reportLeaseLoss,
     });
@@ -243,7 +254,7 @@ describe("LanceDB storage coordination", () => {
 
   test("rejects competing persistent writers and conflicting storage domains", async () => {
     const storage = await domain();
-    const store = await LanceIntelligenceStore.open(storage);
+    const store = await openStore(storage);
     const raw = await lancedb.connect(storage.storagePath, {
       readConsistencyInterval: 0,
     });
@@ -280,70 +291,75 @@ describe("LanceDB storage coordination", () => {
   });
 
   test("uses bounded jittered retry and reports exhaustion", async () => {
-    const delays: number[] = [];
-    let attempts = 0;
-    const value = await withLanceRetry(
-      "fixture",
-      async () => {
-        attempts += 1;
-        if (attempts < 3) throw new Error("commit conflict");
-        return 42;
-      },
-      {
-        maxRetryAttempts: 4,
-        random: () => 0,
-        sleep: async (milliseconds) => {
-          delays.push(milliseconds);
-        },
-      },
-    );
-    expect(value).toBe(42);
-    expect(attempts).toBe(3);
-    expect(delays).toEqual([5, 10]);
-
-    const malformed = new StorageError(
-      "invalid_schema",
-      "malformed row",
-      false,
-    );
-    let malformedAttempts = 0;
-    await expect(
-      withLanceRetry("malformed", async () => {
-        malformedAttempts += 1;
-        throw malformed;
-      }),
-    ).rejects.toBe(malformed);
-    expect(malformedAttempts).toBe(1);
-
-    let defaultSleepAttempts = 0;
-    const recovery = withLanceRetry(
-      "default sleep",
-      async () => {
-        defaultSleepAttempts += 1;
-        if (defaultSleepAttempts === 1) throw new Error("commit conflict");
-        return "recovered";
-      },
-      { maxRetryAttempts: 2, random: () => 0 },
-    );
-    await time.advanceBy(5);
-    expect(await recovery).toBe("recovered");
-    expect(defaultSleepAttempts).toBe(2);
-
-    await expect(
-      withLanceRetry(
-        "exhausted",
+    const retryClock = createMockTime();
+    try {
+      const delays: number[] = [];
+      let attempts = 0;
+      const value = await withLanceRetry(
+        "fixture",
         async () => {
-          throw new Error("transaction conflict");
+          attempts += 1;
+          if (attempts < 3) throw new Error("commit conflict");
+          return 42;
         },
         {
-          maxRetryAttempts: 2,
+          maxRetryAttempts: 4,
           random: () => 0,
-          sleep: async () => {},
+          sleep: async (milliseconds) => {
+            delays.push(milliseconds);
+          },
         },
-      ),
-    ).rejects.toMatchObject({
-      code: "retry_exhausted",
-      retryable: true,
-    } satisfies Partial<StorageError>);
+      );
+      expect(value).toBe(42);
+      expect(attempts).toBe(3);
+      expect(delays).toEqual([5, 10]);
+
+      const malformed = new StorageError(
+        "invalid_schema",
+        "malformed row",
+        false,
+      );
+      let malformedAttempts = 0;
+      await expect(
+        withLanceRetry("malformed", async () => {
+          malformedAttempts += 1;
+          throw malformed;
+        }),
+      ).rejects.toBe(malformed);
+      expect(malformedAttempts).toBe(1);
+
+      let defaultSleepAttempts = 0;
+      const recovery = withLanceRetry(
+        "default sleep",
+        async () => {
+          defaultSleepAttempts += 1;
+          if (defaultSleepAttempts === 1) throw new Error("commit conflict");
+          return "recovered";
+        },
+        { maxRetryAttempts: 2, random: () => 0 },
+      );
+      await retryClock.advanceBy(5);
+      expect(await recovery).toBe("recovered");
+      expect(defaultSleepAttempts).toBe(2);
+
+      await expect(
+        withLanceRetry(
+          "exhausted",
+          async () => {
+            throw new Error("transaction conflict");
+          },
+          {
+            maxRetryAttempts: 2,
+            random: () => 0,
+            sleep: async () => {},
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: "retry_exhausted",
+        retryable: true,
+      } satisfies Partial<StorageError>);
+    } finally {
+      retryClock.dispose();
+    }
   });
 });

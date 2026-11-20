@@ -1,5 +1,12 @@
 import { TOCItem, useItems } from "fumadocs-core/toc";
 import { TypeTable } from "fumadocs-ui/components/type-table";
+import {
+  type MouseEvent as ReactMouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import tools from "@/data/tool-reference.json";
 import { parameterRows } from "@/lib/tool-schema";
@@ -11,8 +18,90 @@ export function isToolReference(toc: { url: string }[]): boolean {
 /** Uses the one AnchorProvider owned by DocsPage. */
 export function ToolTOC() {
   const items = useItems();
+  const [fragment, setFragment] = useState<string | null>(null);
+  const navigation = useRef<{ id: string; settled: boolean } | null>(null);
+  const selectFragment = useCallback((id: string | null) => {
+    const target = id ? document.getElementById(id) : null;
+    const bounds = target?.getBoundingClientRect();
+    const scroller = document.scrollingElement ?? document.documentElement;
+    const inset = target
+      ? (Number.parseFloat(getComputedStyle(target).scrollMarginTop) || 0) +
+        (Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0)
+      : 0;
+    // Initial fragment scrolling can finish before hydration installs scrollend.
+    const settled = Boolean(
+      bounds &&
+      (Math.abs(bounds.top - inset) <= 1 ||
+        (scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <=
+          1 &&
+          bounds.top < innerHeight &&
+          bounds.bottom > 0)),
+    );
+    if (navigation.current?.id !== id) {
+      navigation.current = id ? { id, settled } : null;
+    } else if (navigation.current && settled) {
+      navigation.current.settled = true;
+    }
+    setFragment(id);
+  }, []);
+  const activateFragment = (
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    id: string,
+  ) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    selectFragment(id);
+  };
+
+  useEffect(() => {
+    const followFragment = () => {
+      const hash = window.location.hash.slice(1);
+      let id = hash;
+      try {
+        id = decodeURIComponent(hash);
+      } catch {
+        // A malformed escape still permits a literal heading ID.
+      }
+      selectFragment(id || null);
+    };
+    const onScroll = () => {
+      if (navigation.current?.settled) selectFragment(null);
+    };
+    const onScrollEnd = () => {
+      const current = navigation.current;
+      if (!current) return;
+      const target = document.getElementById(current.id);
+      const bounds = target?.getBoundingClientRect();
+      if (!bounds || bounds.bottom <= 0 || bounds.top >= window.innerHeight) {
+        selectFragment(null);
+      } else current.settled = true;
+    };
+    followFragment();
+    window.addEventListener("hashchange", followFragment);
+    window.addEventListener("popstate", followFragment);
+    document.addEventListener("scroll", onScroll);
+    document.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      window.removeEventListener("hashchange", followFragment);
+      window.removeEventListener("popstate", followFragment);
+      document.removeEventListener("scroll", onScroll);
+      document.removeEventListener("scrollend", onScrollEnd);
+    };
+  }, [selectFragment]);
+
+  const selected = items.some((item) => item.id === fragment) ? fragment : null;
   const groups: { item: (typeof items)[number]; children: typeof items }[] = [];
-  for (const item of items) {
+  for (const observed of items) {
+    const item = selected
+      ? { ...observed, active: observed.id === selected }
+      : observed;
     if (item.original.depth === 2) groups.push({ item, children: [] });
     else groups.at(-1)?.children.push(item);
   }
@@ -24,6 +113,8 @@ export function ToolTOC() {
           <li key={id} className="list-none">
             <TOCItem
               href={original.url}
+              onClick={(event) => activateFragment(event, id)}
+              data-active={String(active)}
               aria-current={active ? "location" : undefined}
               className="block rounded px-2 py-1 font-mono text-sm break-all hover:bg-fd-accent focus-visible:outline-2 data-[active=true]:bg-fd-accent data-[active=true]:text-fd-primary"
             >
@@ -38,6 +129,8 @@ export function ToolTOC() {
                   <li key={child.id} className="list-none">
                     <TOCItem
                       href={child.original.url}
+                      onClick={(event) => activateFragment(event, child.id)}
+                      data-active={String(child.active)}
                       aria-current={child.active ? "location" : undefined}
                       className="block rounded px-2 py-1 text-xs hover:bg-fd-accent focus-visible:outline-2 data-[active=true]:text-fd-primary"
                     >

@@ -3,6 +3,7 @@
 ## NEXT_RELEASE
 
 - Require hosted performance benchmarks before publication. Include benchmark results in the GitHub release and documentation. Available since NEXT_RELEASE.
+- Highlight the selected tool or subsection when opening a documentation link to a heading. Available since NEXT_RELEASE.
 
 ## 0.9.1
 

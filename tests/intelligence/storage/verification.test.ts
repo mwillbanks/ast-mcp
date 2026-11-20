@@ -1,9 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
-
-import { createMockTime } from "../../support/mock-time.ts";
-beforeEach(() => {
-  createMockTime();
-});
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
